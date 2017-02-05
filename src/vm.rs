@@ -21,6 +21,7 @@
 //! Backtracking VM for implementing fancy regexes.
 
 use std::usize;
+use std::collections::BTreeSet;
 use regex::Regex;
 
 use codepoint_len;
@@ -51,6 +52,8 @@ pub enum Insn {
     DoubleFail,
     GoBack(usize),
     Backref(usize),
+    BeginAtomic,
+    EndAtomic,
     DelegateSized(Box<Regex>, usize),
     Delegate {
         inner: Box<Regex>,
@@ -91,6 +94,7 @@ struct State {
 
     oldsave: Vec<(usize, usize)>,
     nsave: usize,
+    explicit_sp: usize,
 }
 
 // Each element in the stack conceptually represents the entire state
@@ -108,9 +112,11 @@ impl State {
             stack: Vec::new(),
             oldsave: Vec::new(),
             nsave: 0,
+            explicit_sp: n_saves,
         }
     }
 
+    // push a backtrack branch
     fn push(&mut self, pc: usize, ix: usize, max_stack: usize) -> Result<()> {
         if self.stack.len() < max_stack {
             self.stack.push((pc, ix, self.nsave));
@@ -121,6 +127,7 @@ impl State {
         }
     }
 
+    // pop a backtrack branch
     fn pop(&mut self) -> (usize, usize) {
         for _ in 0..self.nsave {
             let (slot, val) = self.oldsave.pop().unwrap();
@@ -147,6 +154,64 @@ impl State {
 
     fn get(&self, slot: usize) -> usize {
         self.saves[slot]
+    }
+
+    // push a value onto the explicit stack; note: the entire contents of
+    // the explicit stack is saved and restored on backtrack.
+    fn stack_push(&mut self, val: usize) {
+        if self.saves.len() == self.explicit_sp {
+            self.saves.push(self.explicit_sp + 1);
+        }
+        let explicit_sp = self.explicit_sp;
+        let sp = self.get(explicit_sp);
+        if self.saves.len() == sp {
+            self.saves.push(val);
+        } else {
+            self.save(sp, val);
+        }
+        self.save(explicit_sp, sp + 1);
+    }
+
+    // pop a value from the explicit stack
+    fn stack_pop(&mut self) -> usize {
+        let explicit_sp = self.explicit_sp;
+        let sp = self.get(explicit_sp) - 1;
+        let result = self.get(sp);
+        self.save(explicit_sp, sp);
+        result
+    }
+
+    // get the count of backtracks
+    fn backtrack_count(&self) -> usize {
+        self.stack.len()
+    }
+
+    // discard backtracks since the corresponding call to backtrack_count
+    fn backtrack_cut(&mut self, count: usize) {
+        if self.stack.len() == count {
+            return;
+        }
+        let mut oldsave_ix = self.oldsave.len() - self.nsave;
+        for &(_pc, _ix, nsave) in &self.stack[count + 1 ..] {
+            oldsave_ix -= nsave;
+        }
+        let mut saved = BTreeSet::new();
+        let oldsave_start = oldsave_ix - self.stack[count].2;
+        for &(slot, _val) in &self.oldsave[oldsave_start .. oldsave_ix] {
+            saved.insert(slot);
+        }
+        // retain all oldsave values, but only the first and only if not
+        // already saved.
+        for ix in oldsave_ix..self.oldsave.len() {
+            let (slot, _val) = self.oldsave[ix];
+            if saved.insert(slot) {
+                self.oldsave.swap(oldsave_ix, ix);
+                oldsave_ix += 1;
+            }
+        }
+        self.stack.truncate(count);
+        self.oldsave.truncate(oldsave_ix);
+        self.nsave = oldsave_ix - oldsave_start;
     }
 }
 
@@ -282,6 +347,14 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) ->
                     }
                     ix = ix_end;
                 }
+                Insn::BeginAtomic => {
+                    let count = state.backtrack_count();
+                    state.stack_push(count);
+                }
+                Insn::EndAtomic => {
+                    let count = state.stack_pop();
+                    state.backtrack_cut(count);
+                }
                 Insn::DelegateSized(ref inner, size) => {
                     if inner.is_match(&s[ix..]) {
                         // We could analyze for ascii-only, and ix += size in
@@ -310,8 +383,8 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) ->
                         let mut slot = start_group * 2;
                         for i in 0..(end_group - start_group) {
                             if let Some(m) = caps.get(i + 1) {
-                                state.save(slot, m.start());
-                                state.save(slot + 1, m.end());
+                                state.save(slot, ix + m.start());
+                                state.save(slot + 1, ix + m.end());
                             } else {
                                 state.save(slot, usize::MAX);
                                 state.save(slot + 1, usize::MAX);

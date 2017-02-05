@@ -176,6 +176,13 @@ impl<'a> Compiler<'a> {
             Expr::Backref(group) => {
                 self.b.add(Insn::Backref(group * 2));
             }
+            Expr::AtomicGroup(_) => {
+                // TODO optimization: atomic insns are not needed if the
+                // child doesn't do any backtracking.
+                self.b.add(Insn::BeginAtomic);
+                try!(self.visit(ix + 1, false));
+                self.b.add(Insn::EndAtomic);
+            }
             Expr::Delegate { .. } | Expr::StartText | Expr::EndText
             | Expr::StartLine | Expr::EndLine => {
                 // TODO: might want to have more specialized impls

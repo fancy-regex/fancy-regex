@@ -122,12 +122,17 @@ impl<'a> Parser<'a> {
                 ix += 1;
             }
             greedy ^= self.flag(FLAG_SWAP_GREED);
-            return Ok((ix, Expr::Repeat {
+            let mut node = Expr::Repeat {
                 child: Box::new(child),
                 lo: lo,
                 hi: hi,
                 greedy: greedy,
-            }))
+            };
+            if ix < self.re.len() && self.re.as_bytes()[ix] == b'+' {
+                ix += 1;
+                node = Expr::AtomicGroup(Box::new(node));
+            }
+            return Ok((ix, node))
         }
         Ok((ix, child))
     }
@@ -372,6 +377,8 @@ impl<'a> Parser<'a> {
             (Some(LookBehind), 3)
         } else if self.re[ix..].starts_with("?<!") {
             (Some(LookBehindNeg), 3)
+        } else if self.re[ix..].starts_with("?>") {
+            (None, 2)
         } else if self.re[ix..].starts_with('?') {
             return self.parse_flags(ix, depth);
         } else {
@@ -385,9 +392,10 @@ impl<'a> Parser<'a> {
         } else if self.re.as_bytes()[ix] != b')' {
             return Err(Error::ParseError);
         };
-        let result = match la {
-            Some(la) => Expr::LookAround(Box::new(child), la),
-            None => Expr::Group(Box::new(child)),
+        let result = match (la, skip) {
+            (Some(la), _) => Expr::LookAround(Box::new(child), la),
+            (None, 2) => Expr::AtomicGroup(Box::new(child)),
+            _ => Expr::Group(Box::new(child)),
         };
         Ok((ix + 1, result))
     }
@@ -746,4 +754,24 @@ mod tests {
         assert_eq!(p("(?x: a (?-x:#) b )"), p("a#b"));
     }
 
+    #[test]
+    fn atomic_group() {
+        assert_eq!(p("(?>a)"), Expr::AtomicGroup(Box::new(make_literal("a"))));
+    }
+
+    #[test]
+    fn possessive() {
+        assert_eq!(p("a++"), Expr::AtomicGroup(Box::new(
+            Expr::Repeat { child: Box::new(make_literal("a")),
+            lo: 1, hi: usize::MAX, greedy: true }
+        )));
+        assert_eq!(p("a*+"), Expr::AtomicGroup(Box::new(
+            Expr::Repeat { child: Box::new(make_literal("a")),
+            lo: 0, hi: usize::MAX, greedy: true }
+        )));
+        assert_eq!(p("a?+"), Expr::AtomicGroup(Box::new(
+            Expr::Repeat { child: Box::new(make_literal("a")),
+            lo: 0, hi: 1, greedy: true }
+        )));
+    }
 }

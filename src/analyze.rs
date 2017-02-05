@@ -159,6 +159,15 @@ impl<'a> Analysis<'a> {
             Expr::Backref(_) => {
                 hard = true;
             }
+            Expr::AtomicGroup(ref child) => {
+                let ix = self.infos.len();
+                self.visit(child);
+                let child_info = &self.infos[ix];
+                min_size = child_info.min_size;
+                const_size = child_info.const_size;
+                looks_left = child_info.looks_left;
+                hard = true;  // TODO: possibly could weaken
+            }
         }
         self.infos[ix].end_group = self.group_ix;
         self.infos[ix].min_size = min_size;

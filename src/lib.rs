@@ -351,6 +351,7 @@ pub enum Expr {
         size: usize,  // TODO: move into analysis result
     },
     Backref(usize),
+    AtomicGroup(Box<Expr>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
