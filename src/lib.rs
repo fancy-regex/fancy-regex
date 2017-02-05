@@ -170,9 +170,14 @@ impl Regex {
         }
     }
 
+    // Note: probably want to change the signature of this to match the
+    // change to regex 0.2 (return a match obj with .start() and .end()
+    // methods).
     pub fn find(&self, text: &str) -> Result<Option<(usize, usize)>> {
         match *self {
-            Regex::Wrap { ref inner, .. } => Ok(inner.find(text)),
+            Regex::Wrap { ref inner, .. } => {
+                Ok(inner.find(text).map(|m| (m.start(), m.end())))
+            }
             Regex::Impl { ref prog, .. } => {
                 let result = try!(vm::run(prog, text, 0, 0));
                 Ok(result.map(|saves| (saves[0], saves[1])))
@@ -247,8 +252,8 @@ impl<'t> Captures<'t> {
     pub fn pos(&self, i: usize) -> Option<(usize, usize)> {
         match *self {
             Captures::Wrap { ref inner, ref offset, enclosing_groups } => {
-                inner.pos(i + enclosing_groups).map((|(lo, hi)|
-                    (lo + offset, hi + offset)))
+                inner.get(i + enclosing_groups).map((|m|
+                    (m.start() + offset, m.end() + offset)))
             }
             Captures::Impl { ref saves, .. } => {
                 if i >= saves.len() {
@@ -267,7 +272,7 @@ impl<'t> Captures<'t> {
     pub fn at(&self, i: usize) -> Option<&'t str> {
         match *self {
             Captures::Wrap { ref inner, enclosing_groups, .. } => {
-                inner.at(i + enclosing_groups)
+                inner.get(i + enclosing_groups).map(|m| m.as_str())
             }
             Captures::Impl { text, .. } => {
                 self.pos(i).map(|(lo, hi)|

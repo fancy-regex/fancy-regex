@@ -303,22 +303,22 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) ->
                     };
                     if start_group == end_group {
                         match re.find(&s[ix..]) {
-                            Some((_, end)) => ix += end,
+                            Some(m) => ix += m.end(),
                             _ => break 'fail
                         }
                     } else if let Some(caps) = re.captures(&s[ix..]) {
                         let mut slot = start_group * 2;
                         for i in 0..(end_group - start_group) {
-                            if let Some((beg, end)) = caps.pos(i + 1) {
-                                state.save(slot, beg);
-                                state.save(slot + 1, end);
+                            if let Some(m) = caps.get(i + 1) {
+                                state.save(slot, m.start());
+                                state.save(slot + 1, m.end());
                             } else {
                                 state.save(slot, usize::MAX);
                                 state.save(slot + 1, usize::MAX);
                             }
                             slot += 2;
                         }
-                        ix += caps.pos(0).unwrap().1;
+                        ix += caps.get(0).unwrap().end();
                     } else {
                         break 'fail;
                     }
