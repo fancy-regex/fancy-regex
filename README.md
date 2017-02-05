@@ -131,7 +131,18 @@ Many thanks to [Andrew Gallant](http://blog.burntsushi.net/about/) for
 stimulating conversations that inspired this approach, as well as for
 creating the excellent regex crate.
 
-See the [repository root](https://github.com/google/pulldown-cmark)
-for more information about authorship, licensing, contribution, and a
-disclaimer.
+## Authors
+
+The main author is Raph Levien.
+
+## Contributions
+
+We gladly accept contributions via GitHub pull requests, as long as the author
+has signed the Google Contributor License. Please see CONTRIBUTIONS.md for
+more details.
+
+### Disclaimer
+
+This is not an official Google product (experimental or otherwise), it
+is just code that happens to be owned by Google.
 
