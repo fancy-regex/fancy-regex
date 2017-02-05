@@ -323,6 +323,7 @@ impl<'a> Parser<'a> {
         let bytes = self.re.as_bytes();
         let mut ix = ix + 1;  // skip opening '['
         let mut inner = String::new();
+        let mut nest = 1;
         inner.push('[');
         loop {
             ix = self.optional_whitespace(ix);
@@ -336,7 +337,17 @@ impl<'a> Parser<'a> {
                     }
                     ix + 1 + codepoint_len(bytes[ix + 1])
                 }
-                b']' => break,
+                b'[' => {
+                    nest += 1;
+                    ix + 1
+                }
+                b']' => {
+                    nest -= 1;
+                    if nest == 0 {
+                        break;
+                    }
+                    ix + 1
+                }
                 b => ix + codepoint_len(b)
             };
             inner.push_str(&self.re[ix..end]);
