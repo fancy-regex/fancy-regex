@@ -240,7 +240,7 @@ impl<'a> Parser<'a> {
             return Err(Error::InvalidBackref)
         } else if b == b'A' || b == b'z' || b == b'b' || b == b'B' {
             size = 0;
-        } else if (b | 32) == b'd' || (b | 32) == b's' || (b | 32) == b'w' {
+        } else if (b | 32) == b'd' || (b | 32) == b's' || (b | 32) == b'w' || b == b'b' || b == b'f' || b == b't' || b == b'n' || b == b'r' || b == b'v' {
             // size = 1
         } else if (b | 32) == b'h' {
             let s = if b == b'h' {
