@@ -25,6 +25,8 @@ use std::cmp::min;
 use std::usize;
 
 use Expr;
+use Error;
+use Result;
 
 #[derive(Debug)]
 pub struct Info<'a> {
@@ -46,17 +48,17 @@ pub struct Analysis<'a> {
 }
 
 impl<'a> Analysis<'a> {
-    pub fn analyze(expr: &'a Expr, backrefs: &'a BitSet) -> Analysis<'a> {
+    pub fn analyze(expr: &'a Expr, backrefs: &'a BitSet) -> Result<Analysis<'a>> {
         let mut analysis = Analysis {
             infos: Vec::new(),
             backrefs: backrefs,
             group_ix: 0,
         };
-        analysis.visit(expr);
-        analysis
+        analysis.visit(expr)?;
+        Ok(analysis)
     }
 
-    fn visit(&mut self, expr: &'a Expr) {
+    fn visit(&mut self, expr: &'a Expr) -> Result<()> {
         let ix = self.infos.len();
         self.infos.push(Info {
             expr: expr,
@@ -94,7 +96,7 @@ impl<'a> Analysis<'a> {
                 const_size = true;
                 for child in v {
                     let ix = self.infos.len();
-                    self.visit(child);
+                    self.visit(child)?;
                     if last_ix != usize::MAX {
                         self.infos[last_ix].next_sibling = ix;
                     }
@@ -107,14 +109,14 @@ impl<'a> Analysis<'a> {
             }
             Expr::Alt(ref v) => {
                 let ix = self.infos.len();
-                self.visit(&v[0]);
+                self.visit(&v[0])?;
                 min_size = self.infos[ix].min_size;
                 const_size = self.infos[ix].const_size;
                 hard = self.infos[ix].hard;
                 let mut last_ix = ix;
                 for child in &v[1..] {
                     let ix = self.infos.len();
-                    self.visit(child);
+                    self.visit(child)?;
                     self.infos[last_ix].next_sibling = ix;
                     const_size &= self.infos[ix].const_size && min_size == self.infos[ix].min_size;
                     min_size = min(min_size, self.infos[ix].min_size);
@@ -127,7 +129,7 @@ impl<'a> Analysis<'a> {
                 let group = self.group_ix;
                 self.group_ix += 1;
                 let ix = self.infos.len();
-                self.visit(child);
+                self.visit(child)?;
                 let child_info = &self.infos[ix];
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
@@ -135,7 +137,7 @@ impl<'a> Analysis<'a> {
                 hard = child_info.hard | self.backrefs.contains(group);
             }
             Expr::LookAround(ref child, _) => {
-                self.visit(child);
+                self.visit(child)?;
                 // min_size = 0
                 const_size = true;
                 hard = true;
@@ -143,7 +145,7 @@ impl<'a> Analysis<'a> {
             }
             Expr::Repeat { ref child, lo, hi, .. } => {
                 let ix = self.infos.len();
-                self.visit(child);
+                self.visit(child)?;
                 let child_info = &self.infos[ix];
                 min_size = child_info.min_size * lo;
                 const_size = child_info.const_size && lo == hi;
@@ -156,12 +158,15 @@ impl<'a> Analysis<'a> {
                 const_size = true;
                 looks_left = size == 0;  // TODO: conservative for \z
             }
-            Expr::Backref(_) => {
+            Expr::Backref(group) => {
+                if group >= self.group_ix {
+                   return Err(Error::InvalidBackref);
+                }
                 hard = true;
             }
             Expr::AtomicGroup(ref child) => {
                 let ix = self.infos.len();
-                self.visit(child);
+                self.visit(child)?;
                 let child_info = &self.infos[ix];
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
@@ -174,6 +179,7 @@ impl<'a> Analysis<'a> {
         self.infos[ix].const_size = const_size;
         self.infos[ix].hard = hard;
         self.infos[ix].looks_left = looks_left;
+        Ok(())
     }
 
     pub fn n_groups(&self) -> usize {
@@ -223,6 +229,8 @@ fn literal_const_size(_: &str, _: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use regex;
+    use Expr;
+    use super::Analysis;
     use super::literal_const_size;
 
     #[test]
@@ -237,5 +245,23 @@ mod tests {
         if re.is_match("\u{0565}\u{0582}") {
             assert!(!literal_const_size("\u{0587}", true));
         }
+    }
+
+    #[test]
+    fn invalid_backref_1() {
+        let (e, backrefs) = Expr::parse(".\\0").unwrap();
+        assert!(Analysis::analyze(&e, &backrefs).is_err());
+    }
+
+    #[test]
+    fn invalid_backref_2() {
+        let (e, backrefs) = Expr::parse("(.\\1)").unwrap();
+        assert!(Analysis::analyze(&e, &backrefs).is_err());
+    }
+
+    #[test]
+    fn invalid_backref_3() {
+        let (e, backrefs) = Expr::parse("\\1(.)").unwrap();
+        assert!(Analysis::analyze(&e, &backrefs).is_err());
     }
 }

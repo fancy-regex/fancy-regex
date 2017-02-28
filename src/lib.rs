@@ -120,7 +120,7 @@ impl Regex {
             ))
         ]);
 
-        let a = Analysis::analyze(&e, &backrefs);
+        let a = Analysis::analyze(&e, &backrefs)?;
 
         let inner_info = &a.infos[4];  // references inner expr
         if !inner_info.hard {

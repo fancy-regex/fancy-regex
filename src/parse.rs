@@ -523,6 +523,10 @@ mod tests {
 
     fn p(s: &str) -> Expr { Expr::parse(s).unwrap().0 }
 
+    fn fail(s: &str) {
+        assert!(Expr::parse(s).is_err());
+    }
+
     #[test]
     fn any() {
         assert_eq!(p("."), Expr::Any { newline: false });
@@ -773,5 +777,12 @@ mod tests {
             Expr::Repeat { child: Box::new(make_literal("a")),
             lo: 0, hi: 1, greedy: true }
         )));
+    }
+
+    #[test]
+    fn invalid_backref() {
+        // only syntactic tests; see similar test in analyze module
+        fail(".\\12345678");  // unreasonably large number
+        fail(".\\a");  // not decimal
     }
 }
