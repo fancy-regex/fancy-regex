@@ -11,7 +11,7 @@ NFA-based implementations (exemplified by
 A goal is to be as efficient as possible. For a given regex, the NFA
 implementation has asymptotic running time linear in the length of the
 input, while in the general case a backtracking implementation has
-exponential blowup. A an example given in [Static Analysis for Regular
+exponential blowup. An example given in [Static Analysis for Regular
 Expression Exponential Runtime via Substructural
 Logics](https://www.cs.bham.ac.uk/~hxt/research/redos_full.pdf) is:
 
