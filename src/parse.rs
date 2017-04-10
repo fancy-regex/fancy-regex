@@ -244,9 +244,9 @@ impl<'a> Parser<'a> {
             // size = 1
         } else if (b | 32) == b'h' {
             let s = if b == b'h' {
-                "[0-9A-Za-z]"
+                "[0-9A-Fa-f]"
             } else {
-                "[^0-9A-Za-z]"
+                "[^0-9A-Fa-f]"
             };
             let inner = String::from(s);
             return Ok((end, Expr::Delegate { inner: inner, size: size }));
@@ -559,9 +559,9 @@ mod tests {
     #[test]
     fn hex_escape() {
         assert_eq!(p("\\h"), Expr::Delegate {
-            inner: String::from("[0-9A-Za-z]"), size: 1 });
+            inner: String::from("[0-9A-Fa-f]"), size: 1 });
         assert_eq!(p("\\H"), Expr::Delegate {
-            inner: String::from("[^0-9A-Za-z]"), size: 1 });
+            inner: String::from("[^0-9A-Fa-f]"), size: 1 });
     }
 
     #[test]
