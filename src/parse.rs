@@ -200,7 +200,7 @@ impl<'a> Parser<'a> {
             )),
             b'(' => self.parse_group(ix, depth),
             b'\\' => self.parse_escape(ix),
-            b'+' | b'*' | b'?' | b'|' | b')' | b']' | b'{' | b'}' =>
+            b'+' | b'*' | b'?' | b'|' | b')' | b'{' =>
                 Ok((ix, Expr::Empty)),
             b'[' => self.parse_class(ix),
             b'#' | b' ' | b'\r' | b'\n' | b'\t'
@@ -546,6 +546,12 @@ mod tests {
     #[test]
     fn literal() {
         assert_eq!(p("a"), make_literal("a"));
+    }
+
+    #[test]
+    fn literal_special() {
+        assert_eq!(p("}"), make_literal("}"));
+        assert_eq!(p("]"), make_literal("]"));
     }
 
     #[test]
