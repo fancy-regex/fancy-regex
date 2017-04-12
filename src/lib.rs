@@ -20,7 +20,6 @@
 
 //! An implementation of regexes, supporting a relatively rich set of features, including backreferences and look-around.
 
-#[macro_use] extern crate lazy_static;
 extern crate regex;
 extern crate bit_set;
 extern crate memchr;
