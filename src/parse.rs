@@ -622,6 +622,13 @@ mod tests {
     }
 
     #[test]
+    fn group_repeat() {
+        assert_eq!(p("(a){2}"), Expr::Repeat{
+            child: Box::new(Expr::Group(Box::new(make_literal("a")))), lo: 2, hi: 2, greedy: true
+        });
+    }
+
+    #[test]
     fn repeat() {
         assert_eq!(p("a{2,42}"), Expr::Repeat{ child: Box::new(make_literal("a")),
             lo: 2, hi: 42, greedy: true });
