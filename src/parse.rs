@@ -200,7 +200,7 @@ impl<'a> Parser<'a> {
             )),
             b'(' => self.parse_group(ix, depth),
             b'\\' => self.parse_escape(ix),
-            b'+' | b'*' | b'?' | b'|' | b')' | b'{' =>
+            b'+' | b'*' | b'?' | b'|' | b')' =>
                 Ok((ix, Expr::Empty)),
             b'[' => self.parse_class(ix),
             b'#' | b' ' | b'\r' | b'\n' | b'\t'
@@ -552,6 +552,20 @@ mod tests {
     fn literal_special() {
         assert_eq!(p("}"), make_literal("}"));
         assert_eq!(p("]"), make_literal("]"));
+    }
+
+    #[test]
+    fn literal_unescaped_opening_curly() {
+        assert_eq!(p("{"), make_literal("{"));
+        assert_eq!(p("({)"), Expr::Group(Box::new(
+            make_literal("{"),
+        )));
+        assert_eq!(p("a|{"), Expr::Alt(vec![
+            make_literal("a"),
+            make_literal("{"),
+        ]));
+        assert_eq!(p("{{2}"), Expr::Repeat{ child: Box::new(make_literal("{")),
+            lo: 2, hi: 2, greedy: true });
     }
 
     #[test]
