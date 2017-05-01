@@ -240,8 +240,12 @@ impl<'a> Parser<'a> {
             return Err(Error::InvalidBackref)
         } else if b == b'A' || b == b'z' || b == b'b' || b == b'B' {
             size = 0;
-        } else if (b | 32) == b'd' || (b | 32) == b's' || (b | 32) == b'w' || b == b'b' || b == b'f' || b == b't' || b == b'n' || b == b'r' || b == b'v' {
+        } else if (b | 32) == b'd' || (b | 32) == b's' || (b | 32) == b'w' ||
+            b == b'a' || b == b'f' || b == b'n' || b == b'r' || b == b't' || b == b'v' {
             // size = 1
+        } else if b == b'e' {
+            let inner = String::from(r"\x1B");
+            return Ok((end, Expr::Delegate { inner: inner, size: size }));
         } else if (b | 32) == b'h' {
             let s = if b == b'h' {
                 "[0-9A-Fa-f]"
@@ -789,6 +793,6 @@ mod tests {
     fn invalid_backref() {
         // only syntactic tests; see similar test in analyze module
         fail(".\\12345678");  // unreasonably large number
-        fail(".\\a");  // not decimal
+        fail(".\\c");  // not decimal
     }
 }
