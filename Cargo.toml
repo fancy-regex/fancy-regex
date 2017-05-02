@@ -9,5 +9,4 @@ repository = "https://github.com/google/fancy-regex"
 [dependencies]
 regex = "0.2.1"
 bit-set = "0.4"
-lazy_static = "0.2.2"
 memchr = "1.0.1"
