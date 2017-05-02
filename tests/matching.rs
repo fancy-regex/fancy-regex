@@ -14,6 +14,25 @@ fn control_character_escapes() {
     assert_matches(r"\v", "\x0B");
 }
 
+#[test]
+fn character_class_escapes() {
+    assert_matches(r"[\[]", "[");
+    assert_matches(r"[\^]", "^");
+
+    // The regex crate would reject the following because it's not necessary to escape them.
+    // Other engines allow to escape any non-alphanumeric character.
+    assert_matches(r"[\<]", "<");
+    assert_matches(r"[\>]", ">");
+    assert_matches(r"[\.]", ".");
+
+    // Character class escape
+    assert_matches(r"[\d]", "1");
+
+    // Control characters
+    assert_matches(r"[\e]", "\x1B");
+    assert_matches(r"[\n]", "\x0A");
+}
+
 
 fn assert_matches(re: &str, text: &str) {
     let parse_result = Regex::new(re);
