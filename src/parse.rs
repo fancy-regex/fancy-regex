@@ -335,7 +335,6 @@ impl<'a> Parser<'a> {
         let mut nest = 1;
         inner.push('[');
         loop {
-            ix = self.optional_whitespace(ix);
             if ix == self.re.len() {
                 return Err(Error::InvalidClass);
             }
@@ -782,10 +781,10 @@ mod tests {
         assert_eq!(p("(?x: a { 2 , 3 } ? )"), p("a{2,3}?"));
         assert_eq!(p("(?x: ( ? i : . ) )"), p("(?i:.)"));
         assert_eq!(p("(?x: ( ?= a ) )"), p("(?=a)"));
-        assert_eq!(p("(?x: [ ^ a - z ] )"), p("[^a-z]"));
-        assert_eq!(p("(?x: [ : a s c i i : ] )"), p("[:ascii:]"));
-        assert_eq!(p("(?x: [ \\] ] )"), p("[\\]]"));
-        assert_eq!(p("(?x: [ \\] \\\\] )"), p("[\\]\\\\]"));
+        assert_eq!(p("(?x: [ ] )"), p("[ ]"));
+        assert_eq!(p("(?x: [ ^] )"), p("[ ^]"));
+        assert_eq!(p("(?x: [a - z] )"), p("[a - z]"));
+        assert_eq!(p("(?x: [ \\] \\\\] )"), p("[ \\] \\\\]"));
         assert_eq!(p("(?x: a (?-x:#) b )"), p("a#b"));
     }
 
