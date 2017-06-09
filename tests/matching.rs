@@ -48,6 +48,13 @@ fn character_class_intersection() {
     assert_no_match(r"[[0-9]&&[^4]]", "4");
 }
 
+#[test]
+fn alternation_with_empty_arm() {
+    assert_match(r"^(a|)$", "a");
+    assert_match(r"^(a|)$", "");
+    assert_no_match(r"^(a|)$", "b");
+}
+
 
 fn assert_match(re: &str, text: &str) {
     let result = match_text(re, text);
