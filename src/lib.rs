@@ -390,7 +390,7 @@ impl Expr {
 
     pub fn to_str(&self, buf: &mut String, precedence: u8) {
         match *self {
-            Expr::Empty => (),
+            Expr::Empty => buf.push_str(".{0}"),
             Expr::Any { newline } => buf.push_str(
                 if newline { "(?s:.)" } else { "." }
             ),
