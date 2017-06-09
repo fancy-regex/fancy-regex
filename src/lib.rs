@@ -24,6 +24,7 @@ extern crate regex;
 extern crate bit_set;
 extern crate memchr;
 
+use std::fmt;
 use std::usize;
 use bit_set::BitSet;
 
@@ -76,10 +77,12 @@ pub enum Regex {
     Wrap {
         inner: regex::Regex,
         inner1: Option<Box<regex::Regex>>,
+        original: String,
     },
     Impl {
         prog: Prog,
         n_groups: usize,
+        original: String,
     }
 }
 
@@ -101,6 +104,13 @@ pub enum Captures<'t> {
 pub struct SubCaptures<'t> {
     caps: &'t Captures<'t>,
     i: usize,
+}
+
+impl fmt::Debug for Regex {
+    /// Shows the original regular expression.
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
 }
 
 impl Regex {
@@ -149,6 +159,7 @@ impl Regex {
             return Ok(Regex::Wrap {
                 inner: inner,
                 inner1: inner1,
+                original: re.to_string(),
             });
         }
 
@@ -156,7 +167,16 @@ impl Regex {
         Ok(Regex::Impl {
             prog: p,
             n_groups: a.n_groups(),
+            original: re.to_string(),
         })
+    }
+
+    /// Returns the original string of this regex.
+    pub fn as_str(&self) -> &str {
+        match *self {
+            Regex::Wrap { ref original, .. } => &original,
+            Regex::Impl { ref original, .. } => &original,
+        }
     }
 
     pub fn is_match(&self, text: &str) -> Result<bool> {
@@ -192,7 +212,7 @@ impl Regex {
                     offset: 0,
                     enclosing_groups: 0,
                 })),
-            Regex::Impl { ref prog, n_groups } => {
+            Regex::Impl { ref prog, n_groups, .. } => {
                 let result = try!(vm::run(prog, text, 0, 0));
                 Ok(result.map(|mut saves| {
                     saves.truncate(n_groups * 2);
@@ -208,7 +228,7 @@ impl Regex {
     pub fn captures_from_pos<'t>(&self, text: &'t str, pos: usize) ->
             Result<Option<Captures<'t>>> {
         match *self {
-            Regex::Wrap { ref inner, ref inner1 } => {
+            Regex::Wrap { ref inner, ref inner1, .. } => {
                 if inner1.is_none() || pos == 0 {
                     Ok(inner.captures(&text[pos..]).map(|caps| Captures::Wrap {
                         inner: caps,
@@ -225,7 +245,7 @@ impl Regex {
                     }))
                 }
             }
-            Regex::Impl { ref prog, n_groups } => {
+            Regex::Impl { ref prog, n_groups, .. } => {
                 let result = try!(vm::run(prog, text, pos, 0));
                 Ok(result.map(|mut saves| {
                     saves.truncate(n_groups * 2);
@@ -516,6 +536,7 @@ pub fn detect_possible_backref(re: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use Expr;
+    use Regex;
     use parse::make_literal;
     //use detect_possible_backref;
 
@@ -560,6 +581,14 @@ mod tests {
         ));
         e.to_str(&mut s, 0);
         assert_eq!(s, "(a|b)");
+    }
+
+    #[test]
+    fn as_str_debug() {
+        let s = r"(a+)b\1";
+        let regex = Regex::new(s).unwrap();
+        assert_eq!(s, regex.as_str());
+        assert_eq!(s, format!("{:?}", regex));
     }
 
     /*
