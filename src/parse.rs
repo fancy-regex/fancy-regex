@@ -311,7 +311,7 @@ impl<'a> Parser<'a> {
                 }
                 let b = bytes[endhex];
                 if endhex > starthex && b == b'}' { break; }
-                if is_hex_digit(b) && endhex < starthex + 6 {
+                if is_hex_digit(b) && endhex < starthex + 8 {
                     endhex += 1;
                 } else {
                     return Err(Error::InvalidHex);
@@ -602,6 +602,7 @@ mod tests {
         assert_eq!(p("\\\""), make_literal("\""));
         assert_eq!(p("\\xA0"), make_literal("\u{A0}"));
         assert_eq!(p("\\x{1F4A9}"), make_literal("\u{1F4A9}"));
+        assert_eq!(p("\\x{000000B7}"), make_literal("\u{B7}"));
     }
 
     #[test]
@@ -623,7 +624,6 @@ mod tests {
         assert!(Expr::parse("\\x{42").is_err());
         assert!(Expr::parse("\\x{D800}").is_err());
         assert!(Expr::parse("\\x{110000}").is_err());
-        assert!(Expr::parse("\\x{0000042}").is_err());
     }
 
     #[test]
