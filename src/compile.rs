@@ -333,7 +333,9 @@ impl<'a> Compiler<'a> {
         // TODO: might want to detect case of a group with no captures
         // inside, so we can run find() instead of captures()
         let mut annotated = String::new();
-        annotated.push('^');
+        // Anchor whole expression and group the contents to make sure precedence is right
+        // (e.g. `^a|b` and `^(?:a|b)` are different)
+        annotated.push_str("^(?:");
         let mut min_size = 0;
         let mut const_size = true;
         let mut looks_left = false;
@@ -345,6 +347,7 @@ impl<'a> Compiler<'a> {
             const_size &= info.const_size;
             expr.to_str(&mut annotated, 0);
         }
+        annotated.push(')');
         let start_group = self.a.infos[ixs[0]].start_group;
         let end_group = self.a.infos[ixs[ixs.len() - 1]].end_group;
         self.make_delegate(&annotated, min_size, const_size, looks_left,
@@ -356,7 +359,7 @@ impl<'a> Compiler<'a> {
             start_group: usize, end_group: usize) -> Result<()> {
         let compiled = try!(compile_inner(inner_re));
         if looks_left {
-            let inner1 = ["^(?s:.)(?:", &inner_re[1..], ")"].concat();
+            let inner1 = ["^(?s:.)", &inner_re[1..]].concat();
             let compiled1 = try!(compile_inner(&inner1));
             self.b.add(Insn::Delegate {
                 inner: Box::new(compiled),
