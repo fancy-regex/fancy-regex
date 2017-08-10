@@ -109,9 +109,16 @@ impl<'a> Parser<'a> {
                 b'*' => (0, usize::MAX),
                 b'+' => (1, usize::MAX),
                 b'{' => {
-                    let (next, lo, hi) = try!(self.parse_repeat(ix));
-                    ix = next - 1;
-                    (lo, hi)
+                    match self.parse_repeat(ix) {
+                        Ok((next, lo, hi)) => {
+                            ix = next - 1;
+                            (lo, hi)
+                        },
+                        Err(_) => {
+                            // Invalid repeat syntax, which results in `{` being treated as a literal
+                            return Ok((ix, child));
+                        },
+                    }
                 }
                 _ => return Ok((ix, child))
             };
@@ -155,6 +162,9 @@ impl<'a> Parser<'a> {
             return Err(Error::InvalidRepeat);
         };
         let ix = self.optional_whitespace(end);  // past lo number
+        if ix == self.re.len() {
+            return Err(Error::InvalidRepeat);
+        }
         end = ix;
         let hi = match bytes[ix] {
             b'}' => lo,
@@ -584,6 +594,7 @@ mod tests {
 
     #[test]
     fn literal_unescaped_opening_curly() {
+        // `{` in position where quantifier is not allowed results in literal `{`
         assert_eq!(p("{"), make_literal("{"));
         assert_eq!(p("({)"), Expr::Group(Box::new(
             make_literal("{"),
@@ -675,6 +686,26 @@ mod tests {
             lo: 2, hi: 2, greedy: false });
         assert_eq!(p("a{,2}?"), Expr::Repeat{ child: Box::new(make_literal("a")),
             lo: 0, hi: 2, greedy: false });
+    }
+
+    #[test]
+    fn invalid_repeat() {
+        // Invalid repeat syntax results in literal
+        assert_eq!(p("a{"), Expr::Concat(vec![
+            make_literal("a"),
+            make_literal("{"),
+        ]));
+        assert_eq!(p("a{6"), Expr::Concat(vec![
+            make_literal("a"),
+            make_literal("{"),
+            make_literal("6"),
+        ]));
+        assert_eq!(p("a{6,"), Expr::Concat(vec![
+            make_literal("a"),
+            make_literal("{"),
+            make_literal("6"),
+            make_literal(","),
+        ]));
     }
 
     #[test]
