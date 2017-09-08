@@ -23,7 +23,7 @@
 extern crate fancy_regex;
 
 use fancy_regex::*;
-use fancy_regex::analyze::Analysis;
+use fancy_regex::analyze::analyze;
 use fancy_regex::compile::compile;
 use std::env;
 use std::str::FromStr;
@@ -34,13 +34,13 @@ fn main() {
         if cmd == "parse" {
             if let Some(re) = args.next() {
                 let e = Expr::parse(&re);
-                println!("{:?}", e);
+                println!("{:#?}", e);
             }
         } else if cmd == "analyze" {
             if let Some(re) = args.next() {
                 let (e, backrefs) = Expr::parse(&re).unwrap();
-                let a = Analysis::analyze(&e, &backrefs);
-                println!("{:?}", a);
+                let a = analyze(&e, &backrefs);
+                println!("{:#?}", a);
             }
         } else if cmd == "compile" {
             if let Some(re) = args.next() {
@@ -73,7 +73,7 @@ fn main() {
         } else if cmd == "trace" {
             if let Some(re) = args.next() {
                 let (e, backrefs) = Expr::parse(&re).unwrap();
-                let a = Analysis::analyze(&e, &backrefs).unwrap();
+                let a = analyze(&e, &backrefs).unwrap();
                 let p = compile(&a).unwrap();
                 if let Some(s) = args.next() {
                     vm::run(&p, &s, 0, vm::OPTION_TRACE).unwrap();

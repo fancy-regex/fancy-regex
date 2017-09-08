@@ -31,7 +31,7 @@ use Result;
 #[derive(Debug)]
 pub struct Info<'a> {
     pub expr: &'a Expr,
-    pub next_sibling: usize,
+    pub children: Vec<Info<'a>>,
     pub start_group: usize,
     pub end_group: usize,
     pub min_size: usize,
@@ -40,36 +40,40 @@ pub struct Info<'a> {
     pub looks_left: bool,
 }
 
-#[derive(Debug)]
-pub struct Analysis<'a> {
-    pub infos: Vec<Info<'a>>,
-    pub backrefs: &'a BitSet,
-    pub group_ix: usize,
-}
-
-impl<'a> Analysis<'a> {
-    pub fn analyze(expr: &'a Expr, backrefs: &'a BitSet) -> Result<Analysis<'a>> {
-        let mut analysis = Analysis {
-            infos: Vec::new(),
-            backrefs: backrefs,
-            group_ix: 0,
-        };
-        analysis.visit(expr)?;
-        Ok(analysis)
+impl<'a> Info<'a> {
+    pub fn is_literal(&self) -> bool {
+        match *self.expr {
+            Expr::Literal { casei, .. } => !casei,
+            Expr::Concat(_) => {
+                self.children.iter().all(|child| child.is_literal())
+            }
+            _ => false
+        }
     }
 
-    fn visit(&mut self, expr: &'a Expr) -> Result<()> {
-        let ix = self.infos.len();
-        self.infos.push(Info {
-            expr: expr,
-            next_sibling: 0,
-            start_group: self.group_ix,
-            end_group: self.group_ix,
-            min_size: 0,
-            const_size: false,
-            hard: false,
-            looks_left: false,
-        });
+    pub fn push_literal(&self, buf: &mut String) {
+        match *self.expr {
+            // could be more paranoid about checking casei
+            Expr::Literal { ref val, .. } => buf.push_str(val),
+            Expr::Concat(_) => {
+                for child in &self.children {
+                    child.push_literal(buf);
+                }
+            }
+            _ => panic!("push_literal called on non-literal")
+        }
+    }
+}
+
+struct Analyzer<'a> {
+    backrefs: &'a BitSet,
+    group_ix: usize,
+}
+
+impl<'a> Analyzer<'a> {
+    fn visit(&mut self, expr: &'a Expr) -> Result<Info<'a>> {
+        let start_group = self.group_ix;
+        let mut children = Vec::new();
         let mut min_size = 0;
         let mut const_size = false;
         let mut hard = false;
@@ -92,65 +96,56 @@ impl<'a> Analysis<'a> {
                 looks_left = true;
             }
             Expr::Concat(ref v) => {
-                let mut last_ix = usize::MAX;
                 const_size = true;
                 for child in v {
-                    let ix = self.infos.len();
-                    self.visit(child)?;
-                    if last_ix != usize::MAX {
-                        self.infos[last_ix].next_sibling = ix;
-                    }
-                    looks_left |= self.infos[ix].looks_left && min_size == 0;
-                    min_size += self.infos[ix].min_size;
-                    const_size &= self.infos[ix].const_size;
-                    hard |= self.infos[ix].hard;
-                    last_ix = ix;
+                    let child_info = self.visit(child)?;
+                    looks_left |= child_info.looks_left && min_size == 0;
+                    min_size += child_info.min_size;
+                    const_size &= child_info.const_size;
+                    hard |= child_info.hard;
+                    children.push(child_info);
                 }
             }
             Expr::Alt(ref v) => {
-                let ix = self.infos.len();
-                self.visit(&v[0])?;
-                min_size = self.infos[ix].min_size;
-                const_size = self.infos[ix].const_size;
-                hard = self.infos[ix].hard;
-                let mut last_ix = ix;
+                let child_info = self.visit(&v[0])?;
+                min_size = child_info.min_size;
+                const_size = child_info.const_size;
+                hard = child_info.hard;
+                children.push(child_info);
                 for child in &v[1..] {
-                    let ix = self.infos.len();
-                    self.visit(child)?;
-                    self.infos[last_ix].next_sibling = ix;
-                    const_size &= self.infos[ix].const_size && min_size == self.infos[ix].min_size;
-                    min_size = min(min_size, self.infos[ix].min_size);
-                    hard |= self.infos[ix].hard;
-                    looks_left |= self.infos[ix].looks_left;
-                    last_ix = ix;
+                    let child_info = self.visit(child)?;
+                    const_size &= child_info.const_size && min_size == child_info.min_size;
+                    min_size = min(min_size, child_info.min_size);
+                    hard |= child_info.hard;
+                    looks_left |= child_info.looks_left;
+                    children.push(child_info);
                 }
             }
             Expr::Group(ref child) => {
                 let group = self.group_ix;
                 self.group_ix += 1;
-                let ix = self.infos.len();
-                self.visit(child)?;
-                let child_info = &self.infos[ix];
+                let child_info = self.visit(child)?;
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
                 looks_left = child_info.looks_left;
                 hard = child_info.hard | self.backrefs.contains(group);
+                children.push(child_info);
             }
             Expr::LookAround(ref child, _) => {
-                self.visit(child)?;
+                let child_info = self.visit(child)?;
                 // min_size = 0
                 const_size = true;
                 hard = true;
-                looks_left = self.infos[ix].looks_left;
+                looks_left = child_info.looks_left;
+                children.push(child_info);
             }
             Expr::Repeat { ref child, lo, hi, .. } => {
-                let ix = self.infos.len();
-                self.visit(child)?;
-                let child_info = &self.infos[ix];
+                let child_info = self.visit(child)?;
                 min_size = child_info.min_size * lo;
                 const_size = child_info.const_size && lo == hi;
                 hard = child_info.hard;
                 looks_left = child_info.looks_left;
+                children.push(child_info);
             }
             Expr::Delegate { size, .. } => {
                 // currently only used for empty and single-char matches
@@ -160,62 +155,30 @@ impl<'a> Analysis<'a> {
             }
             Expr::Backref(group) => {
                 if group >= self.group_ix {
-                   return Err(Error::InvalidBackref);
+                    return Err(Error::InvalidBackref);
                 }
                 hard = true;
             }
             Expr::AtomicGroup(ref child) => {
-                let ix = self.infos.len();
-                self.visit(child)?;
-                let child_info = &self.infos[ix];
+                let child_info = self.visit(child)?;
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
                 looks_left = child_info.looks_left;
                 hard = true;  // TODO: possibly could weaken
+                children.push(child_info);
             }
-        }
-        self.infos[ix].end_group = self.group_ix;
-        self.infos[ix].min_size = min_size;
-        self.infos[ix].const_size = const_size;
-        self.infos[ix].hard = hard;
-        self.infos[ix].looks_left = looks_left;
-        Ok(())
-    }
+        };
 
-    pub fn n_groups(&self) -> usize {
-        self.infos[0].end_group
-    }
-
-    pub fn is_literal(&self, ix: usize) -> bool {
-        match *self.infos[ix].expr {
-            Expr::Literal { casei, .. } => !casei,
-            Expr::Concat(_) => {
-                let mut child = ix + 1;
-                loop {
-                    if !self.is_literal(child) { return false; }
-                    child = self.infos[child].next_sibling;
-                    if child == 0 { break; }
-                }
-                true
-            }
-            _ => false
-        }
-    }
-
-    pub fn push_literal(&self, ix: usize, buf: &mut String) {
-        match *self.infos[ix].expr {
-            // could be more paranoid about checking casei
-            Expr::Literal { ref val, .. } => buf.push_str(val),
-            Expr::Concat(_) => {
-                let mut child = ix + 1;
-                loop {
-                    self.push_literal(child, buf);
-                    child = self.infos[child].next_sibling;
-                    if child == 0 { break; }
-                }
-            }
-            _ => panic!("push_literal called on non-literal")
-        }
+        Ok(Info {
+            expr,
+            children,
+            start_group,
+            end_group: self.group_ix,
+            min_size,
+            const_size,
+            hard,
+            looks_left,
+        })
     }
 }
 
@@ -226,11 +189,21 @@ fn literal_const_size(_: &str, _: bool) -> bool {
     true
 }
 
+pub fn analyze<'a>(expr: &'a Expr, backrefs: &'a BitSet) -> Result<Info<'a>> {
+    let mut analyzer = Analyzer {
+        backrefs: backrefs,
+        group_ix: 0,
+    };
+
+    analyzer.visit(expr)
+}
+
+
 #[cfg(test)]
 mod tests {
     use regex;
     use Expr;
-    use super::Analysis;
+    use super::analyze;
     use super::literal_const_size;
 
     #[test]
@@ -250,18 +223,32 @@ mod tests {
     #[test]
     fn invalid_backref_1() {
         let (e, backrefs) = Expr::parse(".\\0").unwrap();
-        assert!(Analysis::analyze(&e, &backrefs).is_err());
+        assert!(analyze(&e, &backrefs).is_err());
     }
 
     #[test]
     fn invalid_backref_2() {
         let (e, backrefs) = Expr::parse("(.\\1)").unwrap();
-        assert!(Analysis::analyze(&e, &backrefs).is_err());
+        assert!(analyze(&e, &backrefs).is_err());
     }
 
     #[test]
     fn invalid_backref_3() {
         let (e, backrefs) = Expr::parse("\\1(.)").unwrap();
-        assert!(Analysis::analyze(&e, &backrefs).is_err());
+        assert!(analyze(&e, &backrefs).is_err());
+    }
+
+    #[test]
+    fn is_literal() {
+        let (e, backrefs) = Expr::parse("abc").unwrap();
+        let info = analyze(&e, &backrefs).unwrap();
+        assert_eq!(info.is_literal(), true);
+    }
+
+    #[test]
+    fn is_literal_with_repeat() {
+        let (e, backrefs) = Expr::parse("abc*").unwrap();
+        let info = analyze(&e, &backrefs).unwrap();
+        assert_eq!(info.is_literal(), false);
     }
 }
