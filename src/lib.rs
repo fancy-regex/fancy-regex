@@ -22,7 +22,6 @@
 
 extern crate regex;
 extern crate bit_set;
-extern crate memchr;
 
 use std::fmt;
 use std::usize;
