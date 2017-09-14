@@ -120,27 +120,10 @@ impl Compiler {
                 try!(self.compile_concat(info, hard));
             }
             Expr::Alt(_) => {
-                let mut jmps = Vec::new();
-                let mut last_pc = usize::MAX;
-                for (i, child) in info.children.iter().enumerate() {
-                    let has_next = i < info.children.len() - 1;
-                    let pc = self.b.pc();
-                    if has_next {
-                        self.b.add(Insn::Split(pc + 1, usize::MAX));
-                    }
-                    if last_pc != usize::MAX {
-                        self.b.set_split_target(last_pc, pc, true);
-                    }
-                    last_pc = pc;
-                    try!(self.visit(child, hard));
-                    let pc = self.b.pc();
-                    jmps.push(pc);
-                    self.b.add(Insn::Jmp(0));
-                }
-                let pc = self.b.pc();
-                for jmp_pc in jmps {
-                    self.b.set_jmp_target(jmp_pc, pc);
-                }
+                let count = info.children.len();
+                try!(self.compile_alt(count, |compiler, i| {
+                    compiler.visit(&info.children[i], hard)
+                }));
             }
             Expr::Group(_) => {
                 let group = info.start_group;
@@ -151,19 +134,8 @@ impl Compiler {
             Expr::Repeat { lo, hi, greedy, .. } => {
                 try!(self.compile_repeat(info, lo, hi, greedy, hard));
             }
-            Expr::LookAround(_, la) if la == LookAhead || la == LookBehind => {
-                let save = self.b.newsave();
-                self.b.add(Insn::Save(save));
-                try!(self.compile_lookaround(&info.children[0], la));
-                self.b.add(Insn::Restore(save));
-            }
-            Expr::LookAround(_, la) => {  // negative look-around
-                let pc = self.b.pc();
-                self.b.add(Insn::Split(pc + 1, usize::MAX));
-                try!(self.compile_lookaround(&info.children[0], la));
-                self.b.add(Insn::DoubleFail);
-                let next_pc = self.b.pc();
-                self.b.set_split_target(pc, next_pc, true);
+            Expr::LookAround(_, la) => {
+                try!(self.compile_lookaround(info, la));
             }
             Expr::Backref(group) => {
                 self.b.add(Insn::Backref(group * 2));
@@ -180,6 +152,36 @@ impl Compiler {
                 // TODO: might want to have more specialized impls
                 try!(self.compile_delegates(&[info]));
             }
+        }
+        Ok(())
+    }
+
+    fn compile_alt<F>(&mut self, count: usize, mut handle_alternative: F) -> Result<()>
+    where
+        F: FnMut(&mut Compiler, usize) -> Result<()>,
+    {
+        let mut jmps = Vec::new();
+        let mut last_pc = usize::MAX;
+        for i in 0..count {
+            let has_next = i != count - 1;
+            let pc = self.b.pc();
+            if has_next {
+                self.b.add(Insn::Split(pc + 1, usize::MAX));
+            }
+            if last_pc != usize::MAX {
+                self.b.set_split_target(last_pc, pc, true);
+            }
+            last_pc = pc;
+
+            try!(handle_alternative(self, i));
+
+            let pc = self.b.pc();
+            jmps.push(pc);
+            self.b.add(Insn::Jmp(0));
+        }
+        let pc = self.b.pc();
+        for jmp_pc in jmps {
+            self.b.set_jmp_target(jmp_pc, pc);
         }
         Ok(())
     }
@@ -287,15 +289,64 @@ impl Compiler {
         Ok(())
     }
 
-    fn compile_lookaround(&mut self, child: &Info, la: LookAround) -> Result<()> {
+    fn compile_lookaround(&mut self, info: &Info, la: LookAround) -> Result<()> {
+        let inner = &info.children[0];
+        match la {
+            LookBehind => {
+                if let &Info { const_size: false, expr: &Expr::Alt(_), .. } = inner {
+                    // Make const size by transforming `(?<=a|bb)` to `(?<=a)|(?<=bb)`
+                    let alternatives = &inner.children;
+                    self.compile_alt(alternatives.len(), |compiler, i| {
+                        let alternative = &alternatives[i];
+                        compiler.compile_positive_lookaround(alternative, la)
+                    })
+                } else {
+                    self.compile_positive_lookaround(inner, la)
+                }
+            }
+            LookBehindNeg => {
+                if let &Info { const_size: false, expr: &Expr::Alt(_), .. } = inner {
+                    // Make const size by transforming `(?<!a|bb)` to `(?<!a)(?<!bb)`
+                    let alternatives = &inner.children;
+                    for alternative in alternatives {
+                        try!(self.compile_negative_lookaround(alternative, la));
+                    }
+                    Ok(())
+                } else {
+                    self.compile_negative_lookaround(inner, la)
+                }
+            }
+            LookAhead => self.compile_positive_lookaround(inner, la),
+            LookAheadNeg => self.compile_negative_lookaround(inner, la),
+        }
+    }
+
+    fn compile_positive_lookaround(&mut self, inner: &Info, la: LookAround) -> Result<()> {
+        let save = self.b.newsave();
+        self.b.add(Insn::Save(save));
+        try!(self.compile_lookaround_inner(inner, la));
+        self.b.add(Insn::Restore(save));
+        Ok(())
+    }
+
+    fn compile_negative_lookaround(&mut self, inner: &Info, la: LookAround) -> Result<()> {
+        let pc = self.b.pc();
+        self.b.add(Insn::Split(pc + 1, usize::MAX));
+        try!(self.compile_lookaround_inner(inner, la));
+        self.b.add(Insn::DoubleFail);
+        let next_pc = self.b.pc();
+        self.b.set_split_target(pc, next_pc, true);
+        Ok(())
+    }
+
+    fn compile_lookaround_inner(&mut self, inner: &Info, la: LookAround) -> Result<()> {
         if la == LookBehind || la == LookBehindNeg {
-            if !child.const_size {
-                // TODO: should be able to handle an Alt of const-size subexprs
+            if !inner.const_size {
                 return Err(Error::LookBehindNotConst);
             }
-            self.b.add(Insn::GoBack(child.min_size));
+            self.b.add(Insn::GoBack(inner.min_size));
         }
-        self.visit(child, false)
+        self.visit(inner, false)
     }
 
     fn compile_delegates(&mut self, infos: &[&Info]) -> Result<()> {
