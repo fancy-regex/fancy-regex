@@ -72,7 +72,7 @@ mod bench {
     #[bench]
     fn run_backtrack(b: &mut Bencher) {
         let (e, br) = Expr::parse("^.*?(([ab]+)\\1b)").unwrap();
-        let a = Analysis::analyze(&e, &br);
+        let a = Analysis::analyze(&e, &br).unwrap();
         let p = compile(&a).unwrap();
         b.iter(|| vm::run(&p, "babab", 0, 0))
     }
@@ -82,7 +82,7 @@ mod bench {
     #[bench]
     fn run_tricky(b: &mut Bencher) {
         let (e, br) = Expr::parse("(a|b|ab)*bc").unwrap();
-        let a = Analysis::analyze(&e, &br);
+        let a = Analysis::analyze(&e, &br).unwrap();
         let p = compile(&a).unwrap();
         let mut s = String::new();
         for _ in 0..28 {
