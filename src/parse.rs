@@ -350,6 +350,19 @@ impl<'a> Parser<'a> {
         let mut class = String::new();
         let mut nest = 1;
         class.push('[');
+
+        // Negated character class
+        if ix < self.re.len() && bytes[ix] == b'^' {
+            class.push('^');
+            ix += 1;
+        }
+
+        // `]` does not have to be escaped after opening `[` or `[^`
+        if ix < self.re.len() && bytes[ix] == b']' {
+            class.push(']');
+            ix += 1;
+        }
+
         loop {
             if ix == self.re.len() {
                 return Err(Error::InvalidClass);
