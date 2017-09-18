@@ -9,15 +9,17 @@ matrix:
       addons:
         apt:
           packages:
+            # cargo-tarpaulin needs this
             - libssl-dev
+      install:
+        # For test coverage. In install step so that it can use cache.
+        - cargo install cargo-tarpaulin
     - rust: beta
     - rust: nightly
   allow_failures:
     - rust: nightly
 
-cache:
-  cargo: true
-  apt: true
+cache: cargo
 
 script:
   - cargo build --verbose
@@ -26,8 +28,7 @@ script:
 
 after_success: |
   if [[ "$TRAVIS_RUST_VERSION" = stable ]]; then
-    # test coverage
-    cargo install cargo-tarpaulin
+    # Calculate test coverage
     cargo tarpaulin --out Xml
     bash <(curl -s https://codecov.io/bash)
   fi
