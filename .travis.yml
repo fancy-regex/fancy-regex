@@ -13,7 +13,7 @@ matrix:
             - libssl-dev
       install:
         # For test coverage. In install step so that it can use cache.
-        - cargo install cargo-tarpaulin
+        - cargo tarpaulin --version || cargo install cargo-tarpaulin
     - rust: beta
     - rust: nightly
   allow_failures:
