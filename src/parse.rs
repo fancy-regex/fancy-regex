@@ -293,8 +293,8 @@ impl<'a> Parser<'a> {
             }
         } else if b'a' <= (b | 32) && (b | 32) <= b'z' {
             return Err(Error::InvalidEscape);
-        } else if 0x21 <= b && b <= 0x7f {
-            // printable ASCII (excluding space)
+        } else if 0x20 <= b && b <= 0x7f {
+            // printable ASCII (including space)
             return Ok((end, make_literal(&self.re[ix + 1..end])));
         }
         // what to do with characters outside printable ASCII?
@@ -611,6 +611,7 @@ mod tests {
     fn literal_escape() {
         assert_eq!(p("\\'"), make_literal("'"));
         assert_eq!(p("\\\""), make_literal("\""));
+        assert_eq!(p("\\ "), make_literal(" "));
         assert_eq!(p("\\xA0"), make_literal("\u{A0}"));
         assert_eq!(p("\\x{1F4A9}"), make_literal("\u{1F4A9}"));
         assert_eq!(p("\\x{000000B7}"), make_literal("\u{B7}"));
@@ -841,6 +842,7 @@ mod tests {
         assert_eq!(p("(?x: [ ^] )"), p("[ ^]"));
         assert_eq!(p("(?x: [a - z] )"), p("[a - z]"));
         assert_eq!(p("(?x: [ \\] \\\\] )"), p("[ \\] \\\\]"));
+        assert_eq!(p("(?x: a\\ b )"), p("a b"));
         assert_eq!(p("(?x: a (?-x:#) b )"), p("a#b"));
     }
 
