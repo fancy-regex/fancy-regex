@@ -23,6 +23,7 @@ fn character_class_escapes() {
     assert_match(r"[\<]", "<");
     assert_match(r"[\>]", ">");
     assert_match(r"[\.]", ".");
+    assert_match(r"[\ ]", " ");
 
     // Character class escape
     assert_match(r"[\d]", "1");
