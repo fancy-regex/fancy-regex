@@ -54,6 +54,20 @@ fn alternation_with_empty_arm() {
     assert_no_match(r"^(a|)$", "b");
 }
 
+#[test]
+fn case_insensitive_character_class() {
+    assert_match(r"^(?i)[a-z]+$", "aB");
+}
+
+#[test]
+fn case_insensitive_escape() {
+    // `\x61` is lowercase `a`
+    assert_match(r"(?i)\x61", "A");
+
+    // `\p{Ll}` is the "Letter, lowercase" category
+    assert_match(r"(?i)\p{Ll}", "A");
+}
+
 
 fn assert_match(re: &str, text: &str) {
     let result = match_text(re, text);
