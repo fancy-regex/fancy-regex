@@ -261,7 +261,7 @@ impl<'a> Parser<'a> {
             // size = 1
         } else if b == b'e' {
             let inner = String::from(r"\x1B");
-            return Ok((end, Expr::Delegate { inner: inner, size: size }));
+            return Ok((end, Expr::Delegate { inner: inner, size: size, casei: false }));
         } else if (b | 32) == b'h' {
             let s = if b == b'h' {
                 "[0-9A-Fa-f]"
@@ -269,7 +269,7 @@ impl<'a> Parser<'a> {
                 "[^0-9A-Fa-f]"
             };
             let inner = String::from(s);
-            return Ok((end, Expr::Delegate { inner: inner, size: size }));
+            return Ok((end, Expr::Delegate { inner: inner, size: size, casei: false }));
         } else if b == b'x' {
             return self.parse_hex(end);
         } else if (b | 32) == b'p' {
@@ -299,7 +299,7 @@ impl<'a> Parser<'a> {
         }
         // what to do with characters outside printable ASCII?
         let inner = String::from(&self.re[ix..end]);
-        Ok((end, Expr::Delegate { inner: inner, size: size }))
+        Ok((end, Expr::Delegate { inner: inner, size: size, casei: self.flag(FLAG_CASEI) }))
     }
 
     // ix points after '\x', eg to 'A0' or '{12345}'
@@ -411,7 +411,7 @@ impl<'a> Parser<'a> {
         }
         class.push(']');
         let ix = ix + 1;  // skip closing ']'
-        Ok((ix, Expr::Delegate { inner: class, size: 1 }))
+        Ok((ix, Expr::Delegate { inner: class, size: 1, casei: self.flag(FLAG_CASEI) }))
     }
 
     fn parse_group(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
@@ -633,9 +633,9 @@ mod tests {
     #[test]
     fn hex_escape() {
         assert_eq!(p("\\h"), Expr::Delegate {
-            inner: String::from("[0-9A-Fa-f]"), size: 1 });
+            inner: String::from("[0-9A-Fa-f]"), size: 1, casei: false });
         assert_eq!(p("\\H"), Expr::Delegate {
-            inner: String::from("[^0-9A-Fa-f]"), size: 1 });
+            inner: String::from("[^0-9A-Fa-f]"), size: 1, casei: false });
     }
 
     #[test]
@@ -725,26 +725,29 @@ mod tests {
     #[test]
     fn delegate_zero() {
         assert_eq!(p("\\b"), Expr::Delegate {
-            inner: String::from("\\b"), size: 0
+            inner: String::from("\\b"), size: 0, casei: false
         });
         assert_eq!(p("\\B"), Expr::Delegate {
-            inner: String::from("\\B"), size: 0
+            inner: String::from("\\B"), size: 0, casei: false
         });
     }
 
     #[test]
     fn delegate_named_group() {
         assert_eq!(p("\\p{Greek}"), Expr::Delegate {
-            inner: String::from("\\p{Greek}"), size: 1
+            inner: String::from("\\p{Greek}"), size: 1, casei: false
         });
         assert_eq!(p("\\pL"), Expr::Delegate {
-            inner: String::from("\\pL"), size: 1
+            inner: String::from("\\pL"), size: 1, casei: false
         });
         assert_eq!(p("\\P{Greek}"), Expr::Delegate {
-            inner: String::from("\\P{Greek}"), size: 1
+            inner: String::from("\\P{Greek}"), size: 1, casei: false
         });
         assert_eq!(p("\\PL"), Expr::Delegate {
-            inner: String::from("\\PL"), size: 1
+            inner: String::from("\\PL"), size: 1, casei: false
+        });
+        assert_eq!(p("(?i)\\p{Ll}"), Expr::Delegate {
+            inner: String::from("\\p{Ll}"), size: 1, casei: true
         });
     }
 
@@ -824,14 +827,14 @@ mod tests {
 
             Expr::Concat(vec![
                 make_literal("'"),
-                Expr::Delegate { inner: String::from("[a-zA-Z_]"), size: 1 },
+                Expr::Delegate { inner: String::from("[a-zA-Z_]"), size: 1, casei: false },
                 Expr::Repeat { child: Box::new(
-                    Expr::Delegate { inner: String::from("[a-zA-Z0-9_]"), size: 1 }
+                    Expr::Delegate { inner: String::from("[a-zA-Z0-9_]"), size: 1, casei: false }
                 ), lo: 0, hi: usize::MAX, greedy: true },
                 Expr::LookAround(Box::new(
                     make_literal("'")
                 ), LookAheadNeg),
-                Expr::Delegate { inner: String::from("\\b"), size: 0 }])
+                Expr::Delegate { inner: String::from("\\b"), size: 0, casei: false }])
 
         );
     }

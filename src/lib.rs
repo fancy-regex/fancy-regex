@@ -367,6 +367,7 @@ pub enum Expr {
     Delegate {
         inner: String,
         size: usize,  // TODO: move into analysis result
+        casei: bool,
     },
     Backref(usize),
     AtomicGroup(Box<Expr>),
@@ -470,9 +471,15 @@ impl Expr {
                     buf.push(')');
                 }
             }
-            Expr::Delegate{ ref inner, .. } => {
+            Expr::Delegate{ ref inner, casei, .. } => {
                 // at the moment, delegate nodes are just atoms
+                if casei {
+                    buf.push_str("(?i:");
+                }
                 buf.push_str(inner);
+                if casei {
+                    buf.push_str(")");
+                }
             }
             _ => panic!("attempting to format hard expr")
         }
