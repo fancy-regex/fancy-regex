@@ -294,7 +294,7 @@ impl<'a> Parser<'a> {
         } else if b'a' <= (b | 32) && (b | 32) <= b'z' {
             return Err(Error::InvalidEscape);
         } else if 0x20 <= b && b <= 0x7f {
-            // printable ASCII (including space)
+            // printable ASCII (including space, see issue #29)
             return Ok((end, make_literal(&self.re[ix + 1..end])));
         }
         // what to do with characters outside printable ASCII?
