@@ -32,7 +32,7 @@ mod bench {
     use regex::Regex;
 
 	use fancy_regex::Expr;
-    use fancy_regex::analyze::Analysis;
+    use fancy_regex::analyze::analyze;
     use fancy_regex::compile::compile;
     use fancy_regex::vm;
 
@@ -54,7 +54,7 @@ mod bench {
     #[bench]
     fn literal_re_analyze(b: &mut Bencher) {
         let (e, br) = Expr::parse("^\\\\([!-/:-@\\[-`\\{-~aftnrv]|[0-7]{1,3}|x[0-9a-fA-F]{2}|x\\{[0-9a-fA-F]{1,6}\\})").unwrap();
-        b.iter(|| Analysis::analyze(&e, &br));
+        b.iter(|| analyze(&e, &br));
     }
 
     #[bench]
@@ -72,7 +72,7 @@ mod bench {
     #[bench]
     fn run_backtrack(b: &mut Bencher) {
         let (e, br) = Expr::parse("^.*?(([ab]+)\\1b)").unwrap();
-        let a = Analysis::analyze(&e, &br).unwrap();
+        let a = analyze(&e, &br).unwrap();
         let p = compile(&a).unwrap();
         b.iter(|| vm::run(&p, "babab", 0, 0))
     }
@@ -82,7 +82,7 @@ mod bench {
     #[bench]
     fn run_tricky(b: &mut Bencher) {
         let (e, br) = Expr::parse("(a|b|ab)*bc").unwrap();
-        let a = Analysis::analyze(&e, &br).unwrap();
+        let a = analyze(&e, &br).unwrap();
         let p = compile(&a).unwrap();
         let mut s = String::new();
         for _ in 0..28 {
