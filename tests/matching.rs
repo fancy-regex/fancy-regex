@@ -30,6 +30,11 @@ fn character_class_escapes() {
     // Control characters
     assert_match(r"[\e]", "\x1B");
     assert_match(r"[\n]", "\x0A");
+
+    // `]` can be unescaped if it's right after `[`
+    assert_match(r"[]]", "]");
+    // `]` can be unescaped even after `[^`
+    assert_match(r"[^]]", "a");
 }
 
 #[test]
