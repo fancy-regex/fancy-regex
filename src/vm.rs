@@ -264,7 +264,7 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) ->
                     ix = end;
                 }
                 Insn::Split(x, y) => {
-                    try!(state.push(y, ix, prog.max_stack));
+                    state.push(y, ix, prog.max_stack)?;
                     pc = x;
                     continue;
                 }
@@ -283,7 +283,7 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) ->
                     }
                     state.save(repeat, repcount + 1);
                     if repcount >= lo {
-                        try!(state.push(next, ix, prog.max_stack));
+                        state.push(next, ix, prog.max_stack)?;
                     }
                 }
                 Insn::RepeatNg { lo, hi, next, repeat } => {
@@ -294,7 +294,7 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) ->
                     }
                     state.save(repeat, repcount + 1);
                     if repcount >= lo {
-                        try!(state.push(pc + 1, ix, prog.max_stack));
+                        state.push(pc + 1, ix, prog.max_stack)?;
                         pc = next;
                         continue;
                     }
@@ -308,7 +308,7 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) ->
                     state.save(repeat, repcount + 1);
                     if repcount >= lo {
                         state.save(check, ix);
-                        try!(state.push(next, ix, prog.max_stack));
+                        state.push(next, ix, prog.max_stack)?;
                     }
                 }
                 Insn::RepeatEpsilonNg { lo, next, repeat, check } => {
@@ -320,7 +320,7 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) ->
                     state.save(repeat, repcount + 1);
                     if repcount >= lo {
                         state.save(check, ix);
-                        try!(state.push(pc + 1, ix, prog.max_stack));
+                        state.push(pc + 1, ix, prog.max_stack)?;
                         pc = next;
                         continue;
                     }

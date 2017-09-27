@@ -114,7 +114,7 @@ impl fmt::Debug for Regex {
 
 impl Regex {
     pub fn new(re: &str) -> Result<Regex> {
-        let (raw_e, backrefs) = try!(Expr::parse(re));
+        let (raw_e, backrefs) = Expr::parse(re)?;
 
         // wrapper to search for re at arbitrary start position,
         // and to capture the match bounds
@@ -146,11 +146,11 @@ impl Regex {
                 _ => unreachable!()
             };
             raw_e.to_str(&mut re_cooked, 0);
-            let inner = try!(compile::compile_inner(&re_cooked));
+            let inner = compile::compile_inner(&re_cooked)?;
             let inner1 = if inner_info.looks_left {
                 // create regex to handle 1-char look-behind
                 let re1 = ["^(?s:.)+?(", re_cooked.as_str(), ")"].concat();
-                let compiled = try!(compile::compile_inner(&re1));
+                let compiled = compile::compile_inner(&re1)?;
                 Some(Box::new(compiled))
             } else {
                 None
@@ -162,7 +162,7 @@ impl Regex {
             });
         }
 
-        let p = try!(compile(&info));
+        let p = compile(&info)?;
         Ok(Regex::Impl {
             prog: p,
             n_groups: info.end_group,
@@ -182,7 +182,7 @@ impl Regex {
         match *self {
             Regex::Wrap { ref inner, .. } => Ok(inner.is_match(text)),
             Regex::Impl { ref prog, .. } => {
-                let result = try!(vm::run(prog, text, 0, 0));
+                let result = vm::run(prog, text, 0, 0)?;
                 Ok(result.is_some())
             }
         }
@@ -197,7 +197,7 @@ impl Regex {
                 Ok(inner.find(text).map(|m| (m.start(), m.end())))
             }
             Regex::Impl { ref prog, .. } => {
-                let result = try!(vm::run(prog, text, 0, 0));
+                let result = vm::run(prog, text, 0, 0)?;
                 Ok(result.map(|saves| (saves[0], saves[1])))
             }
         }
@@ -212,7 +212,7 @@ impl Regex {
                     enclosing_groups: 0,
                 })),
             Regex::Impl { ref prog, n_groups, .. } => {
-                let result = try!(vm::run(prog, text, 0, 0));
+                let result = vm::run(prog, text, 0, 0)?;
                 Ok(result.map(|mut saves| {
                     saves.truncate(n_groups * 2);
                     Captures::Impl {
@@ -245,7 +245,7 @@ impl Regex {
                 }
             }
             Regex::Impl { ref prog, n_groups, .. } => {
-                let result = try!(vm::run(prog, text, pos, 0));
+                let result = vm::run(prog, text, pos, 0)?;
                 Ok(result.map(|mut saves| {
                     saves.truncate(n_groups * 2);
                     Captures::Impl {

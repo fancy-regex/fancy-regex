@@ -105,7 +105,7 @@ impl Compiler {
             Expr::Empty => (),
             Expr::Literal{ ref val, casei } => {
                 if !casei {
-                    try!(self.compile_delegates(&[info]));
+                    self.compile_delegates(&[info])?;
                 } else {
                     self.b.add(Insn::Lit(val.clone()));
                 }
@@ -117,25 +117,25 @@ impl Compiler {
                 self.b.add(Insn::AnyNoNL);
             }
             Expr::Concat(_) => {
-                try!(self.compile_concat(info, hard));
+                self.compile_concat(info, hard)?;
             }
             Expr::Alt(_) => {
                 let count = info.children.len();
-                try!(self.compile_alt(count, |compiler, i| {
+                self.compile_alt(count, |compiler, i| {
                     compiler.visit(&info.children[i], hard)
-                }));
+                })?;
             }
             Expr::Group(_) => {
                 let group = info.start_group;
                 self.b.add(Insn::Save(group * 2));
-                try!(self.visit(&info.children[0], hard));
+                self.visit(&info.children[0], hard)?;
                 self.b.add(Insn::Save(group * 2 + 1));
             }
             Expr::Repeat { lo, hi, greedy, .. } => {
-                try!(self.compile_repeat(info, lo, hi, greedy, hard));
+                self.compile_repeat(info, lo, hi, greedy, hard)?;
             }
             Expr::LookAround(_, la) => {
-                try!(self.compile_lookaround(info, la));
+                self.compile_lookaround(info, la)?;
             }
             Expr::Backref(group) => {
                 self.b.add(Insn::Backref(group * 2));
@@ -144,13 +144,13 @@ impl Compiler {
                 // TODO optimization: atomic insns are not needed if the
                 // child doesn't do any backtracking.
                 self.b.add(Insn::BeginAtomic);
-                try!(self.visit(&info.children[0], false));
+                self.visit(&info.children[0], false)?;
                 self.b.add(Insn::EndAtomic);
             }
             Expr::Delegate { .. } | Expr::StartText | Expr::EndText
             | Expr::StartLine | Expr::EndLine => {
                 // TODO: might want to have more specialized impls
-                try!(self.compile_delegates(&[info]));
+                self.compile_delegates(&[info])?;
             }
         }
         Ok(())
@@ -173,7 +173,7 @@ impl Compiler {
             }
             last_pc = pc;
 
-            try!(handle_alternative(self, i));
+            handle_alternative(self, i)?;
 
             let pc = self.b.pc();
             jmps.push(pc);
@@ -210,13 +210,13 @@ impl Compiler {
             }
         }
 
-        try!(self.compile_delegates(&children[..prefix_end]));
+        self.compile_delegates(&children[..prefix_end])?;
 
         if prefix_end < suffix_begin {
             for child in children[prefix_end..suffix_begin - 1].iter() {
-                try!(self.visit(child, true));
+                self.visit(child, true)?;
             }
-            try!(self.visit(children[suffix_begin - 1], hard));
+            self.visit(children[suffix_begin - 1], hard)?;
         }
 
         self.compile_delegates(&children[suffix_begin..])
@@ -232,7 +232,7 @@ impl Compiler {
             // TODO: do we want to do an epsilon check here? If we do
             // it here and in Alt, we might be able to make a good
             // bound on stack depth
-            try!(self.visit(child, hard));
+            self.visit(child, hard)?;
             let next_pc = self.b.pc();
             self.b.set_split_target(pc, next_pc, greedy);
             return Ok(());
@@ -251,7 +251,7 @@ impl Compiler {
                 self.b.add(Insn::RepeatEpsilonNg{ lo: lo, next: usize::MAX,
                         repeat: repeat, check: check });
             }
-            try!(self.visit(child, hard));
+            self.visit(child, hard)?;
             self.b.add(Insn::Jmp(pc));
             let next_pc = self.b.pc();
             self.b.set_repeat_target(pc, next_pc);
@@ -259,14 +259,14 @@ impl Compiler {
             // e*
             let pc = self.b.pc();
             self.b.add(Insn::Split(pc + 1, pc + 1));
-            try!(self.visit(child, hard));
+            self.visit(child, hard)?;
             self.b.add(Insn::Jmp(pc));
             let next_pc = self.b.pc();
             self.b.set_split_target(pc, next_pc, greedy);
         } else if lo == 1 && hi == usize::MAX {
             // e+
             let pc = self.b.pc();
-            try!(self.visit(child, hard));
+            self.visit(child, hard)?;
             let next = self.b.pc() + 1;
             let (x, y) = if greedy { (pc, next) } else { (next, pc) };
             self.b.add(Insn::Split(x, y));
@@ -281,7 +281,7 @@ impl Compiler {
                 self.b.add(Insn::RepeatNg{ lo: lo, hi: hi, next: usize::MAX,
                         repeat: repeat });
             }
-            try!(self.visit(child, hard));
+            self.visit(child, hard)?;
             self.b.add(Insn::Jmp(pc));
             let next_pc = self.b.pc();
             self.b.set_repeat_target(pc, next_pc);
@@ -309,7 +309,7 @@ impl Compiler {
                     // Make const size by transforming `(?<!a|bb)` to `(?<!a)(?<!bb)`
                     let alternatives = &inner.children;
                     for alternative in alternatives {
-                        try!(self.compile_negative_lookaround(alternative, la));
+                        self.compile_negative_lookaround(alternative, la)?;
                     }
                     Ok(())
                 } else {
@@ -324,7 +324,7 @@ impl Compiler {
     fn compile_positive_lookaround(&mut self, inner: &Info, la: LookAround) -> Result<()> {
         let save = self.b.newsave();
         self.b.add(Insn::Save(save));
-        try!(self.compile_lookaround_inner(inner, la));
+        self.compile_lookaround_inner(inner, la)?;
         self.b.add(Insn::Restore(save));
         Ok(())
     }
@@ -332,7 +332,7 @@ impl Compiler {
     fn compile_negative_lookaround(&mut self, inner: &Info, la: LookAround) -> Result<()> {
         let pc = self.b.pc();
         self.b.add(Insn::Split(pc + 1, usize::MAX));
-        try!(self.compile_lookaround_inner(inner, la));
+        self.compile_lookaround_inner(inner, la)?;
         self.b.add(Insn::DoubleFail);
         let next_pc = self.b.pc();
         self.b.set_split_target(pc, next_pc, true);
@@ -388,10 +388,10 @@ impl Compiler {
     fn make_delegate(&mut self, inner_re: &str,
             min_size: usize, const_size: bool, looks_left: bool,
             start_group: usize, end_group: usize) -> Result<()> {
-        let compiled = try!(compile_inner(inner_re));
+        let compiled = compile_inner(inner_re)?;
         if looks_left {
             let inner1 = ["^(?s:.)", &inner_re[1..]].concat();
-            let compiled1 = try!(compile_inner(&inner1));
+            let compiled1 = compile_inner(&inner1)?;
             self.b.add(Insn::Delegate {
                 inner: Box::new(compiled),
                 inner1: Some(Box::new(compiled1)),
@@ -423,7 +423,7 @@ pub fn compile(info: &Info) -> Result<Prog> {
     let mut c = Compiler {
         b: VMBuilder::new(info.end_group),
     };
-    try!(c.visit(info, false));
+    c.visit(info, false)?;
     c.b.add(Insn::End);
     Ok(c.b.build())
 }
