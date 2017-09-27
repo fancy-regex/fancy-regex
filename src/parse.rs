@@ -48,7 +48,7 @@ pub struct Parser<'a> {
 impl<'a> Parser<'a> {
     pub fn parse(re: &str) -> Result<(Expr, BitSet)> {
         let mut p = Parser::new(re);
-        let (ix, result) = try!(p.parse_re(0, 0));
+        let (ix, result) = p.parse_re(0, 0)?;
         if ix < re.len() {
             return Err(Error::ParseError);
         }
@@ -64,13 +64,13 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_re(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
-        let (ix, child) = try!(self.parse_branch(ix, depth));
+        let (ix, child) = self.parse_branch(ix, depth)?;
         let mut ix = self.optional_whitespace(ix);
         if self.re[ix..].starts_with('|') {
             let mut children = vec![child];
             while self.re[ix..].starts_with('|') {
                 ix += 1;
-                let (next, child) = try!(self.parse_branch(ix, depth));
+                let (next, child) = self.parse_branch(ix, depth)?;
                 children.push(child);
                 ix = self.optional_whitespace(next);
             }
@@ -83,7 +83,7 @@ impl<'a> Parser<'a> {
         let mut children = Vec::new();
         let mut ix = ix;
         while ix < self.re.len() {
-            let (next, child) = try!(self.parse_piece(ix, depth));
+            let (next, child) = self.parse_piece(ix, depth)?;
             if next == ix {
                 break
             }
@@ -100,7 +100,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_piece(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
-        let (ix, child) = try!(self.parse_atom(ix, depth));
+        let (ix, child) = self.parse_atom(ix, depth)?;
         let mut ix = self.optional_whitespace(ix);
         if ix < self.re.len() {
             // fail when child is empty?
@@ -211,7 +211,7 @@ impl<'a> Parser<'a> {
             )),
             b'(' => self.parse_group(ix, depth),
             b'\\' => {
-                let (next, expr) = try!(self.parse_escape(ix));
+                let (next, expr) = self.parse_escape(ix)?;
                 if let Expr::Backref(group) = expr {
                     self.backrefs.insert(group);
                 }
@@ -374,7 +374,7 @@ impl<'a> Parser<'a> {
                     }
 
                     // We support more escapes than regex, so parse it ourselves before delegating.
-                    let (end, expr) = try!(self.parse_escape(ix));
+                    let (end, expr) = self.parse_escape(ix)?;
                     match expr {
                         Expr::Literal { val, .. } => {
                             class.push_str(&escape(&val));
@@ -436,7 +436,7 @@ impl<'a> Parser<'a> {
             (None, 0)
         };
         let ix = ix + skip;
-        let (ix, child) = try!(self.parse_re(ix, depth));
+        let (ix, child) = self.parse_re(ix, depth)?;
         let ix = self.optional_whitespace(ix);
         if ix == self.re.len() {
             return Err(Error::UnclosedOpenParen);
@@ -489,7 +489,7 @@ impl<'a> Parser<'a> {
                         return Err(Error::UnknownFlag);
                     }
                     ix += 1;
-                    let (ix, child) = try!(self.parse_re(ix, depth));
+                    let (ix, child) = self.parse_re(ix, depth)?;
                     if ix == self.re.len() {
                         return Err(Error::UnclosedOpenParen);
                     } else if self.re.as_bytes()[ix] != b')' {
