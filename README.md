@@ -1,12 +1,16 @@
 # fancy-regex
 
-This module contains a hybrid regex implementation, designed to
-support a relatively rich set of features. In particular, this
-implementation uses backtracking to implement "fancy" features such as
+A Rust library for compiling and matching regular expressions. It uses a hybrid
+regex implementation designed to support a relatively rich set of features.
+In particular, it uses backtracking to implement "fancy" features such as
 look-around and backtracking, which are not supported in purely
 NFA-based implementations (exemplified by
 [RE2](https://github.com/google/re2), and implemented in Rust in the
 [regex](https://crates.io/crates/regex) crate).
+
+[![crate](https://img.shields.io/crates/v/fancy-regex.svg)](https://crates.io/crates/fancy-regex)
+[![build status](https://travis-ci.org/google/fancy-regex.svg?branch=master)](https://travis-ci.org/google/fancy-regex)
+[![codecov](https://codecov.io/gh/google/fancy-regex/branch/master/graph/badge.svg)](https://codecov.io/gh/google/fancy-regex)
 
 A goal is to be as efficient as possible. For a given regex, the NFA
 implementation has asymptotic running time linear in the length of the
