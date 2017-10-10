@@ -111,6 +111,7 @@ impl<'a> Analyzer<'a> {
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
                 hard = child_info.hard;
+                looks_left = child_info.looks_left;
                 children.push(child_info);
                 for child in &v[1..] {
                     let child_info = self.visit(child)?;

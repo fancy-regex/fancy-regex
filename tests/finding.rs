@@ -44,6 +44,12 @@ fn negative_lookbehind_variable_sized_alt() {
     assert!(Regex::new(r"(?<!a+b+)").is_err());
 }
 
+#[test]
+fn lookahead_looks_left() {
+    assert_eq!(find(r"a(?=\b|_)", "a."), Some((0, 1)));
+    assert_eq!(find(r"a(?=_|\b)", "a."), Some((0, 1)));
+}
+
 
 fn find(re: &str, text: &str) -> Option<(usize, usize)> {
     let regex = common::regex(re);
