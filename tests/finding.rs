@@ -5,13 +5,23 @@ mod common;
 use fancy_regex::Regex;
 
 #[test]
-fn lookahead_anchoring() {
+fn lookahead_grouping_single_expression() {
+    // These would fail if the delegate expression was `^x|a` (if we didn't
+    // group as `^(?:x|a)`).
     assert_eq!(find(r"(?=x|a)", "a"), Some((0, 0)));
     assert_eq!(find(r"(?=x|a)", "bbba"), Some((3, 3)));
 }
 
 #[test]
-fn lookbehind_anchoring() {
+fn lookahead_grouping_multiple_expressions() {
+    // These would fail if the delegate expression was `^ab|Bc` (if we didn't
+    // preserve grouping of `(?:b|B)`).
+    assert_eq!(find(r"(?=(?!x)a(?:b|B)c)", "aBc"), Some((0, 0)));
+    assert_eq!(find(r"(?=(?!x)a(?:b|B)c)", "Bc"), None);
+}
+
+#[test]
+fn lookbehind_grouping_single_expression() {
     assert_eq!(find(r"(?<=x|a)", "a"), Some((1, 1)));
     assert_eq!(find(r"(?<=x|a)", "ba"), Some((2, 2)));
     assert_eq!(find(r"(?<=^a)", "a"), Some((1, 1)));

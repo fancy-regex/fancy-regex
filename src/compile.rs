@@ -366,9 +366,7 @@ impl Compiler {
         // TODO: might want to detect case of a group with no captures
         // inside, so we can run find() instead of captures()
         let mut annotated = String::new();
-        // Anchor whole expression and group the contents to make sure precedence is right
-        // (e.g. `^a|b` and `^(?:a|b)` are different)
-        annotated.push_str("^(?:");
+        annotated.push('^');
         let mut min_size = 0;
         let mut const_size = true;
         let mut looks_left = false;
@@ -376,9 +374,19 @@ impl Compiler {
             looks_left |= info.looks_left && min_size == 0;
             min_size += info.min_size;
             const_size &= info.const_size;
-            info.expr.to_str(&mut annotated, 0);
+
+            // Add expression. The precedence argument has to be 1 here to
+            // ensure correct grouping in these cases:
+            //
+            // If we have multiple expressions, we are building a concat.
+            // Without grouping, we'd turn ["a", "b|c"] into "^ab|c". But we
+            // want "^a(?:b|c)".
+            //
+            // Even with a single expression, because we add `^` at the
+            // beginning, we need a group. Otherwise `["a|b"]` would be turned
+            // into `"^a|b"` instead of `"^(?:a|b)"`.
+            info.expr.to_str(&mut annotated, 1);
         }
-        annotated.push(')');
         let start_group = infos[0].start_group;
         let end_group = infos[infos.len() - 1].end_group;
         self.make_delegate(&annotated, min_size, const_size, looks_left,
