@@ -37,6 +37,10 @@ pub struct Info<'a> {
     pub min_size: usize,
     pub const_size: bool,
     pub hard: bool,
+
+    /// Whether the expression's matching could be dependent on what the
+    /// previous character was. E.g. `^` matches if there's no previous
+    /// character; `(?m:^)` matches if the previous character was a newline.
     pub looks_left: bool,
 }
 
