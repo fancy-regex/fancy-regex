@@ -224,6 +224,37 @@ impl Regex {
         }
     }
 
+    /// Returns the capture groups for the first match in `text`, starting from
+    /// the specified byte position `pos`.
+    ///
+    /// # Examples
+    ///
+    /// Finding captures starting at a position:
+    ///
+    /// ```
+    /// # use fancy_regex::Regex;
+    /// let re = Regex::new(r"(?m:^)(\d+)").unwrap();
+    /// let text = "1 test 123\n2 foo";
+    /// let captures = re.captures_from_pos(text, 7).unwrap().unwrap();
+    /// assert_eq!(captures.at(1), Some("2"));
+    /// assert_eq!(captures.pos(1), Some((11, 12)));
+    /// ```
+    ///
+    /// Note that in some cases this is not the same as using the `captures`
+    /// methods and passing a slice of the string, see the capture that we get
+    /// when we do this:
+    ///
+    /// ```
+    /// # use fancy_regex::Regex;
+    /// let re = Regex::new(r"(?m:^)(\d+)").unwrap();
+    /// let text = "1 test 123\n2 foo";
+    /// let captures = re.captures(&text[7..]).unwrap().unwrap();
+    /// assert_eq!(captures.at(1), Some("123"));
+    /// ```
+    ///
+    /// This matched the number "123" because it's at the beginning of the text
+    /// of the string slice.
+    ///
     pub fn captures_from_pos<'t>(&self, text: &'t str, pos: usize) ->
             Result<Option<Captures<'t>>> {
         match *self {
