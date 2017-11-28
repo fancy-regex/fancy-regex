@@ -67,7 +67,6 @@ pub enum Insn {
 pub struct Prog {
     body: Vec<Insn>,
     n_saves: usize,
-    max_stack: usize,
 }
 
 impl Prog {
@@ -75,7 +74,6 @@ impl Prog {
         Prog {
             body: body,
             n_saves: n_saves,
-            max_stack: MAX_STACK,
         }
     }
 
@@ -95,6 +93,7 @@ struct State {
     oldsave: Vec<(usize, usize)>,
     nsave: usize,
     explicit_sp: usize,
+    max_stack: usize,
 }
 
 // Each element in the stack conceptually represents the entire state
@@ -106,19 +105,20 @@ struct State {
 // current machine state to the top of stack.
 
 impl State {
-    fn new(n_saves: usize) -> State {
+    fn new(n_saves: usize, max_stack: usize) -> State {
         State {
             saves: vec![usize::MAX; n_saves],
             stack: Vec::new(),
             oldsave: Vec::new(),
             nsave: 0,
             explicit_sp: n_saves,
+            max_stack,
         }
     }
 
     // push a backtrack branch
-    fn push(&mut self, pc: usize, ix: usize, max_stack: usize) -> Result<()> {
-        if self.stack.len() < max_stack {
+    fn push(&mut self, pc: usize, ix: usize) -> Result<()> {
+        if self.stack.len() < self.max_stack {
             self.stack.push((pc, ix, self.nsave));
             self.nsave = 0;
             Ok(())
@@ -221,7 +221,7 @@ fn codepoint_len_at(s: &str, ix: usize) -> usize {
 
 pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) ->
         Result<Option<Vec<usize>>> {
-    let mut state = State::new(prog.n_saves);
+    let mut state = State::new(prog.n_saves, MAX_STACK);
     let mut pc = 0;
     let mut ix = pos;
     loop {
@@ -264,7 +264,7 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) ->
                     ix = end;
                 }
                 Insn::Split(x, y) => {
-                    state.push(y, ix, prog.max_stack)?;
+                    state.push(y, ix)?;
                     pc = x;
                     continue;
                 }
@@ -283,7 +283,7 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) ->
                     }
                     state.save(repeat, repcount + 1);
                     if repcount >= lo {
-                        state.push(next, ix, prog.max_stack)?;
+                        state.push(next, ix)?;
                     }
                 }
                 Insn::RepeatNg { lo, hi, next, repeat } => {
@@ -294,7 +294,7 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) ->
                     }
                     state.save(repeat, repcount + 1);
                     if repcount >= lo {
-                        state.push(pc + 1, ix, prog.max_stack)?;
+                        state.push(pc + 1, ix)?;
                         pc = next;
                         continue;
                     }
@@ -308,7 +308,7 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) ->
                     state.save(repeat, repcount + 1);
                     if repcount >= lo {
                         state.save(check, ix);
-                        state.push(next, ix, prog.max_stack)?;
+                        state.push(next, ix)?;
                     }
                 }
                 Insn::RepeatEpsilonNg { lo, next, repeat, check } => {
@@ -320,7 +320,7 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) ->
                     state.save(repeat, repcount + 1);
                     if repcount >= lo {
                         state.save(check, ix);
-                        state.push(pc + 1, ix, prog.max_stack)?;
+                        state.push(pc + 1, ix)?;
                         pc = next;
                         continue;
                     }
@@ -408,4 +408,133 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) ->
         ix = newix;
     }
 
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quickcheck::{Arbitrary, Gen};
+
+    #[test]
+    fn state_push_pop() {
+        let mut state = State::new(1, MAX_STACK);
+
+        state.push(0, 0).unwrap();
+        state.push(1, 1).unwrap();
+        assert_eq!(state.pop(), (1, 1));
+        assert_eq!(state.pop(), (0, 0));
+        assert!(state.stack.is_empty());
+
+        state.push(2, 2).unwrap();
+        assert_eq!(state.pop(), (2, 2));
+        assert!(state.stack.is_empty());
+    }
+
+    #[test]
+    fn state_save_override() {
+        let mut state = State::new(1, MAX_STACK);
+        state.save(0, 10);
+        state.push(0, 0).unwrap();
+        state.save(0, 20);
+        assert_eq!(state.pop(), (0, 0));
+        assert_eq!(state.get(0), 10);
+    }
+
+    #[test]
+    fn state_save_override_twice() {
+        let mut state = State::new(1, MAX_STACK);
+        state.save(0, 10);
+        state.push(0, 0).unwrap();
+        state.save(0, 20);
+        state.push(1, 1).unwrap();
+        state.save(0, 30);
+
+        assert_eq!(state.get(0), 30);
+        assert_eq!(state.pop(), (1, 1));
+        assert_eq!(state.get(0), 20);
+        assert_eq!(state.pop(), (0, 0));
+        assert_eq!(state.get(0), 10);
+    }
+
+    #[derive(Clone, Debug)]
+    enum Operation {
+        Push,
+        Pop,
+        Save(usize, usize),
+    }
+
+    impl Arbitrary for Operation {
+        fn arbitrary<G: Gen>(g: &mut G) -> Self {
+            match g.gen_range(0, 3) {
+                0 => Operation::Push,
+                1 => Operation::Pop,
+                _ => Operation::Save(g.gen_range(0, 5), g.gen_range(0, usize::MAX)),
+            }
+        }
+    }
+
+    fn check_saves_for_operations(operations: Vec<Operation>) -> bool {
+        let slots = operations
+            .iter()
+            .map(|o| match o {
+                &Operation::Save(slot, _) => slot + 1,
+                _ => 0,
+            })
+            .max()
+            .unwrap_or(0);
+        if slots == 0 {
+            // No point checking if there's no save instructions
+            return true;
+        }
+
+        // Stack with the complete VM state (including saves)
+        let mut stack = Vec::new();
+        let mut saves = vec![usize::MAX; slots];
+
+        let mut state = State::new(slots, MAX_STACK);
+
+        let mut expected = Vec::new();
+        let mut actual = Vec::new();
+
+        for operation in operations {
+            match operation {
+                Operation::Push => {
+                    // We're not checking pc and ix later, so don't bother
+                    // putting in random values.
+                    stack.push((0, 0, saves.clone()));
+                    state.push(0, 0).unwrap();
+                }
+                Operation::Pop => {
+                    // Note that because we generate the operations randomly
+                    // there might be more pops than pushes. So ignore a pop
+                    // if the stack was empty.
+                    if let Some((_, _, previous_saves)) = stack.pop() {
+                        saves = previous_saves;
+                        state.pop();
+                    }
+                }
+                Operation::Save(slot, value) => {
+                    saves[slot] = value;
+                    state.save(slot, value);
+                }
+            }
+
+            // Remember state of saves for checking later
+            expected.push(saves.clone());
+            let mut actual_saves = vec![usize::MAX; slots];
+            for i in 0..slots {
+                actual_saves[i] = state.get(i);
+            }
+            actual.push(actual_saves);
+        }
+
+        expected == actual
+    }
+
+    quickcheck! {
+        fn state_save_quickcheck(operations: Vec<Operation>) -> bool {
+            check_saves_for_operations(operations)
+        }
+    }
 }
