@@ -9,3 +9,6 @@ repository = "https://github.com/google/fancy-regex"
 [dependencies]
 regex = "0.2.2"
 bit-set = "0.4"
+
+[dev-dependencies]
+quickcheck = "0.4"
