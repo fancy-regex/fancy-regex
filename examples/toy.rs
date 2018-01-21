@@ -25,6 +25,7 @@ extern crate fancy_regex;
 use fancy_regex::*;
 use fancy_regex::analyze::analyze;
 use fancy_regex::compile::compile;
+use fancy_regex::vm::{Insn, Prog};
 use std::env;
 use std::str::FromStr;
 
@@ -72,6 +73,13 @@ fn main() {
             }
         } else if cmd == "trace" {
             if let Some(re) = args.next() {
+                let prog = prog(&re);
+                if let Some(s) = args.next() {
+                    vm::run(&prog, &s, 0, vm::OPTION_TRACE).unwrap();
+                }
+            }
+        } else if cmd == "trace-inner" {
+            if let Some(re) = args.next() {
                 let (e, backrefs) = Expr::parse(&re).unwrap();
                 let a = analyze(&e, &backrefs).unwrap();
                 let p = compile(&a).unwrap();
@@ -79,8 +87,44 @@ fn main() {
                     vm::run(&p, &s, 0, vm::OPTION_TRACE).unwrap();
                 }
             }
+        } else if cmd == "graph" {
+            let re = args.next().expect("expected regexp argument");
+            graph(&re);
         } else {
-            println!("commands: parse <expr>, compile <expr>, run <expr> <input>");
+            println!("commands: parse|analyze|compile|graph <expr>, run|trace|trace-inner <expr> <input>");
+        }
+    }
+}
+
+fn graph(re: &str) {
+    let prog = prog(re);
+    println!("digraph G {{");
+    for (i, insn) in prog.body.iter().enumerate() {
+        let label = format!("{:?}", insn).replace("\"", "\\\"");
+        println!(r#"{:3} [label="{}: {}"];"#, i, i, label);
+        match *insn {
+            Insn::Split(a, b) => {
+                println!("{:3} -> {};", i, a);
+                println!("{:3} -> {};", i, b);
+            }
+            Insn::Jmp(target) => {
+                println!("{:3} -> {};", i, target);
+            }
+            Insn::End => {}
+            _ => {
+                println!("{:3} -> {};", i, i+1);
+            }
+        }
+    }
+    println!("}}");
+}
+
+fn prog(re: &str) -> Prog {
+    let r = Regex::new(re).unwrap();
+    match r {
+        Regex::Impl { prog, .. } => prog,
+        _ => {
+            panic!("Expected regex to be fancy (not completely delegatable)");
         }
     }
 }

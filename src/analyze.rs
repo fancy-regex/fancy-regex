@@ -30,8 +30,6 @@ use Result;
 
 #[derive(Debug)]
 pub struct Info<'a> {
-    pub expr: &'a Expr,
-    pub children: Vec<Info<'a>>,
     pub start_group: usize,
     pub end_group: usize,
     pub min_size: usize,
@@ -42,6 +40,9 @@ pub struct Info<'a> {
     /// previous character was. E.g. `^` matches if there's no previous
     /// character; `(?m:^)` matches if the previous character was a newline.
     pub looks_left: bool,
+
+    pub expr: &'a Expr,
+    pub children: Vec<Info<'a>>,
 }
 
 impl<'a> Info<'a> {

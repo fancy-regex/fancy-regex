@@ -65,7 +65,7 @@ pub enum Insn {
 
 #[derive(Debug)]
 pub struct Prog {
-    body: Vec<Insn>,
+    pub body: Vec<Insn>,
     n_saves: usize,
 }
 
