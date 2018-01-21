@@ -11,4 +11,5 @@ regex = "0.2.2"
 bit-set = "0.4"
 
 [dev-dependencies]
+matches = "0.1.6"
 quickcheck = "0.4"
