@@ -94,6 +94,7 @@ struct State {
     nsave: usize,
     explicit_sp: usize,
     max_stack: usize,
+    options: u32,
 }
 
 // Each element in the stack conceptually represents the entire state
@@ -105,7 +106,7 @@ struct State {
 // current machine state to the top of stack.
 
 impl State {
-    fn new(n_saves: usize, max_stack: usize) -> State {
+    fn new(n_saves: usize, max_stack: usize, options: u32) -> State {
         State {
             saves: vec![usize::MAX; n_saves],
             stack: Vec::new(),
@@ -113,6 +114,7 @@ impl State {
             nsave: 0,
             explicit_sp: n_saves,
             max_stack,
+            options
         }
     }
 
@@ -121,6 +123,7 @@ impl State {
         if self.stack.len() < self.max_stack {
             self.stack.push((pc, ix, self.nsave));
             self.nsave = 0;
+            self.trace_stack("push");
             Ok(())
         } else {
             Err(Error::StackOverflow)
@@ -135,6 +138,7 @@ impl State {
         }
         let (pc, ix, nsave) = self.stack.pop().unwrap();
         self.nsave = nsave;
+        self.trace_stack("pop");
         (pc, ix)
     }
 
@@ -150,6 +154,10 @@ impl State {
         self.oldsave.push((slot, self.saves[slot]));
         self.nsave += 1;
         self.saves[slot] = val;
+
+        if self.options & OPTION_TRACE != 0 {
+            println!("saves: {:?}", self.saves);
+        }
     }
 
     fn get(&self, slot: usize) -> usize {
@@ -213,6 +221,13 @@ impl State {
         self.oldsave.truncate(oldsave_ix);
         self.nsave = oldsave_ix - oldsave_start;
     }
+
+    #[inline]
+    fn trace_stack(&self, operation: &str) {
+        if self.options & OPTION_TRACE != 0 {
+            println!("stack after {}: {:?}", operation, self.stack);
+        }
+    }
 }
 
 fn codepoint_len_at(s: &str, ix: usize) -> usize {
@@ -221,15 +236,18 @@ fn codepoint_len_at(s: &str, ix: usize) -> usize {
 
 pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) ->
         Result<Option<Vec<usize>>> {
-    let mut state = State::new(prog.n_saves, MAX_STACK);
+    let mut state = State::new(prog.n_saves, MAX_STACK, options);
+    if options & OPTION_TRACE != 0 {
+        println!("{}\t{}", "pos", "instruction");
+    }
     let mut pc = 0;
     let mut ix = pos;
     loop {
         // break from this loop to fail, causes stack to pop
         'fail: loop {
             if options & OPTION_TRACE != 0 {
-                println!("{} {} {:?} {}",
-                    state.stack.len(), pc, prog.body[pc], ix);
+                println!("{}\t{} {:?}",
+                         ix, pc, prog.body[pc]);
             }
             match prog.body[pc] {
                 Insn::End => {
@@ -238,7 +256,7 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) ->
                     // optimize that.
                     //state.saves[1] = ix;
                     if options & OPTION_TRACE != 0 {
-                        println!("{:?}", state.saves);
+                        println!("saves: {:?}", state.saves);
                     }
                     return Ok(Some(state.saves));
                 }
@@ -399,6 +417,9 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) ->
             }
             pc += 1;
         }
+        if options & OPTION_TRACE != 0 {
+            println!("fail");
+        }
         // "break 'fail" goes here
         if state.stack.is_empty() {
             return Ok(None);
@@ -418,7 +439,7 @@ mod tests {
 
     #[test]
     fn state_push_pop() {
-        let mut state = State::new(1, MAX_STACK);
+        let mut state = State::new(1, MAX_STACK, 0);
 
         state.push(0, 0).unwrap();
         state.push(1, 1).unwrap();
@@ -433,7 +454,7 @@ mod tests {
 
     #[test]
     fn state_save_override() {
-        let mut state = State::new(1, MAX_STACK);
+        let mut state = State::new(1, MAX_STACK, 0);
         state.save(0, 10);
         state.push(0, 0).unwrap();
         state.save(0, 20);
@@ -443,7 +464,7 @@ mod tests {
 
     #[test]
     fn state_save_override_twice() {
-        let mut state = State::new(1, MAX_STACK);
+        let mut state = State::new(1, MAX_STACK, 0);
         state.save(0, 10);
         state.push(0, 0).unwrap();
         state.save(0, 20);
@@ -492,7 +513,7 @@ mod tests {
         let mut stack = Vec::new();
         let mut saves = vec![usize::MAX; slots];
 
-        let mut state = State::new(slots, MAX_STACK);
+        let mut state = State::new(slots, MAX_STACK, 0);
 
         let mut expected = Vec::new();
         let mut actual = Vec::new();
