@@ -25,6 +25,9 @@ extern crate bit_set;
 
 #[cfg(test)]
 #[macro_use]
+extern crate matches;
+#[cfg(test)]
+#[macro_use]
 extern crate quickcheck;
 
 use std::fmt;

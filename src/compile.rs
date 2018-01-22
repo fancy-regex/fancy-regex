@@ -175,13 +175,18 @@ impl Compiler {
 
             handle_alternative(self, i)?;
 
-            let pc = self.b.pc();
-            jmps.push(pc);
-            self.b.add(Insn::Jmp(0));
+            if has_next {
+                // All except the last branch need to jump over instructions of
+                // other branches. The last branch can just continue to the next
+                // instruction.
+                let pc = self.b.pc();
+                jmps.push(pc);
+                self.b.add(Insn::Jmp(0));
+            }
         }
-        let pc = self.b.pc();
+        let next_pc = self.b.pc();
         for jmp_pc in jmps {
-            self.b.set_jmp_target(jmp_pc, pc);
+            self.b.set_jmp_target(jmp_pc, next_pc);
         }
         Ok(())
     }
@@ -436,3 +441,40 @@ pub fn compile(info: &Info) -> Result<Prog> {
     Ok(c.b.build())
 }
 
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+    use analyze::analyze;
+    use bit_set::BitSet;
+
+    #[test]
+    fn jumps_for_alternation() {
+        let expr = Expr::Alt(vec![
+            Expr::Literal{ val: "a".into(), casei: false },
+            Expr::Literal{ val: "b".into(), casei: false },
+            Expr::Literal{ val: "c".into(), casei: false },
+        ]);
+        let backrefs = BitSet::new();
+        let info = analyze(&expr, &backrefs).unwrap();
+
+        let mut c = Compiler {
+            b: VMBuilder::new(0),
+        };
+        // Force "hard" so that compiler doesn't just delegate
+        c.visit(&info, true).unwrap();
+        c.b.add(Insn::End);
+
+        let prog = c.b.prog;
+
+        assert_eq!(prog.len(), 8, "prog: {:?}", prog);
+        assert_matches!(prog[0], Insn::Split(1, 3));
+        assert_matches!(prog[1], Insn::Lit(ref l) if l == "a");
+        assert_matches!(prog[2], Insn::Jmp(7));
+        assert_matches!(prog[3], Insn::Split(4, 6));
+        assert_matches!(prog[4], Insn::Lit(ref l) if l == "b");
+        assert_matches!(prog[5], Insn::Jmp(7));
+        assert_matches!(prog[6], Insn::Lit(ref l) if l == "c");
+        assert_matches!(prog[7], Insn::End);
+    }
+}
