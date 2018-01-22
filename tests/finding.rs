@@ -60,6 +60,18 @@ fn lookahead_looks_left() {
     assert_eq!(find(r"a(?=_|\b)", "a."), Some((0, 1)));
 }
 
+#[test]
+fn negative_lookahead_fail() {
+    // This was a tricky one. There's a negative lookahead that contains a
+    // "hard" alternative (because of the lookahead). When the VM gets to the
+    // point where the body of the negative lookahead matched, it needs to fail
+    // the negative lookahead match. That means it needs to pop the stack until
+    // before the negative lookahead, and then fail. But how many times it has
+    // to pop is not fixed, it depends on the body/VM state.
+    assert_eq!(find(r"(?!a(?=b)|x)", "ab"), Some((1, 1)));
+    assert_eq!(find(r"(?!`(?:[^`]+(?=`)|x)`)", "`a`"), Some((1, 1)));
+}
+
 
 fn find(re: &str, text: &str) -> Option<(usize, usize)> {
     let regex = common::regex(re);

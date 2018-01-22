@@ -338,7 +338,7 @@ impl Compiler {
         let pc = self.b.pc();
         self.b.add(Insn::Split(pc + 1, usize::MAX));
         self.compile_lookaround_inner(inner, la)?;
-        self.b.add(Insn::DoubleFail);
+        self.b.add(Insn::FailNegativeLookAround);
         let next_pc = self.b.pc();
         self.b.set_split_target(pc, next_pc, true);
         Ok(())

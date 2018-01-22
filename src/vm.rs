@@ -49,7 +49,7 @@ pub enum Insn {
     RepeatNg { lo: usize, hi: usize, next: usize, repeat: usize },
     RepeatEpsilonGr { lo: usize, next: usize, repeat: usize, check: usize },
     RepeatEpsilonNg { lo: usize, next: usize, repeat: usize, check: usize },
-    DoubleFail,
+    FailNegativeLookAround,
     GoBack(usize),
     Backref(usize),
     BeginAtomic,
@@ -351,9 +351,22 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) ->
                         ix = prev_codepoint_ix(s, ix);
                     }
                 }
-                Insn::DoubleFail => {
-                    // negative lookaround
-                    let _ = state.pop();
+                Insn::FailNegativeLookAround => {
+                    // Reaching this instruction means that the body of the
+                    // lookaround matched. Because it's a *negative* lookaround,
+                    // that means the lookaround itself should fail (not match).
+                    // But before, we need to discard all the states that have
+                    // been pushed with the lookaround, because we don't want to
+                    // explore them.
+                    loop {
+                        let (popped_pc, _) = state.pop();
+                        if popped_pc == pc + 1 {
+                            // We've reached the state that would jump us to
+                            // after the lookaround (in case the lookaround
+                            // succeeded). That means we popped enough states.
+                            break;
+                        }
+                    }
                     break 'fail;
                 }
                 Insn::Backref(slot) => {
