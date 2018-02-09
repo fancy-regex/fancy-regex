@@ -61,6 +61,8 @@ guarantee. If an attacker can control the regular expressions that
 will be matched against, they will be able to successfully mount a
 denial-of-service attack. Be warned.
 
+See PERFORMANCE.md for some examples.
+
 ## A hybrid approach
 
 One workable approach is to detect the presence of "fancy" features,
