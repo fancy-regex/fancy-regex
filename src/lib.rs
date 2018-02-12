@@ -308,8 +308,8 @@ impl<'t> Captures<'t> {
     pub fn pos(&self, i: usize) -> Option<(usize, usize)> {
         match *self {
             Captures::Wrap { ref inner, ref offset, enclosing_groups } => {
-                inner.get(i + enclosing_groups).map((|m|
-                    (m.start() + offset, m.end() + offset)))
+                inner.get(i + enclosing_groups).map(|m|
+                    (m.start() + offset, m.end() + offset))
             }
             Captures::Impl { ref saves, .. } => {
                 if i >= saves.len() {
