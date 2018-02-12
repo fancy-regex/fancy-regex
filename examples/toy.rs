@@ -70,6 +70,8 @@ fn main() {
                 for cap in caps.iter() {
                     println!("iterate {:?}", cap);
                 }
+            } else {
+                println!("no match");
             }
         } else if cmd == "trace" {
             if let Some(re) = args.next() {
@@ -100,7 +102,9 @@ fn graph(re: &str) {
     let prog = prog(re);
     println!("digraph G {{");
     for (i, insn) in prog.body.iter().enumerate() {
-        let label = format!("{:?}", insn).replace("\"", "\\\"");
+        let label = format!("{:?}", insn)
+            .replace(r#"\"#, r#"\\"#)
+            .replace(r#"""#, r#"\""#);
         println!(r#"{:3} [label="{}: {}"];"#, i, i, label);
         match *insn {
             Insn::Split(a, b) => {
