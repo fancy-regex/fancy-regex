@@ -61,7 +61,7 @@ guarantee. If an attacker can control the regular expressions that
 will be matched against, they will be able to successfully mount a
 denial-of-service attack. Be warned.
 
-See PERFORMANCE.md for some examples.
+See [PERFORMANCE.md](PERFORMANCE.md) for some examples.
 
 ## A hybrid approach
 
