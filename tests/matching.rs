@@ -57,6 +57,12 @@ fn character_class_intersection() {
 fn alternation_with_empty_arm() {
     assert_match(r"^(a|)$", "a");
     assert_match(r"^(a|)$", "");
+    assert_match(r"^(|a)$", "a");
+    assert_match(r"^(|a)$", "");
+    assert_match(r"a|", "a");
+    assert_match(r"a|", "");
+    assert_match(r"|a", "a");
+    assert_match(r"|a", "");
     assert_no_match(r"^(a|)$", "b");
 }
 
