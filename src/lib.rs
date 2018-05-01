@@ -448,7 +448,7 @@ impl Expr {
 
     pub fn to_str(&self, buf: &mut String, precedence: u8) {
         match *self {
-            Expr::Empty => buf.push_str(".{0}"),
+            Expr::Empty => (),
             Expr::Any { newline } => buf.push_str(
                 if newline { "(?s:.)" } else { "." }
             ),
@@ -476,11 +476,26 @@ impl Expr {
                 if precedence > 0 {
                     buf.push_str("(?:");
                 }
-                children[0].to_str(buf, 1);
-                for child in &children[1..] {
-                    buf.push('|');
+
+                let is_empty = |e| match e {
+                    &Expr::Empty => true,
+                    _ => false,
+                };
+                let contains_empty = children.iter().any(&is_empty);
+                if contains_empty {
+                    buf.push_str("(?:");
+                }
+                for (i, child) in children.iter().filter(|&c| !is_empty(c)).enumerate() {
+                    if i != 0 {
+                        buf.push('|');
+                    }
                     child.to_str(buf, 1);
                 }
+                if contains_empty {
+                    // regex fails with `(a|b|)`, so transform to `((?:a|b)?)`
+                    buf.push_str(")?");
+                }
+
                 if precedence > 0 {
                     buf.push(')');
                 }
