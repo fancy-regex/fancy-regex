@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Raph Levien <raph@google.com>"]
 license = "MIT"
 description = "An implementation of regexes, supporting a relatively rich set of features, including backreferences and look-around."
-repository = "https://github.com/google/fancy-regex"
+repository = "https://github.com/fancy-regex/fancy-regex"
 
 [dependencies]
 regex = "1.0"
