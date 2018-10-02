@@ -139,16 +139,12 @@ creating the excellent regex crate.
 
 ## Authors
 
-The main author is Raph Levien.
+The main author is Raph Levien, with many contributions from Robin Stocker.
 
 ## Contributions
 
-We gladly accept contributions via GitHub pull requests, as long as the author
-has signed the Google Contributor License. Please see CONTRIBUTIONS.md for
-more details.
+We gladly accept contributions via GitHub pull requests. Please see
+[CONTRIBUTING.md](CONTRIBUTING.md) for more details.
 
-### Disclaimer
-
-This is not an official Google product (experimental or otherwise), it
-is just code that happens to be owned by Google.
-
+This project started out as a Google 20% project, but none of the authors currently
+work at Google so it has been forked to be community-maintained.
