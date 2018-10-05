@@ -9,8 +9,8 @@ NFA-based implementations (exemplified by
 [regex](https://crates.io/crates/regex) crate).
 
 [![crate](https://img.shields.io/crates/v/fancy-regex.svg)](https://crates.io/crates/fancy-regex)
-[![build status](https://travis-ci.org/google/fancy-regex.svg?branch=master)](https://travis-ci.org/google/fancy-regex)
-[![codecov](https://codecov.io/gh/google/fancy-regex/branch/master/graph/badge.svg)](https://codecov.io/gh/google/fancy-regex)
+[![build status](https://travis-ci.org/fancy-regex/fancy-regex.svg?branch=master)](https://travis-ci.org/fancy-regex/fancy-regex)
+[![codecov](https://codecov.io/gh/fancy-regex/fancy-regex/branch/master/graph/badge.svg)](https://codecov.io/gh/fancy-regex/fancy-regex)
 
 A goal is to be as efficient as possible. For a given regex, the NFA
 implementation has asymptotic running time linear in the length of the
@@ -139,16 +139,12 @@ creating the excellent regex crate.
 
 ## Authors
 
-The main author is Raph Levien.
+The main author is Raph Levien, with many contributions from Robin Stocker.
 
 ## Contributions
 
-We gladly accept contributions via GitHub pull requests, as long as the author
-has signed the Google Contributor License. Please see CONTRIBUTIONS.md for
-more details.
+We gladly accept contributions via GitHub pull requests. Please see
+[CONTRIBUTING.md](CONTRIBUTING.md) for more details.
 
-### Disclaimer
-
-This is not an official Google product (experimental or otherwise), it
-is just code that happens to be owned by Google.
-
+This project started out as a Google 20% project, but none of the authors currently
+work at Google so it has been forked to be community-maintained.
