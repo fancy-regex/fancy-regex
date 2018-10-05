@@ -6,6 +6,8 @@ sudo: false
 matrix:
   include:
     - rust: stable
+    - rust: beta
+    - rust: nightly
       addons:
         apt:
           packages:
@@ -14,8 +16,6 @@ matrix:
       install:
         # For test coverage. In install step so that it can use cache.
         - cargo tarpaulin --version || cargo install cargo-tarpaulin
-    - rust: beta
-    - rust: nightly
   allow_failures:
     - rust: nightly
 
@@ -27,7 +27,7 @@ script:
   - 'if [[ "$TRAVIS_RUST_VERSION" = nightly ]]; then cargo bench; fi'
 
 after_success: |
-  if [[ "$TRAVIS_RUST_VERSION" = stable ]]; then
+  if [[ "$TRAVIS_RUST_VERSION" = nightly ]]; then
     # Calculate test coverage
     cargo tarpaulin --out Xml
     bash <(curl -s https://codecov.io/bash)
