@@ -15,7 +15,7 @@ matrix:
             - libssl-dev
       install:
         # For test coverage. In install step so that it can use cache.
-        - cargo tarpaulin --version || cargo install cargo-tarpaulin
+        - cargo tarpaulin --version || RUSTFLAGS="--cfg procmacro2_semver_exempt" cargo install cargo-tarpaulin
   allow_failures:
     - rust: nightly
 
