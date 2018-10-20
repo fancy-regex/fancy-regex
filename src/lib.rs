@@ -92,6 +92,7 @@ pub enum Regex {
     }
 }
 
+#[derive(Debug)]
 pub enum Captures<'t> {
     Wrap {
         inner: regex::Captures<'t>,
@@ -107,6 +108,7 @@ pub enum Captures<'t> {
     }
 }
 
+#[derive(Debug)]
 pub struct SubCaptures<'t> {
     caps: &'t Captures<'t>,
     i: usize,
