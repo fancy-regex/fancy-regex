@@ -72,10 +72,13 @@ fn negative_lookahead_fail() {
     assert_eq!(find(r"(?!`(?:[^`]+(?=`)|x)`)", "`a`"), Some((1, 1)));
 }
 
-
 fn find(re: &str, text: &str) -> Option<(usize, usize)> {
     let regex = common::regex(re);
     let result = regex.find(text);
-    assert!(result.is_ok(), "Expected find to succeed, but was {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Expected find to succeed, but was {:?}",
+        result
+    );
     result.unwrap()
 }

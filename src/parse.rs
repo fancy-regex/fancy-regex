@@ -20,17 +20,17 @@
 
 //! A regex parser yielding an AST.
 
-use regex::escape;
 use bit_set::BitSet;
+use regex::escape;
 use std::str::FromStr;
 use std::usize;
 
 use codepoint_len;
-use MAX_RECURSION;
-use Expr;
 use Error;
+use Expr;
 use LookAround::*;
 use Result;
+use MAX_RECURSION;
 
 const FLAG_CASEI: u32 = (1 << 0);
 const FLAG_MULTI: u32 = (1 << 1);
@@ -40,7 +40,7 @@ const FLAG_IGNORE_SPACE: u32 = (1 << 4);
 const FLAG_UNICODE: u32 = (1 << 5);
 
 pub struct Parser<'a> {
-    re: &'a str,  // source
+    re: &'a str, // source
     backrefs: BitSet,
     flags: u32,
 }
@@ -74,7 +74,7 @@ impl<'a> Parser<'a> {
                 children.push(child);
                 ix = self.optional_whitespace(next);
             }
-            return Ok((ix, Expr::Alt(children)))
+            return Ok((ix, Expr::Alt(children)));
         }
         Ok((ix, child))
     }
@@ -85,7 +85,7 @@ impl<'a> Parser<'a> {
         while ix < self.re.len() {
             let (next, child) = self.parse_piece(ix, depth)?;
             if next == ix {
-                break
+                break;
             }
             if child != Expr::Empty {
                 children.push(child);
@@ -113,14 +113,14 @@ impl<'a> Parser<'a> {
                         Ok((next, lo, hi)) => {
                             ix = next - 1;
                             (lo, hi)
-                        },
+                        }
                         Err(_) => {
                             // Invalid repeat syntax, which results in `{` being treated as a literal
                             return Ok((ix, child));
-                        },
+                        }
                     }
                 }
-                _ => return Ok((ix, child))
+                _ => return Ok((ix, child)),
             };
             ix += 1;
             ix = self.optional_whitespace(ix);
@@ -140,14 +140,14 @@ impl<'a> Parser<'a> {
                 ix += 1;
                 node = Expr::AtomicGroup(Box::new(node));
             }
-            return Ok((ix, node))
+            return Ok((ix, node));
         }
         Ok((ix, child))
     }
 
     // ix, lo, hi
     fn parse_repeat(&self, ix: usize) -> Result<(usize, usize, usize)> {
-        let ix = self.optional_whitespace(ix + 1);  // skip opening '{'
+        let ix = self.optional_whitespace(ix + 1); // skip opening '{'
         let bytes = self.re.as_bytes();
         if ix == self.re.len() {
             return Err(Error::InvalidRepeat);
@@ -161,7 +161,7 @@ impl<'a> Parser<'a> {
         } else {
             return Err(Error::InvalidRepeat);
         };
-        let ix = self.optional_whitespace(end);  // past lo number
+        let ix = self.optional_whitespace(end); // past lo number
         if ix == self.re.len() {
             return Err(Error::InvalidRepeat);
         }
@@ -169,7 +169,7 @@ impl<'a> Parser<'a> {
         let hi = match bytes[ix] {
             b'}' => lo,
             b',' => {
-                end = self.optional_whitespace(ix + 1);  // past ','
+                end = self.optional_whitespace(ix + 1); // past ','
                 if let Some((next, hi)) = parse_decimal(self.re, end) {
                     end = next;
                     hi
@@ -177,9 +177,9 @@ impl<'a> Parser<'a> {
                     usize::MAX
                 }
             }
-            _ => return Err(Error::InvalidRepeat)
+            _ => return Err(Error::InvalidRepeat),
         };
-        let ix = self.optional_whitespace(end);  // past hi number
+        let ix = self.optional_whitespace(end); // past hi number
         if ix == self.re.len() || bytes[ix] != b'}' {
             return Err(Error::InvalidRepeat);
         }
@@ -192,22 +192,27 @@ impl<'a> Parser<'a> {
             return Ok((ix, Expr::Empty));
         }
         match self.re.as_bytes()[ix] {
-            b'.' => {
-                Ok((ix + 1, Expr::Any { newline: self.flag(FLAG_DOTNL) }))
-            }
-            b'^' => Ok((ix + 1,
+            b'.' => Ok((
+                ix + 1,
+                Expr::Any {
+                    newline: self.flag(FLAG_DOTNL),
+                },
+            )),
+            b'^' => Ok((
+                ix + 1,
                 if self.flag(FLAG_MULTI) {
                     Expr::StartLine
                 } else {
                     Expr::StartText
-                }
+                },
             )),
-            b'$' => Ok((ix + 1,
+            b'$' => Ok((
+                ix + 1,
                 if self.flag(FLAG_MULTI) {
                     Expr::EndLine
                 } else {
                     Expr::EndText
-                }
+                },
             )),
             b'(' => self.parse_group(ix, depth),
             b'\\' => {
@@ -216,12 +221,10 @@ impl<'a> Parser<'a> {
                     self.backrefs.insert(group);
                 }
                 Ok((next, expr))
-            },
-            b'+' | b'*' | b'?' | b'|' | b')' =>
-                Ok((ix, Expr::Empty)),
+            }
+            b'+' | b'*' | b'?' | b'|' | b')' => Ok((ix, Expr::Empty)),
             b'[' => self.parse_class(ix),
-            b'#' | b' ' | b'\r' | b'\n' | b'\t'
-                    if self.flag(FLAG_IGNORE_SPACE) => {
+            b'#' | b' ' | b'\r' | b'\n' | b'\t' if self.flag(FLAG_IGNORE_SPACE) => {
                 // recursion is bounded because whitespace won't land on '#'
                 let ix = self.whitespace(ix);
                 self.parse_atom(ix, depth)
@@ -229,10 +232,13 @@ impl<'a> Parser<'a> {
             b => {
                 // TODO: maybe want to match multiple codepoints?
                 let next = ix + codepoint_len(b);
-                Ok((next, Expr::Literal {
-                    val: String::from(&self.re[ix..next]),
-                    casei: self.flag(FLAG_CASEI),
-                }))
+                Ok((
+                    next,
+                    Expr::Literal {
+                        val: String::from(&self.re[ix..next]),
+                        casei: self.flag(FLAG_CASEI),
+                    },
+                ))
             }
         }
     }
@@ -253,15 +259,30 @@ impl<'a> Parser<'a> {
                     return Ok((end, Expr::Backref(group)));
                 }
             }
-            return Err(Error::InvalidBackref)
+            return Err(Error::InvalidBackref);
         } else if b == b'A' || b == b'z' || b == b'b' || b == b'B' {
             size = 0;
-        } else if (b | 32) == b'd' || (b | 32) == b's' || (b | 32) == b'w' ||
-            b == b'a' || b == b'f' || b == b'n' || b == b'r' || b == b't' || b == b'v' {
+        } else if (b | 32) == b'd'
+            || (b | 32) == b's'
+            || (b | 32) == b'w'
+            || b == b'a'
+            || b == b'f'
+            || b == b'n'
+            || b == b'r'
+            || b == b't'
+            || b == b'v'
+        {
             // size = 1
         } else if b == b'e' {
             let inner = String::from(r"\x1B");
-            return Ok((end, Expr::Delegate { inner: inner, size: size, casei: false }));
+            return Ok((
+                end,
+                Expr::Delegate {
+                    inner: inner,
+                    size: size,
+                    casei: false,
+                },
+            ));
         } else if (b | 32) == b'h' {
             let s = if b == b'h' {
                 "[0-9A-Fa-f]"
@@ -269,13 +290,20 @@ impl<'a> Parser<'a> {
                 "[^0-9A-Fa-f]"
             };
             let inner = String::from(s);
-            return Ok((end, Expr::Delegate { inner: inner, size: size, casei: false }));
+            return Ok((
+                end,
+                Expr::Delegate {
+                    inner: inner,
+                    size: size,
+                    casei: false,
+                },
+            ));
         } else if b == b'x' {
             return self.parse_hex(end);
         } else if (b | 32) == b'p' {
             // allow whitespace?
             if end == self.re.len() {
-                return Err(Error::TrailingBackslash);  // better name?
+                return Err(Error::TrailingBackslash); // better name?
             }
             let b = bytes[end];
             end += 1;
@@ -299,7 +327,14 @@ impl<'a> Parser<'a> {
         }
         // what to do with characters outside printable ASCII?
         let inner = String::from(&self.re[ix..end]);
-        Ok((end, Expr::Delegate { inner: inner, size: size, casei: self.flag(FLAG_CASEI) }))
+        Ok((
+            end,
+            Expr::Delegate {
+                inner: inner,
+                size: size,
+                casei: self.flag(FLAG_CASEI),
+            },
+        ))
     }
 
     // ix points after '\x', eg to 'A0' or '{12345}'
@@ -320,14 +355,16 @@ impl<'a> Parser<'a> {
                     return Err(Error::InvalidHex);
                 }
                 let b = bytes[endhex];
-                if endhex > starthex && b == b'}' { break; }
+                if endhex > starthex && b == b'}' {
+                    break;
+                }
                 if is_hex_digit(b) && endhex < starthex + 8 {
                     endhex += 1;
                 } else {
                     return Err(Error::InvalidHex);
                 }
             }
-            (endhex + 1, &self.re[starthex .. endhex])
+            (endhex + 1, &self.re[starthex..endhex])
         } else {
             return Err(Error::InvalidHex);
         };
@@ -335,10 +372,13 @@ impl<'a> Parser<'a> {
         if let Some(c) = ::std::char::from_u32(codepoint) {
             let mut inner = String::with_capacity(4);
             inner.push(c);
-            return Ok((end, Expr::Literal {
-                val: inner,
-                casei: self.flag(FLAG_CASEI),
-            }));
+            return Ok((
+                end,
+                Expr::Literal {
+                    val: inner,
+                    casei: self.flag(FLAG_CASEI),
+                },
+            ));
         } else {
             return Err(Error::InvalidCodepointValue);
         }
@@ -346,7 +386,7 @@ impl<'a> Parser<'a> {
 
     fn parse_class(&self, ix: usize) -> Result<(usize, Expr)> {
         let bytes = self.re.as_bytes();
-        let mut ix = ix + 1;  // skip opening '['
+        let mut ix = ix + 1; // skip opening '['
         let mut class = String::new();
         let mut nest = 1;
         class.push('[');
@@ -410,8 +450,15 @@ impl<'a> Parser<'a> {
             ix = end;
         }
         class.push(']');
-        let ix = ix + 1;  // skip closing ']'
-        Ok((ix, Expr::Delegate { inner: class, size: 1, casei: self.flag(FLAG_CASEI) }))
+        let ix = ix + 1; // skip closing ']'
+        Ok((
+            ix,
+            Expr::Delegate {
+                inner: class,
+                size: 1,
+                casei: self.flag(FLAG_CASEI),
+            },
+        ))
     }
 
     fn parse_group(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
@@ -469,12 +516,12 @@ impl<'a> Parser<'a> {
                 b'x' => self.update_flag(FLAG_IGNORE_SPACE, neg),
                 b'u' => {
                     if neg {
-                        return Err(Error::NonUnicodeUnsupported)
+                        return Err(Error::NonUnicodeUnsupported);
                     }
                 }
                 b'-' => {
                     if neg {
-                        return Err(Error::UnknownFlag);  // more precise error?
+                        return Err(Error::UnknownFlag); // more precise error?
                     }
                     neg = true;
                 }
@@ -482,7 +529,7 @@ impl<'a> Parser<'a> {
                     if ix == start || neg && ix == start + 1 {
                         return Err(Error::UnknownFlag);
                     }
-                    return Ok((ix + 1, Expr::Empty))
+                    return Ok((ix + 1, Expr::Empty));
                 }
                 b':' => {
                     if neg && ix == start + 1 {
@@ -498,7 +545,7 @@ impl<'a> Parser<'a> {
                     self.flags = oldflags;
                     return Ok((ix + 1, child));
                 }
-                _ => return Err(Error::UnknownFlag)
+                _ => return Err(Error::UnknownFlag),
             }
             ix += 1;
         }
@@ -523,14 +570,12 @@ impl<'a> Parser<'a> {
                 return ix;
             }
             match bytes[ix] {
-                b'#' => {
-                    match bytes[ix..].iter().position(|&c| c == b'\n') {
-                        Some(x) => ix += x + 1,
-                        None => return self.re.len()
-                    }
-                }
+                b'#' => match bytes[ix..].iter().position(|&c| c == b'\n') {
+                    Some(x) => ix += x + 1,
+                    None => return self.re.len(),
+                },
                 b' ' | b'\r' | b'\n' | b'\t' => ix += 1,
-                _ => return ix
+                _ => return ix,
             }
         }
     }
@@ -562,17 +607,22 @@ fn is_hex_digit(b: u8) -> bool {
 }
 
 pub fn make_literal(s: &str) -> Expr {
-    Expr::Literal { val: String::from(s), casei: false }
+    Expr::Literal {
+        val: String::from(s),
+        casei: false,
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use parse::make_literal;
     use std::usize;
     use Expr;
     use LookAround::*;
-    use parse::make_literal;
 
-    fn p(s: &str) -> Expr { Expr::parse(s).unwrap().0 }
+    fn p(s: &str) -> Expr {
+        Expr::parse(s).unwrap().0
+    }
 
     fn fail(s: &str) {
         assert!(Expr::parse(s).is_err());
@@ -609,15 +659,20 @@ mod tests {
     fn literal_unescaped_opening_curly() {
         // `{` in position where quantifier is not allowed results in literal `{`
         assert_eq!(p("{"), make_literal("{"));
-        assert_eq!(p("({)"), Expr::Group(Box::new(
-            make_literal("{"),
-        )));
-        assert_eq!(p("a|{"), Expr::Alt(vec![
-            make_literal("a"),
-            make_literal("{"),
-        ]));
-        assert_eq!(p("{{2}"), Expr::Repeat{ child: Box::new(make_literal("{")),
-            lo: 2, hi: 2, greedy: true });
+        assert_eq!(p("({)"), Expr::Group(Box::new(make_literal("{"),)));
+        assert_eq!(
+            p("a|{"),
+            Expr::Alt(vec![make_literal("a"), make_literal("{"),])
+        );
+        assert_eq!(
+            p("{{2}"),
+            Expr::Repeat {
+                child: Box::new(make_literal("{")),
+                lo: 2,
+                hi: 2,
+                greedy: true
+            }
+        );
     }
 
     #[test]
@@ -632,10 +687,22 @@ mod tests {
 
     #[test]
     fn hex_escape() {
-        assert_eq!(p("\\h"), Expr::Delegate {
-            inner: String::from("[0-9A-Fa-f]"), size: 1, casei: false });
-        assert_eq!(p("\\H"), Expr::Delegate {
-            inner: String::from("[^0-9A-Fa-f]"), size: 1, casei: false });
+        assert_eq!(
+            p("\\h"),
+            Expr::Delegate {
+                inner: String::from("[0-9A-Fa-f]"),
+                size: 1,
+                casei: false
+            }
+        );
+        assert_eq!(
+            p("\\H"),
+            Expr::Delegate {
+                inner: String::from("[^0-9A-Fa-f]"),
+                size: 1,
+                casei: false
+            }
+        );
     }
 
     #[test]
@@ -653,149 +720,265 @@ mod tests {
 
     #[test]
     fn concat() {
-        assert_eq!(p("ab"), Expr::Concat(vec![
-            make_literal("a"),
-            make_literal("b"),
-        ]));
+        assert_eq!(
+            p("ab"),
+            Expr::Concat(vec![make_literal("a"), make_literal("b"),])
+        );
     }
 
     #[test]
     fn alt() {
-        assert_eq!(p("a|b"), Expr::Alt(vec![
-            make_literal("a"),
-            make_literal("b"),
-        ]));
+        assert_eq!(
+            p("a|b"),
+            Expr::Alt(vec![make_literal("a"), make_literal("b"),])
+        );
     }
 
     #[test]
     fn group() {
-        assert_eq!(p("(a)"), Expr::Group(Box::new(
-            make_literal("a"),
-        )));
+        assert_eq!(p("(a)"), Expr::Group(Box::new(make_literal("a"),)));
     }
 
     #[test]
     fn group_repeat() {
-        assert_eq!(p("(a){2}"), Expr::Repeat{
-            child: Box::new(Expr::Group(Box::new(make_literal("a")))), lo: 2, hi: 2, greedy: true
-        });
+        assert_eq!(
+            p("(a){2}"),
+            Expr::Repeat {
+                child: Box::new(Expr::Group(Box::new(make_literal("a")))),
+                lo: 2,
+                hi: 2,
+                greedy: true
+            }
+        );
     }
 
     #[test]
     fn repeat() {
-        assert_eq!(p("a{2,42}"), Expr::Repeat{ child: Box::new(make_literal("a")),
-            lo: 2, hi: 42, greedy: true });
-        assert_eq!(p("a{2,}"), Expr::Repeat{ child: Box::new(make_literal("a")),
-            lo: 2, hi: usize::MAX, greedy: true });
-        assert_eq!(p("a{2}"), Expr::Repeat{ child: Box::new(make_literal("a")),
-            lo: 2, hi: 2, greedy: true });
-        assert_eq!(p("a{,2}"), Expr::Repeat{ child: Box::new(make_literal("a")),
-            lo: 0, hi: 2, greedy: true });
+        assert_eq!(
+            p("a{2,42}"),
+            Expr::Repeat {
+                child: Box::new(make_literal("a")),
+                lo: 2,
+                hi: 42,
+                greedy: true
+            }
+        );
+        assert_eq!(
+            p("a{2,}"),
+            Expr::Repeat {
+                child: Box::new(make_literal("a")),
+                lo: 2,
+                hi: usize::MAX,
+                greedy: true
+            }
+        );
+        assert_eq!(
+            p("a{2}"),
+            Expr::Repeat {
+                child: Box::new(make_literal("a")),
+                lo: 2,
+                hi: 2,
+                greedy: true
+            }
+        );
+        assert_eq!(
+            p("a{,2}"),
+            Expr::Repeat {
+                child: Box::new(make_literal("a")),
+                lo: 0,
+                hi: 2,
+                greedy: true
+            }
+        );
 
-        assert_eq!(p("a{2,42}?"), Expr::Repeat{ child: Box::new(make_literal("a")),
-            lo: 2, hi: 42, greedy: false });
-        assert_eq!(p("a{2,}?"), Expr::Repeat{ child: Box::new(make_literal("a")),
-            lo: 2, hi: usize::MAX, greedy: false });
-        assert_eq!(p("a{2}?"), Expr::Repeat{ child: Box::new(make_literal("a")),
-            lo: 2, hi: 2, greedy: false });
-        assert_eq!(p("a{,2}?"), Expr::Repeat{ child: Box::new(make_literal("a")),
-            lo: 0, hi: 2, greedy: false });
+        assert_eq!(
+            p("a{2,42}?"),
+            Expr::Repeat {
+                child: Box::new(make_literal("a")),
+                lo: 2,
+                hi: 42,
+                greedy: false
+            }
+        );
+        assert_eq!(
+            p("a{2,}?"),
+            Expr::Repeat {
+                child: Box::new(make_literal("a")),
+                lo: 2,
+                hi: usize::MAX,
+                greedy: false
+            }
+        );
+        assert_eq!(
+            p("a{2}?"),
+            Expr::Repeat {
+                child: Box::new(make_literal("a")),
+                lo: 2,
+                hi: 2,
+                greedy: false
+            }
+        );
+        assert_eq!(
+            p("a{,2}?"),
+            Expr::Repeat {
+                child: Box::new(make_literal("a")),
+                lo: 0,
+                hi: 2,
+                greedy: false
+            }
+        );
     }
 
     #[test]
     fn invalid_repeat() {
         // Invalid repeat syntax results in literal
-        assert_eq!(p("a{"), Expr::Concat(vec![
-            make_literal("a"),
-            make_literal("{"),
-        ]));
-        assert_eq!(p("a{6"), Expr::Concat(vec![
-            make_literal("a"),
-            make_literal("{"),
-            make_literal("6"),
-        ]));
-        assert_eq!(p("a{6,"), Expr::Concat(vec![
-            make_literal("a"),
-            make_literal("{"),
-            make_literal("6"),
-            make_literal(","),
-        ]));
+        assert_eq!(
+            p("a{"),
+            Expr::Concat(vec![make_literal("a"), make_literal("{"),])
+        );
+        assert_eq!(
+            p("a{6"),
+            Expr::Concat(vec![
+                make_literal("a"),
+                make_literal("{"),
+                make_literal("6"),
+            ])
+        );
+        assert_eq!(
+            p("a{6,"),
+            Expr::Concat(vec![
+                make_literal("a"),
+                make_literal("{"),
+                make_literal("6"),
+                make_literal(","),
+            ])
+        );
     }
 
     #[test]
     fn delegate_zero() {
-        assert_eq!(p("\\b"), Expr::Delegate {
-            inner: String::from("\\b"), size: 0, casei: false
-        });
-        assert_eq!(p("\\B"), Expr::Delegate {
-            inner: String::from("\\B"), size: 0, casei: false
-        });
+        assert_eq!(
+            p("\\b"),
+            Expr::Delegate {
+                inner: String::from("\\b"),
+                size: 0,
+                casei: false
+            }
+        );
+        assert_eq!(
+            p("\\B"),
+            Expr::Delegate {
+                inner: String::from("\\B"),
+                size: 0,
+                casei: false
+            }
+        );
     }
 
     #[test]
     fn delegate_named_group() {
-        assert_eq!(p("\\p{Greek}"), Expr::Delegate {
-            inner: String::from("\\p{Greek}"), size: 1, casei: false
-        });
-        assert_eq!(p("\\pL"), Expr::Delegate {
-            inner: String::from("\\pL"), size: 1, casei: false
-        });
-        assert_eq!(p("\\P{Greek}"), Expr::Delegate {
-            inner: String::from("\\P{Greek}"), size: 1, casei: false
-        });
-        assert_eq!(p("\\PL"), Expr::Delegate {
-            inner: String::from("\\PL"), size: 1, casei: false
-        });
-        assert_eq!(p("(?i)\\p{Ll}"), Expr::Delegate {
-            inner: String::from("\\p{Ll}"), size: 1, casei: true
-        });
+        assert_eq!(
+            p("\\p{Greek}"),
+            Expr::Delegate {
+                inner: String::from("\\p{Greek}"),
+                size: 1,
+                casei: false
+            }
+        );
+        assert_eq!(
+            p("\\pL"),
+            Expr::Delegate {
+                inner: String::from("\\pL"),
+                size: 1,
+                casei: false
+            }
+        );
+        assert_eq!(
+            p("\\P{Greek}"),
+            Expr::Delegate {
+                inner: String::from("\\P{Greek}"),
+                size: 1,
+                casei: false
+            }
+        );
+        assert_eq!(
+            p("\\PL"),
+            Expr::Delegate {
+                inner: String::from("\\PL"),
+                size: 1,
+                casei: false
+            }
+        );
+        assert_eq!(
+            p("(?i)\\p{Ll}"),
+            Expr::Delegate {
+                inner: String::from("\\p{Ll}"),
+                size: 1,
+                casei: true
+            }
+        );
     }
 
     #[test]
     fn backref() {
-        assert_eq!(p("(.)\\1"), Expr::Concat(vec![
-            Expr::Group(Box::new(
-                Expr::Any { newline: false }
-            )),
-            Expr::Backref(1),
-        ]));
+        assert_eq!(
+            p("(.)\\1"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(Expr::Any { newline: false })),
+                Expr::Backref(1),
+            ])
+        );
     }
 
     #[test]
     fn lookaround() {
-        assert_eq!(p("(?=a)"), Expr::LookAround(Box::new(make_literal("a")),
-            LookAhead));
-        assert_eq!(p("(?!a)"), Expr::LookAround(Box::new(make_literal("a")),
-            LookAheadNeg));
-        assert_eq!(p("(?<=a)"), Expr::LookAround(Box::new(make_literal("a")),
-            LookBehind));
-        assert_eq!(p("(?<!a)"), Expr::LookAround(Box::new(make_literal("a")),
-            LookBehindNeg));
+        assert_eq!(
+            p("(?=a)"),
+            Expr::LookAround(Box::new(make_literal("a")), LookAhead)
+        );
+        assert_eq!(
+            p("(?!a)"),
+            Expr::LookAround(Box::new(make_literal("a")), LookAheadNeg)
+        );
+        assert_eq!(
+            p("(?<=a)"),
+            Expr::LookAround(Box::new(make_literal("a")), LookBehind)
+        );
+        assert_eq!(
+            p("(?<!a)"),
+            Expr::LookAround(Box::new(make_literal("a")), LookBehindNeg)
+        );
     }
 
     #[test]
     fn shy_group() {
-        assert_eq!(p("(?:ab)c"), Expr::Concat(vec![
+        assert_eq!(
+            p("(?:ab)c"),
             Expr::Concat(vec![
-                make_literal("a"),
-                make_literal("b"),
-            ]),
-            make_literal("c"),
-        ]));
+                Expr::Concat(vec![make_literal("a"), make_literal("b"),]),
+                make_literal("c"),
+            ])
+        );
     }
 
     #[test]
     fn flag_state() {
         assert_eq!(p("(?s)."), Expr::Any { newline: true });
         assert_eq!(p("(?s:(?-s:.))"), Expr::Any { newline: false });
-        assert_eq!(p("(?s:.)."), Expr::Concat(vec![
-            Expr::Any { newline: true },
-            Expr::Any { newline: false },
-        ]));
-        assert_eq!(p("(?:(?s).)."), Expr::Concat(vec![
-            Expr::Any { newline: true },
-            Expr::Any { newline: false },
-        ]));
+        assert_eq!(
+            p("(?s:.)."),
+            Expr::Concat(vec![
+                Expr::Any { newline: true },
+                Expr::Any { newline: false },
+            ])
+        );
+        assert_eq!(
+            p("(?:(?s).)."),
+            Expr::Concat(vec![
+                Expr::Any { newline: true },
+                Expr::Any { newline: false },
+            ])
+        );
     }
 
     #[test]
@@ -823,19 +1006,32 @@ mod tests {
 
     #[test]
     fn lifetime() {
-        assert_eq!(p("\\'[a-zA-Z_][a-zA-Z0-9_]*(?!\\')\\b"),
-
+        assert_eq!(
+            p("\\'[a-zA-Z_][a-zA-Z0-9_]*(?!\\')\\b"),
             Expr::Concat(vec![
                 make_literal("'"),
-                Expr::Delegate { inner: String::from("[a-zA-Z_]"), size: 1, casei: false },
-                Expr::Repeat { child: Box::new(
-                    Expr::Delegate { inner: String::from("[a-zA-Z0-9_]"), size: 1, casei: false }
-                ), lo: 0, hi: usize::MAX, greedy: true },
-                Expr::LookAround(Box::new(
-                    make_literal("'")
-                ), LookAheadNeg),
-                Expr::Delegate { inner: String::from("\\b"), size: 0, casei: false }])
-
+                Expr::Delegate {
+                    inner: String::from("[a-zA-Z_]"),
+                    size: 1,
+                    casei: false
+                },
+                Expr::Repeat {
+                    child: Box::new(Expr::Delegate {
+                        inner: String::from("[a-zA-Z0-9_]"),
+                        size: 1,
+                        casei: false
+                    }),
+                    lo: 0,
+                    hi: usize::MAX,
+                    greedy: true
+                },
+                Expr::LookAround(Box::new(make_literal("'")), LookAheadNeg),
+                Expr::Delegate {
+                    inner: String::from("\\b"),
+                    size: 0,
+                    casei: false
+                }
+            ])
         );
     }
 
@@ -869,24 +1065,39 @@ mod tests {
 
     #[test]
     fn possessive() {
-        assert_eq!(p("a++"), Expr::AtomicGroup(Box::new(
-            Expr::Repeat { child: Box::new(make_literal("a")),
-            lo: 1, hi: usize::MAX, greedy: true }
-        )));
-        assert_eq!(p("a*+"), Expr::AtomicGroup(Box::new(
-            Expr::Repeat { child: Box::new(make_literal("a")),
-            lo: 0, hi: usize::MAX, greedy: true }
-        )));
-        assert_eq!(p("a?+"), Expr::AtomicGroup(Box::new(
-            Expr::Repeat { child: Box::new(make_literal("a")),
-            lo: 0, hi: 1, greedy: true }
-        )));
+        assert_eq!(
+            p("a++"),
+            Expr::AtomicGroup(Box::new(Expr::Repeat {
+                child: Box::new(make_literal("a")),
+                lo: 1,
+                hi: usize::MAX,
+                greedy: true
+            }))
+        );
+        assert_eq!(
+            p("a*+"),
+            Expr::AtomicGroup(Box::new(Expr::Repeat {
+                child: Box::new(make_literal("a")),
+                lo: 0,
+                hi: usize::MAX,
+                greedy: true
+            }))
+        );
+        assert_eq!(
+            p("a?+"),
+            Expr::AtomicGroup(Box::new(Expr::Repeat {
+                child: Box::new(make_literal("a")),
+                lo: 0,
+                hi: 1,
+                greedy: true
+            }))
+        );
     }
 
     #[test]
     fn invalid_backref() {
         // only syntactic tests; see similar test in analyze module
-        fail(".\\12345678");  // unreasonably large number
-        fail(".\\c");  // not decimal
+        fail(".\\12345678"); // unreasonably large number
+        fail(".\\c"); // not decimal
     }
 }

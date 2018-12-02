@@ -20,8 +20,8 @@
 
 //! An implementation of regexes, supporting a relatively rich set of features, including backreferences and look-around.
 
-extern crate regex;
 extern crate bit_set;
+extern crate regex;
 
 #[cfg(test)]
 #[macro_use]
@@ -30,20 +30,20 @@ extern crate matches;
 #[macro_use]
 extern crate quickcheck;
 
+use bit_set::BitSet;
 use std::fmt;
 use std::usize;
-use bit_set::BitSet;
 
 // These modules are pub so examples/toy.rs can access them,
 // but we'll want to revisit that.
-pub mod parse;
 pub mod analyze;
 pub mod compile;
+pub mod parse;
 pub mod vm;
 
-use parse::Parser;
 use analyze::analyze;
 use compile::compile;
+use parse::Parser;
 use vm::Prog;
 
 const MAX_RECURSION: usize = 64;
@@ -77,7 +77,6 @@ pub enum Error {
     StackOverflow,
 }
 
-
 pub enum Regex {
     // Do we want to box this? It's pretty big...
     Wrap {
@@ -89,7 +88,7 @@ pub enum Regex {
         prog: Prog,
         n_groups: usize,
         original: String,
-    }
+    },
 }
 
 #[derive(Debug)]
@@ -105,7 +104,7 @@ pub enum Captures<'t> {
     Impl {
         text: &'t str,
         saves: Vec<usize>,
-    }
+    },
 }
 
 #[derive(Debug)]
@@ -130,16 +129,16 @@ impl Regex {
         let e = Expr::Concat(vec![
             Expr::Repeat {
                 child: Box::new(Expr::Any { newline: true }),
-                lo: 0, hi: usize::MAX, greedy: false
+                lo: 0,
+                hi: usize::MAX,
+                greedy: false,
             },
-            Expr::Group(Box::new(
-                raw_e
-            ))
+            Expr::Group(Box::new(raw_e)),
         ]);
 
         let info = analyze(&e, &backrefs)?;
 
-        let inner_info = &info.children[1].children[0];  // references inner expr
+        let inner_info = &info.children[1].children[0]; // references inner expr
         if !inner_info.hard {
             // easy case, wrap regex
 
@@ -147,12 +146,11 @@ impl Regex {
             let mut re_cooked = String::new();
             // same as raw_e above, but it was moved, so traverse to find it
             let raw_e = match e {
-                Expr::Concat(ref v) =>
-                    match v[1] {
-                        Expr::Group(ref child) => child,
-                        _ => unreachable!()
-                    },
-                _ => unreachable!()
+                Expr::Concat(ref v) => match v[1] {
+                    Expr::Group(ref child) => child,
+                    _ => unreachable!(),
+                },
+                _ => unreachable!(),
             };
             raw_e.to_str(&mut re_cooked, 0);
             let inner = compile::compile_inner(&re_cooked)?;
@@ -202,9 +200,7 @@ impl Regex {
     // methods).
     pub fn find(&self, text: &str) -> Result<Option<(usize, usize)>> {
         match *self {
-            Regex::Wrap { ref inner, .. } => {
-                Ok(inner.find(text).map(|m| (m.start(), m.end())))
-            }
+            Regex::Wrap { ref inner, .. } => Ok(inner.find(text).map(|m| (m.start(), m.end()))),
             Regex::Impl { ref prog, .. } => {
                 let result = vm::run(prog, text, 0, 0)?;
                 Ok(result.map(|saves| (saves[0], saves[1])))
@@ -214,19 +210,20 @@ impl Regex {
 
     pub fn captures<'t>(&self, text: &'t str) -> Result<Option<Captures<'t>>> {
         match *self {
-            Regex::Wrap { ref inner, .. } =>
-                Ok(inner.captures(text).map(|caps| Captures::Wrap {
-                    inner: caps,
-                    offset: 0,
-                    enclosing_groups: 0,
-                })),
-            Regex::Impl { ref prog, n_groups, .. } => {
+            Regex::Wrap { ref inner, .. } => Ok(inner.captures(text).map(|caps| Captures::Wrap {
+                inner: caps,
+                offset: 0,
+                enclosing_groups: 0,
+            })),
+            Regex::Impl {
+                ref prog, n_groups, ..
+            } => {
                 let result = vm::run(prog, text, 0, 0)?;
                 Ok(result.map(|mut saves| {
                     saves.truncate(n_groups * 2);
                     Captures::Impl {
                         text: text,
-                        saves: saves
+                        saves: saves,
                     }
                 }))
             }
@@ -264,10 +261,13 @@ impl Regex {
     /// This matched the number "123" because it's at the beginning of the text
     /// of the string slice.
     ///
-    pub fn captures_from_pos<'t>(&self, text: &'t str, pos: usize) ->
-            Result<Option<Captures<'t>>> {
+    pub fn captures_from_pos<'t>(&self, text: &'t str, pos: usize) -> Result<Option<Captures<'t>>> {
         match *self {
-            Regex::Wrap { ref inner, ref inner1, .. } => {
+            Regex::Wrap {
+                ref inner,
+                ref inner1,
+                ..
+            } => {
                 if inner1.is_none() || pos == 0 {
                     Ok(inner.captures(&text[pos..]).map(|caps| Captures::Wrap {
                         inner: caps,
@@ -284,13 +284,15 @@ impl Regex {
                     }))
                 }
             }
-            Regex::Impl { ref prog, n_groups, .. } => {
+            Regex::Impl {
+                ref prog, n_groups, ..
+            } => {
                 let result = vm::run(prog, text, pos, 0)?;
                 Ok(result.map(|mut saves| {
                     saves.truncate(n_groups * 2);
                     Captures::Impl {
                         text: text,
-                        saves: saves
+                        saves: saves,
                     }
                 }))
             }
@@ -301,7 +303,7 @@ impl Regex {
     pub fn debug_print(&self) {
         match *self {
             Regex::Wrap { ref inner, .. } => println!("wrapped {:?}", inner),
-            Regex::Impl { ref prog, .. } => prog.debug_print()
+            Regex::Impl { ref prog, .. } => prog.debug_print(),
         }
     }
 }
@@ -309,10 +311,13 @@ impl Regex {
 impl<'t> Captures<'t> {
     pub fn pos(&self, i: usize) -> Option<(usize, usize)> {
         match *self {
-            Captures::Wrap { ref inner, ref offset, enclosing_groups } => {
-                inner.get(i + enclosing_groups).map(|m|
-                    (m.start() + offset, m.end() + offset))
-            }
+            Captures::Wrap {
+                ref inner,
+                ref offset,
+                enclosing_groups,
+            } => inner
+                .get(i + enclosing_groups)
+                .map(|m| (m.start() + offset, m.end() + offset)),
             Captures::Impl { ref saves, .. } => {
                 if i >= saves.len() {
                     return None;
@@ -329,14 +334,12 @@ impl<'t> Captures<'t> {
 
     pub fn at(&self, i: usize) -> Option<&'t str> {
         match *self {
-            Captures::Wrap { ref inner, enclosing_groups, .. } => {
-                inner.get(i + enclosing_groups).map(|m| m.as_str())
-            }
-            Captures::Impl { text, .. } => {
-                self.pos(i).map(|(lo, hi)|
-                    &text[lo..hi]
-                )
-            }
+            Captures::Wrap {
+                ref inner,
+                enclosing_groups,
+                ..
+            } => inner.get(i + enclosing_groups).map(|m| m.as_str()),
+            Captures::Impl { text, .. } => self.pos(i).map(|(lo, hi)| &text[lo..hi]),
         }
     }
 
@@ -346,18 +349,23 @@ impl<'t> Captures<'t> {
 
     pub fn len(&self) -> usize {
         match *self {
-            Captures::Wrap { ref inner, enclosing_groups, .. } => {
-                inner.len() - enclosing_groups
-            }
-            Captures::Impl { ref saves, .. } => saves.len() / 2
+            Captures::Wrap {
+                ref inner,
+                enclosing_groups,
+                ..
+            } => inner.len() - enclosing_groups,
+            Captures::Impl { ref saves, .. } => saves.len() / 2,
         }
     }
 
     pub fn is_empty(&self) -> bool {
         match *self {
-            Captures::Wrap { ref inner, enclosing_groups, .. } =>
-                inner.len() == enclosing_groups,
-            Captures::Impl { ref saves, .. } => saves.is_empty()
+            Captures::Wrap {
+                ref inner,
+                enclosing_groups,
+                ..
+            } => inner.len() == enclosing_groups,
+            Captures::Impl { ref saves, .. } => saves.is_empty(),
         }
     }
 }
@@ -385,7 +393,9 @@ impl<'t> Iterator for SubCaptures<'t> {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Expr {
     Empty,
-    Any { newline: bool },
+    Any {
+        newline: bool,
+    },
     StartText,
     EndText,
     StartLine,
@@ -406,7 +416,7 @@ pub enum Expr {
     },
     Delegate {
         inner: String,
-        size: usize,  // TODO: move into analysis result
+        size: usize, // TODO: move into analysis result
         casei: bool,
     },
     Backref(usize),
@@ -435,9 +445,9 @@ fn push_usize(s: &mut String, x: usize) {
 fn push_quoted(buf: &mut String, s: &str) {
     for c in s.chars() {
         match c {
-            '\\' | '.' | '+' | '*' | '?' | '(' | ')' | '|' |
-            '[' | ']' | '{' | '}' | '^' | '$' | '#' => buf.push('\\'),
-            _ => ()
+            '\\' | '.' | '+' | '*' | '?' | '(' | ')' | '|' | '[' | ']' | '{' | '}' | '^' | '$'
+            | '#' => buf.push('\\'),
+            _ => (),
         }
         buf.push(c);
     }
@@ -451,13 +461,15 @@ impl Expr {
     pub fn to_str(&self, buf: &mut String, precedence: u8) {
         match *self {
             Expr::Empty => (),
-            Expr::Any { newline } => buf.push_str(
-                if newline { "(?s:.)" } else { "." }
-            ),
-            Expr::Literal{ ref val, casei } => {
-                if casei { buf.push_str("(?i:"); }
+            Expr::Any { newline } => buf.push_str(if newline { "(?s:.)" } else { "." }),
+            Expr::Literal { ref val, casei } => {
+                if casei {
+                    buf.push_str("(?i:");
+                }
                 push_quoted(buf, val);
-                if casei { buf.push_str(")"); }
+                if casei {
+                    buf.push_str(")");
+                }
             }
             Expr::StartText => buf.push('^'),
             Expr::EndText => buf.push('$'),
@@ -507,7 +519,12 @@ impl Expr {
                 child.to_str(buf, 0);
                 buf.push(')');
             }
-            Expr::Repeat{ ref child, lo, hi, greedy } => {
+            Expr::Repeat {
+                ref child,
+                lo,
+                hi,
+                greedy,
+            } => {
                 if precedence > 2 {
                     buf.push_str("(?:");
                 }
@@ -526,7 +543,9 @@ impl Expr {
                     buf.push(')');
                 }
             }
-            Expr::Delegate{ ref inner, casei, .. } => {
+            Expr::Delegate {
+                ref inner, casei, ..
+            } => {
                 // at the moment, delegate nodes are just atoms
                 if casei {
                     buf.push_str("(?i:");
@@ -536,7 +555,7 @@ impl Expr {
                     buf.push_str(")");
                 }
             }
-            _ => panic!("attempting to format hard expr")
+            _ => panic!("attempting to format hard expr"),
         }
     }
 }
@@ -559,7 +578,7 @@ fn codepoint_len(b: u8) -> usize {
         b if b < 0x80 => 1,
         b if b < 0xe0 => 2,
         b if b < 0xf0 => 3,
-        _ => 4
+        _ => 4,
     }
 }
 
@@ -596,9 +615,9 @@ pub fn detect_possible_backref(re: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use parse::make_literal;
     use Expr;
     use Regex;
-    use parse::make_literal;
     //use detect_possible_backref;
 
     // tests for to_str
@@ -607,10 +626,7 @@ mod tests {
     fn to_str_concat_alt() {
         let mut s = String::new();
         let e = Expr::Concat(vec![
-            Expr::Alt(vec![
-                make_literal("a"),
-                make_literal("b"),
-            ]),
+            Expr::Alt(vec![make_literal("a"), make_literal("b")]),
             make_literal("c"),
         ]);
         e.to_str(&mut s, 0);
@@ -620,12 +636,11 @@ mod tests {
     #[test]
     fn to_str_rep_concat() {
         let mut s = String::new();
-        let e = Expr::Repeat{ child: Box::new(
-            Expr::Concat(vec![
-                make_literal("a"),
-                make_literal("b"),
-            ])),
-            lo: 2, hi: 3, greedy: true
+        let e = Expr::Repeat {
+            child: Box::new(Expr::Concat(vec![make_literal("a"), make_literal("b")])),
+            lo: 2,
+            hi: 3,
+            greedy: true,
         };
         e.to_str(&mut s, 0);
         assert_eq!(s, "(?:ab){2,3}");
@@ -634,12 +649,10 @@ mod tests {
     #[test]
     fn to_str_group_alt() {
         let mut s = String::new();
-        let e = Expr::Group(Box::new(
-            Expr::Alt(vec![
-                make_literal("a"),
-                make_literal("b"),
-            ])
-        ));
+        let e = Expr::Group(Box::new(Expr::Alt(vec![
+            make_literal("a"),
+            make_literal("b"),
+        ])));
         e.to_str(&mut s, 0);
         assert_eq!(s, "(a|b)");
     }
