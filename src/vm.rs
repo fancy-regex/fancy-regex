@@ -449,6 +449,7 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) ->
 mod tests {
     use super::*;
     use quickcheck::{Arbitrary, Gen};
+    use rand::Rng;
 
     #[test]
     fn state_push_pop() {
