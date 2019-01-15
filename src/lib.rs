@@ -18,7 +18,58 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-//! An implementation of regexes, supporting a relatively rich set of features, including backreferences and look-around.
+/*!
+An implementation of regexes, supporting a relatively rich set of features, including backreferences
+and look-around.
+
+It builds on top of the excellent [regex](https://crates.io/crates/regex) crate. If you are not
+familiar with it, make sure you read its documentation and maybe you don't even need fancy-regex.
+
+If your regex or parts of it does not use any special features, the matching is delegated to the
+regex crate. That means it has linear runtime. But if you use "fancy" features such as
+backreferences or look-around, an engine with backtracking needs to be used. In that case, depending
+on the regex and the input you can run into what is called "catastrophic backtracking".
+
+# Usage
+
+The API should feel very similar to the regex crate, and involves compiling a regex and then using
+it to find matches in text.
+
+An example with backreferences to check if a text consists of two identical words:
+
+```rust
+use fancy_regex::Regex;
+
+let re = Regex::new(r"^(\w+) (\1)$").unwrap();
+let result = re.is_match("foo foo");
+
+assert!(result.is_ok());
+let matched = result.unwrap();
+assert!(matched);
+```
+
+Note that like in the regex crate, the regex needs anchors like `^` and `$` to match against the
+entire input text.
+
+# Example: Find matches
+
+```rust
+use fancy_regex::Regex;
+
+let re = Regex::new(r"\d+").unwrap();
+let result = re.find("foo 123");
+
+assert!(result.is_ok(), "execution was successful");
+let match_option = result.unwrap();
+
+assert!(match_option.is_some(), "found a match");
+let m = match_option.unwrap();
+
+assert_eq!(m.start(), 4);
+assert_eq!(m.end(), 7);
+assert_eq!(m.as_str(), "123");
+```
+*/
 
 extern crate regex;
 extern crate bit_set;
@@ -92,6 +143,14 @@ pub enum Regex {
         n_groups: usize,
         original: String,
     }
+}
+
+/// A single match of a regex in an input text
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct Match<'t> {
+    text: &'t str,
+    start: usize,
+    end: usize,
 }
 
 #[derive(Debug)]
@@ -189,6 +248,18 @@ impl Regex {
         }
     }
 
+    /// Check if the regex matches the input text.
+    ///
+    /// # Example
+    ///
+    /// Test if some text contains the same word twice:
+    ///
+    /// ```rust
+    /// # use fancy_regex::Regex;
+    ///
+    /// let re = Regex::new(r"(\w+) \1").unwrap();
+    /// assert!(re.is_match("mirror mirror on the wall").unwrap());
+    /// ```
     pub fn is_match(&self, text: &str) -> Result<bool> {
         match *self {
             Regex::Wrap { ref inner, .. } => Ok(inner.is_match(text)),
@@ -199,17 +270,26 @@ impl Regex {
         }
     }
 
-    // Note: probably want to change the signature of this to match the
-    // change to regex 0.2 (return a match obj with .start() and .end()
-    // methods).
-    pub fn find(&self, text: &str) -> Result<Option<(usize, usize)>> {
+    /// Find the first match in the input text.
+    ///
+    /// # Example
+    ///
+    /// Find a word that is followed by an exclamation point:
+    ///
+    /// ```rust
+    /// # use fancy_regex::Regex;
+    ///
+    /// let re = Regex::new(r"\w+(?=!)").unwrap();
+    /// assert_eq!(re.find("so fancy!").unwrap().unwrap().as_str(), "fancy");
+    /// ```
+    pub fn find<'t>(&self, text: &'t str) -> Result<Option<Match<'t>>> {
         match *self {
             Regex::Wrap { ref inner, .. } => {
-                Ok(inner.find(text).map(|m| (m.start(), m.end())))
+                Ok(inner.find(text).map(|m| Match::new(text, m.start(), m.end())))
             }
             Regex::Impl { ref prog, .. } => {
                 let result = vm::run(prog, text, 0, 0)?;
-                Ok(result.map(|saves| (saves[0], saves[1])))
+                Ok(result.map(|saves| Match::new(text, saves[0], saves[1])))
             }
         }
     }
@@ -304,6 +384,34 @@ impl Regex {
         match *self {
             Regex::Wrap { ref inner, .. } => println!("wrapped {:?}", inner),
             Regex::Impl { ref prog, .. } => prog.debug_print()
+        }
+    }
+}
+
+impl<'t> Match<'t> {
+    /// Returns the starting byte offset of the match in the text.
+    #[inline]
+    pub fn start(&self) -> usize {
+        self.start
+    }
+
+    /// Returns the ending byte offset of the match in the text.
+    #[inline]
+    pub fn end(&self) -> usize {
+        self.end
+    }
+
+    /// Returns the matched text.
+    #[inline]
+    pub fn as_str(&self) -> &'t str {
+        &self.text[self.start..self.end]
+    }
+
+    fn new(text: &'t str, start: usize, end: usize) -> Match<'t> {
+        Match {
+            text,
+            start,
+            end,
         }
     }
 }

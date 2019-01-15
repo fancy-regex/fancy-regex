@@ -77,5 +77,5 @@ fn find(re: &str, text: &str) -> Option<(usize, usize)> {
     let regex = common::regex(re);
     let result = regex.find(text);
     assert!(result.is_ok(), "Expected find to succeed, but was {:?}", result);
-    result.unwrap()
+    result.unwrap().map(|m| (m.start(), m.end()))
 }
