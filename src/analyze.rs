@@ -24,8 +24,8 @@ use bit_set::BitSet;
 use std::cmp::min;
 use std::usize;
 
-use Expr;
 use Error;
+use Expr;
 use Result;
 
 #[derive(Debug)]
@@ -49,10 +49,8 @@ impl<'a> Info<'a> {
     pub fn is_literal(&self) -> bool {
         match *self.expr {
             Expr::Literal { casei, .. } => !casei,
-            Expr::Concat(_) => {
-                self.children.iter().all(|child| child.is_literal())
-            }
-            _ => false
+            Expr::Concat(_) => self.children.iter().all(|child| child.is_literal()),
+            _ => false,
         }
     }
 
@@ -65,7 +63,7 @@ impl<'a> Info<'a> {
                     child.push_literal(buf);
                 }
             }
-            _ => panic!("push_literal called on non-literal")
+            _ => panic!("push_literal called on non-literal"),
         }
     }
 }
@@ -87,11 +85,11 @@ impl<'a> Analyzer<'a> {
             Expr::Empty | Expr::EndText | Expr::EndLine => {
                 const_size = true;
             }
-            Expr::Any{..} => {
+            Expr::Any { .. } => {
                 min_size = 1;
                 const_size = true;
             }
-            Expr::Literal{ ref val, casei } => {
+            Expr::Literal { ref val, casei } => {
                 // right now each character in a literal gets its own node, that might change
                 min_size = 1;
                 const_size = literal_const_size(val, casei);
@@ -145,7 +143,9 @@ impl<'a> Analyzer<'a> {
                 looks_left = child_info.looks_left;
                 children.push(child_info);
             }
-            Expr::Repeat { ref child, lo, hi, .. } => {
+            Expr::Repeat {
+                ref child, lo, hi, ..
+            } => {
                 let child_info = self.visit(child)?;
                 min_size = child_info.min_size * lo;
                 const_size = child_info.const_size && lo == hi;
@@ -157,7 +157,7 @@ impl<'a> Analyzer<'a> {
                 // currently only used for empty and single-char matches
                 min_size = size;
                 const_size = true;
-                looks_left = size == 0;  // TODO: conservative for \z
+                looks_left = size == 0; // TODO: conservative for \z
             }
             Expr::Backref(group) => {
                 if group >= self.group_ix {
@@ -170,7 +170,7 @@ impl<'a> Analyzer<'a> {
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
                 looks_left = child_info.looks_left;
-                hard = true;  // TODO: possibly could weaken
+                hard = true; // TODO: possibly could weaken
                 children.push(child_info);
             }
         };
@@ -204,13 +204,12 @@ pub fn analyze<'a>(expr: &'a Expr, backrefs: &'a BitSet) -> Result<Info<'a>> {
     analyzer.visit(expr)
 }
 
-
 #[cfg(test)]
 mod tests {
-    use regex;
-    use Expr;
     use super::analyze;
     use super::literal_const_size;
+    use regex;
+    use Expr;
 
     #[test]
     fn case_folding_safe() {

@@ -20,16 +20,16 @@
 
 //! Compilation of regexes to VM.
 
-use std::usize;
 use regex;
+use std::usize;
 
-use Expr;
-use Result;
+use analyze::Info;
+use vm::{Insn, Prog};
 use Error;
+use Expr;
 use LookAround;
 use LookAround::*;
-use analyze::Info;
-use vm::{Insn,Prog};
+use Result;
 
 // I'm thinking it probably doesn't make a lot of sense having this split
 // out from Compiler.
@@ -68,7 +68,7 @@ impl VMBuilder {
     fn set_jmp_target(&mut self, jmp_pc: usize, target: usize) {
         match self.prog[jmp_pc] {
             Insn::Jmp(ref mut next) => *next = target,
-            _ => panic!("mutating instruction other than Jmp")
+            _ => panic!("mutating instruction other than Jmp"),
         }
     }
 
@@ -76,17 +76,17 @@ impl VMBuilder {
         match self.prog[jmp_pc] {
             Insn::Split(_, ref mut y) if second => *y = target,
             Insn::Split(ref mut x, _) => *x = target,
-            _ => panic!("mutating instruction other than Split")
+            _ => panic!("mutating instruction other than Split"),
         }
     }
 
     fn set_repeat_target(&mut self, jmp_pc: usize, target: usize) {
         match self.prog[jmp_pc] {
-            Insn::RepeatGr { ref mut next, .. } |
-            Insn::RepeatNg { ref mut next, .. } |
-            Insn::RepeatEpsilonGr { ref mut next, .. } |
-            Insn::RepeatEpsilonNg { ref mut next, .. } => *next = target,
-            _ => panic!("mutating instruction other than Repeat")
+            Insn::RepeatGr { ref mut next, .. }
+            | Insn::RepeatNg { ref mut next, .. }
+            | Insn::RepeatEpsilonGr { ref mut next, .. }
+            | Insn::RepeatEpsilonNg { ref mut next, .. } => *next = target,
+            _ => panic!("mutating instruction other than Repeat"),
         }
     }
 }
@@ -103,7 +103,7 @@ impl Compiler {
         }
         match *info.expr {
             Expr::Empty => (),
-            Expr::Literal{ ref val, casei } => {
+            Expr::Literal { ref val, casei } => {
                 if !casei {
                     self.compile_delegates(&[info])?;
                 } else {
@@ -121,9 +121,7 @@ impl Compiler {
             }
             Expr::Alt(_) => {
                 let count = info.children.len();
-                self.compile_alt(count, |compiler, i| {
-                    compiler.visit(&info.children[i], hard)
-                })?;
+                self.compile_alt(count, |compiler, i| compiler.visit(&info.children[i], hard))?;
             }
             Expr::Group(_) => {
                 let group = info.start_group;
@@ -147,8 +145,11 @@ impl Compiler {
                 self.visit(&info.children[0], false)?;
                 self.b.add(Insn::EndAtomic);
             }
-            Expr::Delegate { .. } | Expr::StartText | Expr::EndText
-            | Expr::StartLine | Expr::EndLine => {
+            Expr::Delegate { .. }
+            | Expr::StartText
+            | Expr::EndText
+            | Expr::StartLine
+            | Expr::EndLine => {
                 // TODO: might want to have more specialized impls
                 self.compile_delegates(&[info])?;
             }
@@ -227,8 +228,14 @@ impl Compiler {
         self.compile_delegates(&children[suffix_begin..])
     }
 
-    fn compile_repeat(&mut self, info: &Info, lo: usize, hi: usize, greedy: bool,
-                      hard: bool) -> Result<()> {
+    fn compile_repeat(
+        &mut self,
+        info: &Info,
+        lo: usize,
+        hi: usize,
+        greedy: bool,
+        hard: bool,
+    ) -> Result<()> {
         let child = &info.children[0];
         if lo == 0 && hi == 1 {
             // e?
@@ -250,11 +257,19 @@ impl Compiler {
             self.b.add(Insn::Save0(repeat));
             let pc = self.b.pc();
             if greedy {
-                self.b.add(Insn::RepeatEpsilonGr{ lo: lo, next: usize::MAX,
-                        repeat: repeat, check: check });
+                self.b.add(Insn::RepeatEpsilonGr {
+                    lo: lo,
+                    next: usize::MAX,
+                    repeat: repeat,
+                    check: check,
+                });
             } else {
-                self.b.add(Insn::RepeatEpsilonNg{ lo: lo, next: usize::MAX,
-                        repeat: repeat, check: check });
+                self.b.add(Insn::RepeatEpsilonNg {
+                    lo: lo,
+                    next: usize::MAX,
+                    repeat: repeat,
+                    check: check,
+                });
             }
             self.visit(child, hard)?;
             self.b.add(Insn::Jmp(pc));
@@ -280,11 +295,19 @@ impl Compiler {
             self.b.add(Insn::Save0(repeat));
             let pc = self.b.pc();
             if greedy {
-                self.b.add(Insn::RepeatGr{ lo: lo, hi: hi, next: usize::MAX,
-                        repeat: repeat });
+                self.b.add(Insn::RepeatGr {
+                    lo: lo,
+                    hi: hi,
+                    next: usize::MAX,
+                    repeat: repeat,
+                });
             } else {
-                self.b.add(Insn::RepeatNg{ lo: lo, hi: hi, next: usize::MAX,
-                        repeat: repeat });
+                self.b.add(Insn::RepeatNg {
+                    lo: lo,
+                    hi: hi,
+                    next: usize::MAX,
+                    repeat: repeat,
+                });
             }
             self.visit(child, hard)?;
             self.b.add(Insn::Jmp(pc));
@@ -298,7 +321,12 @@ impl Compiler {
         let inner = &info.children[0];
         match la {
             LookBehind => {
-                if let &Info { const_size: false, expr: &Expr::Alt(_), .. } = inner {
+                if let &Info {
+                    const_size: false,
+                    expr: &Expr::Alt(_),
+                    ..
+                } = inner
+                {
                     // Make const size by transforming `(?<=a|bb)` to `(?<=a)|(?<=bb)`
                     let alternatives = &inner.children;
                     self.compile_alt(alternatives.len(), |compiler, i| {
@@ -310,7 +338,12 @@ impl Compiler {
                 }
             }
             LookBehindNeg => {
-                if let &Info { const_size: false, expr: &Expr::Alt(_), .. } = inner {
+                if let &Info {
+                    const_size: false,
+                    expr: &Expr::Alt(_),
+                    ..
+                } = inner
+                {
                     // Make const size by transforming `(?<!a|bb)` to `(?<!a)(?<!bb)`
                     let alternatives = &inner.children;
                     for alternative in alternatives {
@@ -394,13 +427,25 @@ impl Compiler {
         }
         let start_group = infos[0].start_group;
         let end_group = infos[infos.len() - 1].end_group;
-        self.make_delegate(&annotated, min_size, const_size, looks_left,
-            start_group, end_group)
+        self.make_delegate(
+            &annotated,
+            min_size,
+            const_size,
+            looks_left,
+            start_group,
+            end_group,
+        )
     }
 
-    fn make_delegate(&mut self, inner_re: &str,
-            min_size: usize, const_size: bool, looks_left: bool,
-            start_group: usize, end_group: usize) -> Result<()> {
+    fn make_delegate(
+        &mut self,
+        inner_re: &str,
+        min_size: usize,
+        const_size: bool,
+        looks_left: bool,
+        start_group: usize,
+        end_group: usize,
+    ) -> Result<()> {
         let compiled = compile_inner(inner_re)?;
         if looks_left {
             let inner1 = ["^(?s:.)", &inner_re[1..]].concat();
@@ -424,7 +469,6 @@ impl Compiler {
         }
         Ok(())
     }
-
 }
 
 pub fn compile_inner(inner_re: &str) -> Result<regex::Regex> {
@@ -451,9 +495,18 @@ mod tests {
     #[test]
     fn jumps_for_alternation() {
         let expr = Expr::Alt(vec![
-            Expr::Literal{ val: "a".into(), casei: false },
-            Expr::Literal{ val: "b".into(), casei: false },
-            Expr::Literal{ val: "c".into(), casei: false },
+            Expr::Literal {
+                val: "a".into(),
+                casei: false,
+            },
+            Expr::Literal {
+                val: "b".into(),
+                casei: false,
+            },
+            Expr::Literal {
+                val: "c".into(),
+                casei: false,
+            },
         ]);
         let backrefs = BitSet::new();
         let info = analyze(&expr, &backrefs).unwrap();

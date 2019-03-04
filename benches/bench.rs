@@ -20,21 +20,21 @@
 
 #![feature(test)]
 
-extern crate test;
 extern crate regex;
+extern crate test;
 
 extern crate fancy_regex;
 
 #[cfg(test)]
 mod bench {
 
-    use test::Bencher;
     use regex::Regex;
+    use test::Bencher;
 
-	use fancy_regex::Expr;
     use fancy_regex::analyze::analyze;
     use fancy_regex::compile::compile;
     use fancy_regex::vm;
+    use fancy_regex::Expr;
 
     #[bench]
     fn lifetime_re(b: &mut Bencher) {
@@ -53,7 +53,10 @@ mod bench {
 
     #[bench]
     fn literal_re_analyze(b: &mut Bencher) {
-        let (e, br) = Expr::parse("^\\\\([!-/:-@\\[-`\\{-~aftnrv]|[0-7]{1,3}|x[0-9a-fA-F]{2}|x\\{[0-9a-fA-F]{1,6}\\})").unwrap();
+        let (e, br) = Expr::parse(
+            "^\\\\([!-/:-@\\[-`\\{-~aftnrv]|[0-7]{1,3}|x[0-9a-fA-F]{2}|x\\{[0-9a-fA-F]{1,6}\\})",
+        )
+        .unwrap();
         b.iter(|| analyze(&e, &br));
     }
 

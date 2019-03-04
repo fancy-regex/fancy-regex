@@ -20,14 +20,14 @@
 
 //! Backtracking VM for implementing fancy regexes.
 
-use std::usize;
-use std::collections::BTreeSet;
 use regex::Regex;
+use std::collections::BTreeSet;
+use std::usize;
 
 use codepoint_len;
 use prev_codepoint_ix;
-use Result;
 use Error;
+use Result;
 
 pub const OPTION_TRACE: u32 = 1;
 
@@ -39,16 +39,36 @@ pub enum Insn {
     End,
     Any,
     AnyNoNL,
-    Lit(String),  // should be cow?
+    Lit(String), // should be cow?
     Split(usize, usize),
     Jmp(usize),
     Save(usize),
     Save0(usize),
     Restore(usize),
-    RepeatGr { lo: usize, hi: usize, next: usize, repeat: usize },
-    RepeatNg { lo: usize, hi: usize, next: usize, repeat: usize },
-    RepeatEpsilonGr { lo: usize, next: usize, repeat: usize, check: usize },
-    RepeatEpsilonNg { lo: usize, next: usize, repeat: usize, check: usize },
+    RepeatGr {
+        lo: usize,
+        hi: usize,
+        next: usize,
+        repeat: usize,
+    },
+    RepeatNg {
+        lo: usize,
+        hi: usize,
+        next: usize,
+        repeat: usize,
+    },
+    RepeatEpsilonGr {
+        lo: usize,
+        next: usize,
+        repeat: usize,
+        check: usize,
+    },
+    RepeatEpsilonNg {
+        lo: usize,
+        next: usize,
+        repeat: usize,
+        check: usize,
+    },
     FailNegativeLookAround,
     GoBack(usize),
     Backref(usize),
@@ -57,7 +77,7 @@ pub enum Insn {
     DelegateSized(Box<Regex>, usize),
     Delegate {
         inner: Box<Regex>,
-        inner1: Option<Box<Regex>>,  // regex with 1-char look-behind
+        inner1: Option<Box<Regex>>, // regex with 1-char look-behind
         start_group: usize,
         end_group: usize,
     },
@@ -85,7 +105,7 @@ impl Prog {
 }
 
 struct State {
-    pub saves: Vec<usize>,  // mostly indices to s, but can be repeat values etc
+    pub saves: Vec<usize>, // mostly indices to s, but can be repeat values etc
 
     // pc, index to string, nsave value
     pub stack: Vec<(usize, usize, usize)>,
@@ -114,7 +134,7 @@ impl State {
             nsave: 0,
             explicit_sp: n_saves,
             max_stack,
-            options
+            options,
         }
     }
 
@@ -200,12 +220,12 @@ impl State {
             return;
         }
         let mut oldsave_ix = self.oldsave.len() - self.nsave;
-        for &(_pc, _ix, nsave) in &self.stack[count + 1 ..] {
+        for &(_pc, _ix, nsave) in &self.stack[count + 1..] {
             oldsave_ix -= nsave;
         }
         let mut saved = BTreeSet::new();
         let oldsave_start = oldsave_ix - self.stack[count].2;
-        for &(slot, _val) in &self.oldsave[oldsave_start .. oldsave_ix] {
+        for &(slot, _val) in &self.oldsave[oldsave_start..oldsave_ix] {
             saved.insert(slot);
         }
         // retain all oldsave values, but only the first and only if not
@@ -234,8 +254,7 @@ fn codepoint_len_at(s: &str, ix: usize) -> usize {
     codepoint_len(s.as_bytes()[ix])
 }
 
-pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) ->
-        Result<Option<Vec<usize>>> {
+pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) -> Result<Option<Vec<usize>>> {
     let mut state = State::new(prog.n_saves, MAX_STACK, options);
     if options & OPTION_TRACE != 0 {
         println!("{}\t{}", "pos", "instruction");
@@ -246,8 +265,7 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) ->
         // break from this loop to fail, causes stack to pop
         'fail: loop {
             if options & OPTION_TRACE != 0 {
-                println!("{}\t{} {:?}",
-                         ix, pc, prog.body[pc]);
+                println!("{}\t{} {:?}", ix, pc, prog.body[pc]);
             }
             match prog.body[pc] {
                 Insn::End => {
@@ -293,7 +311,12 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) ->
                 Insn::Save(slot) => state.save(slot, ix),
                 Insn::Save0(slot) => state.save(slot, 0),
                 Insn::Restore(slot) => ix = state.get(slot),
-                Insn::RepeatGr { lo, hi, next, repeat } => {
+                Insn::RepeatGr {
+                    lo,
+                    hi,
+                    next,
+                    repeat,
+                } => {
                     let repcount = state.get(repeat);
                     if repcount == hi {
                         pc = next;
@@ -304,7 +327,12 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) ->
                         state.push(next, ix)?;
                     }
                 }
-                Insn::RepeatNg { lo, hi, next, repeat } => {
+                Insn::RepeatNg {
+                    lo,
+                    hi,
+                    next,
+                    repeat,
+                } => {
                     let repcount = state.get(repeat);
                     if repcount == hi {
                         pc = next;
@@ -317,7 +345,12 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) ->
                         continue;
                     }
                 }
-                Insn::RepeatEpsilonGr { lo, next, repeat, check } => {
+                Insn::RepeatEpsilonGr {
+                    lo,
+                    next,
+                    repeat,
+                    check,
+                } => {
                     let repcount = state.get(repeat);
                     if repcount > lo && state.get(check) == ix {
                         // prevent zero-length match on repeat
@@ -329,7 +362,12 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) ->
                         state.push(next, ix)?;
                     }
                 }
-                Insn::RepeatEpsilonNg { lo, next, repeat, check } => {
+                Insn::RepeatEpsilonNg {
+                    lo,
+                    next,
+                    repeat,
+                    check,
+                } => {
                     let repcount = state.get(repeat);
                     if repcount > lo && state.get(check) == ix {
                         // prevent zero-length match on repeat
@@ -397,7 +435,12 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) ->
                         break 'fail;
                     }
                 }
-                Insn::Delegate { ref inner, ref inner1, start_group, end_group } => {
+                Insn::Delegate {
+                    ref inner,
+                    ref inner1,
+                    start_group,
+                    end_group,
+                } => {
                     let re = match *inner1 {
                         Some(ref inner1) if ix > 0 => {
                             ix = prev_codepoint_ix(s, ix);
@@ -408,7 +451,7 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) ->
                     if start_group == end_group {
                         match re.find(&s[ix..]) {
                             Some(m) => ix += m.end(),
-                            _ => break 'fail
+                            _ => break 'fail,
                         }
                     } else if let Some(caps) = re.captures(&s[ix..]) {
                         let mut slot = start_group * 2;
@@ -441,9 +484,7 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) ->
         pc = newpc;
         ix = newix;
     }
-
 }
-
 
 #[cfg(test)]
 mod tests {
