@@ -22,10 +22,10 @@
 
 extern crate fancy_regex;
 
-use fancy_regex::*;
 use fancy_regex::analyze::analyze;
 use fancy_regex::compile::compile;
 use fancy_regex::vm::{Insn, Prog};
+use fancy_regex::*;
 use std::env;
 use std::str::FromStr;
 
@@ -116,7 +116,7 @@ fn graph(re: &str) {
             }
             Insn::End => {}
             _ => {
-                println!("{:3} -> {};", i, i+1);
+                println!("{:3} -> {};", i, i + 1);
             }
         }
     }

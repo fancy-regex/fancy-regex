@@ -80,20 +80,31 @@ fn case_insensitive_escape() {
     assert_match(r"(?i)\p{Ll}", "A");
 }
 
-
 fn assert_match(re: &str, text: &str) {
     let result = match_text(re, text);
-    assert_eq!(result, true, "Expected regex '{}' to match text '{}'", re, text);
+    assert_eq!(
+        result, true,
+        "Expected regex '{}' to match text '{}'",
+        re, text
+    );
 }
 
 fn assert_no_match(re: &str, text: &str) {
     let result = match_text(re, text);
-    assert_eq!(result, false, "Expected regex '{}' to not match text '{}'", re, text);
+    assert_eq!(
+        result, false,
+        "Expected regex '{}' to not match text '{}'",
+        re, text
+    );
 }
 
 fn match_text(re: &str, text: &str) -> bool {
     let regex = common::regex(re);
     let result = regex.is_match(text);
-    assert!(result.is_ok(), "Expected match to succeed, but was {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Expected match to succeed, but was {:?}",
+        result
+    );
     result.unwrap()
 }
