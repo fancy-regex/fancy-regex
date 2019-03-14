@@ -60,8 +60,8 @@ fn main() {
                 print!("captures:");
                 for i in 0..caps.len() {
                     print!(" {}:", i);
-                    if let Some((lo, hi)) = caps.pos(i) {
-                        print!("[{}..{}] \"{}\"", lo, hi, caps.at(i).unwrap());
+                    if let Some(m) = caps.get(i) {
+                        print!("[{}..{}] \"{}\"", m.start(), m.end(), m.as_str());
                     } else {
                         print!("_");
                     }

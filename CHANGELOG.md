@@ -17,6 +17,9 @@ with the exception that 0.x versions can break between minor versions.
 - Implement `Debug` for `Regex`
 ### Changed
 - Change `find` to return a `Match` struct (breaking change)
+- Change `Captures` API (breaking change):
+  - Replace `at` and `pos` with `get` that returns a `Match` struct
+  - Remove `is_empty` (use `len`)
 - Allow unescaped `]` and `}` as literals
 - Allow unescaped `{` as literal when not after atom
 - Allow escapes such as `\<` or `\e` inside character classes
