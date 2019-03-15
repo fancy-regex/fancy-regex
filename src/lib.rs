@@ -170,7 +170,7 @@ pub enum Captures<'t> {
 }
 
 #[derive(Debug)]
-pub struct SubCaptureMatches<'c, 't> {
+pub struct SubCaptureMatches<'c, 't: 'c> {
     caps: &'c Captures<'t>,
     i: usize,
 }
