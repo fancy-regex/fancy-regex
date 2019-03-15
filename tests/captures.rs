@@ -10,8 +10,8 @@ fn captures_after_lookbehind() {
         r"\s*(?<=[() ])(@\w+)(\([^)]*\))?\s*",
         " @another(foo bar)   ",
     );
-    assert_eq!(Some("@another"), captures.at(1));
-    assert_eq!(Some("(foo bar)"), captures.at(2));
+    assert_eq!(Some("@another"), captures.get(1).map(|m| m.as_str()));
+    assert_eq!(Some("(foo bar)"), captures.get(2).map(|m| m.as_str()));
 }
 
 fn captures<'a>(re: &str, text: &'a str) -> Captures<'a> {

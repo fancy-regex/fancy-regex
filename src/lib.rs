@@ -155,6 +155,7 @@ pub struct Match<'t> {
 #[derive(Debug)]
 pub enum Captures<'t> {
     Wrap {
+        text: &'t str,
         inner: regex::Captures<'t>,
 
         // starting position, in _from_pos variants
@@ -169,8 +170,8 @@ pub enum Captures<'t> {
 }
 
 #[derive(Debug)]
-pub struct SubCaptures<'t> {
-    caps: &'t Captures<'t>,
+pub struct SubCaptureMatches<'c, 't: 'c> {
+    caps: &'c Captures<'t>,
     i: usize,
 }
 
@@ -270,6 +271,9 @@ impl Regex {
 
     /// Find the first match in the input text.
     ///
+    /// If you have capturing groups in your regex that you want to extract, use the [captures()]
+    /// method.
+    ///
     /// # Example
     ///
     /// Find a word that is followed by an exclamation point:
@@ -292,9 +296,30 @@ impl Regex {
         }
     }
 
+    /// Returns the capture groups for the first match in `text`.
+    ///
+    /// If no match is found, then `Ok(None)` is returned.
+    ///
+    /// # Examples
+    ///
+    /// Finding matches and capturing parts of the match:
+    ///
+    /// ```rust
+    /// # use fancy_regex::Regex;
+    ///
+    /// let re = Regex::new(r"(\d{4})-(\d{2})-(\d{2})").unwrap();
+    /// let text = "The date was 2018-04-07";
+    /// let captures = re.captures(text).unwrap().unwrap();
+    ///
+    /// assert_eq!(captures.get(1).unwrap().as_str(), "2018");
+    /// assert_eq!(captures.get(2).unwrap().as_str(), "04");
+    /// assert_eq!(captures.get(3).unwrap().as_str(), "07");
+    /// assert_eq!(captures.get(0).unwrap().as_str(), "2018-04-07");
+    /// ```
     pub fn captures<'t>(&self, text: &'t str) -> Result<Option<Captures<'t>>> {
         match *self {
             Regex::Wrap { ref inner, .. } => Ok(inner.captures(text).map(|caps| Captures::Wrap {
+                text,
                 inner: caps,
                 offset: 0,
                 enclosing_groups: 0,
@@ -306,7 +331,7 @@ impl Regex {
                 Ok(result.map(|mut saves| {
                     saves.truncate(n_groups * 2);
                     Captures::Impl {
-                        text: text,
+                        text,
                         saves: saves,
                     }
                 }))
@@ -326,8 +351,11 @@ impl Regex {
     /// let re = Regex::new(r"(?m:^)(\d+)").unwrap();
     /// let text = "1 test 123\n2 foo";
     /// let captures = re.captures_from_pos(text, 7).unwrap().unwrap();
-    /// assert_eq!(captures.at(1), Some("2"));
-    /// assert_eq!(captures.pos(1), Some((11, 12)));
+    ///
+    /// let group = captures.get(1).unwrap();
+    /// assert_eq!(group.as_str(), "2");
+    /// assert_eq!(group.start(), 11);
+    /// assert_eq!(group.end(), 12);
     /// ```
     ///
     /// Note that in some cases this is not the same as using the `captures`
@@ -339,7 +367,7 @@ impl Regex {
     /// let re = Regex::new(r"(?m:^)(\d+)").unwrap();
     /// let text = "1 test 123\n2 foo";
     /// let captures = re.captures(&text[7..]).unwrap().unwrap();
-    /// assert_eq!(captures.at(1), Some("123"));
+    /// assert_eq!(captures.get(1).unwrap().as_str(), "123");
     /// ```
     ///
     /// This matched the number "123" because it's at the beginning of the text
@@ -354,6 +382,7 @@ impl Regex {
             } => {
                 if inner1.is_none() || pos == 0 {
                     Ok(inner.captures(&text[pos..]).map(|caps| Captures::Wrap {
+                        text,
                         inner: caps,
                         offset: pos,
                         enclosing_groups: 0,
@@ -362,6 +391,7 @@ impl Regex {
                     let ix = prev_codepoint_ix(text, pos);
                     let inner1 = inner1.as_ref().unwrap();
                     Ok(inner1.captures(&text[ix..]).map(|caps| Captures::Wrap {
+                        text,
                         inner: caps,
                         offset: ix,
                         enclosing_groups: 1,
@@ -375,8 +405,8 @@ impl Regex {
                 Ok(result.map(|mut saves| {
                     saves.truncate(n_groups * 2);
                     Captures::Impl {
-                        text: text,
-                        saves: saves,
+                        text,
+                        saves,
                     }
                 }))
             }
@@ -417,16 +447,19 @@ impl<'t> Match<'t> {
 }
 
 impl<'t> Captures<'t> {
-    pub fn pos(&self, i: usize) -> Option<(usize, usize)> {
+    pub fn get(&self, i: usize) -> Option<Match<'t>> {
         match *self {
             Captures::Wrap {
+                text,
                 ref inner,
                 ref offset,
                 enclosing_groups,
-            } => inner
-                .get(i + enclosing_groups)
-                .map(|m| (m.start() + offset, m.end() + offset)),
-            Captures::Impl { ref saves, .. } => {
+            } => inner.get(i + enclosing_groups).map(|m| Match {
+                text,
+                start: m.start() + offset,
+                end: m.end() + offset,
+            }),
+            Captures::Impl { text, ref saves } => {
                 if i >= saves.len() {
                     return None;
                 }
@@ -435,24 +468,17 @@ impl<'t> Captures<'t> {
                     return None;
                 }
                 let hi = saves[i * 2 + 1];
-                Some((lo, hi))
+                Some(Match {
+                    text,
+                    start: lo,
+                    end: hi,
+                })
             }
         }
     }
 
-    pub fn at(&self, i: usize) -> Option<&'t str> {
-        match *self {
-            Captures::Wrap {
-                ref inner,
-                enclosing_groups,
-                ..
-            } => inner.get(i + enclosing_groups).map(|m| m.as_str()),
-            Captures::Impl { text, .. } => self.pos(i).map(|(lo, hi)| &text[lo..hi]),
-        }
-    }
-
-    pub fn iter(&'t self) -> SubCaptures<'t> {
-        SubCaptures { caps: self, i: 0 }
+    pub fn iter<'c>(&'c self) -> SubCaptureMatches<'c, 't> {
+        SubCaptureMatches { caps: self, i: 0 }
     }
 
     pub fn len(&self) -> usize {
@@ -465,25 +491,14 @@ impl<'t> Captures<'t> {
             Captures::Impl { ref saves, .. } => saves.len() / 2,
         }
     }
-
-    pub fn is_empty(&self) -> bool {
-        match *self {
-            Captures::Wrap {
-                ref inner,
-                enclosing_groups,
-                ..
-            } => inner.len() == enclosing_groups,
-            Captures::Impl { ref saves, .. } => saves.is_empty(),
-        }
-    }
 }
 
-impl<'t> Iterator for SubCaptures<'t> {
-    type Item = Option<&'t str>;
+impl<'c, 't> Iterator for SubCaptureMatches<'c, 't> {
+    type Item = Option<Match<'t>>;
 
-    fn next(&mut self) -> Option<Option<&'t str>> {
+    fn next(&mut self) -> Option<Option<Match<'t>>> {
         if self.i < self.caps.len() {
-            let result = self.caps.at(self.i);
+            let result = self.caps.get(self.i);
             self.i += 1;
             Some(result)
         } else {
