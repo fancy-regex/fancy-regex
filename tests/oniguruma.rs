@@ -208,22 +208,24 @@ fn oniguruma() {
     let mut success = 0;
 
     for test in tests {
-        if ignore.contains(&test) {
-            ignored += 1;
-            continue;
-        }
-
         let result = run_test(&test);
-        if let Some(failure) = result {
-            // This is a weird way to do the assertions, but the nice thing about it is that we can
-            // run the tests without an "ignore" file and instead of failing, print the contents for
-            // the ignore file. To do that, disable the assert and enable the print:
 
-            // println!("{}", failure);
-            assert!(false, "{}", failure);
+        if ignore.contains(&test) {
+            assert!(result.is_some(),
+                    "Expected ignored test to fail, but it succeeded. Remove it from the ignore file: {}", &test.source);
+            ignored += 1;
         } else {
-            // println!("Success: {}", test.source);
-            success += 1;
+            if let Some(failure) = result {
+                // This is a weird way to do the assertions, but the nice thing about it is that we
+                // can run the tests without an "ignore" file and instead of failing, print the
+                // content for the ignore file. To do that, disable the assert and enable the print:
+
+                // println!("{}", failure);
+                assert!(false, "{}", failure);
+            } else {
+                // println!("Success: {}", test.source);
+                success += 1;
+            }
         }
     }
 
