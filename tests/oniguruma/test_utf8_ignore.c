@@ -1045,9 +1045,6 @@
   // No match found
   x2("a{2,3}+a", "aaa", 0, 3);
 
-  // No match found
-  x2("\\p{Common}", "\xe3\x8b\xbf", 0, 3);
-
   // Compile failed: InnerError(Syntax(
   // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   // regex parse error:
