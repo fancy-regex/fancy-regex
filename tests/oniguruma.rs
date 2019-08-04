@@ -3,7 +3,7 @@
 extern crate fancy_regex;
 extern crate regex;
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::panic;
 
 use regex::Regex;
@@ -29,22 +29,31 @@ enum Assertion {
 }
 
 /// Extract tests from the C source file (or the ignore file).
-fn parse_tests(test_source: &str) -> Vec<Test> {
+///
+/// Returns a vec of tuple of the test data and the comment for the test.
+fn parse_tests(test_source: &str) -> Vec<(Test, String)> {
     let mut tests = Vec::new();
 
     let c_string = r#""((?:\\\\|\\"|[^"])*)""#;
     let re = Regex::new(&format!(
-        r"(?m)^\s*(x2|x3|n)\({},\s*{},?([^\)]+)\);",
+        r"(?m)((?:^  //.*\n)*)^\s*((x2|x3|n)\({},\s*{},?([^\)]+)\);)",
         c_string, c_string
     ))
     .unwrap();
     for caps in re.captures_iter(test_source) {
-        let source = caps.get(0).unwrap().as_str().trim().to_string();
-        let kind = caps.get(1).unwrap().as_str();
-        let pattern = unescape(caps.get(2).unwrap().as_str());
-        let text = unescape(caps.get(3).unwrap().as_str());
+        let comment = caps
+            .get(1)
+            .unwrap()
+            .as_str()
+            .replace("  // ", "")
+            .trim()
+            .to_string();
+        let source = caps.get(2).unwrap().as_str().to_string();
+        let kind = caps.get(3).unwrap().as_str();
+        let pattern = unescape(caps.get(4).unwrap().as_str());
+        let text = unescape(caps.get(5).unwrap().as_str());
         let args: Vec<usize> = caps
-            .get(4)
+            .get(6)
             .unwrap()
             .as_str()
             .split(",")
@@ -75,7 +84,7 @@ fn parse_tests(test_source: &str) -> Vec<Test> {
             assertion,
         };
 
-        tests.push(test);
+        tests.push((test, comment));
     }
     tests
 }
@@ -139,18 +148,16 @@ fn unescape(escaped: &str) -> String {
 
 fn run_test(test: &Test) -> Option<String> {
     let Test {
-        source,
         pattern,
         text,
         assertion,
+        ..
     } = test;
 
     let compile_result = FancyRegex::new(&pattern);
     if compile_result.is_err() {
-        let mut error = format!("{:?}", compile_result.unwrap_err());
-        // The regex crate's error can be multiple lines, format nicely
-        error = error.replace("\n", "\n  // ");
-        return Some(format!("  // Compile failed: {}\n  {}\n", error, source));
+        let error = format!("{:?}", compile_result.unwrap_err());
+        return Some(format!("Compile failed: {}", error));
     }
 
     match *assertion {
@@ -167,28 +174,27 @@ fn run_test(test: &Test) -> Option<String> {
                     let m = captures.get(group).expect("Expected group to exist");
                     if m.start() != start || m.end() != end {
                         Some(format!(
-                            "  // Match found at start {} and end {} (expected {} and {})\n  {}\n",
+                            "Match found at start {} and end {} (expected {} and {})",
                             m.start(),
                             m.end(),
                             start,
-                            end,
-                            source
+                            end
                         ))
                     } else {
                         None
                     }
                 } else {
-                    Some(format!("  // No match found\n  {}\n", source))
+                    Some("No match found".to_string())
                 }
             } else {
-                Some(format!("  // Panic while matching\n  {}\n", source))
+                Some("Panic while matching".to_string())
             }
         }
         Assertion::NoMatch => {
             let regex = FancyRegex::new(&pattern).unwrap();
             let result = regex.find(&text).unwrap();
             if result.is_some() {
-                Some(format!(" // Match found\n  {}\n", source))
+                Some("Match found".to_string())
             } else {
                 // We expected it not to match and it didn't -> good
                 None
@@ -199,8 +205,11 @@ fn run_test(test: &Test) -> Option<String> {
 
 #[test]
 fn oniguruma() {
-    let tests = parse_tests(include_str!("oniguruma/test_utf8.c"));
-    let ignore: HashSet<_> = parse_tests(include_str!("oniguruma/test_utf8_ignore.c"))
+    let tests: Vec<Test> = parse_tests(include_str!("oniguruma/test_utf8.c"))
+        .into_iter()
+        .map(|(test, _comment)| test)
+        .collect();
+    let ignore: HashMap<Test, String> = parse_tests(include_str!("oniguruma/test_utf8_ignore.c"))
         .into_iter()
         .collect();
 
@@ -210,9 +219,15 @@ fn oniguruma() {
     for test in tests {
         let result = run_test(&test);
 
-        if ignore.contains(&test) {
+        if let Some(expected_failure) = ignore.get(&test) {
             assert!(result.is_some(),
                     "Expected ignored test to fail, but it succeeded. Remove it from the ignore file: {}", &test.source);
+            let failure = result.unwrap();
+            assert_eq!(
+                failure, *expected_failure,
+                "Expected failure differed for test, change it in the ignore file: {}",
+                &test.source
+            );
             ignored += 1;
         } else {
             if let Some(failure) = result {
@@ -220,8 +235,8 @@ fn oniguruma() {
                 // can run the tests without an "ignore" file and instead of failing, print the
                 // content for the ignore file. To do that, disable the assert and enable the print:
 
-                // println!("{}", failure);
-                assert!(false, "{}", failure);
+                // println!("  // {}\n  {}\n", failure, test.source);
+                assert!(false, "Test {} failed: {}", &test.source, failure);
             } else {
                 // println!("Success: {}", test.source);
                 success += 1;
