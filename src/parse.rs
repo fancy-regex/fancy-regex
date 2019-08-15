@@ -39,6 +39,7 @@ const FLAG_SWAP_GREED: u32 = (1 << 3);
 const FLAG_IGNORE_SPACE: u32 = (1 << 4);
 const FLAG_UNICODE: u32 = (1 << 5);
 
+#[derive(Debug)]
 pub struct Parser<'a> {
     re: &'a str, // source
     backrefs: BitSet,
@@ -46,6 +47,8 @@ pub struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
+    /// Parse the regex and return an expression (AST) and a bit set with the indexes of groups
+    /// that are referenced by backrefs.
     pub fn parse(re: &str) -> Result<(Expr, BitSet)> {
         let mut p = Parser::new(re);
         let (ix, result) = p.parse_re(0, 0)?;

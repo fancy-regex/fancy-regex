@@ -71,6 +71,10 @@ assert_eq!(m.as_str(), "123");
 ```
 */
 
+#![deny(warnings)]
+//#![deny(missing_docs)]
+#![deny(missing_debug_implementations)]
+
 extern crate bit_set;
 extern crate regex;
 
@@ -169,6 +173,7 @@ pub enum Captures<'t> {
     },
 }
 
+/// Iterator for captured groups in order in which they appear in the regex.
 #[derive(Debug)]
 pub struct SubCaptureMatches<'c, 't: 'c> {
     caps: &'c Captures<'t>,
@@ -183,6 +188,7 @@ impl fmt::Debug for Regex {
 }
 
 impl Regex {
+    /// Parse and compile a regex.
     pub fn new(re: &str) -> Result<Regex> {
         let (raw_e, backrefs) = Expr::parse(re)?;
 
@@ -414,6 +420,7 @@ impl Regex {
     }
 
     // for debugging only
+    #[doc(hidden)]
     pub fn debug_print(&self) {
         match *self {
             Regex::Wrap { ref inner, .. } => println!("wrapped {:?}", inner),
@@ -447,6 +454,10 @@ impl<'t> Match<'t> {
 }
 
 impl<'t> Captures<'t> {
+    /// Get the capture group by its index in the regex.
+    ///
+    /// If there is no match for that group or the index does not correspond to a group, `None` is
+    /// returned. The index 0 returns the whole match.
     pub fn get(&self, i: usize) -> Option<Match<'t>> {
         match *self {
             Captures::Wrap {
@@ -477,10 +488,13 @@ impl<'t> Captures<'t> {
         }
     }
 
+    /// Iterate over the captured groups in order in which they appeared in the regex. The first
+    /// capture corresponds to the whole match.
     pub fn iter<'c>(&'c self) -> SubCaptureMatches<'c, 't> {
         SubCaptureMatches { caps: self, i: 0 }
     }
 
+    /// How many groups were captured.
     pub fn len(&self) -> usize {
         match *self {
             Captures::Wrap {
@@ -511,46 +525,83 @@ impl<'c, 't> Iterator for SubCaptureMatches<'c, 't> {
 
 // impl error traits (::std::error::Error, fmt::Display)
 
-// Access to the AST. This is public for now but may change.
-
+/// Regular expression AST. This is public for now but may change.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Expr {
+    /// An empty expression, e.g. the last branch in `(a|b|)`
     Empty,
+    /// Any character, regex `.`
     Any {
+        /// Whether it also matches newlines or not
         newline: bool,
     },
+    /// Start of input text
     StartText,
+    /// End of input text
     EndText,
+    /// Start of a line
     StartLine,
+    /// End of a line
     EndLine,
+    /// The string as a literal, e.g. `a`
     Literal {
+        /// The string to match
         val: String,
+        /// Whether match is case-insensitive or not
         casei: bool,
     },
+    /// Concatenation of multiple expressions, must match in order, e.g. `a.` is a concatenation of
+    /// the literal `a` and `.` for any character
     Concat(Vec<Expr>),
+    /// Alternative of multiple expressions, one of them must match, e.g. `a|b` is an alternative
+    /// where either the literal `a` or `b` must match
     Alt(Vec<Expr>),
+    /// Capturing group of expression, e.g. `(a.)` matches `a` and any character and "captures"
+    /// (remembers) the match
     Group(Box<Expr>),
+    /// Look-around (e.g. positive/negative look-ahead or look-behind) with an expression, e.g.
+    /// `(?=a)` means the next character must be `a` (but the match is not consumed)
     LookAround(Box<Expr>, LookAround),
+    /// Repeat of an expression, e.g. `a*` or `a+` or `a{1,3}`
     Repeat {
+        /// The expression that is being repeated
         child: Box<Expr>,
+        /// The minimum number of repetitions
         lo: usize,
+        /// The maximum number of repetitions (or `usize::MAX`)
         hi: usize,
+        /// Greedy means as much as possible is matched, e.g. `.*b` would match all of `abab`.
+        /// Non-greedy means as little as possible, e.g. `.*?b` would match only `ab` in `abab`.
         greedy: bool,
     },
+    /// Delegate a regex to the regex crate. This is used as a simplification so that we don't have
+    /// to represent all the expressions in the AST, e.g. character classes.
     Delegate {
+        /// The regex
         inner: String,
+        /// How many characters the regex matches
         size: usize, // TODO: move into analysis result
+        /// Whether the matching is case-insensitive or not
         casei: bool,
     },
+    /// Back reference to a capture group, e.g. `\1` in `(abc|def)\1` references the captured group
+    /// and the whole regex matches either `abcabc` or `defdef`.
     Backref(usize),
+    /// Atomic non-capturing group, e.g. `(?>ab|a)` in text that contains `ab` will match `ab` and
+    /// never backtrack and try `a`, even if matching fails after the atomic group.
     AtomicGroup(Box<Expr>),
 }
 
+/// Type of look-around assertion as used for a look-around expression.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum LookAround {
+    /// Look-ahead assertion, e.g. `(?=a)`
     LookAhead,
+    /// Negative look-ahead assertion, e.g. `(?!a)`
     LookAheadNeg,
+    /// Look-behind assertion, e.g. `(?<=a)`
     LookBehind,
+    /// Negative look-behind assertion, e.g. `(?<!a)`
     LookBehindNeg,
 }
 
@@ -577,10 +628,17 @@ fn push_quoted(buf: &mut String, s: &str) {
 }
 
 impl Expr {
+    /// Parse the regex and return an expression (AST) and a bit set with the indexes of groups
+    /// that are referenced by backrefs.
     pub fn parse(re: &str) -> Result<(Expr, BitSet)> {
         Parser::parse(re)
     }
 
+    /// Convert expression to a regex string in the regex crate's syntax.
+    ///
+    /// # Panics
+    ///
+    /// Panics for expressions that are hard, i.e. can not be handled by the regex crate.
     pub fn to_str(&self, buf: &mut String, precedence: u8) {
         match *self {
             Expr::Empty => (),

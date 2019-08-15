@@ -97,6 +97,7 @@ impl Prog {
         }
     }
 
+    #[doc(hidden)]
     pub fn debug_print(&self) {
         for (i, insn) in self.body.iter().enumerate() {
             println!("{:3}: {:?}", i, insn);
@@ -105,10 +106,10 @@ impl Prog {
 }
 
 struct State {
-    pub saves: Vec<usize>, // mostly indices to s, but can be repeat values etc
+    saves: Vec<usize>, // mostly indices to s, but can be repeat values etc
 
     // pc, index to string, nsave value
-    pub stack: Vec<(usize, usize, usize)>,
+    stack: Vec<(usize, usize, usize)>,
 
     oldsave: Vec<(usize, usize)>,
     nsave: usize,
