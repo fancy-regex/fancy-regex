@@ -7,7 +7,7 @@ description = "An implementation of regexes, supporting a relatively rich set of
 repository = "https://github.com/fancy-regex/fancy-regex"
 
 [dependencies]
-regex = "1.1"
+regex = "1.2"
 bit-set = "0.5"
 
 [dev-dependencies]
