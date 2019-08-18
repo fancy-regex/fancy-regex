@@ -72,6 +72,11 @@ fn negative_lookahead_fail() {
     assert_eq!(find(r"(?!`(?:[^`]+(?=`)|x)`)", "`a`"), Some((1, 1)));
 }
 
+#[test]
+fn backref_for_unmatched_group() {
+    assert_eq!(find(r"(a)?\1", "bb"), None);
+}
+
 fn find(re: &str, text: &str) -> Option<(usize, usize)> {
     let regex = common::regex(re);
     let result = regex.find(text);

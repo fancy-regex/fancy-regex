@@ -410,6 +410,10 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) -> Result<Option<Vec<
                 }
                 Insn::Backref(slot) => {
                     let lo = state.get(slot);
+                    if lo == usize::MAX {
+                        // Referenced group hasn't matched, so the backref doesn't match either
+                        break 'fail;
+                    }
                     let hi = state.get(slot + 1);
                     let ix_end = ix + (hi - lo);
                     if ix_end > s.len() || s[ix..ix_end] != s[lo..hi] {
