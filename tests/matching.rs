@@ -1,5 +1,3 @@
-extern crate fancy_regex;
-
 mod common;
 
 #[test]

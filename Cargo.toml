@@ -2,6 +2,7 @@
 name = "fancy-regex"
 version = "0.1.0"
 authors = ["Raph Levien <raph@google.com>"]
+edition = "2018"
 license = "MIT"
 description = "An implementation of regexes, supporting a relatively rich set of features, including backreferences and look-around."
 repository = "https://github.com/fancy-regex/fancy-regex"

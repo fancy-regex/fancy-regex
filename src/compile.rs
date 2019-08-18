@@ -23,13 +23,13 @@
 use regex;
 use std::usize;
 
-use analyze::Info;
-use vm::{Insn, Prog};
-use Error;
-use Expr;
-use LookAround;
-use LookAround::*;
-use Result;
+use crate::analyze::Info;
+use crate::vm::{Insn, Prog};
+use crate::Error;
+use crate::Expr;
+use crate::LookAround;
+use crate::LookAround::*;
+use crate::Result;
 
 // I'm thinking it probably doesn't make a lot of sense having this split
 // out from Compiler.
@@ -96,7 +96,7 @@ struct Compiler {
 }
 
 impl Compiler {
-    fn visit(&mut self, info: &Info, hard: bool) -> Result<()> {
+    fn visit(&mut self, info: &Info<'_>, hard: bool) -> Result<()> {
         if !hard && !info.hard {
             // easy case, delegate entire subexpr
             return self.compile_delegates(&[info]);
@@ -192,7 +192,7 @@ impl Compiler {
         Ok(())
     }
 
-    fn compile_concat(&mut self, info: &Info, hard: bool) -> Result<()> {
+    fn compile_concat(&mut self, info: &Info<'_>, hard: bool) -> Result<()> {
         let children: Vec<_> = info.children.iter().map(|c| c).collect();
 
         // First: determine a prefix which is constant size and not hard.
@@ -230,7 +230,7 @@ impl Compiler {
 
     fn compile_repeat(
         &mut self,
-        info: &Info,
+        info: &Info<'_>,
         lo: usize,
         hi: usize,
         greedy: bool,
@@ -317,7 +317,7 @@ impl Compiler {
         Ok(())
     }
 
-    fn compile_lookaround(&mut self, info: &Info, la: LookAround) -> Result<()> {
+    fn compile_lookaround(&mut self, info: &Info<'_>, la: LookAround) -> Result<()> {
         let inner = &info.children[0];
         match la {
             LookBehind => {
@@ -359,7 +359,7 @@ impl Compiler {
         }
     }
 
-    fn compile_positive_lookaround(&mut self, inner: &Info, la: LookAround) -> Result<()> {
+    fn compile_positive_lookaround(&mut self, inner: &Info<'_>, la: LookAround) -> Result<()> {
         let save = self.b.newsave();
         self.b.add(Insn::Save(save));
         self.compile_lookaround_inner(inner, la)?;
@@ -367,7 +367,7 @@ impl Compiler {
         Ok(())
     }
 
-    fn compile_negative_lookaround(&mut self, inner: &Info, la: LookAround) -> Result<()> {
+    fn compile_negative_lookaround(&mut self, inner: &Info<'_>, la: LookAround) -> Result<()> {
         let pc = self.b.pc();
         self.b.add(Insn::Split(pc + 1, usize::MAX));
         self.compile_lookaround_inner(inner, la)?;
@@ -377,7 +377,7 @@ impl Compiler {
         Ok(())
     }
 
-    fn compile_lookaround_inner(&mut self, inner: &Info, la: LookAround) -> Result<()> {
+    fn compile_lookaround_inner(&mut self, inner: &Info<'_>, la: LookAround) -> Result<()> {
         if la == LookBehind || la == LookBehindNeg {
             if !inner.const_size {
                 return Err(Error::LookBehindNotConst);
@@ -387,7 +387,7 @@ impl Compiler {
         self.visit(inner, false)
     }
 
-    fn compile_delegates(&mut self, infos: &[&Info]) -> Result<()> {
+    fn compile_delegates(&mut self, infos: &[&Info<'_>]) -> Result<()> {
         if infos.is_empty() {
             return Ok(());
         }
@@ -476,7 +476,7 @@ pub fn compile_inner(inner_re: &str) -> Result<regex::Regex> {
 }
 
 // Don't need the expr because the analysis info points to it
-pub fn compile(info: &Info) -> Result<Prog> {
+pub fn compile(info: &Info<'_>) -> Result<Prog> {
     let mut c = Compiler {
         b: VMBuilder::new(info.end_group),
     };
@@ -489,8 +489,9 @@ pub fn compile(info: &Info) -> Result<Prog> {
 mod tests {
 
     use super::*;
-    use analyze::analyze;
+    use crate::analyze::analyze;
     use bit_set::BitSet;
+    use matches::assert_matches;
 
     #[test]
     fn jumps_for_alternation() {

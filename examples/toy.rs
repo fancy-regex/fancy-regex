@@ -20,8 +20,6 @@
 
 //! A simple test app for exercising and debugging the regex engine.
 
-extern crate fancy_regex;
-
 use fancy_regex::analyze::analyze;
 use fancy_regex::compile::compile;
 use fancy_regex::vm::{Insn, Prog};

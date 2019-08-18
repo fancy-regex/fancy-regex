@@ -20,10 +20,7 @@
 
 #![feature(test)]
 
-extern crate regex;
 extern crate test;
-
-extern crate fancy_regex;
 
 #[cfg(test)]
 mod bench {

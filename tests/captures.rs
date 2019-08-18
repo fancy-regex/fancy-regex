@@ -1,4 +1,4 @@
-extern crate fancy_regex;
+
 
 use fancy_regex::Captures;
 
