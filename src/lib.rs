@@ -710,13 +710,22 @@ impl Expr {
                     buf.push_str("(?:");
                 }
                 child.to_str(buf, 3);
-                buf.push('{');
-                push_usize(buf, lo);
-                buf.push(',');
-                if hi != usize::MAX {
-                    push_usize(buf, hi);
+                match (lo, hi) {
+                    (0, 1) => buf.push('?'),
+                    (0, usize::MAX) => buf.push('*'),
+                    (1, usize::MAX) => buf.push('+'),
+                    (lo, hi) => {
+                        buf.push('{');
+                        push_usize(buf, lo);
+                        if lo != hi {
+                            buf.push(',');
+                            if hi != usize::MAX {
+                                push_usize(buf, hi);
+                            }
+                        }
+                        buf.push('}');
+                    }
                 }
-                buf.push('}');
                 if !greedy {
                     buf.push('?');
                 }
@@ -796,6 +805,7 @@ pub fn detect_possible_backref(re: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::usize;
     use parse::make_literal;
     use Expr;
     use Regex;
@@ -803,39 +813,39 @@ mod tests {
 
     // tests for to_str
 
+    fn to_str(e: Expr) -> String {
+        let mut s = String::new();
+        e.to_str(&mut s, 0);
+        s
+    }
+
     #[test]
     fn to_str_concat_alt() {
-        let mut s = String::new();
         let e = Expr::Concat(vec![
             Expr::Alt(vec![make_literal("a"), make_literal("b")]),
             make_literal("c"),
         ]);
-        e.to_str(&mut s, 0);
-        assert_eq!(s, "(?:a|b)c");
+        assert_eq!(to_str(e), "(?:a|b)c");
     }
 
     #[test]
     fn to_str_rep_concat() {
-        let mut s = String::new();
         let e = Expr::Repeat {
             child: Box::new(Expr::Concat(vec![make_literal("a"), make_literal("b")])),
             lo: 2,
             hi: 3,
             greedy: true,
         };
-        e.to_str(&mut s, 0);
-        assert_eq!(s, "(?:ab){2,3}");
+        assert_eq!(to_str(e), "(?:ab){2,3}");
     }
 
     #[test]
     fn to_str_group_alt() {
-        let mut s = String::new();
         let e = Expr::Group(Box::new(Expr::Alt(vec![
             make_literal("a"),
             make_literal("b"),
         ])));
-        e.to_str(&mut s, 0);
-        assert_eq!(s, "(a|b)");
+        assert_eq!(to_str(e), "(a|b)");
     }
 
     #[test]
@@ -844,6 +854,31 @@ mod tests {
         let regex = Regex::new(s).unwrap();
         assert_eq!(s, regex.as_str());
         assert_eq!(s, format!("{:?}", regex));
+    }
+
+    #[test]
+    fn to_str_repeat() {
+        fn repeat(lo: usize, hi: usize, greedy: bool) -> Expr {
+            Expr::Repeat {
+                child: Box::new(make_literal("a")),
+                lo,
+                hi,
+                greedy,
+            }
+        }
+
+        assert_eq!(to_str(repeat(2, 2, true)), "a{2}");
+        assert_eq!(to_str(repeat(2, 2, false)), "a{2}?");
+        assert_eq!(to_str(repeat(2, 3, true)), "a{2,3}");
+        assert_eq!(to_str(repeat(2, 3, false)), "a{2,3}?");
+        assert_eq!(to_str(repeat(2, usize::MAX, true)), "a{2,}");
+        assert_eq!(to_str(repeat(2, usize::MAX, false)), "a{2,}?");
+        assert_eq!(to_str(repeat(0, 1, true)), "a?");
+        assert_eq!(to_str(repeat(0, 1, false)), "a??");
+        assert_eq!(to_str(repeat(0, usize::MAX, true)), "a*");
+        assert_eq!(to_str(repeat(0, usize::MAX, false)), "a*?");
+        assert_eq!(to_str(repeat(1, usize::MAX, true)), "a+");
+        assert_eq!(to_str(repeat(1, usize::MAX, false)), "a+?");
     }
 
     /*

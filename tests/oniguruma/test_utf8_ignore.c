@@ -966,7 +966,7 @@
   // Compile failed: InnerError(Syntax(
   // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   // regex parse error:
-  //     (?:[ab]|({0,}MAX{2,2}).){0,}
+  //     (?:[ab]|(*MAX{2}).)*
   //              ^
   // error: repetition operator missing expression
   // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -976,7 +976,7 @@
   // Compile failed: InnerError(Syntax(
   // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   // regex parse error:
-  //     (?:({0,}COUNT[AB]\{X\})[ab]|({0,}COUNT[CD]\{X\})[cd]){0,}({0,}CMP\{AB,<,CD\})
+  //     (?:(*COUNT[AB]\{X\})[ab]|(*COUNT[CD]\{X\})[cd])*(*CMP\{AB,<,CD\})
   //         ^
   // error: repetition operator missing expression
   // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
