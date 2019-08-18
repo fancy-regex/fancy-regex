@@ -239,10 +239,10 @@
   // Compile failed: UnknownFlag
   x2("(?<pare>\\(([^\\(\\)]++|\\g<pare>)*+\\))", "((a))", 0, 5);
 
-  // Panic while matching
+  // No match found
   x2("()*\\1", "", 0, 0);
 
-  // Panic while matching
+  // No match found
   x2("(?:()|())*\\1\\2", "", 0, 0);
 
   // Compile failed: InvalidBackref
@@ -251,10 +251,10 @@
   // Compile failed: InvalidEscape
   x2("x((.)*)*x(?i:\\1)\\Z", "0x1x2x1X2", 1, 9);
 
-  // Panic while matching
+  // No match found
   x2("(?:()|()|()|()|()|())*\\2\\5", "", 0, 0);
 
-  // Panic while matching
+  // No match found
   x2("(?:()|()|()|(x)|()|())*\\2b\\5", "b", 0, 1);
 
   // Compile failed: InvalidEscape
@@ -362,13 +362,13 @@
   // Compile failed: InvalidEscape
   x2("(a\\Kb|\\Kac\\K)*", "acababacab", 9, 10);
 
-  // Panic while matching
+  // No match found
   x2("(?:()|())*\\1", "abc", 0, 0);
 
-  // Panic while matching
+  // No match found
   x2("(?:()|())*\\2", "abc", 0, 0);
 
-  // Panic while matching
+  // No match found
   x2("(?:()|()|())*\\3\\1", "abc", 0, 0);
 
   // Compile failed: InvalidEscape
