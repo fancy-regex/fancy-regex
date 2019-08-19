@@ -5,8 +5,8 @@ sudo: required
 
 matrix:
   include:
-    # minimal supported Rust version, keep in sync with regex crate
-    - rust: 1.28.0
+    # minimal supported Rust version
+    - rust: 1.31.1
     - rust: stable
     - rust: beta
     - rust: nightly
