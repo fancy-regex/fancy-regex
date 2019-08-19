@@ -25,12 +25,12 @@ use regex::escape;
 use std::str::FromStr;
 use std::usize;
 
-use codepoint_len;
-use Error;
-use Expr;
-use LookAround::*;
-use Result;
-use MAX_RECURSION;
+use crate::codepoint_len;
+use crate::Error;
+use crate::Expr;
+use crate::LookAround::*;
+use crate::Result;
+use crate::MAX_RECURSION;
 
 const FLAG_CASEI: u32 = (1 << 0);
 const FLAG_MULTI: u32 = (1 << 1);
@@ -58,7 +58,7 @@ impl<'a> Parser<'a> {
         Ok((result, p.backrefs))
     }
 
-    fn new(re: &str) -> Parser {
+    fn new(re: &str) -> Parser<'_> {
         Parser {
             re: re,
             backrefs: BitSet::new(),
@@ -618,10 +618,10 @@ pub fn make_literal(s: &str) -> Expr {
 
 #[cfg(test)]
 mod tests {
-    use parse::make_literal;
+    use crate::parse::make_literal;
     use std::usize;
-    use Expr;
-    use LookAround::*;
+    use crate::Expr;
+    use crate::LookAround::*;
 
     fn p(s: &str) -> Expr {
         Expr::parse(s).unwrap().0

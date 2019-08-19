@@ -24,10 +24,10 @@ use regex::Regex;
 use std::collections::BTreeSet;
 use std::usize;
 
-use codepoint_len;
-use prev_codepoint_ix;
-use Error;
-use Result;
+use crate::codepoint_len;
+use crate::prev_codepoint_ix;
+use crate::Error;
+use crate::Result;
 
 pub const OPTION_TRACE: u32 = 1;
 
@@ -494,7 +494,7 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) -> Result<Option<Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quickcheck::{Arbitrary, Gen};
+    use quickcheck::{quickcheck, Arbitrary, Gen};
     use rand::Rng;
 
     #[test]

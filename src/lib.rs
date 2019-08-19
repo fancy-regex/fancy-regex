@@ -75,18 +75,6 @@ assert_eq!(m.as_str(), "123");
 //#![deny(missing_docs)]
 #![deny(missing_debug_implementations)]
 
-extern crate bit_set;
-extern crate regex;
-
-#[cfg(test)]
-#[macro_use]
-extern crate matches;
-#[cfg(test)]
-#[macro_use]
-extern crate quickcheck;
-#[cfg(test)]
-extern crate rand;
-
 use bit_set::BitSet;
 use std::fmt;
 use std::usize;
@@ -98,10 +86,10 @@ pub mod compile;
 pub mod parse;
 pub mod vm;
 
-use analyze::analyze;
-use compile::compile;
-use parse::Parser;
-use vm::Prog;
+use crate::analyze::analyze;
+use crate::compile::compile;
+use crate::parse::Parser;
+use crate::vm::Prog;
 
 const MAX_RECURSION: usize = 64;
 
@@ -175,14 +163,14 @@ pub enum Captures<'t> {
 
 /// Iterator for captured groups in order in which they appear in the regex.
 #[derive(Debug)]
-pub struct SubCaptureMatches<'c, 't: 'c> {
+pub struct SubCaptureMatches<'c, 't> {
     caps: &'c Captures<'t>,
     i: usize,
 }
 
 impl fmt::Debug for Regex {
     /// Shows the original regular expression.
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.as_str())
     }
 }
@@ -806,9 +794,9 @@ pub fn detect_possible_backref(re: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use std::usize;
-    use parse::make_literal;
-    use Expr;
-    use Regex;
+    use crate::parse::make_literal;
+    use crate::Expr;
+    use crate::Regex;
     //use detect_possible_backref;
 
     // tests for to_str

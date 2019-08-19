@@ -1,8 +1,5 @@
 //! Run tests from Oniguruma's test suite, see `oniguruma/README.md`
 
-extern crate fancy_regex;
-extern crate regex;
-
 use std::collections::HashMap;
 use std::panic;
 

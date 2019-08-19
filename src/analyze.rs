@@ -24,9 +24,9 @@ use bit_set::BitSet;
 use std::cmp::min;
 use std::usize;
 
-use Error;
-use Expr;
-use Result;
+use crate::Error;
+use crate::Expr;
+use crate::Result;
 
 #[derive(Debug)]
 pub struct Info<'a> {
@@ -209,7 +209,7 @@ mod tests {
     use super::analyze;
     use super::literal_const_size;
     use regex;
-    use Expr;
+    use crate::Expr;
 
     #[test]
     fn case_folding_safe() {
