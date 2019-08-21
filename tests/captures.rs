@@ -14,11 +14,27 @@ fn captures_after_lookbehind() {
 
 #[test]
 fn captures_from_pos() {
-    let regex = common::regex(r"(\d+)(?!a)");
-    let captures = assert_captures(regex.captures_from_pos("1b 2a 3b", 3));
+    let text = "11 21 33";
 
-    assert_match(captures.get(0), "3", 6, 7);
+    let regex = common::regex(r"(\d)\d");
+    let captures = assert_captures(regex.captures_from_pos(text, 3));
+    assert_eq!(captures.len(), 2);
+    assert_match(captures.get(0), "21", 3, 5);
+    assert_match(captures.get(1), "2", 3, 4);
+    let matches: Vec<_> = captures.iter().collect();
+    assert_eq!(matches.len(), 2);
+    assert_match(matches[0], "21", 3, 5);
+    assert_match(matches[1], "2", 3, 4);
+
+    let regex = common::regex(r"(\d+)\1");
+    let captures = assert_captures(regex.captures_from_pos(text, 3));
+    assert_eq!(captures.len(), 2);
+    assert_match(captures.get(0), "33", 6, 8);
     assert_match(captures.get(1), "3", 6, 7);
+    let matches: Vec<_> = captures.iter().collect();
+    assert_eq!(matches.len(), 2);
+    assert_match(matches[0], "33", 6, 8);
+    assert_match(matches[1], "3", 6, 7);
 }
 
 fn captures<'a>(re: &str, text: &'a str) -> Captures<'a> {
