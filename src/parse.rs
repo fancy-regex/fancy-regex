@@ -619,9 +619,9 @@ pub fn make_literal(s: &str) -> Expr {
 #[cfg(test)]
 mod tests {
     use crate::parse::make_literal;
-    use std::usize;
     use crate::Expr;
     use crate::LookAround::*;
+    use std::usize;
 
     fn p(s: &str) -> Expr {
         Expr::parse(s).unwrap().0

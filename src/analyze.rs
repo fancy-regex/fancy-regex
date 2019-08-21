@@ -208,8 +208,8 @@ pub fn analyze<'a>(expr: &'a Expr, backrefs: &'a BitSet) -> Result<Info<'a>> {
 mod tests {
     use super::analyze;
     use super::literal_const_size;
-    use regex;
     use crate::Expr;
+    use regex;
 
     #[test]
     fn case_folding_safe() {

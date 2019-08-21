@@ -324,10 +324,7 @@ impl Regex {
                 let result = vm::run(prog, text, 0, 0)?;
                 Ok(result.map(|mut saves| {
                     saves.truncate(n_groups * 2);
-                    Captures::Impl {
-                        text,
-                        saves: saves,
-                    }
+                    Captures::Impl { text, saves: saves }
                 }))
             }
         }
@@ -398,10 +395,7 @@ impl Regex {
                 let result = vm::run(prog, text, pos, 0)?;
                 Ok(result.map(|mut saves| {
                     saves.truncate(n_groups * 2);
-                    Captures::Impl {
-                        text,
-                        saves,
-                    }
+                    Captures::Impl { text, saves }
                 }))
             }
         }
@@ -793,10 +787,10 @@ pub fn detect_possible_backref(re: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::usize;
     use crate::parse::make_literal;
     use crate::Expr;
     use crate::Regex;
+    use std::usize;
     //use detect_possible_backref;
 
     // tests for to_str
