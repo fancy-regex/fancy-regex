@@ -79,12 +79,10 @@ use bit_set::BitSet;
 use std::fmt;
 use std::usize;
 
-// These modules are pub so examples/toy.rs can access them,
-// but we'll want to revisit that.
-pub mod analyze;
-pub mod compile;
-pub mod parse;
-pub mod vm;
+mod analyze;
+mod compile;
+mod parse;
+mod vm;
 
 use crate::analyze::analyze;
 use crate::compile::compile;
@@ -122,14 +120,17 @@ pub enum Error {
     StackOverflow,
 }
 
-pub enum Regex {
+pub struct Regex(RegexImpl);
+
+// Separate enum because we don't want to expose any of this
+enum RegexImpl {
     // Do we want to box this? It's pretty big...
     Wrap {
         inner: regex::Regex,
         inner1: Option<Box<regex::Regex>>,
         original: String,
     },
-    Impl {
+    Fancy {
         prog: Prog,
         n_groups: usize,
         original: String,
@@ -145,7 +146,10 @@ pub struct Match<'t> {
 }
 
 #[derive(Debug)]
-pub enum Captures<'t> {
+pub struct Captures<'t>(CapturesImpl<'t>);
+
+#[derive(Debug)]
+enum CapturesImpl<'t> {
     Wrap {
         text: &'t str,
         inner: regex::Captures<'t>,
@@ -155,7 +159,7 @@ pub enum Captures<'t> {
 
         enclosing_groups: usize,
     },
-    Impl {
+    Fancy {
         text: &'t str,
         saves: Vec<usize>,
     },
@@ -218,26 +222,26 @@ impl Regex {
             } else {
                 None
             };
-            return Ok(Regex::Wrap {
-                inner: inner,
-                inner1: inner1,
+            return Ok(Regex(RegexImpl::Wrap {
+                inner,
+                inner1,
                 original: re.to_string(),
-            });
+            }));
         }
 
-        let p = compile(&info)?;
-        Ok(Regex::Impl {
-            prog: p,
+        let prog = compile(&info)?;
+        Ok(Regex(RegexImpl::Fancy {
+            prog,
             n_groups: info.end_group,
             original: re.to_string(),
-        })
+        }))
     }
 
     /// Returns the original string of this regex.
     pub fn as_str(&self) -> &str {
-        match *self {
-            Regex::Wrap { ref original, .. } => &original,
-            Regex::Impl { ref original, .. } => &original,
+        match &self.0 {
+            RegexImpl::Wrap { ref original, .. } => original,
+            RegexImpl::Fancy { ref original, .. } => original,
         }
     }
 
@@ -254,9 +258,9 @@ impl Regex {
     /// assert!(re.is_match("mirror mirror on the wall").unwrap());
     /// ```
     pub fn is_match(&self, text: &str) -> Result<bool> {
-        match *self {
-            Regex::Wrap { ref inner, .. } => Ok(inner.is_match(text)),
-            Regex::Impl { ref prog, .. } => {
+        match &self.0 {
+            RegexImpl::Wrap { ref inner, .. } => Ok(inner.is_match(text)),
+            RegexImpl::Fancy { ref prog, .. } => {
                 let result = vm::run(prog, text, 0, 0)?;
                 Ok(result.is_some())
             }
@@ -279,11 +283,11 @@ impl Regex {
     /// assert_eq!(re.find("so fancy!").unwrap().unwrap().as_str(), "fancy");
     /// ```
     pub fn find<'t>(&self, text: &'t str) -> Result<Option<Match<'t>>> {
-        match *self {
-            Regex::Wrap { ref inner, .. } => Ok(inner
+        match &self.0 {
+            RegexImpl::Wrap { inner, .. } => Ok(inner
                 .find(text)
                 .map(|m| Match::new(text, m.start(), m.end()))),
-            Regex::Impl { ref prog, .. } => {
+            RegexImpl::Fancy { prog, .. } => {
                 let result = vm::run(prog, text, 0, 0)?;
                 Ok(result.map(|saves| Match::new(text, saves[0], saves[1])))
             }
@@ -311,20 +315,20 @@ impl Regex {
     /// assert_eq!(captures.get(0).unwrap().as_str(), "2018-04-07");
     /// ```
     pub fn captures<'t>(&self, text: &'t str) -> Result<Option<Captures<'t>>> {
-        match *self {
-            Regex::Wrap { ref inner, .. } => Ok(inner.captures(text).map(|caps| Captures::Wrap {
-                text,
-                inner: caps,
-                offset: 0,
-                enclosing_groups: 0,
+        match &self.0 {
+            RegexImpl::Wrap { inner, .. } => Ok(inner.captures(text).map(|caps| {
+                Captures(CapturesImpl::Wrap {
+                    text,
+                    inner: caps,
+                    offset: 0,
+                    enclosing_groups: 0,
+                })
             })),
-            Regex::Impl {
-                ref prog, n_groups, ..
-            } => {
+            RegexImpl::Fancy { prog, n_groups, .. } => {
                 let result = vm::run(prog, text, 0, 0)?;
                 Ok(result.map(|mut saves| {
                     saves.truncate(n_groups * 2);
-                    Captures::Impl { text, saves: saves }
+                    Captures(CapturesImpl::Fancy { text, saves: saves })
                 }))
             }
         }
@@ -365,37 +369,37 @@ impl Regex {
     /// of the string slice.
     ///
     pub fn captures_from_pos<'t>(&self, text: &'t str, pos: usize) -> Result<Option<Captures<'t>>> {
-        match *self {
-            Regex::Wrap {
-                ref inner,
-                ref inner1,
-                ..
-            } => {
+        match &self.0 {
+            RegexImpl::Wrap { inner, inner1, .. } => {
                 if inner1.is_none() || pos == 0 {
-                    Ok(inner.captures(&text[pos..]).map(|caps| Captures::Wrap {
-                        text,
-                        inner: caps,
-                        offset: pos,
-                        enclosing_groups: 0,
+                    let result = inner.captures(&text[pos..]);
+                    Ok(result.map(|caps| {
+                        Captures(CapturesImpl::Wrap {
+                            text,
+                            inner: caps,
+                            offset: pos,
+                            enclosing_groups: 0,
+                        })
                     }))
                 } else {
                     let ix = prev_codepoint_ix(text, pos);
                     let inner1 = inner1.as_ref().unwrap();
-                    Ok(inner1.captures(&text[ix..]).map(|caps| Captures::Wrap {
-                        text,
-                        inner: caps,
-                        offset: ix,
-                        enclosing_groups: 1,
+                    let result = inner1.captures(&text[ix..]);
+                    Ok(result.map(|caps| {
+                        Captures(CapturesImpl::Wrap {
+                            text,
+                            inner: caps,
+                            offset: ix,
+                            enclosing_groups: 1,
+                        })
                     }))
                 }
             }
-            Regex::Impl {
-                ref prog, n_groups, ..
-            } => {
+            RegexImpl::Fancy { prog, n_groups, .. } => {
                 let result = vm::run(prog, text, pos, 0)?;
                 Ok(result.map(|mut saves| {
                     saves.truncate(n_groups * 2);
-                    Captures::Impl { text, saves }
+                    Captures(CapturesImpl::Fancy { text, saves })
                 }))
             }
         }
@@ -404,9 +408,9 @@ impl Regex {
     // for debugging only
     #[doc(hidden)]
     pub fn debug_print(&self) {
-        match *self {
-            Regex::Wrap { ref inner, .. } => println!("wrapped {:?}", inner),
-            Regex::Impl { ref prog, .. } => prog.debug_print(),
+        match &self.0 {
+            RegexImpl::Wrap { inner, .. } => println!("wrapped {:?}", inner),
+            RegexImpl::Fancy { prog, .. } => prog.debug_print(),
         }
     }
 }
@@ -441,18 +445,18 @@ impl<'t> Captures<'t> {
     /// If there is no match for that group or the index does not correspond to a group, `None` is
     /// returned. The index 0 returns the whole match.
     pub fn get(&self, i: usize) -> Option<Match<'t>> {
-        match *self {
-            Captures::Wrap {
+        match &self.0 {
+            CapturesImpl::Wrap {
                 text,
-                ref inner,
-                ref offset,
+                inner,
+                offset,
                 enclosing_groups,
-            } => inner.get(i + enclosing_groups).map(|m| Match {
+            } => inner.get(i + *enclosing_groups).map(|m| Match {
                 text,
-                start: m.start() + offset,
-                end: m.end() + offset,
+                start: m.start() + *offset,
+                end: m.end() + *offset,
             }),
-            Captures::Impl { text, ref saves } => {
+            CapturesImpl::Fancy { text, ref saves } => {
                 if i >= saves.len() {
                     return None;
                 }
@@ -478,13 +482,13 @@ impl<'t> Captures<'t> {
 
     /// How many groups were captured.
     pub fn len(&self) -> usize {
-        match *self {
-            Captures::Wrap {
+        match self.0 {
+            CapturesImpl::Wrap {
                 ref inner,
                 enclosing_groups,
                 ..
             } => inner.len() - enclosing_groups,
-            Captures::Impl { ref saves, .. } => saves.len() / 2,
+            CapturesImpl::Fancy { ref saves, .. } => saves.len() / 2,
         }
     }
 }
@@ -784,6 +788,15 @@ pub fn detect_possible_backref(re: &str) -> bool {
     }
 }
 */
+
+/// The internal module only exists so that the toy example can access internals for debugging and
+/// experimenting.
+#[doc(hidden)]
+pub mod internal {
+    pub use crate::analyze::analyze;
+    pub use crate::compile::compile;
+    pub use crate::vm::{trace, Insn, Prog};
+}
 
 #[cfg(test)]
 mod tests {

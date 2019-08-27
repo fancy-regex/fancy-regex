@@ -29,7 +29,7 @@ use crate::prev_codepoint_ix;
 use crate::Error;
 use crate::Result;
 
-pub const OPTION_TRACE: u32 = 1;
+const OPTION_TRACE: u32 = 1;
 
 // TODO: make configurable
 const MAX_STACK: usize = 1000000;
@@ -253,6 +253,10 @@ impl State {
 
 fn codepoint_len_at(s: &str, ix: usize) -> usize {
     codepoint_len(s.as_bytes()[ix])
+}
+
+pub fn trace(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
+    run(prog, s, pos, OPTION_TRACE)
 }
 
 pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) -> Result<Option<Vec<usize>>> {
