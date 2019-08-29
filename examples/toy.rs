@@ -20,9 +20,7 @@
 
 //! A simple test app for exercising and debugging the regex engine.
 
-use fancy_regex::analyze::analyze;
-use fancy_regex::compile::compile;
-use fancy_regex::vm::{Insn, Prog};
+use fancy_regex::internal::{analyze, compile, trace, Insn, Prog};
 use fancy_regex::*;
 use std::env;
 use std::str::FromStr;
@@ -75,7 +73,7 @@ fn main() {
             if let Some(re) = args.next() {
                 let prog = prog(&re);
                 if let Some(s) = args.next() {
-                    vm::run(&prog, &s, 0, vm::OPTION_TRACE).unwrap();
+                    trace(&prog, &s, 0).unwrap();
                 }
             }
         } else if cmd == "trace-inner" {
@@ -84,7 +82,7 @@ fn main() {
                 let a = analyze(&e, &backrefs).unwrap();
                 let p = compile(&a).unwrap();
                 if let Some(s) = args.next() {
-                    vm::run(&p, &s, 0, vm::OPTION_TRACE).unwrap();
+                    trace(&p, &s, 0).unwrap();
                 }
             }
         } else if cmd == "graph" {
@@ -122,11 +120,7 @@ fn graph(re: &str) {
 }
 
 fn prog(re: &str) -> Prog {
-    let r = Regex::new(re).unwrap();
-    match r {
-        Regex::Impl { prog, .. } => prog,
-        _ => {
-            panic!("Expected regex to be fancy (not completely delegatable)");
-        }
-    }
+    let (expr, backrefs) = Expr::parse(re).expect("Expected parsing regex to work");
+    let result = analyze(&expr, &backrefs).expect("Expected analyze to succeed");
+    compile(&result).expect("Expected compile to succeed")
 }
