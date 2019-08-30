@@ -30,23 +30,24 @@ use crate::Result;
 
 #[derive(Debug)]
 pub struct Info<'a> {
-    pub start_group: usize,
-    pub end_group: usize,
-    pub min_size: usize,
-    pub const_size: bool,
-    pub hard: bool,
+    pub(crate) start_group: usize,
+    pub(crate) end_group: usize,
+    pub(crate) min_size: usize,
+    pub(crate) const_size: bool,
+    pub(crate) hard: bool,
 
     /// Whether the expression's matching could be dependent on what the
     /// previous character was. E.g. `^` matches if there's no previous
     /// character; `(?m:^)` matches if the previous character was a newline.
-    pub looks_left: bool,
+    /// The matching of `\b` depends on the previous character.
+    pub(crate) looks_left: bool,
 
-    pub expr: &'a Expr,
-    pub children: Vec<Info<'a>>,
+    pub(crate) expr: &'a Expr,
+    pub(crate) children: Vec<Info<'a>>,
 }
 
 impl<'a> Info<'a> {
-    pub fn is_literal(&self) -> bool {
+    pub(crate) fn is_literal(&self) -> bool {
         match *self.expr {
             Expr::Literal { casei, .. } => !casei,
             Expr::Concat(_) => self.children.iter().all(|child| child.is_literal()),
@@ -54,7 +55,7 @@ impl<'a> Info<'a> {
         }
     }
 
-    pub fn push_literal(&self, buf: &mut String) {
+    pub(crate) fn push_literal(&self, buf: &mut String) {
         match *self.expr {
             // could be more paranoid about checking casei
             Expr::Literal { ref val, .. } => buf.push_str(val),
@@ -195,9 +196,10 @@ fn literal_const_size(_: &str, _: bool) -> bool {
     true
 }
 
+/// Analyze the parsed expression to determine whether it requires fancy features.
 pub fn analyze<'a>(expr: &'a Expr, backrefs: &'a BitSet) -> Result<Info<'a>> {
     let mut analyzer = Analyzer {
-        backrefs: backrefs,
+        backrefs,
         group_ix: 0,
     };
 

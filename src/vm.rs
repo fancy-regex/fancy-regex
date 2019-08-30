@@ -19,6 +19,55 @@
 // THE SOFTWARE.
 
 //! Backtracking VM for implementing fancy regexes.
+//!
+//! Read https://swtch.com/~rsc/regexp/regexp2.html for a good introduction for how this works.
+//!
+//! The VM executes a sequence of instructions (a program) against an input string. It keeps track
+//! of a program counter (PC) and an index into the string (IX). Execution can have one or more
+//! threads.
+//!
+//! One of the basic instructions is `Lit`, which matches a string against the input. If it matches,
+//! the PC advances to the next instruction and the IX to the position after the matched string.
+//! If not, the current thread is stopped because it failed.
+//!
+//! If execution reaches an `End` instruction, the program is successful because a match was found.
+//! If there are no more threads to execute, the program has failed to match.
+//!
+//! A very simple program for the regex `a`:
+//!
+//! ```norun
+//! 0: Lit("a")
+//! 1: End
+//! ```
+//!
+//! The `Split` instruction causes execution to split into two threads. The first thread is executed
+//! with the current string index. If it fails, we reset the string index and resume execution with
+//! the second thread. That is what "backtracking" refers to. In order to do that, we keep a stack
+//! of threads (PC and IX) to try.
+//!
+//! Example program for the regex `ab|ac`:
+//!
+//! ```norun
+//! 0: Split(1, 4)
+//! 1: Lit("a")
+//! 2: Lit("b")
+//! 3: Jmp(6)
+//! 4: Lit("a")
+//! 5: Lit("c")
+//! 6: End
+//! ```
+//!
+//! The `Jmp` instruction causes execution to jump to the specified instruction. In the example it
+//! is needed to separate the two threads.
+//!
+//! Let's step through execution with that program for the input `ac`:
+//!
+//! 1. We're at PC 0 and IX 0
+//! 2. `Split(1, 4)` means we save a thread with PC 4 and IX 0 for trying later
+//! 3. Continue at `Lit("a")` which matches, so we advance IX to 1
+//! 4. `Lit("b")` doesn't match at IX 1 (`"b" != "c"`), so the thread fails
+//! 5. We continue with the previously saved thread at PC 4 and IX 0 (backtracking)
+//! 6. Both `Lit("a")` and `Lit("c")` match and we reach `End` -> successful match (index 0 to 2)
 
 use regex::Regex;
 use std::collections::BTreeSet;
@@ -34,71 +83,124 @@ const OPTION_TRACE: u32 = 1;
 // TODO: make configurable
 const MAX_STACK: usize = 1000000;
 
+/// Instruction of the VM.
 #[derive(Debug)]
 pub enum Insn {
+    /// Successful end of program
     End,
+    /// Match any character (including newline)
     Any,
+    /// Match any character (not including newline)
     AnyNoNL,
+    /// Match the literal string at the current index
     Lit(String), // should be cow?
+    /// Split execution into two threads. The two fields are positions of instructions. Execution
+    /// first tries the first thread. If that fails, the second position is tried.
     Split(usize, usize),
+    /// Jump to instruction at position
     Jmp(usize),
+    /// Save the current string index into the specified slot
     Save(usize),
+    /// Save `0` into the specified slot
     Save0(usize),
+    /// Set the string index to the value that was saved in the specified slot
     Restore(usize),
+    /// Repeat greedily (match as much as possible)
     RepeatGr {
+        /// Minimum number of matches
         lo: usize,
+        /// Maximum number of matches
         hi: usize,
+        /// The instruction after the repeat
         next: usize,
+        /// The slot for keeping track of the number of repetitions
         repeat: usize,
     },
+    /// Repeat non-greedily (prefer matching as little as possible)
     RepeatNg {
+        /// Minimum number of matches
         lo: usize,
+        /// Maximum number of matches
         hi: usize,
+        /// The instruction after the repeat
         next: usize,
+        /// The slot for keeping track of the number of repetitions
         repeat: usize,
     },
+    /// Repeat greedily and prevent infinite loops from empty matches
     RepeatEpsilonGr {
+        /// Minimum number of matches
         lo: usize,
+        /// The instruction after the repeat
         next: usize,
+        /// The slot for keeping track of the number of repetitions
         repeat: usize,
+        /// The slot for saving the previous IX to check if we had an empty match
         check: usize,
     },
+    /// Repeat non-greedily and prevent infinite loops from empty matches
     RepeatEpsilonNg {
+        /// Minimum number of matches
         lo: usize,
+        /// The instruction after the repeat
         next: usize,
+        /// The slot for keeping track of the number of repetitions
         repeat: usize,
+        /// The slot for saving the previous IX to check if we had an empty match
         check: usize,
     },
+    /// Negative look-around failed
     FailNegativeLookAround,
+    /// Set IX back by the specified number of characters
     GoBack(usize),
+    /// Back reference to a group number to check
     Backref(usize),
+    /// Begin of atomic group
     BeginAtomic,
+    /// End of atomic group
     EndAtomic,
+    /// Delegate matching to the regex crate for a fixed size
     DelegateSized(Box<Regex>, usize),
+    /// Delegate matching to the regex crate
     Delegate {
+        /// The regex
         inner: Box<Regex>,
-        inner1: Option<Box<Regex>>, // regex with 1-char look-behind
+        /// The same regex but matching an additional character on the left.
+        ///
+        /// E.g. if `inner` is `^\b`, `inner1` is `^(?s:.)\b`. Why do we need this? Because `\b`
+        /// needs to know the previous character to work correctly. Let's say we're currently at the
+        /// second character of the string `xy`. Should `\b` match there? No. But if we'd run `^\b`
+        /// against `y`, it would match (incorrect). To do the right thing, we run `^(?s:.)\b`
+        /// against `xy`, which does not match.
+        ///
+        /// We only need this for regexes that "look left", i.e. need to know what the previous
+        /// character was.
+        inner1: Option<Box<Regex>>,
+        /// The first group number that this regex captures (if it contains groups)
         start_group: usize,
+        /// The last group number
         end_group: usize,
     },
 }
 
+/// Sequence of instructions for the VM to execute.
 #[derive(Debug)]
 pub struct Prog {
+    /// Instructions of the program
     pub body: Vec<Insn>,
     n_saves: usize,
 }
 
 impl Prog {
-    pub fn new(body: Vec<Insn>, n_saves: usize) -> Prog {
+    pub(crate) fn new(body: Vec<Insn>, n_saves: usize) -> Prog {
         Prog {
-            body: body,
-            n_saves: n_saves,
+            body,
+            n_saves,
         }
     }
 
     #[doc(hidden)]
-    pub fn debug_print(&self) {
+    pub(crate) fn debug_print(&self) {
         for (i, insn) in self.body.iter().enumerate() {
             println!("{:3}: {:?}", i, insn);
         }
@@ -114,6 +216,8 @@ struct State {
     oldsave: Vec<(usize, usize)>,
     nsave: usize,
     explicit_sp: usize,
+    /// Maximum size of the stack. If the size would be exceeded during execution, a `StackOverflow`
+    /// error is raised.
     max_stack: usize,
     options: u32,
 }
@@ -255,11 +359,13 @@ fn codepoint_len_at(s: &str, ix: usize) -> usize {
     codepoint_len(s.as_bytes()[ix])
 }
 
+/// Run the program with trace printing for debugging.
 pub fn trace(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
     run(prog, s, pos, OPTION_TRACE)
 }
 
-pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) -> Result<Option<Vec<usize>>> {
+/// Run the program.
+pub(crate) fn run(prog: &Prog, s: &str, pos: usize, options: u32) -> Result<Option<Vec<usize>>> {
     let mut state = State::new(prog.n_saves, MAX_STACK, options);
     if options & OPTION_TRACE != 0 {
         println!("{}\t{}", "pos", "instruction");
@@ -458,6 +564,7 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) -> Result<Option<Vec<
                         _ => inner,
                     };
                     if start_group == end_group {
+                        // No groups, so we can use `find` which is faster than `captures`
                         match re.find(&s[ix..]) {
                             Some(m) => ix += m.end(),
                             _ => break 'fail,

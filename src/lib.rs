@@ -72,7 +72,7 @@ assert_eq!(m.as_str(), "123");
 */
 
 #![deny(warnings)]
-//#![deny(missing_docs)]
+#![deny(missing_docs)]
 #![deny(missing_debug_implementations)]
 
 use bit_set::BitSet;
@@ -93,33 +93,57 @@ const MAX_RECURSION: usize = 64;
 
 // the public API
 
+/// Result type for this crate with specific error enum.
 pub type Result<T> = ::std::result::Result<T, Error>;
 
-// We use one Error type for both compile time and run time errors,
-// to minimize the boilerplate for callers.
+/// An error for the result of compiling or running a regex.
 #[derive(Debug)]
 pub enum Error {
     // Compile time errors
+
+    /// General parsing error
     ParseError,
+    /// Opening parenthesis without closing parenthesis, e.g. `(a|b`
     UnclosedOpenParen,
+    /// Invalid repeat syntax
     InvalidRepeat,
+    /// Pattern too deeply nested
     RecursionExceeded,
+    /// Look-behind assertion without constant size
     LookBehindNotConst,
+    /// Backslash without following character
     TrailingBackslash,
+    /// Invalid escape
     InvalidEscape,
+    /// Unicode escape not closed
     UnclosedUnicodeName,
+    /// Invalid hex escape
     InvalidHex,
+    /// Invalid codepoint for hex or unicode escape
     InvalidCodepointValue,
+    /// Invalid character class
     InvalidClass,
+    /// Unknown group flag
     UnknownFlag,
+    /// Disabling Unicode not supported
     NonUnicodeUnsupported,
+    /// Invalid back reference
     InvalidBackref,
+    /// Regex crate error
     InnerError(regex::Error),
 
     // Run time errors
+
+    /// Max stack size exceeded for backtracking while executing regex
     StackOverflow,
+
+    /// This enum may grow additional variants, so this makes sure clients don't count on exhaustive
+    /// matching. Otherwise, adding a new variant could break existing code.
+    #[doc(hidden)]
+    __Nonexhaustive,
 }
 
+/// A compiled regular expression.
 pub struct Regex(RegexImpl);
 
 // Separate enum because we don't want to expose any of this
@@ -137,7 +161,7 @@ enum RegexImpl {
     },
 }
 
-/// A single match of a regex in an input text
+/// A single match of a regex or group in an input text
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Match<'t> {
     text: &'t str,
@@ -145,6 +169,7 @@ pub struct Match<'t> {
     end: usize,
 }
 
+/// A set of capture groups found for a regex.
 #[derive(Debug)]
 pub struct Captures<'t>(CapturesImpl<'t>);
 

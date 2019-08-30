@@ -40,7 +40,7 @@ const FLAG_IGNORE_SPACE: u32 = (1 << 4);
 const FLAG_UNICODE: u32 = (1 << 5);
 
 #[derive(Debug)]
-pub struct Parser<'a> {
+pub(crate) struct Parser<'a> {
     re: &'a str, // source
     backrefs: BitSet,
     flags: u32,
@@ -49,7 +49,7 @@ pub struct Parser<'a> {
 impl<'a> Parser<'a> {
     /// Parse the regex and return an expression (AST) and a bit set with the indexes of groups
     /// that are referenced by backrefs.
-    pub fn parse(re: &str) -> Result<(Expr, BitSet)> {
+    pub(crate) fn parse(re: &str) -> Result<(Expr, BitSet)> {
         let mut p = Parser::new(re);
         let (ix, result) = p.parse_re(0, 0)?;
         if ix < re.len() {
@@ -609,7 +609,7 @@ fn is_hex_digit(b: u8) -> bool {
     is_digit(b) || (b'a' <= (b | 32) && (b | 32) <= b'f')
 }
 
-pub fn make_literal(s: &str) -> Expr {
+pub(crate) fn make_literal(s: &str) -> Expr {
     Expr::Literal {
         val: String::from(s),
         casei: false,

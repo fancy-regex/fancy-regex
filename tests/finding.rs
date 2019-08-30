@@ -54,6 +54,8 @@ fn negative_lookbehind_variable_sized_alt() {
 
 #[test]
 fn lookahead_looks_left() {
+    assert_eq!(find(r"a(?=\b)", "ab"), None);
+    assert_eq!(find(r"a(?=\b)", "a."), Some((0, 1)));
     assert_eq!(find(r"a(?=\b|_)", "a."), Some((0, 1)));
     assert_eq!(find(r"a(?=_|\b)", "a."), Some((0, 1)));
 }
