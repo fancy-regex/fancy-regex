@@ -502,16 +502,16 @@ pub(crate) fn run(prog: &Prog, s: &str, pos: usize, options: u32) -> Result<Opti
                 }
                 Insn::FailNegativeLookAround => {
                     // Reaching this instruction means that the body of the
-                    // lookaround matched. Because it's a *negative* lookaround,
-                    // that means the lookaround itself should fail (not match).
+                    // look-around matched. Because it's a *negative* look-around,
+                    // that means the look-around itself should fail (not match).
                     // But before, we need to discard all the states that have
-                    // been pushed with the lookaround, because we don't want to
+                    // been pushed with the look-around, because we don't want to
                     // explore them.
                     loop {
                         let (popped_pc, _) = state.pop();
                         if popped_pc == pc + 1 {
                             // We've reached the state that would jump us to
-                            // after the lookaround (in case the lookaround
+                            // after the look-around (in case the look-around
                             // succeeded). That means we popped enough states.
                             break;
                         }
