@@ -570,8 +570,8 @@ pub(crate) fn run(prog: &Prog, s: &str, pos: usize, options: u32) -> Result<Opti
                             _ => break 'fail,
                         }
                     } else if let Some(caps) = re.captures(&s[ix..]) {
-                        let mut slot = start_group * 2;
                         for i in 0..(end_group - start_group) {
+                            let slot = (start_group + i) * 2;
                             if let Some(m) = caps.get(i + 1) {
                                 state.save(slot, ix + m.start());
                                 state.save(slot + 1, ix + m.end());
@@ -579,7 +579,6 @@ pub(crate) fn run(prog: &Prog, s: &str, pos: usize, options: u32) -> Result<Opti
                                 state.save(slot, usize::MAX);
                                 state.save(slot + 1, usize::MAX);
                             }
-                            slot += 2;
                         }
                         ix += caps.get(0).unwrap().end();
                     } else {
