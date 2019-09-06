@@ -20,20 +20,23 @@
 
 /*!
 An implementation of regexes, supporting a relatively rich set of features, including backreferences
-and look-around.
+and lookaround.
 
-It builds on top of the excellent [regex](https://crates.io/crates/regex) crate. If you are not
+It builds on top of the excellent [regex] crate. If you are not
 familiar with it, make sure you read its documentation and maybe you don't even need fancy-regex.
 
 If your regex or parts of it does not use any special features, the matching is delegated to the
 regex crate. That means it has linear runtime. But if you use "fancy" features such as
-backreferences or look-around, an engine with backtracking needs to be used. In that case, depending
-on the regex and the input you can run into what is called "catastrophic backtracking".
+backreferences or look-around, an engine with backtracking needs to be used. In that case, the regex
+can be slow and take exponential time to run because of what is called "catastrophic backtracking".
+This depends on the regex and the input.
 
 # Usage
 
 The API should feel very similar to the regex crate, and involves compiling a regex and then using
 it to find matches in text.
+
+## Example: Matching text
 
 An example with backreferences to check if a text consists of two identical words:
 
@@ -44,20 +47,20 @@ let re = Regex::new(r"^(\w+) (\1)$").unwrap();
 let result = re.is_match("foo foo");
 
 assert!(result.is_ok());
-let matched = result.unwrap();
-assert!(matched);
+let did_match = result.unwrap();
+assert!(did_match);
 ```
 
 Note that like in the regex crate, the regex needs anchors like `^` and `$` to match against the
 entire input text.
 
-# Example: Find matches
+## Example: Finding the position of matches
 
 ```rust
 use fancy_regex::Regex;
 
-let re = Regex::new(r"\d+").unwrap();
-let result = re.find("foo 123");
+let re = Regex::new(r"(\d)\1").unwrap();
+let result = re.find("foo 22");
 
 assert!(result.is_ok(), "execution was successful");
 let match_option = result.unwrap();
@@ -66,13 +69,64 @@ assert!(match_option.is_some(), "found a match");
 let m = match_option.unwrap();
 
 assert_eq!(m.start(), 4);
-assert_eq!(m.end(), 7);
-assert_eq!(m.as_str(), "123");
+assert_eq!(m.end(), 6);
+assert_eq!(m.as_str(), "22");
 ```
+
+## Example: Capturing groups
+
+```rust
+use fancy_regex::Regex;
+
+let re = Regex::new(r"(?<!AU)\$(\d+)").unwrap();
+let result = re.captures("AU$10, $20");
+
+let captures = result.expect("Error running regex").expect("No match found");
+let group = captures.get(1).expect("No group");
+assert_eq!(group.as_str(), "20");
+```
+
+# Syntax
+
+The regex syntax is based on the [regex] crate's, with some additional supported syntax. Escapes:
+
+```norun
+\h    hex digit ([0-9A-Fa-f])
+\H    not hex digit ([^0-9A-Fa-f])
+\e    escape control character (\x1B)
+```
+
+Backreferences:
+
+```norun
+\1    match the exact string that the first capture group matched
+\2    backref to the second capture group, etc
+```
+
+Look-around assertions for matching without changing the current position:
+
+```norun
+(?=exp)    look-ahead, succeeds if exp matches to the right of the current position
+(?!exp)    negative look-ahead, succeeds if exp doesn't match to the right
+(?<=exp)   look-behind, succeeds if exp matches to the left of the current position
+(?<!exp)   negative look-behind, succeeds if exp doesn't match to the left
+```
+
+Atomic groups using `(?>exp)` to prevent backtracking within `exp`, e.g.:
+
+```
+# use fancy_regex::Regex;
+let re = Regex::new(r"^a(?>bc|b)c$").unwrap();
+assert!(re.is_match("abcc").unwrap());
+// Doesn't match because `|b` is never tried because of the atomic group
+assert!(!re.is_match("abc").unwrap());
+```
+
+[regex]: https://crates.io/crates/regex
 */
 
 #![deny(warnings)]
-//#![deny(missing_docs)]
+#![deny(missing_docs)]
 #![deny(missing_debug_implementations)]
 
 use bit_set::BitSet;
@@ -93,33 +147,57 @@ const MAX_RECURSION: usize = 64;
 
 // the public API
 
+/// Result type for this crate with specific error enum.
 pub type Result<T> = ::std::result::Result<T, Error>;
 
-// We use one Error type for both compile time and run time errors,
-// to minimize the boilerplate for callers.
+/// An error for the result of compiling or running a regex.
 #[derive(Debug)]
 pub enum Error {
     // Compile time errors
+
+    /// General parsing error
     ParseError,
+    /// Opening parenthesis without closing parenthesis, e.g. `(a|b`
     UnclosedOpenParen,
+    /// Invalid repeat syntax
     InvalidRepeat,
+    /// Pattern too deeply nested
     RecursionExceeded,
+    /// Look-behind assertion without constant size
     LookBehindNotConst,
+    /// Backslash without following character
     TrailingBackslash,
+    /// Invalid escape
     InvalidEscape,
+    /// Unicode escape not closed
     UnclosedUnicodeName,
+    /// Invalid hex escape
     InvalidHex,
+    /// Invalid codepoint for hex or unicode escape
     InvalidCodepointValue,
+    /// Invalid character class
     InvalidClass,
+    /// Unknown group flag
     UnknownFlag,
+    /// Disabling Unicode not supported
     NonUnicodeUnsupported,
+    /// Invalid back reference
     InvalidBackref,
+    /// Regex crate error
     InnerError(regex::Error),
 
     // Run time errors
+
+    /// Max stack size exceeded for backtracking while executing regex
     StackOverflow,
+
+    /// This enum may grow additional variants, so this makes sure clients don't count on exhaustive
+    /// matching. Otherwise, adding a new variant could break existing code.
+    #[doc(hidden)]
+    __Nonexhaustive,
 }
 
+/// A compiled regular expression.
 pub struct Regex(RegexImpl);
 
 // Separate enum because we don't want to expose any of this
@@ -137,7 +215,7 @@ enum RegexImpl {
     },
 }
 
-/// A single match of a regex in an input text
+/// A single match of a regex or group in an input text
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Match<'t> {
     text: &'t str,
@@ -145,6 +223,7 @@ pub struct Match<'t> {
     end: usize,
 }
 
+/// A set of capture groups found for a regex.
 #[derive(Debug)]
 pub struct Captures<'t>(CapturesImpl<'t>);
 

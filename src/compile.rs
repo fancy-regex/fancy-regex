@@ -72,16 +72,16 @@ impl VMBuilder {
         }
     }
 
-    fn set_split_target(&mut self, jmp_pc: usize, target: usize, second: bool) {
-        match self.prog[jmp_pc] {
+    fn set_split_target(&mut self, split_pc: usize, target: usize, second: bool) {
+        match self.prog[split_pc] {
             Insn::Split(_, ref mut y) if second => *y = target,
             Insn::Split(ref mut x, _) => *x = target,
             _ => panic!("mutating instruction other than Split"),
         }
     }
 
-    fn set_repeat_target(&mut self, jmp_pc: usize, target: usize) {
-        match self.prog[jmp_pc] {
+    fn set_repeat_target(&mut self, repeat_pc: usize, target: usize) {
+        match self.prog[repeat_pc] {
             Insn::RepeatGr { ref mut next, .. }
             | Insn::RepeatNg { ref mut next, .. }
             | Insn::RepeatEpsilonGr { ref mut next, .. }
@@ -448,6 +448,7 @@ impl Compiler {
     ) -> Result<()> {
         let compiled = compile_inner(inner_re)?;
         if looks_left {
+            // The "s" flag is for allowing `.` to match `\n`
             let inner1 = ["^(?s:.)", &inner_re[1..]].concat();
             let compiled1 = compile_inner(&inner1)?;
             self.b.add(Insn::Delegate {
@@ -471,11 +472,11 @@ impl Compiler {
     }
 }
 
-pub fn compile_inner(inner_re: &str) -> Result<regex::Regex> {
+pub(crate) fn compile_inner(inner_re: &str) -> Result<regex::Regex> {
     regex::Regex::new(inner_re).map_err(Error::InnerError)
 }
 
-// Don't need the expr because the analysis info points to it
+/// Compile the analyzed expressions into a program.
 pub fn compile(info: &Info<'_>) -> Result<Prog> {
     let mut c = Compiler {
         b: VMBuilder::new(info.end_group),
