@@ -123,9 +123,9 @@ from parents to children.
 Still in development, though the basic ideas are in place. Currently,
 the following features are missing:
 
-* Support for named captures (including in the API)
-* The following regex language features not yet implemented:
-  * Procedure calls and recursive expressions
+* Iterator methods likes `find_iter` and `captures_iter`
+* Named capture groups (including in the API)
+* Procedure calls and recursive expressions
 
 ## Acknowledgements
 
