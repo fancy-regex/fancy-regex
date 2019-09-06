@@ -78,6 +78,12 @@ fn case_insensitive_escape() {
     assert_match(r"(?i)\p{Ll}", "A");
 }
 
+#[test]
+fn atomic_group() {
+    assert_match(r"^a(?>bc|b)c$", "abcc");
+    assert_no_match(r"^a(?>bc|b)c$", "abc");
+}
+
 fn assert_match(re: &str, text: &str) {
     let result = match_text(re, text);
     assert_eq!(

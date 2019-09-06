@@ -124,12 +124,8 @@ Still in development, though the basic ideas are in place. Currently,
 the following features are missing:
 
 * Support for named captures (including in the API)
-
 * The following regex language features not yet implemented:
-
-     * Atomic groups
-
-     * Procedure calls and recursive expressions
+  * Procedure calls and recursive expressions
 
 ## Acknowledgements
 
