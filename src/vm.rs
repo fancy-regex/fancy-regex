@@ -365,7 +365,7 @@ pub fn trace(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
 }
 
 /// Run the program.
-pub(crate) fn run(prog: &Prog, s: &str, pos: usize, options: u32) -> Result<Option<Vec<usize>>> {
+pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) -> Result<Option<Vec<usize>>> {
     let mut state = State::new(prog.n_saves, MAX_STACK, options);
     if options & OPTION_TRACE != 0 {
         println!("{}\t{}", "pos", "instruction");

@@ -28,9 +28,7 @@ mod bench {
     use regex::Regex;
     use test::Bencher;
 
-    use fancy_regex::analyze::analyze;
-    use fancy_regex::compile::compile;
-    use fancy_regex::vm;
+    use fancy_regex::internal::{analyze, compile, run};
     use fancy_regex::Expr;
 
     #[bench]
@@ -74,7 +72,7 @@ mod bench {
         let (e, br) = Expr::parse("^.*?(([ab]+)\\1b)").unwrap();
         let a = analyze(&e, &br).unwrap();
         let p = compile(&a).unwrap();
-        b.iter(|| vm::run(&p, "babab", 0, 0))
+        b.iter(|| run(&p, "babab", 0, 0))
     }
 
     // The following regex is a pathological case for backtracking
@@ -89,7 +87,7 @@ mod bench {
             s.push_str("ab");
         }
         s.push_str("ac");
-        b.iter(|| vm::run(&p, &s, 0, 0))
+        b.iter(|| run(&p, &s, 0, 0))
     }
 
 }

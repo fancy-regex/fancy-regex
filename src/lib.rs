@@ -874,7 +874,7 @@ pub fn detect_possible_backref(re: &str) -> bool {
 pub mod internal {
     pub use crate::analyze::analyze;
     pub use crate::compile::compile;
-    pub use crate::vm::{trace, Insn, Prog};
+    pub use crate::vm::{run, trace, Insn, Prog};
 }
 
 #[cfg(test)]
