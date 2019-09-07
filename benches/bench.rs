@@ -18,76 +18,78 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-#![feature(test)]
+#[macro_use]
+extern crate criterion;
 
-extern crate test;
+use criterion::Criterion;
 
-#[cfg(test)]
-mod bench {
+use fancy_regex::internal::{analyze, compile, run};
+use fancy_regex::Expr;
+use regex::Regex;
 
-    use regex::Regex;
-    use test::Bencher;
-
-    use fancy_regex::internal::{analyze, compile, run};
-    use fancy_regex::Expr;
-
-    #[bench]
-    fn lifetime_re(b: &mut Bencher) {
-        b.iter(|| Expr::parse("\\'[a-zA-Z_][a-zA-Z0-9_]*(?!\\')\\b"));
-    }
-
-    #[bench]
-    fn literal_re(b: &mut Bencher) {
-        b.iter(|| Expr::parse("^(\\\\([!-/:-@\\[-`\\{-~aftnrv]|[0-7]{1,3}|x[0-9a-fA-F]{2}|x\\{[0-9a-fA-F]{1,6}\\})"));
-    }
-
-    #[bench]
-    fn misc(b: &mut Bencher) {
-        b.iter(|| Expr::parse("^\\p{L}|\\p{N}|\\s|.|\\d"));
-    }
-
-    #[bench]
-    fn literal_re_analyze(b: &mut Bencher) {
-        let (e, br) = Expr::parse(
-            "^\\\\([!-/:-@\\[-`\\{-~aftnrv]|[0-7]{1,3}|x[0-9a-fA-F]{2}|x\\{[0-9a-fA-F]{1,6}\\})",
-        )
-        .unwrap();
-        b.iter(|| analyze(&e, &br));
-    }
-
-    #[bench]
-    fn literal_re_regex(b: &mut Bencher) {
-        b.iter(|| Regex::new("^\\\\([!-/:-@\\[-`\\{-~aftnrv]|[0-7]{1,3}|x[0-9a-fA-F]{2}|x\\{[0-9a-fA-F]{1,6}\\})"));
-    }
-
-    /*
-    #[bench]
-    fn detect_backref(b: &mut Bencher) {
-        b.iter(|| detect_possible_backref("^\\\\([!-/:-@\\[-`\\{-~aftnrv]|[0-7]{1,3}|x[0-9a-fA-F]{2}|x\\{[0-9a-fA-F]{1,6}\\})"));
-    }
-    */
-
-    #[bench]
-    fn run_backtrack(b: &mut Bencher) {
-        let (e, br) = Expr::parse("^.*?(([ab]+)\\1b)").unwrap();
-        let a = analyze(&e, &br).unwrap();
-        let p = compile(&a).unwrap();
-        b.iter(|| run(&p, "babab", 0, 0))
-    }
-
-    // The following regex is a pathological case for backtracking
-    // implementations, see README.md:
-    #[bench]
-    fn run_tricky(b: &mut Bencher) {
-        let (e, br) = Expr::parse("(a|b|ab)*bc").unwrap();
-        let a = analyze(&e, &br).unwrap();
-        let p = compile(&a).unwrap();
-        let mut s = String::new();
-        for _ in 0..28 {
-            s.push_str("ab");
-        }
-        s.push_str("ac");
-        b.iter(|| run(&p, &s, 0, 0))
-    }
-
+fn parse_lifetime_re(c: &mut Criterion) {
+    c.bench_function("parse_lifetime_re", |b| {
+        b.iter(|| Expr::parse("\\'[a-zA-Z_][a-zA-Z0-9_]*(?!\\')\\b").unwrap())
+    });
 }
+
+fn parse_literal_re(c: &mut Criterion) {
+    c.bench_function("parse_literal_re", |b| {
+        b.iter(|| Expr::parse("^\\\\([!-/:-@\\[-`\\{-~aftnrv]|[0-7]{1,3}|x[0-9a-fA-F]{2}|x\\{[0-9a-fA-F]{1,6}\\})").unwrap())
+    });
+}
+
+fn parse_literal_re_regex(c: &mut Criterion) {
+    c.bench_function("parse_literal_re_regex", |b| {
+        b.iter(|| Regex::new("^\\\\([!-/:-@\\[-`\\{-~aftnrv]|[0-7]{1,3}|x[0-9a-fA-F]{2}|x\\{[0-9a-fA-F]{1,6}\\})").unwrap())
+    });
+}
+
+fn parse_misc(c: &mut Criterion) {
+    c.bench_function("parse_misc", |b| {
+        b.iter(|| Expr::parse("^\\p{L}|\\p{N}|\\s|.|\\d").unwrap())
+    });
+}
+
+fn analyze_literal_re(c: &mut Criterion) {
+    let re = "^\\\\([!-/:-@\\[-`\\{-~aftnrv]|[0-7]{1,3}|x[0-9a-fA-F]{2}|x\\{[0-9a-fA-F]{1,6}\\})";
+    let (e, br) = Expr::parse(re).unwrap();
+    c.bench_function("analyze_literal_re", |b| {
+        b.iter(|| analyze(&e, &br).unwrap())
+    });
+}
+
+fn run_backtrack(c: &mut Criterion) {
+    let (e, br) = Expr::parse("^.*?(([ab]+)\\1b)").unwrap();
+    let a = analyze(&e, &br).unwrap();
+    let p = compile(&a).unwrap();
+    c.bench_function("run_backtrack", |b| {
+        b.iter(|| run(&p, "babab", 0, 0).unwrap())
+    });
+}
+
+// The following regex is a pathological case for backtracking
+// implementations, see README.md:
+fn run_tricky(c: &mut Criterion) {
+    let (e, br) = Expr::parse("(a|b|ab)*bc").unwrap();
+    let a = analyze(&e, &br).unwrap();
+    let p = compile(&a).unwrap();
+    let mut s = String::new();
+    for _ in 0..28 {
+        s.push_str("ab");
+    }
+    s.push_str("ac");
+    c.bench_function("run_tricky", |b| b.iter(|| run(&p, &s, 0, 0).unwrap()));
+}
+
+criterion_group!(
+    benches,
+    parse_lifetime_re,
+    parse_literal_re,
+    parse_literal_re_regex,
+    parse_misc,
+    analyze_literal_re,
+    run_backtrack,
+    run_tricky
+);
+criterion_main!(benches);

@@ -12,6 +12,11 @@ regex = "1.2"
 bit-set = "0.5"
 
 [dev-dependencies]
+criterion = "0.3"
 matches = "0.1.8"
 quickcheck = "0.7"
 rand = "0.5"
+
+[[bench]]
+name = "bench"
+harness = false
