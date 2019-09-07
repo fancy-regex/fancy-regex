@@ -125,7 +125,6 @@ assert!(!re.is_match("abc").unwrap());
 [regex]: https://crates.io/crates/regex
 */
 
-#![deny(warnings)]
 #![deny(missing_docs)]
 #![deny(missing_debug_implementations)]
 
