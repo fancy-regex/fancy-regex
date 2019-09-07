@@ -26,6 +26,7 @@ cache: cargo
 script:
   - cargo build --verbose
   - cargo test --verbose
+  - 'if [[ "$TRAVIS_RUST_VERSION" = 1.31.1 ]]; then RUSTFLAGS="-D warnings" cargo build; fi'
   - 'if [[ "$TRAVIS_RUST_VERSION" = nightly ]]; then cargo bench; fi'
 
 after_success: |
