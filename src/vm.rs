@@ -330,30 +330,45 @@ impl State {
         result
     }
 
-    // get the count of backtracks
+    /// Get the current number of backtrack branches
     fn backtrack_count(&self) -> usize {
         self.stack.len()
     }
 
-    // discard backtracks since the corresponding call to backtrack_count
+    /// Discard backtrack branches that were pushed since the call to `backtrack_count`.
+    ///
+    /// What we want:
+    /// * Keep the current `saves` as they are
+    /// * Only keep `count` backtrack branches on `stack`, discard the rest
+    /// * Keep the first `oldsave` for each slot, discard the rest (multiple pushes might have
+    ///   happened with saves to the same slot)
     fn backtrack_cut(&mut self, count: usize) {
         if self.stack.len() == count {
+            // no backtrack branches to discard, all good
             return;
         }
-        let mut oldsave_ix = self.oldsave.len() - self.nsave;
-        for &Branch { nsave, .. } in &self.stack[count + 1..] {
-            oldsave_ix -= nsave;
-        }
+        // start and end indexes of old saves for the branch we're cutting to
+        let (oldsave_start, oldsave_end) = {
+            let mut end = self.oldsave.len() - self.nsave;
+            for &Branch { nsave, .. } in &self.stack[count + 1..] {
+                end -= nsave;
+            }
+            let start = end - self.stack[count].nsave;
+            (start, end)
+        };
         let mut saved = BTreeSet::new();
-        let oldsave_start = oldsave_ix - self.stack[count].nsave;
-        for &Save { slot, .. } in &self.oldsave[oldsave_start..oldsave_ix] {
+        // keep all the old saves of our branch (they're all for different slots)
+        for &Save { slot, .. } in &self.oldsave[oldsave_start..oldsave_end] {
             saved.insert(slot);
         }
-        // retain all oldsave values, but only the first and only if not
-        // already saved.
-        for ix in oldsave_ix..self.oldsave.len() {
+        let mut oldsave_ix = oldsave_end;
+        // for other old saves, keep them only if they're for a slot that we haven't saved yet
+        for ix in oldsave_end..self.oldsave.len() {
             let Save { slot, .. } = self.oldsave[ix];
-            if saved.insert(slot) {
+            let new_slot = saved.insert(slot);
+            if new_slot {
+                // put the save we want to keep (ix) after the ones we already have (oldsave_ix)
+                // note that it's fine if the indexes are the same (then swapping is a no-op)
                 self.oldsave.swap(oldsave_ix, ix);
                 oldsave_ix += 1;
             }
@@ -662,6 +677,70 @@ mod tests {
         assert_eq!(state.get(0), 20);
         assert_eq!(state.pop(), (0, 0));
         assert_eq!(state.get(0), 10);
+    }
+
+    #[test]
+    fn state_explicit_stack() {
+        let mut state = State::new(1, MAX_STACK, 0);
+        state.stack_push(11);
+        state.stack_push(12);
+
+        state.push(100, 101).unwrap();
+        state.stack_push(13);
+        assert_eq!(state.stack_pop(), 13);
+        state.stack_push(14);
+        assert_eq!(state.pop(), (100, 101));
+
+        // Note: 14 is not there because it was pushed as part of the backtrack branch
+        assert_eq!(state.stack_pop(), 12);
+        assert_eq!(state.stack_pop(), 11);
+    }
+
+    #[test]
+    fn state_backtrack_cut_simple() {
+        let mut state = State::new(2, MAX_STACK, 0);
+        state.save(0, 1);
+        state.save(1, 2);
+
+        let count = state.backtrack_count();
+
+        state.push(0, 0).unwrap();
+        state.save(0, 3);
+        assert_eq!(state.backtrack_count(), 1);
+
+        state.backtrack_cut(count);
+        assert_eq!(state.backtrack_count(), 0);
+        assert_eq!(state.get(0), 3);
+        assert_eq!(state.get(1), 2);
+    }
+
+    #[test]
+    fn state_backtrack_cut_complex() {
+        let mut state = State::new(2, MAX_STACK, 0);
+        state.save(0, 1);
+        state.save(1, 2);
+
+        state.push(0, 0).unwrap();
+        state.save(0, 3);
+
+        let count = state.backtrack_count();
+
+        state.push(1, 1).unwrap();
+        state.save(0, 4);
+        state.push(2, 2).unwrap();
+        state.save(1, 5);
+        assert_eq!(state.backtrack_count(), 3);
+
+        state.backtrack_cut(count);
+        assert_eq!(state.backtrack_count(), 1);
+        assert_eq!(state.get(0), 4);
+        assert_eq!(state.get(1), 5);
+
+        state.pop();
+        assert_eq!(state.backtrack_count(), 0);
+        // Check that oldsave were set correctly
+        assert_eq!(state.get(0), 1);
+        assert_eq!(state.get(1), 2);
     }
 
     #[derive(Clone, Debug)]

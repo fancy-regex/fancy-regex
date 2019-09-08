@@ -82,6 +82,10 @@ fn case_insensitive_escape() {
 fn atomic_group() {
     assert_match(r"^a(?>bc|b)c$", "abcc");
     assert_no_match(r"^a(?>bc|b)c$", "abc");
+
+    // Look-ahead forces use of VM
+    assert_match(r"^a(bc(?=d)|b)cd$", "abcd");
+    assert_no_match(r"^a(?>bc(?=d)|b)cd$", "abcd");
 }
 
 fn assert_match(re: &str, text: &str) {
