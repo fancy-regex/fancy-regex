@@ -60,7 +60,7 @@ impl<'a> Parser<'a> {
 
     fn new(re: &str) -> Parser<'_> {
         Parser {
-            re: re,
+            re,
             backrefs: BitSet::new(),
             flags: FLAG_UNICODE,
         }
@@ -135,9 +135,9 @@ impl<'a> Parser<'a> {
             greedy ^= self.flag(FLAG_SWAP_GREED);
             let mut node = Expr::Repeat {
                 child: Box::new(child),
-                lo: lo,
-                hi: hi,
-                greedy: greedy,
+                lo,
+                hi,
+                greedy,
             };
             if ix < self.re.len() && self.re.as_bytes()[ix] == b'+' {
                 ix += 1;
@@ -281,8 +281,8 @@ impl<'a> Parser<'a> {
             return Ok((
                 end,
                 Expr::Delegate {
-                    inner: inner,
-                    size: size,
+                    inner,
+                    size,
                     casei: false,
                 },
             ));
@@ -296,8 +296,8 @@ impl<'a> Parser<'a> {
             return Ok((
                 end,
                 Expr::Delegate {
-                    inner: inner,
-                    size: size,
+                    inner,
+                    size,
                     casei: false,
                 },
             ));
@@ -333,8 +333,8 @@ impl<'a> Parser<'a> {
         Ok((
             end,
             Expr::Delegate {
-                inner: inner,
-                size: size,
+                inner,
+                size,
                 casei: self.flag(FLAG_CASEI),
             },
         ))

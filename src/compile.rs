@@ -258,17 +258,17 @@ impl Compiler {
             let pc = self.b.pc();
             if greedy {
                 self.b.add(Insn::RepeatEpsilonGr {
-                    lo: lo,
+                    lo,
                     next: usize::MAX,
-                    repeat: repeat,
-                    check: check,
+                    repeat,
+                    check,
                 });
             } else {
                 self.b.add(Insn::RepeatEpsilonNg {
-                    lo: lo,
+                    lo,
                     next: usize::MAX,
-                    repeat: repeat,
-                    check: check,
+                    repeat,
+                    check,
                 });
             }
             self.visit(child, hard)?;
@@ -296,17 +296,17 @@ impl Compiler {
             let pc = self.b.pc();
             if greedy {
                 self.b.add(Insn::RepeatGr {
-                    lo: lo,
-                    hi: hi,
+                    lo,
+                    hi,
                     next: usize::MAX,
-                    repeat: repeat,
+                    repeat,
                 });
             } else {
                 self.b.add(Insn::RepeatNg {
-                    lo: lo,
-                    hi: hi,
+                    lo,
+                    hi,
                     next: usize::MAX,
-                    repeat: repeat,
+                    repeat,
                 });
             }
             self.visit(child, hard)?;
@@ -454,8 +454,8 @@ impl Compiler {
             self.b.add(Insn::Delegate {
                 inner: Box::new(compiled),
                 inner1: Some(Box::new(compiled1)),
-                start_group: start_group,
-                end_group: end_group,
+                start_group,
+                end_group,
             });
         } else if const_size && start_group == end_group {
             let size = min_size;
@@ -464,8 +464,8 @@ impl Compiler {
             self.b.add(Insn::Delegate {
                 inner: Box::new(compiled),
                 inner1: None,
-                start_group: start_group,
-                end_group: end_group,
+                start_group,
+                end_group,
             });
         }
         Ok(())
