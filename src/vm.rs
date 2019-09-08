@@ -193,10 +193,7 @@ pub struct Prog {
 
 impl Prog {
     pub(crate) fn new(body: Vec<Insn>, n_saves: usize) -> Prog {
-        Prog {
-            body,
-            n_saves,
-        }
+        Prog { body, n_saves }
     }
 
     #[doc(hidden)]
@@ -207,13 +204,28 @@ impl Prog {
     }
 }
 
+#[derive(Debug)]
+struct Branch {
+    pc: usize,
+    ix: usize,
+    nsave: usize,
+}
+
+#[derive(Debug)]
+struct Save {
+    slot: usize,
+    value: usize,
+}
+
 struct State {
-    saves: Vec<usize>, // mostly indices to s, but can be repeat values etc
-
-    // pc, index to string, nsave value
-    stack: Vec<(usize, usize, usize)>,
-
-    oldsave: Vec<(usize, usize)>,
+    /// Saved values indexed by slot. Mostly indices to s, but can be repeat values etc.
+    /// Always contains the saves of the current state.
+    saves: Vec<usize>,
+    /// Stack of backtrack branches.
+    stack: Vec<Branch>,
+    /// Old saves (slot, value)
+    oldsave: Vec<Save>,
+    /// Number of saves at the end of `oldsave` that need to be restored to `saves` on pop
     nsave: usize,
     explicit_sp: usize,
     /// Maximum size of the stack. If the size would be exceeded during execution, a `StackOverflow`
@@ -246,7 +258,8 @@ impl State {
     // push a backtrack branch
     fn push(&mut self, pc: usize, ix: usize) -> Result<()> {
         if self.stack.len() < self.max_stack {
-            self.stack.push((pc, ix, self.nsave));
+            let nsave = self.nsave;
+            self.stack.push(Branch { pc, ix, nsave });
             self.nsave = 0;
             self.trace_stack("push");
             Ok(())
@@ -258,10 +271,10 @@ impl State {
     // pop a backtrack branch
     fn pop(&mut self) -> (usize, usize) {
         for _ in 0..self.nsave {
-            let (slot, val) = self.oldsave.pop().unwrap();
-            self.saves[slot] = val;
+            let Save { slot, value } = self.oldsave.pop().unwrap();
+            self.saves[slot] = value;
         }
-        let (pc, ix, nsave) = self.stack.pop().unwrap();
+        let Branch { pc, ix, nsave } = self.stack.pop().unwrap();
         self.nsave = nsave;
         self.trace_stack("pop");
         (pc, ix)
@@ -270,13 +283,16 @@ impl State {
     fn save(&mut self, slot: usize, val: usize) {
         for i in 0..self.nsave {
             // could avoid this iteration with some overhead; worth it?
-            if self.oldsave[self.oldsave.len() - i - 1].0 == slot {
+            if self.oldsave[self.oldsave.len() - i - 1].slot == slot {
                 // already saved, just update
                 self.saves[slot] = val;
                 return;
             }
         }
-        self.oldsave.push((slot, self.saves[slot]));
+        self.oldsave.push(Save {
+            slot,
+            value: self.saves[slot],
+        });
         self.nsave += 1;
         self.saves[slot] = val;
 
@@ -325,18 +341,18 @@ impl State {
             return;
         }
         let mut oldsave_ix = self.oldsave.len() - self.nsave;
-        for &(_pc, _ix, nsave) in &self.stack[count + 1..] {
+        for &Branch { nsave, .. } in &self.stack[count + 1..] {
             oldsave_ix -= nsave;
         }
         let mut saved = BTreeSet::new();
-        let oldsave_start = oldsave_ix - self.stack[count].2;
-        for &(slot, _val) in &self.oldsave[oldsave_start..oldsave_ix] {
+        let oldsave_start = oldsave_ix - self.stack[count].nsave;
+        for &Save { slot, .. } in &self.oldsave[oldsave_start..oldsave_ix] {
             saved.insert(slot);
         }
         // retain all oldsave values, but only the first and only if not
         // already saved.
         for ix in oldsave_ix..self.oldsave.len() {
-            let (slot, _val) = self.oldsave[ix];
+            let Save { slot, .. } = self.oldsave[ix];
             if saved.insert(slot) {
                 self.oldsave.swap(oldsave_ix, ix);
                 oldsave_ix += 1;
