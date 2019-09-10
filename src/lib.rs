@@ -153,7 +153,6 @@ pub type Result<T> = ::std::result::Result<T, Error>;
 #[derive(Debug)]
 pub enum Error {
     // Compile time errors
-
     /// General parsing error
     ParseError,
     /// Opening parenthesis without closing parenthesis, e.g. `(a|b`
@@ -186,7 +185,6 @@ pub enum Error {
     InnerError(regex::Error),
 
     // Run time errors
-
     /// Max stack size exceeded for backtracking while executing regex
     StackOverflow,
 
@@ -406,7 +404,7 @@ impl Regex {
                 let result = vm::run(prog, text, 0, 0)?;
                 Ok(result.map(|mut saves| {
                     saves.truncate(n_groups * 2);
-                    Captures(CapturesImpl::Fancy { text, saves: saves })
+                    Captures(CapturesImpl::Fancy { text, saves })
                 }))
             }
         }
