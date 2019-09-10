@@ -81,7 +81,7 @@ use crate::Result;
 const OPTION_TRACE: u32 = 1;
 
 // TODO: make configurable
-const MAX_STACK: usize = 1000000;
+const MAX_STACK: usize = 1_000_000;
 
 /// Instruction of the VM.
 #[derive(Debug)]
@@ -399,7 +399,7 @@ pub fn trace(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
 pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) -> Result<Option<Vec<usize>>> {
     let mut state = State::new(prog.n_saves, MAX_STACK, options);
     if options & OPTION_TRACE != 0 {
-        println!("{}\t{}", "pos", "instruction");
+        println!("pos\tinstruction");
     }
     let mut pc = 0;
     let mut ix = pos;
