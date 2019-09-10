@@ -37,6 +37,14 @@ fn captures_from_pos() {
     assert_match(matches[1], "3", 6, 7);
 }
 
+#[test]
+fn captures_from_pos_looking_left() {
+    let regex = common::regex(r"\b(x)");
+    // This should *not* match because `\b` doesn't match between a and x
+    let result = regex.captures_from_pos("ax", 1).unwrap();
+    assert!(result.is_none());
+}
+
 fn captures<'a>(re: &str, text: &'a str) -> Captures<'a> {
     let regex = common::regex(re);
     let result = regex.captures(text);
