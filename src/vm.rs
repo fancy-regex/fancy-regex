@@ -422,14 +422,14 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) -> Result<Option<Vec<
                 }
                 Insn::Any => {
                     if ix < s.len() {
-                        ix += codepoint_len_at(s, ix)
+                        ix += codepoint_len_at(s, ix);
                     } else {
                         break 'fail;
                     }
                 }
                 Insn::AnyNoNL => {
                     if ix < s.len() && s.as_bytes()[ix] != b'\n' {
-                        ix += codepoint_len_at(s, ix)
+                        ix += codepoint_len_at(s, ix);
                     } else {
                         break 'fail;
                     }
