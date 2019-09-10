@@ -77,6 +77,21 @@ fn backref_for_unmatched_group() {
     assert_eq!(find(r"(a)?\1", "bb"), None);
 }
 
+#[test]
+fn repeat_non_greedy() {
+    // (?=a) to make it fancy and use VM
+    assert_eq!(find(r"(a(?=a)){2,}?", "aaa"), Some((0, 2)));
+    assert_eq!(find(r"(a(?=a)){2}?a", "aaa"), Some((0, 3)));
+}
+
+#[test]
+fn empty_repeat_non_greedy() {
+    // (?=b) to make it fancy and use VM
+    assert_eq!(find(r"(a(?=b)|)+?", "ab"), Some((0, 1)));
+    // This tests the "prevent zero-length match on repeat" logic
+    assert_eq!(find(r"(a(?=b)|)+?x", "ab"), None);
+}
+
 fn find(re: &str, text: &str) -> Option<(usize, usize)> {
     let regex = common::regex(re);
     let result = regex.find(text);
