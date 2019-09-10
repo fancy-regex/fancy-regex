@@ -92,6 +92,18 @@ fn empty_repeat_non_greedy() {
     assert_eq!(find(r"(a(?=b)|)+?x", "ab"), None);
 }
 
+#[test]
+fn any_match_unicode_scalar_value() {
+    assert_eq!(find(r"(.)\1", "\u{1F60A}\u{1F60A}"), Some((0, 8)));
+    assert_eq!(find(r"(?s)(.)\1", "\u{1F60A}\u{1F60A}"), Some((0, 8)));
+}
+
+#[test]
+fn delegates_match_unicode_scalar_value() {
+    assert_eq!(find(r".(?=a)", "\u{1F60A}a"), Some((0, 4)));
+    assert_eq!(find(r".(?=\ba+)", "\u{1F60A}a"), Some((0, 4)));
+}
+
 fn find(re: &str, text: &str) -> Option<(usize, usize)> {
     let regex = common::regex(re);
     let result = regex.find(text);
