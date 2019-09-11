@@ -15,6 +15,7 @@ with the exception that 0.x versions can break between minor versions.
 - Support `\b`, `\f`, `\t`, `\n`, `\r`, `\v`
 - Support look-behind with variable sized alternative
 - Implement `Debug` for `Regex`
+- More test coverage including running one of Oniguruma's test suites
 ### Changed
 - Change `find` to return a `Match` struct (breaking change)
 - Change `Captures` API (breaking change):
