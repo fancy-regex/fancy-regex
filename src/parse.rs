@@ -375,15 +375,15 @@ impl<'a> Parser<'a> {
         if let Some(c) = ::std::char::from_u32(codepoint) {
             let mut inner = String::with_capacity(4);
             inner.push(c);
-            return Ok((
+            Ok((
                 end,
                 Expr::Literal {
                     val: inner,
                     casei: self.flag(FLAG_CASEI),
                 },
-            ));
+            ))
         } else {
-            return Err(Error::InvalidCodepointValue);
+            Err(Error::InvalidCodepointValue)
         }
     }
 

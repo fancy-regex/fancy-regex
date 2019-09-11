@@ -321,7 +321,7 @@ impl Compiler {
         let inner = &info.children[0];
         match la {
             LookBehind => {
-                if let &Info {
+                if let Info {
                     const_size: false,
                     expr: &Expr::Alt(_),
                     ..
@@ -338,7 +338,7 @@ impl Compiler {
                 }
             }
             LookBehindNeg => {
-                if let &Info {
+                if let Info {
                     const_size: false,
                     expr: &Expr::Alt(_),
                     ..
