@@ -3,6 +3,24 @@ use fancy_regex::{Captures, Match, Result};
 mod common;
 
 #[test]
+fn captures_fancy() {
+    let captures = captures(r"\s*(\w+)(?=\.)", "foo bar.");
+    assert_eq!(captures.len(), 2);
+    assert_match(captures.get(0), " bar", 3, 7);
+    assert_match(captures.get(1), "bar", 4, 7);
+    assert!(captures.get(2).is_none());
+}
+
+#[test]
+fn captures_fancy_unmatched_group() {
+    let captures = captures(r"(\w+)(?=\.)|(\w+)(?=!)", "foo! bar.");
+    assert_eq!(captures.len(), 3);
+    assert_match(captures.get(0), "foo", 0, 3);
+    assert!(captures.get(1).is_none());
+    assert_match(captures.get(2), "foo", 0, 3);
+}
+
+#[test]
 fn captures_after_lookbehind() {
     let captures = captures(
         r"\s*(?<=[() ])(@\w+)(\([^)]*\))?\s*",
@@ -39,10 +57,16 @@ fn captures_from_pos() {
 
 #[test]
 fn captures_from_pos_looking_left() {
-    let regex = common::regex(r"\b(x)");
+    let regex = common::regex(r"\b(\w)");
+
     // This should *not* match because `\b` doesn't match between a and x
     let result = regex.captures_from_pos("ax", 1).unwrap();
     assert!(result.is_none());
+
+    let captures = assert_captures(regex.captures_from_pos(".x", 1));
+    assert_eq!(captures.len(), 2);
+    assert_match(captures.get(0), "x", 1, 2);
+    assert_match(captures.get(1), "x", 1, 2);
 }
 
 fn captures<'a>(re: &str, text: &'a str) -> Captures<'a> {

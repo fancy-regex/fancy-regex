@@ -533,14 +533,15 @@ impl<'t> Captures<'t> {
                 end: m.end() + *offset,
             }),
             CapturesImpl::Fancy { text, ref saves } => {
-                if i >= saves.len() {
+                let slot = i * 2;
+                if slot >= saves.len() {
                     return None;
                 }
-                let lo = saves[i * 2];
+                let lo = saves[slot];
                 if lo == std::usize::MAX {
                     return None;
                 }
-                let hi = saves[i * 2 + 1];
+                let hi = saves[slot + 1];
                 Some(Match {
                     text,
                     start: lo,
