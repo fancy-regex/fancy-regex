@@ -3,6 +3,12 @@ mod common;
 use fancy_regex::Regex;
 
 #[test]
+fn find_wrap() {
+    assert_eq!(find(r"(\w+)", "... test"), Some((4, 8)));
+    assert_eq!(find(r"(?m)^yes$", "foo\nyes\n"), Some((4, 7)));
+}
+
+#[test]
 fn lookahead_grouping_single_expression() {
     // These would fail if the delegate expression was `^x|a` (if we didn't
     // group as `^(?:x|a)`).
