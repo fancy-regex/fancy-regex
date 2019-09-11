@@ -105,9 +105,9 @@ impl Compiler {
             Expr::Empty => (),
             Expr::Literal { ref val, casei } => {
                 if !casei {
-                    self.compile_delegates(&[info])?;
-                } else {
                     self.b.add(Insn::Lit(val.clone()));
+                } else {
+                    self.compile_delegates(&[info])?;
                 }
             }
             Expr::Any { newline: true } => {

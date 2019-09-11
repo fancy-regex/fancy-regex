@@ -9,6 +9,13 @@ fn find_wrap() {
 }
 
 #[test]
+fn find_fancy_case_insensitive() {
+    assert_eq!(find(r"(x|xy)\1", "XX"), None);
+    assert_eq!(find(r"(x|xy)\1", "xx"), Some((0, 2)));
+    assert_eq!(find(r"((?i:x|xy))\1", "XX"), Some((0, 2)));
+}
+
+#[test]
 fn lookahead_grouping_single_expression() {
     // These would fail if the delegate expression was `^x|a` (if we didn't
     // group as `^(?:x|a)`).

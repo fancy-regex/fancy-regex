@@ -133,6 +133,9 @@ impl<'a> Analyzer<'a> {
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
                 looks_left = child_info.looks_left;
+                // If there's a backref to this group, we potentially have to backtrack within the
+                // group. E.g. with `(x|xy)\1` and input `xyxy`, `x` matches but then the backref
+                // doesn't, so we have to backtrack and try `xy`.
                 hard = child_info.hard | self.backrefs.contains(group);
                 children.push(child_info);
             }
