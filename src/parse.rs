@@ -253,7 +253,7 @@ impl<'a> Parser<'a> {
         }
         let bytes = self.re.as_bytes();
         let b = bytes[ix + 1];
-        let mut end = ix + 2;
+        let mut end = ix + 1 + codepoint_len(b);
         let mut size = 1;
         if is_digit(b) {
             if let Some((end, group)) = parse_decimal(self.re, ix + 1) {
@@ -309,18 +309,19 @@ impl<'a> Parser<'a> {
                 return Err(Error::TrailingBackslash); // better name?
             }
             let b = bytes[end];
-            end += 1;
+            end += codepoint_len(b);
             if b == b'{' {
                 loop {
                     if end == self.re.len() {
                         return Err(Error::UnclosedUnicodeName);
                     }
-                    if bytes[end] == b'}' {
+                    let b = bytes[end];
+                    if b == b'}' {
+                        end += 1;
                         break;
                     }
-                    end += 1;
+                    end += codepoint_len(b);
                 }
-                end += 1;
             }
         } else if b'a' <= (b | 32) && (b | 32) <= b'z' {
             return Err(Error::InvalidEscape);
@@ -1109,5 +1110,16 @@ mod tests {
         // only syntactic tests; see similar test in analyze module
         fail(".\\12345678"); // unreasonably large number
         fail(".\\c"); // not decimal
+    }
+
+    // found by cargo fuzz, then minimized
+    #[test]
+    fn fuzz_1() {
+        p(r"\ä");
+    }
+
+    #[test]
+    fn fuzz_2() {
+        p(r"\pä");
     }
 }
