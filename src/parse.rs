@@ -632,6 +632,11 @@ mod tests {
     }
 
     #[test]
+    fn empty() {
+        assert_eq!(p(""), Expr::Empty);
+    }
+
+    #[test]
     fn any() {
         assert_eq!(p("."), Expr::Any { newline: false });
         assert_eq!(p("(?s:.)"), Expr::Any { newline: true });
@@ -1040,6 +1045,8 @@ mod tests {
 
     #[test]
     fn ignore_whitespace() {
+        assert_eq!(p("(?x: )"), p(""));
+        assert_eq!(p("(?x) | "), p("|"));
         assert_eq!(p("(?x: a )"), p("a"));
         assert_eq!(p("(?x: a # ) bobby tables\n b )"), p("ab"));
         assert_eq!(p("(?x: a | b )"), p("a|b"));
