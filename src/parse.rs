@@ -227,11 +227,6 @@ impl<'a> Parser<'a> {
             }
             b'+' | b'*' | b'?' | b'|' | b')' => Ok((ix, Expr::Empty)),
             b'[' => self.parse_class(ix),
-            b'#' | b' ' | b'\r' | b'\n' | b'\t' if self.flag(FLAG_IGNORE_SPACE) => {
-                // recursion is bounded because whitespace won't land on '#'
-                let ix = self.whitespace(ix);
-                self.parse_atom(ix, depth)
-            }
             b => {
                 // TODO: maybe want to match multiple codepoints?
                 let next = ix + codepoint_len(b);
