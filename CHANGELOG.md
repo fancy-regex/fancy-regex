@@ -8,6 +8,7 @@ with the exception that 0.x versions can break between minor versions.
 
 ## [Unreleased]
 ### Added
+- More documentation and examples
 - Support character class nesting and intersections (implemented in
   regex crate)
 - Support atomic groups, both the the `(?>foo)` group syntax and the
