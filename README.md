@@ -8,6 +8,7 @@ NFA-based implementations (exemplified by
 [RE2](https://github.com/google/re2), and implemented in Rust in the
 [regex](https://crates.io/crates/regex) crate).
 
+[![docs](https://docs.rs/fancy-regex/badge.svg)](https://docs.rs/fancy-regex)
 [![crate](https://img.shields.io/crates/v/fancy-regex.svg)](https://crates.io/crates/fancy-regex)
 [![build status](https://travis-ci.com/fancy-regex/fancy-regex.svg?branch=master)](https://travis-ci.com/fancy-regex/fancy-regex)
 [![codecov](https://codecov.io/gh/fancy-regex/fancy-regex/branch/master/graph/badge.svg)](https://codecov.io/gh/fancy-regex/fancy-regex)
