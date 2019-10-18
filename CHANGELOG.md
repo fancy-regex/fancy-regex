@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
-## [Unreleased]
+## [0.2.0] - 2019-10-19
 ### Added
 - More documentation and examples
 - Support character class nesting and intersections (implemented in
@@ -40,5 +40,5 @@ with the exception that 0.x versions can break between minor versions.
 ### Added
 - Initial release
 
-[Unreleased]: https://github.com/fancy-regex/fancy-regex/compare/0.1.0...HEAD
+[0.2.0]: https://github.com/fancy-regex/fancy-regex/compare/0.1.0...0.2.0
 [0.1.0]: https://github.com/fancy-regex/fancy-regex/commits/0.1.0
