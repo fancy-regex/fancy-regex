@@ -126,7 +126,6 @@ assert!(!re.is_match("abc").unwrap());
 */
 
 #![doc(html_root_url = "https://docs.rs/fancy-regex/0.2.0")]
-
 #![deny(missing_docs)]
 #![deny(missing_debug_implementations)]
 
@@ -187,14 +186,22 @@ pub enum Error {
     InnerError(regex::Error),
 
     // Run time errors
-    /// Max stack size exceeded for backtracking while executing regex
+    /// Max stack size exceeded for backtracking while executing regex.
     StackOverflow,
+    /// Max limit for backtracking count exceeded while executing the regex.
+    /// Configure using
+    /// [`RegexBuilder::backtrack_limit`](struct.RegexBuilder.html#method.backtrack_limit).
+    BacktrackLimitExceeded,
 
     /// This enum may grow additional variants, so this makes sure clients don't count on exhaustive
     /// matching. Otherwise, adding a new variant could break existing code.
     #[doc(hidden)]
     __Nonexhaustive,
 }
+
+/// A builder for a `Regex` to allow configuring options.
+#[derive(Debug)]
+pub struct RegexBuilder(RegexOptions);
 
 /// A compiled regular expression.
 pub struct Regex(RegexImpl);
@@ -205,12 +212,12 @@ enum RegexImpl {
     Wrap {
         inner: regex::Regex,
         inner1: Option<Box<regex::Regex>>,
-        original: String,
+        options: RegexOptions,
     },
     Fancy {
         prog: Prog,
         n_groups: usize,
-        original: String,
+        options: RegexOptions,
     },
 }
 
@@ -250,6 +257,50 @@ pub struct SubCaptureMatches<'c, 't> {
     i: usize,
 }
 
+#[derive(Clone, Debug)]
+struct RegexOptions {
+    pattern: String,
+    backtrack_limit: usize,
+}
+
+impl Default for RegexOptions {
+    fn default() -> Self {
+        RegexOptions {
+            pattern: String::new(),
+            backtrack_limit: 1_000_000,
+        }
+    }
+}
+
+impl RegexBuilder {
+    /// Create a new regex builder with a regex pattern.
+    ///
+    /// If the pattern is invalid, the call to `build` will fail later.
+    pub fn new(pattern: &str) -> Self {
+        let mut builder = RegexBuilder(RegexOptions::default());
+        builder.0.pattern = pattern.to_string();
+        builder
+    }
+
+    /// Build the `Regex`.
+    ///
+    /// Returns an [`Error`](enum.Error.html) if the pattern could not be parsed.
+    pub fn build(&self) -> Result<Regex> {
+        Regex::new_options(self.0.clone())
+    }
+
+    /// Limit for how many times backtracking should be attempted for fancy regexes (where
+    /// backtracking is used). If this limit is exceeded, execution returns an error with
+    /// [`Error::BacktrackLimitExceeded`](enum.Error.html#variant.BacktrackLimitExceeded).
+    /// This is for preventing a regex with catastrophic backtracking to run for too long.
+    ///
+    /// Default is `1_000_000` (1 million).
+    pub fn backtrack_limit(&mut self, limit: usize) -> &mut Self {
+        self.0.backtrack_limit = limit;
+        self
+    }
+}
+
 impl fmt::Debug for Regex {
     /// Shows the original regular expression.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -258,9 +309,19 @@ impl fmt::Debug for Regex {
 }
 
 impl Regex {
-    /// Parse and compile a regex.
+    /// Parse and compile a regex with default options, see `RegexBuilder`.
+    ///
+    /// Returns an [`Error`](enum.Error.html) if the pattern could not be parsed.
     pub fn new(re: &str) -> Result<Regex> {
-        let (raw_e, backrefs) = Expr::parse(re)?;
+        let options = RegexOptions {
+            pattern: re.to_string(),
+            ..RegexOptions::default()
+        };
+        Self::new_options(options)
+    }
+
+    fn new_options(options: RegexOptions) -> Result<Regex> {
+        let (raw_e, backrefs) = Expr::parse(&options.pattern)?;
 
         // wrapper to search for re at arbitrary start position,
         // and to capture the match bounds
@@ -303,7 +364,7 @@ impl Regex {
             return Ok(Regex(RegexImpl::Wrap {
                 inner,
                 inner1,
-                original: re.to_string(),
+                options,
             }));
         }
 
@@ -311,15 +372,15 @@ impl Regex {
         Ok(Regex(RegexImpl::Fancy {
             prog,
             n_groups: info.end_group,
-            original: re.to_string(),
+            options,
         }))
     }
 
     /// Returns the original string of this regex.
     pub fn as_str(&self) -> &str {
         match &self.0 {
-            RegexImpl::Wrap { ref original, .. } => original,
-            RegexImpl::Fancy { ref original, .. } => original,
+            RegexImpl::Wrap { options, .. } => &options.pattern,
+            RegexImpl::Fancy { options, .. } => &options.pattern,
         }
     }
 
@@ -338,8 +399,10 @@ impl Regex {
     pub fn is_match(&self, text: &str) -> Result<bool> {
         match &self.0 {
             RegexImpl::Wrap { ref inner, .. } => Ok(inner.is_match(text)),
-            RegexImpl::Fancy { ref prog, .. } => {
-                let result = vm::run(prog, text, 0, 0)?;
+            RegexImpl::Fancy {
+                ref prog, options, ..
+            } => {
+                let result = vm::run(prog, text, 0, 0, options)?;
                 Ok(result.is_some())
             }
         }
@@ -365,8 +428,8 @@ impl Regex {
             RegexImpl::Wrap { inner, .. } => Ok(inner
                 .find(text)
                 .map(|m| Match::new(text, m.start(), m.end()))),
-            RegexImpl::Fancy { prog, .. } => {
-                let result = vm::run(prog, text, 0, 0)?;
+            RegexImpl::Fancy { prog, options, .. } => {
+                let result = vm::run(prog, text, 0, 0, options)?;
                 Ok(result.map(|saves| Match::new(text, saves[0], saves[1])))
             }
         }
@@ -402,8 +465,13 @@ impl Regex {
                     enclosing_groups: 0,
                 })
             })),
-            RegexImpl::Fancy { prog, n_groups, .. } => {
-                let result = vm::run(prog, text, 0, 0)?;
+            RegexImpl::Fancy {
+                prog,
+                n_groups,
+                options,
+                ..
+            } => {
+                let result = vm::run(prog, text, 0, 0, options)?;
                 Ok(result.map(|mut saves| {
                     saves.truncate(n_groups * 2);
                     Captures(CapturesImpl::Fancy { text, saves })
@@ -473,8 +541,13 @@ impl Regex {
                     }))
                 }
             }
-            RegexImpl::Fancy { prog, n_groups, .. } => {
-                let result = vm::run(prog, text, pos, 0)?;
+            RegexImpl::Fancy {
+                prog,
+                n_groups,
+                options,
+                ..
+            } => {
+                let result = vm::run(prog, text, pos, 0, options)?;
                 Ok(result.map(|mut saves| {
                     saves.truncate(n_groups * 2);
                     Captures(CapturesImpl::Fancy { text, saves })
@@ -874,7 +947,7 @@ pub fn detect_possible_backref(re: &str) -> bool {
 pub mod internal {
     pub use crate::analyze::analyze;
     pub use crate::compile::compile;
-    pub use crate::vm::{run, trace, Insn, Prog};
+    pub use crate::vm::{run_default, run_trace, Insn, Prog};
 }
 
 #[cfg(test)]

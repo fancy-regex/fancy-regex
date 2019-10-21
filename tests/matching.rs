@@ -1,3 +1,5 @@
+use fancy_regex::{Error, RegexBuilder};
+
 mod common;
 
 #[test]
@@ -86,6 +88,21 @@ fn atomic_group() {
     // Look-ahead forces use of VM
     assert_match(r"^a(bc(?=d)|b)cd$", "abcd");
     assert_no_match(r"^a(?>bc(?=d)|b)cd$", "abcd");
+}
+
+#[test]
+fn backtrack_limit() {
+    let re = RegexBuilder::new("(?i)(a|b|ab)*(?=c)")
+        .backtrack_limit(100_000)
+        .build()
+        .unwrap();
+    let s = "abababababababababababababababababababababababababababab";
+    let result = re.is_match(s);
+    assert!(result.is_err());
+    match result.err() {
+        Some(Error::BacktrackLimitExceeded) => {}
+        _ => panic!("Expected Error::BacktrackLimitExceeded"),
+    }
 }
 
 fn assert_match(re: &str, text: &str) {
