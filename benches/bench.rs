@@ -23,7 +23,7 @@ extern crate criterion;
 
 use criterion::Criterion;
 
-use fancy_regex::internal::{analyze, compile, run};
+use fancy_regex::internal::{analyze, compile, run_default};
 use fancy_regex::Expr;
 use regex::Regex;
 
@@ -64,7 +64,7 @@ fn run_backtrack(c: &mut Criterion) {
     let a = analyze(&e, &br).unwrap();
     let p = compile(&a).unwrap();
     c.bench_function("run_backtrack", |b| {
-        b.iter(|| run(&p, "babab", 0, 0).unwrap())
+        b.iter(|| run_default(&p, "babab", 0).unwrap())
     });
 }
 
@@ -79,7 +79,17 @@ fn run_tricky(c: &mut Criterion) {
         s.push_str("ab");
     }
     s.push_str("ac");
-    c.bench_function("run_tricky", |b| b.iter(|| run(&p, &s, 0, 0).unwrap()));
+    c.bench_function("run_tricky", |b| b.iter(|| run_default(&p, &s, 0).unwrap()));
+}
+
+fn run_backtrack_limit(c: &mut Criterion) {
+    let (e, br) = Expr::parse("(?i)(a|b|ab)*(?=c)").unwrap();
+    let a = analyze(&e, &br).unwrap();
+    let p = compile(&a).unwrap();
+    let s = "abababababababababababababababababababababababababababab";
+    c.bench_function("run_backtrack_limit", |b| {
+        b.iter(|| run_default(&p, &s, 0).unwrap_err())
+    });
 }
 
 criterion_group!(
@@ -90,6 +100,7 @@ criterion_group!(
     parse_misc,
     analyze_literal_re,
     run_backtrack,
-    run_tricky
+    run_tricky,
+    run_backtrack_limit,
 );
 criterion_main!(benches);

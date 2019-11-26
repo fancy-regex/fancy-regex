@@ -73,10 +73,10 @@ use regex::Regex;
 use std::collections::BTreeSet;
 use std::usize;
 
-use crate::codepoint_len;
 use crate::prev_codepoint_ix;
 use crate::Error;
 use crate::Result;
+use crate::{codepoint_len, RegexOptions};
 
 const OPTION_TRACE: u32 = 1;
 
@@ -391,22 +391,34 @@ fn codepoint_len_at(s: &str, ix: usize) -> usize {
 }
 
 /// Run the program with trace printing for debugging.
-pub fn trace(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
-    run(prog, s, pos, OPTION_TRACE)
+pub fn run_trace(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
+    run(prog, s, pos, OPTION_TRACE, &RegexOptions::default())
 }
 
-/// Run the program.
-pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) -> Result<Option<Vec<usize>>> {
-    let mut state = State::new(prog.n_saves, MAX_STACK, options);
-    if options & OPTION_TRACE != 0 {
+/// Run the program with default options.
+pub fn run_default(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
+    run(prog, s, pos, 0, &RegexOptions::default())
+}
+
+/// Run the program with options.
+pub(crate) fn run(
+    prog: &Prog,
+    s: &str,
+    pos: usize,
+    option_flags: u32,
+    options: &RegexOptions,
+) -> Result<Option<Vec<usize>>> {
+    let mut state = State::new(prog.n_saves, MAX_STACK, option_flags);
+    if option_flags & OPTION_TRACE != 0 {
         println!("pos\tinstruction");
     }
+    let mut backtrack_count = 0;
     let mut pc = 0;
     let mut ix = pos;
     loop {
         // break from this loop to fail, causes stack to pop
         'fail: loop {
-            if options & OPTION_TRACE != 0 {
+            if option_flags & OPTION_TRACE != 0 {
                 println!("{}\t{} {:?}", ix, pc, prog.body[pc]);
             }
             match prog.body[pc] {
@@ -415,7 +427,7 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) -> Result<Option<Vec<
                     // with an explicit group; we might want to
                     // optimize that.
                     //state.saves[1] = ix;
-                    if options & OPTION_TRACE != 0 {
+                    if option_flags & OPTION_TRACE != 0 {
                         println!("saves: {:?}", state.saves);
                     }
                     return Ok(Some(state.saves));
@@ -619,13 +631,19 @@ pub fn run(prog: &Prog, s: &str, pos: usize, options: u32) -> Result<Option<Vec<
             }
             pc += 1;
         }
-        if options & OPTION_TRACE != 0 {
+        if option_flags & OPTION_TRACE != 0 {
             println!("fail");
         }
         // "break 'fail" goes here
         if state.stack.is_empty() {
             return Ok(None);
         }
+
+        backtrack_count += 1;
+        if backtrack_count > options.backtrack_limit {
+            return Err(Error::BacktrackLimitExceeded);
+        }
+
         let (newpc, newix) = state.pop();
         pc = newpc;
         ix = newix;
