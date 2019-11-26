@@ -91,6 +91,14 @@ fn backref_for_unmatched_group() {
 }
 
 #[test]
+fn backref_with_multibyte() {
+    assert_eq!(
+        find(r"(.+)\1+", "x\u{1F431}\u{1F436}\u{1F431}\u{1F436}"),
+        Some((1, 17))
+    );
+}
+
+#[test]
 fn repeat_non_greedy() {
     // (?=a) to make it fancy and use VM
     assert_eq!(find(r"(a(?=a)){2,}?", "aaa"), Some((0, 2)));

@@ -390,6 +390,14 @@ fn codepoint_len_at(s: &str, ix: usize) -> usize {
     codepoint_len(s.as_bytes()[ix])
 }
 
+#[inline]
+fn matches_literal(s: &str, ix: usize, end: usize, literal: &str) -> bool {
+    // Compare as bytes because the literal might be a single byte char whereas ix
+    // points to a multibyte char. Comparing with str would result in an error like
+    // "byte index N is not a char boundary".
+    end <= s.len() && &s.as_bytes()[ix..end] == literal.as_bytes()
+}
+
 /// Run the program with trace printing for debugging.
 pub fn run_trace(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
     run(prog, s, pos, OPTION_TRACE, &RegexOptions::default())
@@ -447,11 +455,11 @@ pub(crate) fn run(
                     }
                 }
                 Insn::Lit(ref val) => {
-                    let end = ix + val.len();
-                    if end > s.len() || &s.as_bytes()[ix..end] != val.as_bytes() {
+                    let ix_end = ix + val.len();
+                    if !matches_literal(s, ix, ix_end, val) {
                         break 'fail;
                     }
-                    ix = end;
+                    ix = ix_end;
                 }
                 Insn::Split(x, y) => {
                     state.push(y, ix)?;
@@ -568,8 +576,9 @@ pub(crate) fn run(
                         break 'fail;
                     }
                     let hi = state.get(slot + 1);
-                    let ix_end = ix + (hi - lo);
-                    if ix_end > s.len() || s[ix..ix_end] != s[lo..hi] {
+                    let ref_text = &s[lo..hi];
+                    let ix_end = ix + ref_text.len();
+                    if !matches_literal(s, ix, ix_end, ref_text) {
                         break 'fail;
                     }
                     ix = ix_end;
