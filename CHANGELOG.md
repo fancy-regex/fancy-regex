@@ -6,12 +6,15 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
-## [unreleased] - 2019-10-19
+## [0.3.0] - 2019-11-27
 ### Added
 - Add limit for backtracking so that execution errors instead of running
   for a long time in case of catastrophic backtracking.
 - Add `RegexBuilder` with `backtrack_limit` to configure the new
   backtrack limit per regex.
+- `Error` now implements `std::error::Error` trait
+### Fixed
+- Fix panic in backref matching with multibyte chars
 
 ## [0.2.0] - 2019-10-19
 ### Added
@@ -47,6 +50,6 @@ with the exception that 0.x versions can break between minor versions.
 ### Added
 - Initial release
 
-[unreleased]: https://github.com/fancy-regex/fancy-regex/compare/0.2.0...master
+[0.3.0]: https://github.com/fancy-regex/fancy-regex/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/fancy-regex/fancy-regex/compare/0.1.0...0.2.0
 [0.1.0]: https://github.com/fancy-regex/fancy-regex/commits/0.1.0
