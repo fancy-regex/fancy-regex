@@ -135,6 +135,7 @@ use std::usize;
 
 mod analyze;
 mod compile;
+mod error;
 mod parse;
 mod vm;
 
@@ -143,61 +144,11 @@ use crate::compile::compile;
 use crate::parse::Parser;
 use crate::vm::Prog;
 
+pub use crate::error::{Error, Result};
+
 const MAX_RECURSION: usize = 64;
 
 // the public API
-
-/// Result type for this crate with specific error enum.
-pub type Result<T> = ::std::result::Result<T, Error>;
-
-/// An error for the result of compiling or running a regex.
-#[derive(Debug)]
-pub enum Error {
-    // Compile time errors
-    /// General parsing error
-    ParseError,
-    /// Opening parenthesis without closing parenthesis, e.g. `(a|b`
-    UnclosedOpenParen,
-    /// Invalid repeat syntax
-    InvalidRepeat,
-    /// Pattern too deeply nested
-    RecursionExceeded,
-    /// Look-behind assertion without constant size
-    LookBehindNotConst,
-    /// Backslash without following character
-    TrailingBackslash,
-    /// Invalid escape
-    InvalidEscape,
-    /// Unicode escape not closed
-    UnclosedUnicodeName,
-    /// Invalid hex escape
-    InvalidHex,
-    /// Invalid codepoint for hex or unicode escape
-    InvalidCodepointValue,
-    /// Invalid character class
-    InvalidClass,
-    /// Unknown group flag
-    UnknownFlag,
-    /// Disabling Unicode not supported
-    NonUnicodeUnsupported,
-    /// Invalid back reference
-    InvalidBackref,
-    /// Regex crate error
-    InnerError(regex::Error),
-
-    // Run time errors
-    /// Max stack size exceeded for backtracking while executing regex.
-    StackOverflow,
-    /// Max limit for backtracking count exceeded while executing the regex.
-    /// Configure using
-    /// [`RegexBuilder::backtrack_limit`](struct.RegexBuilder.html#method.backtrack_limit).
-    BacktrackLimitExceeded,
-
-    /// This enum may grow additional variants, so this makes sure clients don't count on exhaustive
-    /// matching. Otherwise, adding a new variant could break existing code.
-    #[doc(hidden)]
-    __Nonexhaustive,
-}
 
 /// A builder for a `Regex` to allow configuring options.
 #[derive(Debug)]
@@ -660,8 +611,6 @@ impl<'c, 't> Iterator for SubCaptureMatches<'c, 't> {
 }
 
 // TODO: might be nice to implement ExactSizeIterator etc for SubCaptures
-
-// impl error traits (::std::error::Error, fmt::Display)
 
 /// Regular expression AST. This is public for now but may change.
 #[derive(Debug, PartialEq, Eq)]
