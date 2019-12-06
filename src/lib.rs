@@ -212,6 +212,8 @@ pub struct SubCaptureMatches<'c, 't> {
 struct RegexOptions {
     pattern: String,
     backtrack_limit: usize,
+    size_limit: Option<usize>,
+    dfa_size_limit: Option<usize>,
 }
 
 impl Default for RegexOptions {
@@ -219,6 +221,8 @@ impl Default for RegexOptions {
         RegexOptions {
             pattern: String::new(),
             backtrack_limit: 1_000_000,
+            size_limit: None,
+            dfa_size_limit: None,
         }
     }
 }
@@ -248,6 +252,22 @@ impl RegexBuilder {
     /// Default is `1_000_000` (1 million).
     pub fn backtrack_limit(&mut self, limit: usize) -> &mut Self {
         self.0.backtrack_limit = limit;
+        self
+    }
+
+    /// Set the approximate size limit of the compiled regular expression.
+    ///
+    /// This option is forwarded from the wrapped `regex` crate.
+    pub fn size_limit(&mut self, limit: usize) -> &mut Self {
+        self.0.size_limit = Some(limit);
+        self
+    }
+
+    /// Set the approximate size of the cache used by the DFA.
+    ///
+    /// This option is forwarded from the wrapped `regex` crate.
+    pub fn dfa_size_limit(&mut self, limit: usize) -> &mut Self {
+        self.0.dfa_size_limit = Some(limit);
         self
     }
 }
@@ -303,11 +323,11 @@ impl Regex {
                 _ => unreachable!(),
             };
             raw_e.to_str(&mut re_cooked, 0);
-            let inner = compile::compile_inner(&re_cooked)?;
+            let inner = compile::compile_inner(&re_cooked, &options)?;
             let inner1 = if inner_info.looks_left {
                 // create regex to handle 1-char look-behind
                 let re1 = ["^(?s:.)+?(", re_cooked.as_str(), ")"].concat();
-                let compiled = compile::compile_inner(&re1)?;
+                let compiled = compile::compile_inner(&re1, &options)?;
                 Some(Box::new(compiled))
             } else {
                 None
