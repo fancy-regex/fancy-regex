@@ -125,7 +125,7 @@ assert!(!re.is_match("abc").unwrap());
 [regex]: https://crates.io/crates/regex
 */
 
-#![doc(html_root_url = "https://docs.rs/fancy-regex/0.3.0")]
+#![doc(html_root_url = "https://docs.rs/fancy-regex/0.3.1")]
 #![deny(missing_docs)]
 #![deny(missing_debug_implementations)]
 
