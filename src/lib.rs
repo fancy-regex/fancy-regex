@@ -212,8 +212,8 @@ pub struct SubCaptureMatches<'c, 't> {
 struct RegexOptions {
     pattern: String,
     backtrack_limit: usize,
-    size_limit: Option<usize>,
-    dfa_size_limit: Option<usize>,
+    delegate_size_limit: Option<usize>,
+    delegate_dfa_size_limit: Option<usize>,
 }
 
 impl Default for RegexOptions {
@@ -221,8 +221,8 @@ impl Default for RegexOptions {
         RegexOptions {
             pattern: String::new(),
             backtrack_limit: 1_000_000,
-            size_limit: None,
-            dfa_size_limit: None,
+            delegate_size_limit: None,
+            delegate_dfa_size_limit: None,
         }
     }
 }
@@ -257,17 +257,22 @@ impl RegexBuilder {
 
     /// Set the approximate size limit of the compiled regular expression.
     ///
-    /// This option is forwarded from the wrapped `regex` crate.
-    pub fn size_limit(&mut self, limit: usize) -> &mut Self {
-        self.0.size_limit = Some(limit);
+    /// This option is forwarded from the wrapped `regex` crate. Note that depending on the used
+    /// regex features there may be multiple delegated sub-regexes fed to the `regex` crate. As
+    /// such the actual limit is closer to `<number of delegated regexes> * delegate_size_limit`.
+    pub fn delegate_size_limit(&mut self, limit: usize) -> &mut Self {
+        self.0.delegate_size_limit = Some(limit);
         self
     }
 
     /// Set the approximate size of the cache used by the DFA.
     ///
-    /// This option is forwarded from the wrapped `regex` crate.
-    pub fn dfa_size_limit(&mut self, limit: usize) -> &mut Self {
-        self.0.dfa_size_limit = Some(limit);
+    /// This option is forwarded from the wrapped `regex` crate. Note that depending on the used
+    /// regex features there may be multiple delegated sub-regexes fed to the `regex` crate. As
+    /// such the actual limit is closer to `<number of delegated regexes> *
+    /// delegate_dfa_size_limit`.
+    pub fn delegate_dfa_size_limit(&mut self, limit: usize) -> &mut Self {
+        self.0.delegate_dfa_size_limit = Some(limit);
         self
     }
 }

@@ -476,10 +476,10 @@ impl Compiler {
 
 pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<regex::Regex> {
     let mut builder = regex::RegexBuilder::new(inner_re);
-    if let Some(size_limit) = options.size_limit {
+    if let Some(size_limit) = options.delegate_size_limit {
         builder.size_limit(size_limit);
     }
-    if let Some(dfa_size_limit) = options.dfa_size_limit {
+    if let Some(dfa_size_limit) = options.delegate_dfa_size_limit {
         builder.dfa_size_limit(dfa_size_limit);
     }
 
