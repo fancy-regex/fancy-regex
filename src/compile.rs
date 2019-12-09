@@ -29,6 +29,7 @@ use crate::Error;
 use crate::Expr;
 use crate::LookAround;
 use crate::LookAround::*;
+use crate::RegexOptions;
 use crate::Result;
 
 // I'm thinking it probably doesn't make a lot of sense having this split
@@ -93,6 +94,7 @@ impl VMBuilder {
 
 struct Compiler {
     b: VMBuilder,
+    options: RegexOptions,
 }
 
 impl Compiler {
@@ -446,11 +448,11 @@ impl Compiler {
         start_group: usize,
         end_group: usize,
     ) -> Result<()> {
-        let compiled = compile_inner(inner_re)?;
+        let compiled = compile_inner(inner_re, &self.options)?;
         if looks_left {
             // The "s" flag is for allowing `.` to match `\n`
             let inner1 = ["^(?s:.)", &inner_re[1..]].concat();
-            let compiled1 = compile_inner(&inner1)?;
+            let compiled1 = compile_inner(&inner1, &self.options)?;
             self.b.add(Insn::Delegate {
                 inner: Box::new(compiled),
                 inner1: Some(Box::new(compiled1)),
@@ -472,14 +474,23 @@ impl Compiler {
     }
 }
 
-pub(crate) fn compile_inner(inner_re: &str) -> Result<regex::Regex> {
-    regex::Regex::new(inner_re).map_err(Error::InnerError)
+pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<regex::Regex> {
+    let mut builder = regex::RegexBuilder::new(inner_re);
+    if let Some(size_limit) = options.delegate_size_limit {
+        builder.size_limit(size_limit);
+    }
+    if let Some(dfa_size_limit) = options.delegate_dfa_size_limit {
+        builder.dfa_size_limit(dfa_size_limit);
+    }
+
+    builder.build().map_err(Error::InnerError)
 }
 
 /// Compile the analyzed expressions into a program.
 pub fn compile(info: &Info<'_>) -> Result<Prog> {
     let mut c = Compiler {
         b: VMBuilder::new(info.end_group),
+        options: Default::default(),
     };
     c.visit(info, false)?;
     c.b.add(Insn::End);
@@ -515,6 +526,7 @@ mod tests {
 
         let mut c = Compiler {
             b: VMBuilder::new(0),
+            options: Default::default(),
         };
         // Force "hard" so that compiler doesn't just delegate
         c.visit(&info, true).unwrap();
