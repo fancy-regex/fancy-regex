@@ -105,6 +105,13 @@ fn backtrack_limit() {
     }
 }
 
+#[test]
+fn end_of_hard_expression_cannot_be_delegated() {
+    assert_match(r"(?!x)(?:a|ab)c", "abc");
+    // If `(?:a|ab)` is delegated, there's no backtracking and `a` matches and `ab` is never tried.
+    assert_match(r"((?!x)(?:a|ab))c", "abc");
+}
+
 fn assert_match(re: &str, text: &str) {
     let result = match_text(re, text);
     assert_eq!(

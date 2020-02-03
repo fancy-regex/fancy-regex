@@ -98,6 +98,13 @@ struct Compiler {
 }
 
 impl Compiler {
+    fn new(max_group: usize) -> Compiler {
+        Compiler {
+            b: VMBuilder::new(max_group),
+            options: Default::default(),
+        }
+    }
+
     fn visit(&mut self, info: &Info<'_>, hard: bool) -> Result<()> {
         if !hard && !info.hard {
             // easy case, delegate entire subexpr
@@ -217,14 +224,13 @@ impl Compiler {
                 suffix_begin -= 1;
             }
         }
+        // TODO optimization: Check if we can delegate a const_size suffix even when incoming
+        //  difficulty is hard.
 
         self.compile_delegates(&children[..prefix_end])?;
 
-        if prefix_end < suffix_begin {
-            for child in children[prefix_end..suffix_begin - 1].iter() {
-                self.visit(child, true)?;
-            }
-            self.visit(children[suffix_begin - 1], hard)?;
+        for child in children[prefix_end..suffix_begin].iter() {
+            self.visit(child, true)?;
         }
 
         self.compile_delegates(&children[suffix_begin..])
@@ -488,10 +494,7 @@ pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<re
 
 /// Compile the analyzed expressions into a program.
 pub fn compile(info: &Info<'_>) -> Result<Prog> {
-    let mut c = Compiler {
-        b: VMBuilder::new(info.end_group),
-        options: Default::default(),
-    };
+    let mut c = Compiler::new(info.end_group);
     c.visit(info, false)?;
     c.b.add(Insn::End);
     Ok(c.b.build())
@@ -502,6 +505,7 @@ mod tests {
 
     use super::*;
     use crate::analyze::analyze;
+    use crate::vm::Insn::*;
     use bit_set::BitSet;
     use matches::assert_matches;
 
@@ -524,10 +528,7 @@ mod tests {
         let backrefs = BitSet::new();
         let info = analyze(&expr, &backrefs).unwrap();
 
-        let mut c = Compiler {
-            b: VMBuilder::new(0),
-            options: Default::default(),
-        };
+        let mut c = Compiler::new(0);
         // Force "hard" so that compiler doesn't just delegate
         c.visit(&info, true).unwrap();
         c.b.add(Insn::End);
@@ -535,13 +536,71 @@ mod tests {
         let prog = c.b.prog;
 
         assert_eq!(prog.len(), 8, "prog: {:?}", prog);
-        assert_matches!(prog[0], Insn::Split(1, 3));
-        assert_matches!(prog[1], Insn::Lit(ref l) if l == "a");
-        assert_matches!(prog[2], Insn::Jmp(7));
-        assert_matches!(prog[3], Insn::Split(4, 6));
-        assert_matches!(prog[4], Insn::Lit(ref l) if l == "b");
-        assert_matches!(prog[5], Insn::Jmp(7));
-        assert_matches!(prog[6], Insn::Lit(ref l) if l == "c");
-        assert_matches!(prog[7], Insn::End);
+        assert_matches!(prog[0], Split(1, 3));
+        assert_matches!(prog[1], Lit(ref l) if l == "a");
+        assert_matches!(prog[2], Jmp(7));
+        assert_matches!(prog[3], Split(4, 6));
+        assert_matches!(prog[4], Lit(ref l) if l == "b");
+        assert_matches!(prog[5], Jmp(7));
+        assert_matches!(prog[6], Lit(ref l) if l == "c");
+        assert_matches!(prog[7], End);
+    }
+
+    #[test]
+    fn look_around_pattern_can_be_delegated() {
+        let prog = compile_prog("(?=ab*)c");
+
+        assert_eq!(prog.len(), 5, "prog: {:?}", prog);
+        assert_matches!(prog[0], Save(0));
+        assert_delegate(&prog[1], "^ab*");
+        assert_matches!(prog[2], Restore(0));
+        assert_matches!(prog[3], Lit(ref l) if l == "c");
+        assert_matches!(prog[4], End);
+    }
+
+    #[test]
+    fn easy_concat_can_delegate_end() {
+        let prog = compile_prog("(?!x)(?:a|ab)x*");
+
+        assert_eq!(prog.len(), 5, "prog: {:?}", prog);
+        assert_matches!(prog[0], Split(1, 3));
+        assert_matches!(prog[1], Lit(ref l) if l == "x");
+        assert_matches!(prog[2], FailNegativeLookAround);
+        assert_delegate(&prog[3], "^(?:a|ab)x*");
+        assert_matches!(prog[4], End);
+    }
+
+    #[test]
+    fn hard_concat_can_not_delegate_end() {
+        let prog = compile_prog("(?:(?!x)(?:a|ab))x*");
+
+        assert_eq!(prog.len(), 9, "prog: {:?}", prog);
+        assert_matches!(prog[0], Split(1, 3));
+        assert_matches!(prog[1], Lit(ref l) if l == "x");
+        assert_matches!(prog[2], FailNegativeLookAround);
+        assert_matches!(prog[3], Split(4, 6));
+        assert_matches!(prog[4], Lit(ref l) if l == "a");
+        assert_matches!(prog[5], Jmp(7));
+        assert_matches!(prog[6], Lit(ref l) if l == "ab");
+        assert_delegate(&prog[7], "^x*");
+        assert_matches!(prog[8], End);
+    }
+
+    fn compile_prog(re: &str) -> Vec<Insn> {
+        let (expr, backrefs) = Expr::parse(re).unwrap();
+        let info = analyze(&expr, &backrefs).unwrap();
+        let prog = compile(&info).unwrap();
+        prog.body
+    }
+
+    fn assert_delegate(insn: &Insn, re: &str) {
+        match insn {
+            Insn::Delegate { inner, .. } => {
+                assert_eq!(inner.as_str(), re);
+            }
+            _ => {
+                panic!("Expected Insn::Delegate but was {:#?}", insn);
+            }
+        }
     }
 }
