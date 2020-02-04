@@ -108,7 +108,7 @@ impl Compiler {
     fn visit(&mut self, info: &Info<'_>, hard: bool) -> Result<()> {
         if !hard && !info.hard {
             // easy case, delegate entire subexpr
-            return self.compile_delegates(&[info]);
+            return self.compile_delegate(info);
         }
         match *info.expr {
             Expr::Empty => (),
@@ -116,7 +116,7 @@ impl Compiler {
                 if !casei {
                     self.b.add(Insn::Lit(val.clone()));
                 } else {
-                    self.compile_delegates(&[info])?;
+                    self.compile_delegate(info)?;
                 }
             }
             Expr::Any { newline: true } => {
@@ -160,7 +160,7 @@ impl Compiler {
             | Expr::StartLine
             | Expr::EndLine => {
                 // TODO: might want to have more specialized impls
-                self.compile_delegates(&[info])?;
+                self.compile_delegate(info)?;
             }
         }
         Ok(())
@@ -202,11 +202,9 @@ impl Compiler {
     }
 
     fn compile_concat(&mut self, info: &Info<'_>, hard: bool) -> Result<()> {
-        let children: Vec<_> = info.children.iter().map(|c| c).collect();
-
         // First: determine a prefix which is constant size and not hard.
         let mut prefix_end = 0;
-        for child in &children {
+        for child in &info.children {
             if !child.const_size || child.hard {
                 break;
             }
@@ -215,9 +213,9 @@ impl Compiler {
 
         // If incoming difficulty is not hard, the suffix after the last
         // hard child can be done with NFA.
-        let mut suffix_begin = children.len();
+        let mut suffix_begin = info.children.len();
         if !hard {
-            for child in children[prefix_end..].iter().rev() {
+            for child in info.children[prefix_end..].iter().rev() {
                 if child.hard {
                     break;
                 }
@@ -227,13 +225,13 @@ impl Compiler {
         // TODO optimization: Check if we can delegate a const_size suffix even when incoming
         //  difficulty is hard.
 
-        self.compile_delegates(&children[..prefix_end])?;
+        self.compile_delegates(&info.children[..prefix_end])?;
 
-        for child in children[prefix_end..suffix_begin].iter() {
+        for child in info.children[prefix_end..suffix_begin].iter() {
             self.visit(child, true)?;
         }
 
-        self.compile_delegates(&children[suffix_begin..])
+        self.compile_delegates(&info.children[suffix_begin..])
     }
 
     fn compile_repeat(
@@ -395,7 +393,7 @@ impl Compiler {
         self.visit(inner, false)
     }
 
-    fn compile_delegates(&mut self, infos: &[&Info<'_>]) -> Result<()> {
+    fn compile_delegates(&mut self, infos: &[Info<'_>]) -> Result<()> {
         if infos.is_empty() {
             return Ok(());
         }
@@ -409,73 +407,26 @@ impl Compiler {
             self.b.add(Insn::Lit(val));
             return Ok(());
         }
-        // TODO: might want to detect case of a group with no captures
-        // inside, so we can run find() instead of captures()
-        let mut annotated = String::new();
-        annotated.push('^');
-        let mut min_size = 0;
-        let mut const_size = true;
-        let mut looks_left = false;
-        for info in infos {
-            looks_left |= info.looks_left && min_size == 0;
-            min_size += info.min_size;
-            const_size &= info.const_size;
 
-            // Add expression. The precedence argument has to be 1 here to
-            // ensure correct grouping in these cases:
-            //
-            // If we have multiple expressions, we are building a concat.
-            // Without grouping, we'd turn ["a", "b|c"] into "^ab|c". But we
-            // want "^a(?:b|c)".
-            //
-            // Even with a single expression, because we add `^` at the
-            // beginning, we need a group. Otherwise `["a|b"]` would be turned
-            // into `"^a|b"` instead of `"^(?:a|b)"`.
-            info.expr.to_str(&mut annotated, 1);
+        let mut delegate_builder = DelegateBuilder::new();
+        for info in infos {
+            delegate_builder.push(info);
         }
-        let start_group = infos[0].start_group;
-        let end_group = infos[infos.len() - 1].end_group;
-        self.make_delegate(
-            &annotated,
-            min_size,
-            const_size,
-            looks_left,
-            start_group,
-            end_group,
-        )
+        let delegate = delegate_builder.build(&self.options)?;
+
+        self.b.add(delegate);
+        Ok(())
     }
 
-    fn make_delegate(
-        &mut self,
-        inner_re: &str,
-        min_size: usize,
-        const_size: bool,
-        looks_left: bool,
-        start_group: usize,
-        end_group: usize,
-    ) -> Result<()> {
-        let compiled = compile_inner(inner_re, &self.options)?;
-        if looks_left {
-            // The "s" flag is for allowing `.` to match `\n`
-            let inner1 = ["^(?s:.)", &inner_re[1..]].concat();
-            let compiled1 = compile_inner(&inner1, &self.options)?;
-            self.b.add(Insn::Delegate {
-                inner: Box::new(compiled),
-                inner1: Some(Box::new(compiled1)),
-                start_group,
-                end_group,
-            });
-        } else if const_size && start_group == end_group {
-            let size = min_size;
-            self.b.add(Insn::DelegateSized(Box::new(compiled), size));
+    fn compile_delegate(&mut self, info: &Info) -> Result<()> {
+        let insn = if info.is_literal() {
+            let mut val = String::new();
+            info.push_literal(&mut val);
+            Insn::Lit(val)
         } else {
-            self.b.add(Insn::Delegate {
-                inner: Box::new(compiled),
-                inner1: None,
-                start_group,
-                end_group,
-            });
-        }
+            DelegateBuilder::new().push(info).build(&self.options)?
+        };
+        self.b.add(insn);
         Ok(())
     }
 }
@@ -498,6 +449,82 @@ pub fn compile(info: &Info<'_>) -> Result<Prog> {
     c.visit(info, false)?;
     c.b.add(Insn::End);
     Ok(c.b.build())
+}
+
+struct DelegateBuilder {
+    re: String,
+    min_size: usize,
+    const_size: bool,
+    looks_left: bool,
+    start_group: Option<usize>,
+    end_group: usize,
+}
+
+impl DelegateBuilder {
+    fn new() -> Self {
+        Self {
+            re: "^".to_string(),
+            min_size: 0,
+            const_size: true,
+            looks_left: false,
+            start_group: None,
+            end_group: 0,
+        }
+    }
+
+    fn push(&mut self, info: &Info<'_>) -> &mut DelegateBuilder {
+        // TODO: might want to detect case of a group with no captures
+        //  inside, so we can run find() instead of captures()
+
+        self.looks_left |= info.looks_left && self.min_size == 0;
+        self.min_size += info.min_size;
+        self.const_size &= info.const_size;
+        if self.start_group.is_none() {
+            self.start_group = Some(info.start_group);
+        }
+        self.end_group = info.end_group;
+
+        // Add expression. The precedence argument has to be 1 here to
+        // ensure correct grouping in these cases:
+        //
+        // If we have multiple expressions, we are building a concat.
+        // Without grouping, we'd turn ["a", "b|c"] into "^ab|c". But we
+        // want "^a(?:b|c)".
+        //
+        // Even with a single expression, because we add `^` at the
+        // beginning, we need a group. Otherwise `["a|b"]` would be turned
+        // into `"^a|b"` instead of `"^(?:a|b)"`.
+        info.expr.to_str(&mut self.re, 1);
+        self
+    }
+
+    fn build(&self, options: &RegexOptions) -> Result<Insn> {
+        let start_group = self.start_group.expect("Expected at least one expression");
+        let end_group = self.end_group;
+
+        let compiled = compile_inner(&self.re, options)?;
+        if self.looks_left {
+            // The "s" flag is for allowing `.` to match `\n`
+            let inner1 = ["^(?s:.)", &self.re[1..]].concat();
+            let compiled1 = compile_inner(&inner1, options)?;
+            Ok(Insn::Delegate {
+                inner: Box::new(compiled),
+                inner1: Some(Box::new(compiled1)),
+                start_group,
+                end_group,
+            })
+        } else if self.const_size && start_group == end_group {
+            let size = self.min_size;
+            Ok(Insn::DelegateSized(Box::new(compiled), size))
+        } else {
+            Ok(Insn::Delegate {
+                inner: Box::new(compiled),
+                inner1: None,
+                start_group,
+                end_group,
+            })
+        }
+    }
 }
 
 #[cfg(test)]
