@@ -15,7 +15,7 @@ regex = "1.2"
 bit-set = "0.5"
 
 [dev-dependencies]
-criterion = "0.3"
+criterion = "= 0.3.0" # pinned because 0.3.1 doesn't work on Rust 1.32
 matches = "0.1.8"
 quickcheck = "0.7"
 rand = "0.5"
