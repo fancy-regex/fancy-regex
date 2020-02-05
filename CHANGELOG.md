@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
-## [Unreleased]
+## [0.3.2] - 2020-02-05
 ### Fixed
 - Some regexes with fancy parts in the beginning/middle didn't match
   when they should have, e.g. `((?!x)(a|ab))c` didn't match `abc`.
@@ -60,6 +60,7 @@ with the exception that 0.x versions can break between minor versions.
 ### Added
 - Initial release
 
+[0.3.2]: https://github.com/fancy-regex/fancy-regex/compare/0.3.1...0.3.2
 [0.3.1]: https://github.com/fancy-regex/fancy-regex/compare/0.3.0...0.3.1
 [0.3.0]: https://github.com/fancy-regex/fancy-regex/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/fancy-regex/fancy-regex/compare/0.1.0...0.2.0
