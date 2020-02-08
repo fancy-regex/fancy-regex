@@ -203,27 +203,17 @@ impl Compiler {
 
     fn compile_concat(&mut self, info: &Info<'_>, hard: bool) -> Result<()> {
         // First: determine a prefix which is constant size and not hard.
-        let mut prefix_end = 0;
-        for child in &info.children {
-            if !child.const_size || child.hard {
-                break;
-            }
-            prefix_end += 1;
-        }
+        let prefix_end = info.children.iter().take_while(|c| c.const_size && !c.hard).count();
 
         // If incoming difficulty is not hard, the suffix after the last
         // hard child can be done with NFA.
-        let mut suffix_begin = info.children.len();
-        if !hard {
-            for child in info.children[prefix_end..].iter().rev() {
-                if child.hard {
-                    break;
-                }
-                suffix_begin -= 1;
-            }
-        }
-        // TODO optimization: Check if we can delegate a const_size suffix even when incoming
-        //  difficulty is hard.
+        let suffix_len = if !hard {
+            info.children[prefix_end..].iter().rev().take_while(|c| !c.hard).count()
+        } else {
+            // Even for hard, we can delegate a const-sized suffix
+            info.children[prefix_end..].iter().rev().take_while(|c| c.const_size && !c.hard).count()
+        };
+        let suffix_begin = info.children.len() - suffix_len;
 
         self.compile_delegates(&info.children[..prefix_end])?;
 
@@ -598,7 +588,20 @@ mod tests {
     }
 
     #[test]
-    fn hard_concat_can_not_delegate_end() {
+    fn hard_concat_can_delegate_const_size_end() {
+        let prog = compile_prog("(?:(?!x)(?:a|b)c)x*");
+
+        assert_eq!(prog.len(), 6, "prog: {:?}", prog);
+        assert_matches!(prog[0], Split(1, 3));
+        assert_matches!(prog[1], Lit(ref l) if l == "x");
+        assert_matches!(prog[2], FailNegativeLookAround);
+        assert_delegate_sized(&prog[3], "^(?:a|b)c");
+        assert_delegate(&prog[4], "^x*");
+        assert_matches!(prog[5], End);
+    }
+
+    #[test]
+    fn hard_concat_can_not_delegate_variable_end() {
         let prog = compile_prog("(?:(?!x)(?:a|ab))x*");
 
         assert_eq!(prog.len(), 9, "prog: {:?}", prog);
@@ -627,6 +630,17 @@ mod tests {
             }
             _ => {
                 panic!("Expected Insn::Delegate but was {:#?}", insn);
+            }
+        }
+    }
+
+    fn assert_delegate_sized(insn: &Insn, re: &str) {
+        match insn {
+            Insn::DelegateSized(inner, .. ) => {
+                assert_eq!(inner.as_str(), re);
+            }
+            _ => {
+                panic!("Expected Insn::DelegateSized but was {:#?}", insn);
             }
         }
     }
