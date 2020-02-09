@@ -636,7 +636,7 @@ mod tests {
 
     fn assert_delegate_sized(insn: &Insn, re: &str) {
         match insn {
-            Insn::DelegateSized(inner, .. ) => {
+            Insn::DelegateSized(inner, ..) => {
                 assert_eq!(inner.as_str(), re);
             }
             _ => {

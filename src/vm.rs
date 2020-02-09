@@ -608,6 +608,11 @@ pub(crate) fn run(
                     start_group,
                     end_group,
                 } => {
+                    // Note: Why can't we use `find_at` or `captures_read_at` here instead of the
+                    // `inner1` regex? We only want to match at the current location, so our regexes
+                    // need to have an anchor: `^foo` (without `^`, it would match `foo` anywhere).
+                    // But regex like `^foo` won't match in `bar foo` with `find_at(s, 4)` because
+                    // `^` only matches at the beginning of the text.
                     let re = match *inner1 {
                         Some(ref inner1) if ix > 0 => {
                             ix = prev_codepoint_ix(s, ix);
@@ -616,25 +621,28 @@ pub(crate) fn run(
                         _ => inner,
                     };
                     if start_group == end_group {
-                        // No groups, so we can use `find` which is faster than `captures`
+                        // No groups, so we can use `find` which is faster than `captures_read`
                         match re.find(&s[ix..]) {
                             Some(m) => ix += m.end(),
                             _ => break 'fail,
                         }
-                    } else if let Some(caps) = re.captures(&s[ix..]) {
-                        for i in 0..(end_group - start_group) {
-                            let slot = (start_group + i) * 2;
-                            if let Some(m) = caps.get(i + 1) {
-                                state.save(slot, ix + m.start());
-                                state.save(slot + 1, ix + m.end());
-                            } else {
-                                state.save(slot, usize::MAX);
-                                state.save(slot + 1, usize::MAX);
-                            }
-                        }
-                        ix += caps.get(0).unwrap().end();
                     } else {
-                        break 'fail;
+                        let mut locations = re.capture_locations();
+                        if let Some(m) = re.captures_read(&mut locations, &s[ix..]) {
+                            for i in 0..(end_group - start_group) {
+                                let slot = (start_group + i) * 2;
+                                if let Some((start, end)) = locations.get(i + 1) {
+                                    state.save(slot, ix + start);
+                                    state.save(slot + 1, ix + end);
+                                } else {
+                                    state.save(slot, usize::MAX);
+                                    state.save(slot + 1, usize::MAX);
+                                }
+                            }
+                            ix += m.end();
+                        } else {
+                            break 'fail;
+                        }
                     }
                 }
             }
