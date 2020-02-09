@@ -162,7 +162,6 @@ enum RegexImpl {
     // Do we want to box this? It's pretty big...
     Wrap {
         inner: regex::Regex,
-        inner1: Option<Box<regex::Regex>>,
         options: RegexOptions,
     },
     Fancy {
@@ -188,12 +187,7 @@ pub struct Captures<'t>(CapturesImpl<'t>);
 enum CapturesImpl<'t> {
     Wrap {
         text: &'t str,
-        inner: regex::Captures<'t>,
-
-        // starting position, in _from_pos variants
-        offset: usize,
-
-        enclosing_groups: usize,
+        locations: regex::CaptureLocations,
     },
     Fancy {
         text: &'t str,
@@ -329,19 +323,7 @@ impl Regex {
             };
             raw_e.to_str(&mut re_cooked, 0);
             let inner = compile::compile_inner(&re_cooked, &options)?;
-            let inner1 = if inner_info.looks_left {
-                // create regex to handle 1-char look-behind
-                let re1 = ["^(?s:.)+?(", re_cooked.as_str(), ")"].concat();
-                let compiled = compile::compile_inner(&re1, &options)?;
-                Some(Box::new(compiled))
-            } else {
-                None
-            };
-            return Ok(Regex(RegexImpl::Wrap {
-                inner,
-                inner1,
-                options,
-            }));
+            return Ok(Regex(RegexImpl::Wrap { inner, options }));
         }
 
         let prog = compile(&info)?;
@@ -432,28 +414,7 @@ impl Regex {
     /// assert_eq!(captures.get(0).unwrap().as_str(), "2018-04-07");
     /// ```
     pub fn captures<'t>(&self, text: &'t str) -> Result<Option<Captures<'t>>> {
-        match &self.0 {
-            RegexImpl::Wrap { inner, .. } => Ok(inner.captures(text).map(|caps| {
-                Captures(CapturesImpl::Wrap {
-                    text,
-                    inner: caps,
-                    offset: 0,
-                    enclosing_groups: 0,
-                })
-            })),
-            RegexImpl::Fancy {
-                prog,
-                n_groups,
-                options,
-                ..
-            } => {
-                let result = vm::run(prog, text, 0, 0, options)?;
-                Ok(result.map(|mut saves| {
-                    saves.truncate(n_groups * 2);
-                    Captures(CapturesImpl::Fancy { text, saves })
-                }))
-            }
-        }
+        self.captures_from_pos(text, 0)
     }
 
     /// Returns the capture groups for the first match in `text`, starting from
@@ -492,30 +453,10 @@ impl Regex {
     ///
     pub fn captures_from_pos<'t>(&self, text: &'t str, pos: usize) -> Result<Option<Captures<'t>>> {
         match &self.0 {
-            RegexImpl::Wrap { inner, inner1, .. } => {
-                if inner1.is_none() || pos == 0 {
-                    let result = inner.captures(&text[pos..]);
-                    Ok(result.map(|caps| {
-                        Captures(CapturesImpl::Wrap {
-                            text,
-                            inner: caps,
-                            offset: pos,
-                            enclosing_groups: 0,
-                        })
-                    }))
-                } else {
-                    let ix = prev_codepoint_ix(text, pos);
-                    let inner1 = inner1.as_ref().unwrap();
-                    let result = inner1.captures(&text[ix..]);
-                    Ok(result.map(|caps| {
-                        Captures(CapturesImpl::Wrap {
-                            text,
-                            inner: caps,
-                            offset: ix,
-                            enclosing_groups: 1,
-                        })
-                    }))
-                }
+            RegexImpl::Wrap { inner, .. } => {
+                let mut locations = inner.capture_locations();
+                let result = inner.captures_read_at(&mut locations, text, pos);
+                Ok(result.map(|_| Captures(CapturesImpl::Wrap { text, locations })))
             }
             RegexImpl::Fancy {
                 prog,
@@ -573,16 +514,11 @@ impl<'t> Captures<'t> {
     /// returned. The index 0 returns the whole match.
     pub fn get(&self, i: usize) -> Option<Match<'t>> {
         match &self.0 {
-            CapturesImpl::Wrap {
-                text,
-                inner,
-                offset,
-                enclosing_groups,
-            } => inner.get(i + *enclosing_groups).map(|m| Match {
-                text,
-                start: m.start() + *offset,
-                end: m.end() + *offset,
-            }),
+            CapturesImpl::Wrap { text, locations } => {
+                locations
+                    .get(i)
+                    .map(|(start, end)| Match { text, start, end })
+            }
             CapturesImpl::Fancy { text, ref saves } => {
                 let slot = i * 2;
                 if slot >= saves.len() {
@@ -610,13 +546,9 @@ impl<'t> Captures<'t> {
 
     /// How many groups were captured.
     pub fn len(&self) -> usize {
-        match self.0 {
-            CapturesImpl::Wrap {
-                ref inner,
-                enclosing_groups,
-                ..
-            } => inner.len() - enclosing_groups,
-            CapturesImpl::Fancy { ref saves, .. } => saves.len() / 2,
+        match &self.0 {
+            CapturesImpl::Wrap { locations, .. } => locations.len(),
+            CapturesImpl::Fancy { saves, .. } => saves.len() / 2,
         }
     }
 }

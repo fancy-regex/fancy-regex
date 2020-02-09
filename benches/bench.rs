@@ -22,6 +22,7 @@
 extern crate criterion;
 
 use criterion::Criterion;
+use std::time::Duration;
 
 use fancy_regex::internal::{analyze, compile, run_default};
 use fancy_regex::Expr;
@@ -93,14 +94,20 @@ fn run_backtrack_limit(c: &mut Criterion) {
 }
 
 criterion_group!(
-    benches,
-    parse_lifetime_re,
+    name = benches;
+    config = Criterion::default().warm_up_time(Duration::from_secs(10));
+    targets = parse_lifetime_re,
     parse_literal_re,
     parse_literal_re_regex,
     parse_misc,
     analyze_literal_re,
     run_backtrack,
     run_tricky,
-    run_backtrack_limit,
 );
-criterion_main!(benches);
+criterion_group!(
+    name = slow_benches;
+    config = Criterion::default().sample_size(10);
+    targets = run_backtrack_limit,
+);
+
+criterion_main!(benches, slow_benches);
