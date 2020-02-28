@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
+## [0.3.3] - 2020-02-28
+### Changed
+- Optimization: Delegate const-sized suffixes in more cases
+- Optimization: Use `captures_read_at` when delegating to regex crate
+
 ## [0.3.2] - 2020-02-05
 ### Fixed
 - Some regexes with fancy parts in the beginning/middle didn't match
@@ -60,6 +65,7 @@ with the exception that 0.x versions can break between minor versions.
 ### Added
 - Initial release
 
+[0.3.3]: https://github.com/fancy-regex/fancy-regex/compare/0.3.2...0.3.3
 [0.3.2]: https://github.com/fancy-regex/fancy-regex/compare/0.3.1...0.3.2
 [0.3.1]: https://github.com/fancy-regex/fancy-regex/compare/0.3.0...0.3.1
 [0.3.0]: https://github.com/fancy-regex/fancy-regex/compare/0.2.0...0.3.0
