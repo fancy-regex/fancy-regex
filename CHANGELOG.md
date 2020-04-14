@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
+## Unreleased
+### Added
+- Support comments using `(?# comment)` syntax
+
 ## [0.3.3] - 2020-02-28
 ### Changed
 - Optimization: Delegate const-sized suffixes in more cases

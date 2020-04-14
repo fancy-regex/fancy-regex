@@ -31,9 +31,6 @@
   // Compile failed: InvalidBackref
   x2("\\17", "\017", 0, 1);
 
-  // Compile failed: UnknownFlag
-  x2("a(?#....\\\\JJJJ)b", "ab", 0, 2);
-
   // No match found
   x2("(?x)  G (o O(?-x)oO) g L", "GoOoOgLe", 0, 7);
 

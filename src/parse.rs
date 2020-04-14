@@ -68,14 +68,14 @@ impl<'a> Parser<'a> {
 
     fn parse_re(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
         let (ix, child) = self.parse_branch(ix, depth)?;
-        let mut ix = self.optional_whitespace(ix);
+        let mut ix = self.optional_whitespace(ix)?;
         if self.re[ix..].starts_with('|') {
             let mut children = vec![child];
             while self.re[ix..].starts_with('|') {
                 ix += 1;
                 let (next, child) = self.parse_branch(ix, depth)?;
                 children.push(child);
-                ix = self.optional_whitespace(next);
+                ix = self.optional_whitespace(next)?;
             }
             return Ok((ix, Expr::Alt(children)));
         }
@@ -104,7 +104,7 @@ impl<'a> Parser<'a> {
 
     fn parse_piece(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
         let (ix, child) = self.parse_atom(ix, depth)?;
-        let mut ix = self.optional_whitespace(ix);
+        let mut ix = self.optional_whitespace(ix)?;
         if ix < self.re.len() {
             // fail when child is empty?
             let (lo, hi) = match self.re.as_bytes()[ix] {
@@ -126,7 +126,7 @@ impl<'a> Parser<'a> {
                 _ => return Ok((ix, child)),
             };
             ix += 1;
-            ix = self.optional_whitespace(ix);
+            ix = self.optional_whitespace(ix)?;
             let mut greedy = true;
             if ix < self.re.len() && self.re.as_bytes()[ix] == b'?' {
                 greedy = false;
@@ -150,7 +150,7 @@ impl<'a> Parser<'a> {
 
     // ix, lo, hi
     fn parse_repeat(&self, ix: usize) -> Result<(usize, usize, usize)> {
-        let ix = self.optional_whitespace(ix + 1); // skip opening '{'
+        let ix = self.optional_whitespace(ix + 1)?; // skip opening '{'
         let bytes = self.re.as_bytes();
         if ix == self.re.len() {
             return Err(Error::InvalidRepeat);
@@ -164,7 +164,7 @@ impl<'a> Parser<'a> {
         } else {
             return Err(Error::InvalidRepeat);
         };
-        let ix = self.optional_whitespace(end); // past lo number
+        let ix = self.optional_whitespace(end)?; // past lo number
         if ix == self.re.len() {
             return Err(Error::InvalidRepeat);
         }
@@ -172,7 +172,7 @@ impl<'a> Parser<'a> {
         let hi = match bytes[ix] {
             b'}' => lo,
             b',' => {
-                end = self.optional_whitespace(ix + 1); // past ','
+                end = self.optional_whitespace(ix + 1)?; // past ','
                 if let Some((next, hi)) = parse_decimal(self.re, end) {
                     end = next;
                     hi
@@ -182,7 +182,7 @@ impl<'a> Parser<'a> {
             }
             _ => return Err(Error::InvalidRepeat),
         };
-        let ix = self.optional_whitespace(end); // past hi number
+        let ix = self.optional_whitespace(end)?; // past hi number
         if ix == self.re.len() || bytes[ix] != b'}' {
             return Err(Error::InvalidRepeat);
         }
@@ -190,7 +190,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_atom(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
-        let ix = self.optional_whitespace(ix);
+        let ix = self.optional_whitespace(ix)?;
         if ix == self.re.len() {
             return Ok((ix, Expr::Empty));
         }
@@ -465,7 +465,7 @@ impl<'a> Parser<'a> {
         if depth >= MAX_RECURSION {
             return Err(Error::RecursionExceeded);
         }
-        let ix = self.optional_whitespace(ix + 1);
+        let ix = self.optional_whitespace(ix + 1)?;
         let (la, skip) = if self.re[ix..].starts_with("?=") {
             (Some(LookAhead), 2)
         } else if self.re[ix..].starts_with("?!") {
@@ -483,7 +483,7 @@ impl<'a> Parser<'a> {
         };
         let ix = ix + skip;
         let (ix, child) = self.parse_re(ix, depth)?;
-        let ix = self.optional_whitespace(ix);
+        let ix = self.optional_whitespace(ix)?;
         if ix == self.re.len() {
             return Err(Error::UnclosedOpenParen);
         } else if self.re.as_bytes()[ix] != b')' {
@@ -503,7 +503,7 @@ impl<'a> Parser<'a> {
         let mut neg = false;
         let oldflags = self.flags;
         loop {
-            ix = self.optional_whitespace(ix);
+            ix = self.optional_whitespace(ix)?;
             if ix == self.re.len() {
                 return Err(Error::UnclosedOpenParen);
             }
@@ -562,28 +562,38 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn whitespace(&self, mut ix: usize) -> usize {
+    fn optional_whitespace(&self, mut ix: usize) -> Result<usize> {
         let bytes = self.re.as_bytes();
         loop {
             if ix == self.re.len() {
-                return ix;
+                return Ok(ix);
             }
             match bytes[ix] {
-                b'#' => match bytes[ix..].iter().position(|&c| c == b'\n') {
-                    Some(x) => ix += x + 1,
-                    None => return self.re.len(),
-                },
-                b' ' | b'\r' | b'\n' | b'\t' => ix += 1,
-                _ => return ix,
+                b'#' if self.flag(FLAG_IGNORE_SPACE) => {
+                    match bytes[ix..].iter().position(|&c| c == b'\n') {
+                        Some(x) => ix += x + 1,
+                        None => return Ok(self.re.len()),
+                    }
+                }
+                b' ' | b'\r' | b'\n' | b'\t' if self.flag(FLAG_IGNORE_SPACE) => ix += 1,
+                b'(' if bytes[ix..].starts_with(b"(?#") => {
+                    ix += 3;
+                    loop {
+                        if ix >= self.re.len() {
+                            return Err(Error::UnclosedOpenParen);
+                        }
+                        match bytes[ix] {
+                            b')' => {
+                                ix += 1;
+                                break;
+                            }
+                            b'\\' => ix += 2,
+                            _ => ix += 1,
+                        }
+                    }
+                }
+                _ => return Ok(ix),
             }
-        }
-    }
-
-    fn optional_whitespace(&self, ix: usize) -> usize {
-        if self.flag(FLAG_IGNORE_SPACE) {
-            self.whitespace(ix)
-        } else {
-            ix
         }
     }
 }
@@ -1062,6 +1072,19 @@ mod tests {
         assert_eq!(p("(?x: [ \\] \\\\] )"), p("[ \\] \\\\]"));
         assert_eq!(p("(?x: a\\ b )"), p("a b"));
         assert_eq!(p("(?x: a (?-x:#) b )"), p("a#b"));
+    }
+
+    #[test]
+    fn comments() {
+        assert_eq!(p(r"ab(?# comment)"), p("ab"));
+        assert_eq!(p(r"ab(?#)"), p("ab"));
+        assert_eq!(p(r"(?# comment 1)(?# comment 2)ab"), p("ab"));
+        assert_eq!(p(r"ab(?# comment \))c"), p("abc"));
+        assert_eq!(p(r"ab(?# comment \\)c"), p("abc"));
+        assert_eq!(p(r"ab(?# comment ()c"), p("abc"));
+        assert_eq!(p(r"ab(?# comment)*"), p("ab*"));
+        fail(r"ab(?# comment");
+        fail(r"ab(?# comment\");
     }
 
     #[test]
