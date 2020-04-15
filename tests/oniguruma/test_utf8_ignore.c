@@ -401,9 +401,6 @@
   // Compile failed: InvalidEscape
   x2("[\\o{101}]", "A", 0, 1);
 
-  // Compile failed: InvalidEscape
-  x2("[\\u0041]", "A", 0, 1);
-
   // Compile failed: UnknownFlag
   x2("(?~)", "", 0, 0);
 
@@ -950,12 +947,6 @@
 
   // Compile failed: InvalidHex
   x2("\\x1", "\x01", 0, 1);
-
-  // Compile failed: InvalidEscape
-  x2("\\u4E38", "\xE4\xB8\xB8", 0, 3);
-
-  // Compile failed: InvalidEscape
-  x2("\\u0040", "@", 0, 1);
 
   // Compile failed: UnknownFlag
   x2("((?()0+)+++(((0\\g<0>)0)|())++++((?(1)(0\\g<0>))++++++0*())++++((?(1)(0\\g<1>)+)++++++++++*())++++((?(1)((0)\\g<0>)+)++())+0++*+++(((0\\g<0>))*())++++((?(1)(0\\g<0>)+)++++++++++*|)++++*+++((?(1)((0)\\g<0>)+)+++++++++())++*|)++++((?()0))|", "abcde", 0, 0);

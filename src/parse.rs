@@ -297,7 +297,11 @@ impl<'a> Parser<'a> {
                 },
             ));
         } else if b == b'x' {
-            return self.parse_hex(end);
+            return self.parse_hex(end, 2);
+        } else if b == b'u' {
+            return self.parse_hex(end, 4);
+        } else if b == b'U' {
+            return self.parse_hex(end, 8);
         } else if (b | 32) == b'p' {
             // allow whitespace?
             if end == self.re.len() {
@@ -336,15 +340,14 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    // ix points after '\x', eg to 'A0' or '{12345}'
-    fn parse_hex(&self, ix: usize) -> Result<(usize, Expr)> {
-        if ix + 2 > self.re.len() {
-            return Err(Error::InvalidHex);
-        }
+    // ix points after '\x', eg to 'A0' or '{12345}', or after `\u` or `\U`
+    fn parse_hex(&self, ix: usize, digits: usize) -> Result<(usize, Expr)> {
         let bytes = self.re.as_bytes();
         let b = bytes[ix];
-        let (end, s) = if is_hex_digit(b) && is_hex_digit(bytes[ix + 1]) {
-            let end = ix + 2;
+        let (end, s) = if ix + digits <= self.re.len()
+            && bytes[ix..ix + digits].iter().all(|&b| is_hex_digit(b))
+        {
+            let end = ix + digits;
             (end, &self.re[ix..end])
         } else if b == b'{' {
             let starthex = ix + 1;
@@ -697,6 +700,11 @@ mod tests {
         assert_eq!(p("\\xA0"), make_literal("\u{A0}"));
         assert_eq!(p("\\x{1F4A9}"), make_literal("\u{1F4A9}"));
         assert_eq!(p("\\x{000000B7}"), make_literal("\u{B7}"));
+        assert_eq!(p("\\u21D2"), make_literal("\u{21D2}"));
+        assert_eq!(p("\\u{21D2}"), make_literal("\u{21D2}"));
+        assert_eq!(p("\\u21D2x"), p("\u{21D2}x"));
+        assert_eq!(p("\\U0001F60A"), make_literal("\u{1F60A}"));
+        assert_eq!(p("\\U{0001F60A}"), make_literal("\u{1F60A}"));
     }
 
     #[test]
@@ -730,6 +738,11 @@ mod tests {
         assert!(Expr::parse("\\x{42").is_err());
         assert!(Expr::parse("\\x{D800}").is_err());
         assert!(Expr::parse("\\x{110000}").is_err());
+        assert!(Expr::parse("\\u123").is_err());
+        assert!(Expr::parse("\\u123x").is_err());
+        assert!(Expr::parse("\\u{}").is_err());
+        assert!(Expr::parse("\\U1234567").is_err());
+        assert!(Expr::parse("\\U{}").is_err());
     }
 
     #[test]

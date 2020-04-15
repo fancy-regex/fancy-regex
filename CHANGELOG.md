@@ -9,6 +9,7 @@ with the exception that 0.x versions can break between minor versions.
 ## Unreleased
 ### Added
 - Support comments using `(?# comment)` syntax
+- Support unicode escapes like `\u21D2` and `\U0001F60A`
 
 ## [0.3.3] - 2020-02-28
 ### Changed
