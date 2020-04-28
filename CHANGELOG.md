@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
-## Unreleased
+## [0.3.4] - 2020-04-28
 ### Added
 - Support comments using `(?# comment)` syntax
 - Support unicode escapes like `\u21D2` and `\U0001F60A`
@@ -70,6 +70,7 @@ with the exception that 0.x versions can break between minor versions.
 ### Added
 - Initial release
 
+[0.3.4]: https://github.com/fancy-regex/fancy-regex/compare/0.3.3...0.3.4
 [0.3.3]: https://github.com/fancy-regex/fancy-regex/compare/0.3.2...0.3.3
 [0.3.2]: https://github.com/fancy-regex/fancy-regex/compare/0.3.1...0.3.2
 [0.3.1]: https://github.com/fancy-regex/fancy-regex/compare/0.3.0...0.3.1
