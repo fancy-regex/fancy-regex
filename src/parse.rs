@@ -323,7 +323,7 @@ impl<'a> Parser<'a> {
                 }
             }
         } else if b'a' <= (b | 32) && (b | 32) <= b'z' {
-            return Err(Error::InvalidEscape);
+            return Err(Error::InvalidEscape(format!("\\{}", &self.re[ix + 1..end])));
         } else if 0x20 <= b && b <= 0x7f {
             // printable ASCII (including space, see issue #29)
             return Ok((end, make_literal(&self.re[ix + 1..end])));
@@ -500,8 +500,16 @@ impl<'a> Parser<'a> {
         Ok((ix + 1, result))
     }
 
+    // ix points to `?` in `(?`
     fn parse_flags(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
         let start = ix + 1;
+
+        fn unknown_flag(re: &str, start: usize, end: usize) -> Error {
+            let after_end = end + codepoint_len(re.as_bytes()[end]);
+            let s = format!("(?{}", &re[start..after_end]);
+            Error::UnknownFlag(s)
+        }
+
         let mut ix = start;
         let mut neg = false;
         let oldflags = self.flags;
@@ -510,7 +518,8 @@ impl<'a> Parser<'a> {
             if ix == self.re.len() {
                 return Err(Error::UnclosedOpenParen);
             }
-            match self.re.as_bytes()[ix] {
+            let b = self.re.as_bytes()[ix];
+            match b {
                 b'i' => self.update_flag(FLAG_CASEI, neg),
                 b'm' => self.update_flag(FLAG_MULTI, neg),
                 b's' => self.update_flag(FLAG_DOTNL, neg),
@@ -523,19 +532,19 @@ impl<'a> Parser<'a> {
                 }
                 b'-' => {
                     if neg {
-                        return Err(Error::UnknownFlag); // more precise error?
+                        return Err(unknown_flag(self.re, start, ix));
                     }
                     neg = true;
                 }
                 b')' => {
                     if ix == start || neg && ix == start + 1 {
-                        return Err(Error::UnknownFlag);
+                        return Err(unknown_flag(self.re, start, ix));
                     }
                     return Ok((ix + 1, Expr::Empty));
                 }
                 b':' => {
                     if neg && ix == start + 1 {
-                        return Err(Error::UnknownFlag);
+                        return Err(unknown_flag(self.re, start, ix));
                     }
                     ix += 1;
                     let (ix, child) = self.parse_re(ix, depth)?;
@@ -547,7 +556,9 @@ impl<'a> Parser<'a> {
                     self.flags = oldflags;
                     return Ok((ix + 1, child));
                 }
-                _ => return Err(Error::UnknownFlag),
+                _ => {
+                    return Err(unknown_flag(self.re, start, ix))
+                },
             }
             ix += 1;
         }
@@ -640,6 +651,12 @@ mod tests {
         assert!(Expr::parse(s).is_err());
     }
 
+    fn assert_error(re: &str, expected_error: &str) {
+        let result = Expr::parse(re);
+        assert!(result.is_err());
+        assert_eq!(&format!("{}", result.err().unwrap()), expected_error);
+    }
+
     #[test]
     fn empty() {
         assert_eq!(p(""), Expr::Empty);
@@ -729,20 +746,20 @@ mod tests {
 
     #[test]
     fn invalid_escape() {
-        assert!(Expr::parse("\\").is_err());
-        assert!(Expr::parse("\\q").is_err());
-        assert!(Expr::parse("\\xAG").is_err());
-        assert!(Expr::parse("\\xA").is_err());
-        assert!(Expr::parse("\\x{}").is_err());
-        assert!(Expr::parse("\\x{AG}").is_err());
-        assert!(Expr::parse("\\x{42").is_err());
-        assert!(Expr::parse("\\x{D800}").is_err());
-        assert!(Expr::parse("\\x{110000}").is_err());
-        assert!(Expr::parse("\\u123").is_err());
-        assert!(Expr::parse("\\u123x").is_err());
-        assert!(Expr::parse("\\u{}").is_err());
-        assert!(Expr::parse("\\U1234567").is_err());
-        assert!(Expr::parse("\\U{}").is_err());
+        assert_error("\\", "Backslash without following character");
+        assert_error("\\q", "Invalid escape: \\q");
+        assert_error("\\xAG", "Invalid hex escape");
+        assert_error("\\xA", "Invalid hex escape");
+        assert_error("\\x{}", "Invalid hex escape");
+        assert_error("\\x{AG}", "Invalid hex escape");
+        assert_error("\\x{42", "Invalid hex escape");
+        assert_error("\\x{D800}", "Invalid codepoint for hex or unicode escape");
+        assert_error("\\x{110000}", "Invalid codepoint for hex or unicode escape");
+        assert_error("\\u123", "Invalid hex escape");
+        assert_error("\\u123x", "Invalid hex escape");
+        assert_error("\\u{}", "Invalid hex escape");
+        assert_error("\\U1234567", "Invalid hex escape");
+        assert_error("\\U{}", "Invalid hex escape");
     }
 
     #[test]
@@ -1141,6 +1158,16 @@ mod tests {
         // only syntactic tests; see similar test in analyze module
         fail(".\\12345678"); // unreasonably large number
         fail(".\\c"); // not decimal
+    }
+
+    #[test]
+    fn unknown_flag() {
+        assert_error("(?<name>[-*_])", "Unknown group flag: (?<");
+        assert_error("(?-:a)", "Unknown group flag: (?-:");
+        assert_error("(?)", "Unknown group flag: (?)");
+        assert_error("(?--)", "Unknown group flag: (?--");
+        // Check that we don't split on char boundary
+        assert_error("(?\u{1F60A})", "Unknown group flag: (?\u{1F60A}");
     }
 
     // found by cargo fuzz, then minimized
