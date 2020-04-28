@@ -20,7 +20,7 @@ pub enum Error {
     /// Backslash without following character
     TrailingBackslash,
     /// Invalid escape
-    InvalidEscape,
+    InvalidEscape(String),
     /// Unicode escape not closed
     UnclosedUnicodeName,
     /// Invalid hex escape
@@ -30,7 +30,7 @@ pub enum Error {
     /// Invalid character class
     InvalidClass,
     /// Unknown group flag
-    UnknownFlag,
+    UnknownFlag(String),
     /// Disabling Unicode not supported
     NonUnicodeUnsupported,
     /// Invalid back reference
@@ -67,14 +67,14 @@ impl fmt::Display for Error {
             Error::RecursionExceeded => write!(f, "Pattern too deeply nested"),
             Error::LookBehindNotConst => write!(f, "Look-behind assertion without constant size"),
             Error::TrailingBackslash => write!(f, "Backslash without following character"),
-            Error::InvalidEscape => write!(f, "Invalid escape"),
+            Error::InvalidEscape(s) => write!(f, "Invalid escape: {}", s),
             Error::UnclosedUnicodeName => write!(f, "Unicode escape not closed"),
             Error::InvalidHex => write!(f, "Invalid hex escape"),
             Error::InvalidCodepointValue => {
                 write!(f, "Invalid codepoint for hex or unicode escape")
             }
             Error::InvalidClass => write!(f, "Invalid character class"),
-            Error::UnknownFlag => write!(f, "Unknown group flag"),
+            Error::UnknownFlag(s) => write!(f, "Unknown group flag: {}", s),
             Error::NonUnicodeUnsupported => write!(f, "Disabling Unicode not supported"),
             Error::InvalidBackref => write!(f, "Invalid back reference"),
             Error::InnerError(e) => write!(f, "Regex error: {}", e),
