@@ -6,8 +6,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
-## Unreleased
-### Added
+## [0.3.5] - 2020-04-28
+### Changed
 - Include string snippet in errors for unknown group and invalid escape
   to make it easier to identify the problem.
 
@@ -75,6 +75,7 @@ with the exception that 0.x versions can break between minor versions.
 ### Added
 - Initial release
 
+[0.3.5]: https://github.com/fancy-regex/fancy-regex/compare/0.3.4...0.3.5
 [0.3.4]: https://github.com/fancy-regex/fancy-regex/compare/0.3.3...0.3.4
 [0.3.3]: https://github.com/fancy-regex/fancy-regex/compare/0.3.2...0.3.3
 [0.3.2]: https://github.com/fancy-regex/fancy-regex/compare/0.3.1...0.3.2
