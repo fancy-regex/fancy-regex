@@ -24,6 +24,7 @@ use bit_set::BitSet;
 use regex::escape;
 use std::str::FromStr;
 use std::usize;
+use std::collections::HashMap;
 
 use crate::codepoint_len;
 use crate::Error;
@@ -44,6 +45,8 @@ pub(crate) struct Parser<'a> {
     re: &'a str, // source
     backrefs: BitSet,
     flags: u32,
+    named_groups: HashMap<String, usize>,
+    curr_group: usize,  // need to keep track of which group number we're parsing
 }
 
 impl<'a> Parser<'a> {
@@ -62,7 +65,9 @@ impl<'a> Parser<'a> {
         Parser {
             re,
             backrefs: BitSet::new(),
+            named_groups: HashMap::new(),
             flags: FLAG_UNICODE,
+            curr_group: 0,
         }
     }
 
@@ -258,6 +263,13 @@ impl<'a> Parser<'a> {
                 }
             }
             return Err(Error::InvalidBackref);
+        } else if b == b'k' {
+            if let Some((id, skip)) = parse_id(self.re, ix) {
+                if let Some(group) = self.named_groups.get(id) {
+                    return Ok((ix + skip, Expr::Backref(*group)));
+                }
+            }
+            return Err(Error::InvalidGroupName);
         } else if b == b'A' || b == b'z' || b == b'b' || b == b'B' {
             size = 0;
         } else if (b | 32) == b'd'
@@ -477,11 +489,20 @@ impl<'a> Parser<'a> {
             (Some(LookBehind), 3)
         } else if self.re[ix..].starts_with("?<!") {
             (Some(LookBehindNeg), 3)
+        } else if self.re[ix..].starts_with("?<") {
+            self.curr_group += 1; // this is a capture group
+            if let Some((id, skip)) = parse_id(self.re, ix) {
+                self.named_groups.insert(id.to_string(), self.curr_group);
+                (None, skip)
+            } else {
+                return Err(Error::InvalidGroupName);
+            }
         } else if self.re[ix..].starts_with("?>") {
             (None, 2)
         } else if self.re[ix..].starts_with('?') {
             return self.parse_flags(ix, depth);
         } else {
+            self.curr_group += 1; // this is a capture group
             (None, 0)
         };
         let ix = ix + skip;
@@ -619,6 +640,20 @@ fn parse_decimal(s: &str, ix: usize) -> Option<(usize, usize)> {
         end += 1;
     }
     usize::from_str(&s[ix..end]).ok().map(|val| (end, val))
+}
+
+// finds the an ID between < and > and returns (id, skip) where skip
+// is how far ahead we should jump ix (how much of the string we used)
+fn parse_id(s: &str, ix: usize) -> Option<(&str, usize)> {
+    if let Some(start) = s[ix..].find('<') {
+        if let Some(end) = s[ix..].find('>') {
+            let id = &s[ix+start+1..ix+end];
+            return Some((id, end+1));
+        } else {
+            return None;
+        }
+    }    
+    None
 }
 
 fn is_digit(b: u8) -> bool {
@@ -1162,7 +1197,6 @@ mod tests {
 
     #[test]
     fn unknown_flag() {
-        assert_error("(?<name>[-*_])", "Unknown group flag: (?<");
         assert_error("(?-:a)", "Unknown group flag: (?-:");
         assert_error("(?)", "Unknown group flag: (?)");
         assert_error("(?--)", "Unknown group flag: (?--");

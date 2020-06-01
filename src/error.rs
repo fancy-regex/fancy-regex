@@ -37,6 +37,8 @@ pub enum Error {
     InvalidBackref,
     /// Regex crate error
     InnerError(regex::Error),
+    /// Couldn't find matching '>' in named group
+    InvalidGroupName,
 
     // Run time errors
     /// Max stack size exceeded for backtracking while executing regex.
@@ -81,6 +83,7 @@ impl fmt::Display for Error {
             Error::StackOverflow => write!(f, "Max stack size exceeded for backtracking"),
             Error::BacktrackLimitExceeded => write!(f, "Max limit for backtracking count exceeded"),
             Error::__Nonexhaustive => unreachable!(),
+            Error::InvalidGroupName => write!(f, "Could not parse group name"),
         }
     }
 }
