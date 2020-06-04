@@ -268,8 +268,12 @@ impl<'a> Parser<'a> {
                 if let Some(group) = self.named_groups.get(id) {
                     return Ok((ix + skip, Expr::Backref(*group)));
                 }
+                // here the name is parsed but it is invalid
+                return Err(Error::InvalidGroupNameBackref(id.to_string()));
+            } else {
+                // in this case the name can't be parsed
+                return Err(Error::InvalidGroupName);
             }
-            return Err(Error::InvalidGroupName);
         } else if b == b'A' || b == b'z' || b == b'b' || b == b'B' {
             size = 0;
         } else if (b | 32) == b'd'
@@ -1010,6 +1014,17 @@ mod tests {
     }
 
     #[test]
+    fn named_backref() {
+        assert_eq!(
+            p("(?<i>.)\\k<i>"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(Expr::Any { newline: false })),
+                Expr::Backref(1),
+            ])
+        );
+    }
+
+    #[test]
     fn lookaround() {
         assert_eq!(
             p("(?=a)"),
@@ -1193,6 +1208,11 @@ mod tests {
         // only syntactic tests; see similar test in analyze module
         fail(".\\12345678"); // unreasonably large number
         fail(".\\c"); // not decimal
+    }
+
+    #[test]
+    fn invalid_named_backref() {
+        assert_error("\\k<id>(?<id>.)", "Invalid group name in back reference: id");
     }
 
     #[test]
