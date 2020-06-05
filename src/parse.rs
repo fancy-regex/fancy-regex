@@ -648,16 +648,37 @@ fn parse_decimal(s: &str, ix: usize) -> Option<(usize, usize)> {
 
 // finds the an ID between < and > and returns (id, skip) where skip
 // is how far ahead we should jump ix (how much of the string we used)
+// IDs have to be made up of word characters (\w)
 fn parse_id(s: &str, ix: usize) -> Option<(&str, usize)> {
-    if let Some(start) = s[ix..].find('<') {
-        if let Some(end) = s[ix..].find('>') {
-            let id = &s[ix+start+1..ix+end];
-            return Some((id, end+1));
-        } else {
+    // find the start of the ID
+    let mut start = 0;
+    for (i, c) in s[ix..].char_indices() {
+        if c == '<' {
+            start = ix + i + 1;
+            break;
+        }
+    }
+    if start == 0 {
+        return None;
+    }
+    
+    // look for the end of the ID while making sure the chars are \w
+    let mut end = 0;
+    for (i, c) in s[start..].char_indices() {
+        if c =='>' {
+            end = start + i;
+            break;
+        }
+        if (! c.is_alphanumeric()) && c != '_' {
             return None;
         }
-    }    
-    None
+    }
+    if end == 0 {
+        return None;
+    }
+
+    let id = &s[start..end];
+    Some((id, end-ix+1))
 }
 
 fn is_digit(b: u8) -> bool {
@@ -1211,8 +1232,19 @@ mod tests {
     }
 
     #[test]
-    fn invalid_named_backref() {
+    fn invalid_group_name_backref() {
         assert_error("\\k<id>(?<id>.)", "Invalid group name in back reference: id");
+    }
+
+    #[test]
+    fn incomplete_group_name() {
+        assert_error("(?<id)", "Could not parse group name");
+    }
+
+    // group names can only use alphanumerics and underscores
+    #[test]
+    fn invalid_group_name() {
+        assert_error("(?<#>)", "Could not parse group name");
     }
 
     #[test]
