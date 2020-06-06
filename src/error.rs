@@ -41,6 +41,8 @@ pub enum Error {
     InvalidGroupName,
     /// Invalid group id in escape sequence
     InvalidGroupNameBackref(String),
+    /// Once named groups are used you cannot refer to groups by number
+    NamedBackrefOnly,
 
     // Run time errors
     /// Max stack size exceeded for backtracking while executing regex.
@@ -87,6 +89,7 @@ impl fmt::Display for Error {
             Error::__Nonexhaustive => unreachable!(),
             Error::InvalidGroupName => write!(f, "Could not parse group name"),
             Error::InvalidGroupNameBackref(s) => write!(f, "Invalid group name in back reference: {}", s),
+            Error::NamedBackrefOnly => write!(f, "numbered backref/call is not allowed. (use name)"),
         }
     }
 }
