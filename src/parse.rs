@@ -268,9 +268,9 @@ impl<'a> Parser<'a> {
             }
             return Err(Error::InvalidBackref);
         } else if b == b'k' {
-            if let Some((id, skip)) = parse_id(self.re, ix) {
+            if let Some((id, skip)) = parse_id(&self.re[ix+2..]) {
                 if let Some(group) = self.named_groups.get(id) {
-                    return Ok((ix + skip, Expr::Backref(*group)));
+                    return Ok((ix + skip + 2, Expr::Backref(*group)));
                 }
                 // here the name is parsed but it is invalid
                 return Err(Error::InvalidGroupNameBackref(id.to_string()));
@@ -499,9 +499,9 @@ impl<'a> Parser<'a> {
             (Some(LookBehindNeg), 3)
         } else if self.re[ix..].starts_with("?<") {
             self.curr_group += 1; // this is a capture group
-            if let Some((id, skip)) = parse_id(self.re, ix) {
+            if let Some((id, skip)) = parse_id(&self.re[ix+1..]) {
                 self.named_groups.insert(id.to_string(), self.curr_group);
-                (None, skip)
+                (None, skip+1)
             } else {
                 return Err(Error::InvalidGroupName);
             }
@@ -650,39 +650,24 @@ fn parse_decimal(s: &str, ix: usize) -> Option<(usize, usize)> {
     usize::from_str(&s[ix..end]).ok().map(|val| (end, val))
 }
 
-// finds the an ID between < and > and returns (id, skip) where skip
-// is how far ahead we should jump ix (how much of the string we used)
-// IDs have to be made up of word characters (\w)
-fn parse_id(s: &str, ix: usize) -> Option<(&str, usize)> {
-    // find the start of the ID
-    let mut start = 0;
-    for (i, c) in s[ix..].char_indices() {
-        if c == '<' {
-            start = ix + i + 1;
-            break;
-        }
-    }
-    if start == 0 {
-        return None;
-    }
-    
-    // look for the end of the ID while making sure the chars are \w
-    let mut end = 0;
-    for (i, c) in s[start..].char_indices() {
-        if c =='>' {
-            end = start + i;
-            break;
-        }
-        if (! c.is_alphanumeric()) && c != '_' {
-            return None;
-        }
-    }
-    if end == 0 {
+// finds the an ID between < and > and returns (id, skip) where skip is how much
+// of the string we used.
+fn parse_id(s: &str) -> Option<(&str, usize)> {
+    // the first character should be '<'
+    if !s.starts_with("<") {
         return None;
     }
 
-    let id = &s[start..end];
-    Some((id, end-ix+1))
+    // look for the next character that isn't alphanumeric or an underscore
+    if let Some(len) = s[1..].find(|c: char| !c.is_alphanumeric() && c != '_') {
+        if len > 0 && s[1+len..].starts_with('>') {
+            Some((&s[1..len+1], len+2))
+        } else {
+            None
+        }
+    } else {
+        None
+    }
 }
 
 fn is_digit(b: u8) -> bool {
@@ -1245,6 +1230,12 @@ mod tests {
         assert_error("(?<id)", "Could not parse group name");
     }
 
+    // '<' must immediately follow "(?" or "\k" for a named group 
+    #[test]
+    fn invalid_group_name_start() {
+        assert_error("\\kxxx<id>", "Could not parse group name");
+    }
+
     #[test]
     fn named_backref_only() {
         assert_error("(?<id>.)\\1", "numbered backref/call is not allowed. (use name)");
@@ -1255,6 +1246,7 @@ mod tests {
     fn invalid_group_name() {
         assert_error("(?<#>)", "Could not parse group name");
     }
+
 
     #[test]
     fn unknown_flag() {

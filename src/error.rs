@@ -37,7 +37,7 @@ pub enum Error {
     InvalidBackref,
     /// Regex crate error
     InnerError(regex::Error),
-    /// Couldn't find matching '>' in named group
+    /// Couldn't parse group name
     InvalidGroupName,
     /// Invalid group id in escape sequence
     InvalidGroupNameBackref(String),
