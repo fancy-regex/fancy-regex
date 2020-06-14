@@ -84,6 +84,14 @@ impl<'a> Parser<'a> {
             }
             return Ok((ix, Expr::Alt(children)));
         }
+        // can't have numeric backrefs and named backrefs
+        for escape in self.re.split('\\').skip(1) { // re can't start with a backref
+            if escape.starts_with(char::is_numeric) {
+                if self.named_groups.len() > 0 {
+                    return Err(Error::NamedBackrefOnly);
+                }
+            }
+        }
         Ok((ix, child))
     }
 
@@ -256,10 +264,6 @@ impl<'a> Parser<'a> {
         let mut end = ix + 1 + codepoint_len(b);
         let mut size = 1;
         if is_digit(b) {
-            // don't allow numbered groups if named groups have been used
-            if self.named_groups.len() > 0 {
-                return Err(Error::NamedBackrefOnly);
-            }
             if let Some((end, group)) = parse_decimal(self.re, ix + 1) {
                 // protect BitSet against unreasonably large value
                 if group < self.re.len() / 2 {
@@ -1226,25 +1230,17 @@ mod tests {
     }
 
     #[test]
-    fn incomplete_group_name() {
-        assert_error("(?<id)", "Could not parse group name");
-    }
-
-    // '<' must immediately follow "(?" or "\k" for a named group 
-    #[test]
-    fn invalid_group_name_start() {
-        assert_error("\\kxxx<id>", "Could not parse group name");
-    }
-
-    #[test]
     fn named_backref_only() {
         assert_error("(?<id>.)\\1", "numbered backref/call is not allowed. (use name)");
+        assert_error("(a)\\1(?<name>b)", "numbered backref/call is not allowed. (use name)");
     }
 
-    // group names can only use alphanumerics and underscores
     #[test]
     fn invalid_group_name() {
+        assert_error("(?<id)", "Could not parse group name");
+        assert_error("(?<>)", "Could not parse group name");
         assert_error("(?<#>)", "Could not parse group name");
+        assert_error("\\kxxx<id>", "Could not parse group name");
     }
 
 
