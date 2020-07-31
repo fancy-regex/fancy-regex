@@ -46,6 +46,7 @@ pub(crate) struct Parser<'a> {
     backrefs: BitSet,
     flags: u32,
     named_groups: HashMap<String, usize>,
+    numeric_backrefs: bool,
     curr_group: usize,  // need to keep track of which group number we're parsing
 }
 
@@ -66,6 +67,7 @@ impl<'a> Parser<'a> {
             re,
             backrefs: BitSet::new(),
             named_groups: HashMap::new(),
+            numeric_backrefs: false,
             flags: FLAG_UNICODE,
             curr_group: 0,
         }
@@ -85,12 +87,8 @@ impl<'a> Parser<'a> {
             return Ok((ix, Expr::Alt(children)));
         }
         // can't have numeric backrefs and named backrefs
-        for escape in self.re.split('\\').skip(1) { // re can't start with a backref
-            if escape.starts_with(char::is_numeric) {
-                if self.named_groups.len() > 0 {
-                    return Err(Error::NamedBackrefOnly);
-                }
-            }
+        if self.numeric_backrefs && (self.named_groups.len() > 0) {
+            return Err(Error::NamedBackrefOnly);
         }
         Ok((ix, child))
     }
@@ -255,7 +253,7 @@ impl<'a> Parser<'a> {
     }
 
     // ix points to \ character
-    fn parse_escape(&self, ix: usize) -> Result<(usize, Expr)> {
+    fn parse_escape(&mut self, ix: usize) -> Result<(usize, Expr)> {
         if ix + 1 == self.re.len() {
             return Err(Error::TrailingBackslash);
         }
@@ -267,6 +265,7 @@ impl<'a> Parser<'a> {
             if let Some((end, group)) = parse_decimal(self.re, ix + 1) {
                 // protect BitSet against unreasonably large value
                 if group < self.re.len() / 2 {
+                    self.numeric_backrefs = true;
                     return Ok((end, Expr::Backref(group)));
                 }
             }
@@ -410,7 +409,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_class(&self, ix: usize) -> Result<(usize, Expr)> {
+    fn parse_class(&mut self, ix: usize) -> Result<(usize, Expr)> {
         let bytes = self.re.as_bytes();
         let mut ix = ix + 1; // skip opening '['
         let mut class = String::new();
@@ -1231,8 +1230,8 @@ mod tests {
 
     #[test]
     fn named_backref_only() {
-        assert_error("(?<id>.)\\1", "numbered backref/call is not allowed. (use name)");
-        assert_error("(a)\\1(?<name>b)", "numbered backref/call is not allowed. (use name)");
+        assert_error("(?<id>.)\\1", "Numbered backref/call not allowed because named group was used, use a named backref instead");
+        assert_error("(a)\\1(?<name>b)", "Numbered backref/call not allowed because named group was used, use a named backref instead");
     }
 
     #[test]

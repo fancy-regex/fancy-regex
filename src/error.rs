@@ -89,7 +89,7 @@ impl fmt::Display for Error {
             Error::__Nonexhaustive => unreachable!(),
             Error::InvalidGroupName => write!(f, "Could not parse group name"),
             Error::InvalidGroupNameBackref(s) => write!(f, "Invalid group name in back reference: {}", s),
-            Error::NamedBackrefOnly => write!(f, "numbered backref/call is not allowed. (use name)"),
+            Error::NamedBackrefOnly => write!(f, "Numbered backref/call not allowed because named group was used, use a named backref instead"),
         }
     }
 }
