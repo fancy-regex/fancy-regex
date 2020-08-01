@@ -146,22 +146,16 @@
   // Compile failed: InvalidEscape("\\g")
   x2("(a)\\g<1>", "aa", 0, 2);
 
-  // Compile failed: UnknownFlag("(?<")
-  x2("(?<name1>a)", "a", 0, 1);
-
-  // Compile failed: UnknownFlag("(?<")
+  // Compile failed: InvalidEscape("\\g")
   x2("(?<name_2>ab)\\g<name_2>", "abab", 0, 4);
-
-  // Compile failed: UnknownFlag("(?<")
-  x2("(?<name_3>.zv.)\\k<name_3>", "azvbazvb", 0, 8);
 
   // Compile failed: InvalidEscape("\\g")
   x2("(?<=\\g<ab>)|-\\zEND (?<ab>XyZ)", "XyZ", 3, 3);
 
-  // Compile failed: UnknownFlag("(?<")
+  // Compile failed: InvalidEscape("\\g")
   x2("(?<n>|a\\g<n>)+", "", 0, 0);
 
-  // Compile failed: UnknownFlag("(?<")
+  // Compile failed: InvalidEscape("\\g")
   x2("(?<n>|\\(\\g<n>\\))+$", "()(())", 0, 6);
 
   // Compile failed: InvalidEscape("\\g")
@@ -170,46 +164,28 @@
   // Compile failed: InvalidEscape("\\g")
   x2("\\g<n>(abc|df(?<n>.YZ){2,8}){0}", "XYZ", 0, 3);
 
-  // Compile failed: UnknownFlag("(?<")
+  // Compile failed: InvalidEscape("\\g")
   x2("\\A(?<n>(a\\g<n>)|)\\z", "aaaa", 0, 4);
 
-  // Compile failed: UnknownFlag("(?<")
+  // Compile failed: InvalidEscape("\\g")
   x2("(?<n>|\\g<m>\\g<n>)\\z|\\zEND (?<m>a|(b)\\g<m>)", "bbbbabba", 0, 8);
 
-  // Compile failed: UnknownFlag("(?<")
-  x2("(?<name1240>\\w+\\sx)a+\\k<name1240>", "  fg xaaaaaaaafg x", 2, 18);
-
-  // Compile failed: UnknownFlag("(?<")
+  // Compile failed: InvalidEscape("\\g")
   x3("(z)()()(?<_9>a)\\g<_9>", "zaa", 2, 3, 1);
 
-  // Compile failed: UnknownFlag("(?<")
-  x2("(.)(((?<_>a)))\\k<_>", "zaa", 0, 3);
-
-  // Compile failed: UnknownFlag("(?<")
-  x2("((?<name1>\\d)|(?<name2>\\w))(\\k<name1>|\\k<name2>)", "ff", 0, 2);
-
-  // Compile failed: UnknownFlag("(?<")
+  // No match found
   x2("(?:(?<x>)|(?<x>efg))\\k<x>", "", 0, 0);
 
-  // Compile failed: UnknownFlag("(?<")
-  x2("(?:(?<x>abc)|(?<x>efg))\\k<x>", "abcefgefg", 3, 9);
-
-  // Compile failed: UnknownFlag("(?<")
+  // No match found
   x2("(?:(?<n1>.)|(?<n1>..)|(?<n1>...)|(?<n1>....)|(?<n1>.....)|(?<n1>......)|(?<n1>.......)|(?<n1>........)|(?<n1>.........)|(?<n1>..........)|(?<n1>...........)|(?<n1>............)|(?<n1>.............)|(?<n1>..............))\\k<n1>$", "a-pyumpyum", 2, 10);
 
-  // Compile failed: UnknownFlag("(?<")
-  x3("(?:(?<n1>.)|(?<n1>..)|(?<n1>...)|(?<n1>....)|(?<n1>.....)|(?<n1>......)|(?<n1>.......)|(?<n1>........)|(?<n1>.........)|(?<n1>..........)|(?<n1>...........)|(?<n1>............)|(?<n1>.............)|(?<n1>..............))\\k<n1>$", "xxxxabcdefghijklmnabcdefghijklmn", 4, 18, 14);
-
-  // Compile failed: UnknownFlag("(?<")
-  x3("(?<name1>)(?<name2>)(?<name3>)(?<name4>)(?<name5>)(?<name6>)(?<name7>)(?<name8>)(?<name9>)(?<name10>)(?<name11>)(?<name12>)(?<name13>)(?<name14>)(?<name15>)(?<name16>aaa)(?<name17>)$", "aaa", 0, 3, 16);
-
-  // Compile failed: UnknownFlag("(?<")
+  // Compile failed: InvalidEscape("\\g")
   x2("(?<foo>a|\\(\\g<foo>\\))", "a", 0, 1);
 
-  // Compile failed: UnknownFlag("(?<")
+  // Compile failed: InvalidEscape("\\g")
   x2("(?<foo>a|\\(\\g<foo>\\))", "((((((a))))))", 0, 13);
 
-  // Compile failed: UnknownFlag("(?<")
+  // Compile failed: InvalidEscape("\\g")
   x3("(?<foo>a|\\(\\g<foo>\\))", "((((((((a))))))))", 0, 17, 1);
 
   // Compile failed: InvalidEscape("\\g")
@@ -224,16 +200,16 @@
   // Compile failed: InvalidEscape("\\g")
   x2("\\A(?:\\g<pon>|\\g<pan>|\\zEND  (?<pan>a|c\\g<pon>c)(?<pon>b|d\\g<pan>d))$", "cdcbcdc", 0, 7);
 
-  // Compile failed: UnknownFlag("(?<")
+  // Compile failed: InvalidEscape("\\g")
   x2("\\A(?<n>|a\\g<m>)\\z|\\zEND (?<m>\\g<n>)", "aaaa", 0, 4);
 
-  // Compile failed: UnknownFlag("(?<")
+  // Compile failed: InvalidEscape("\\g")
   x2("(?<n>(a|b\\g<n>c){3,5})", "baaaaca", 1, 5);
 
-  // Compile failed: UnknownFlag("(?<")
+  // Compile failed: InvalidEscape("\\g")
   x2("(?<n>(a|b\\g<n>c){3,5})", "baaaacaaaaa", 0, 10);
 
-  // Compile failed: UnknownFlag("(?<")
+  // Compile failed: InvalidEscape("\\g")
   x2("(?<pare>\\(([^\\(\\)]++|\\g<pare>)*+\\))", "((a))", 0, 5);
 
   // No match found
@@ -266,10 +242,10 @@
   // Compile failed: InvalidEscape("\\g")
   x2("(?i)\\A(a|b\\g<1>c)\\k<1+2>\\z", "bBACcbac", 0, 8);
 
-  // Compile failed: UnknownFlag("(?<")
+  // No match found
   x2("(?i)(?<X>aa)|(?<X>bb)\\k<X>", "BBbb", 0, 4);
 
-  // Compile failed: InvalidEscape("\\k")
+  // Compile failed: InvalidGroupName
   x2("(?:\\k'+1'B|(A)C)*", "ACAB", 0, 4);
 
   // Compile failed: InvalidEscape("\\g")
@@ -287,7 +263,7 @@
   // Compile failed: UnknownFlag("(?(")
   x2("(a*)(?(-1))aa", "aaaaa", 0, 5);
 
-  // Compile failed: UnknownFlag("(?<")
+  // Compile failed: UnknownFlag("(?(")
   x2("(?<name>aaa)(?('name'))aa", "aaaaa", 0, 5);
 
   // Compile failed: UnknownFlag("(?(")
@@ -371,28 +347,28 @@
   // Compile failed: InvalidEscape("\\g")
   x2("(|(?:a(?:\\g'1')*))b|", "abc", 0, 2);
 
-  // Compile failed: UnknownFlag("(?<")
+  // Compile failed: InvalidEscape("\\g")
   x2("((?<x>abc){0}a\\g<x>d)+", "aabcd", 0, 5);
 
   // Compile failed: UnknownFlag("(?(")
   x2("((?(abc)true|false))+", "false", 0, 5);
 
-  // Compile failed: UnknownFlag("(?<")
+  // Compile failed: UnknownFlag("(?(")
   x2("()(?<x>ab)(?(<x>)a|b)", "aba", 0, 3);
 
   // Compile failed: UnknownFlag("(?(")
   x2("(?<=(?(a)a|bb))z", "aaz", 2, 3);
 
-  // Compile failed: UnknownFlag("(?<")
+  // Match found at start 0 and end 3 (expected 0 and 6)
   x2("(?<x>a)(?<x>b)(\\k<x>)+", "abbaab", 0, 6);
 
   // Compile failed: UnknownFlag("(?(")
   x2("((?(a)b|c))(\\1)", "abab", 0, 4);
 
-  // Compile failed: UnknownFlag("(?<")
+  // Compile failed: InvalidEscape("\\g")
   x2("(?<x>$|b\\g<x>)", "bbb", 0, 3);
 
-  // Compile failed: UnknownFlag("(?<")
+  // Compile failed: UnknownFlag("(?(")
   x2("(?<x>(?(a)a|b)|c\\g<x>)", "cccb", 0, 4);
 
   // Compile failed: UnknownFlag("(?(")
@@ -605,7 +581,7 @@
   // Compile failed: InvalidEscape("\\Z")
   x2(".(あ*\\Z)\\1", "いあ", 3, 6);
 
-  // Compile failed: UnknownFlag("(?<")
+  // Compile failed: InvalidEscape("\\g")
   x2("(?<愚か>変|\\(\\g<愚か>\\))", "((((((変))))))", 0, 15);
 
   // Compile failed: InvalidEscape("\\g")

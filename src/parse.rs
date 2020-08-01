@@ -24,6 +24,7 @@ use bit_set::BitSet;
 use regex::escape;
 use std::str::FromStr;
 use std::usize;
+use std::collections::HashMap;
 
 use crate::codepoint_len;
 use crate::Error;
@@ -44,6 +45,9 @@ pub(crate) struct Parser<'a> {
     re: &'a str, // source
     backrefs: BitSet,
     flags: u32,
+    named_groups: HashMap<String, usize>,
+    numeric_backrefs: bool,
+    curr_group: usize,  // need to keep track of which group number we're parsing
 }
 
 impl<'a> Parser<'a> {
@@ -62,7 +66,10 @@ impl<'a> Parser<'a> {
         Parser {
             re,
             backrefs: BitSet::new(),
+            named_groups: HashMap::new(),
+            numeric_backrefs: false,
             flags: FLAG_UNICODE,
+            curr_group: 0,
         }
     }
 
@@ -78,6 +85,10 @@ impl<'a> Parser<'a> {
                 ix = self.optional_whitespace(next)?;
             }
             return Ok((ix, Expr::Alt(children)));
+        }
+        // can't have numeric backrefs and named backrefs
+        if self.numeric_backrefs && (self.named_groups.len() > 0) {
+            return Err(Error::NamedBackrefOnly);
         }
         Ok((ix, child))
     }
@@ -242,7 +253,7 @@ impl<'a> Parser<'a> {
     }
 
     // ix points to \ character
-    fn parse_escape(&self, ix: usize) -> Result<(usize, Expr)> {
+    fn parse_escape(&mut self, ix: usize) -> Result<(usize, Expr)> {
         if ix + 1 == self.re.len() {
             return Err(Error::TrailingBackslash);
         }
@@ -254,10 +265,22 @@ impl<'a> Parser<'a> {
             if let Some((end, group)) = parse_decimal(self.re, ix + 1) {
                 // protect BitSet against unreasonably large value
                 if group < self.re.len() / 2 {
+                    self.numeric_backrefs = true;
                     return Ok((end, Expr::Backref(group)));
                 }
             }
             return Err(Error::InvalidBackref);
+        } else if b == b'k' {
+            if let Some((id, skip)) = parse_id(&self.re[ix+2..]) {
+                if let Some(group) = self.named_groups.get(id) {
+                    return Ok((ix + skip + 2, Expr::Backref(*group)));
+                }
+                // here the name is parsed but it is invalid
+                return Err(Error::InvalidGroupNameBackref(id.to_string()));
+            } else {
+                // in this case the name can't be parsed
+                return Err(Error::InvalidGroupName);
+            }
         } else if b == b'A' || b == b'z' || b == b'b' || b == b'B' {
             size = 0;
         } else if (b | 32) == b'd'
@@ -386,7 +409,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_class(&self, ix: usize) -> Result<(usize, Expr)> {
+    fn parse_class(&mut self, ix: usize) -> Result<(usize, Expr)> {
         let bytes = self.re.as_bytes();
         let mut ix = ix + 1; // skip opening '['
         let mut class = String::new();
@@ -477,11 +500,20 @@ impl<'a> Parser<'a> {
             (Some(LookBehind), 3)
         } else if self.re[ix..].starts_with("?<!") {
             (Some(LookBehindNeg), 3)
+        } else if self.re[ix..].starts_with("?<") {
+            self.curr_group += 1; // this is a capture group
+            if let Some((id, skip)) = parse_id(&self.re[ix+1..]) {
+                self.named_groups.insert(id.to_string(), self.curr_group);
+                (None, skip+1)
+            } else {
+                return Err(Error::InvalidGroupName);
+            }
         } else if self.re[ix..].starts_with("?>") {
             (None, 2)
         } else if self.re[ix..].starts_with('?') {
             return self.parse_flags(ix, depth);
         } else {
+            self.curr_group += 1; // this is a capture group
             (None, 0)
         };
         let ix = ix + skip;
@@ -619,6 +651,26 @@ fn parse_decimal(s: &str, ix: usize) -> Option<(usize, usize)> {
         end += 1;
     }
     usize::from_str(&s[ix..end]).ok().map(|val| (end, val))
+}
+
+// finds the an ID between < and > and returns (id, skip) where skip is how much
+// of the string we used.
+fn parse_id(s: &str) -> Option<(&str, usize)> {
+    // the first character should be '<'
+    if !s.starts_with("<") {
+        return None;
+    }
+
+    // look for the next character that isn't alphanumeric or an underscore
+    if let Some(len) = s[1..].find(|c: char| !c.is_alphanumeric() && c != '_') {
+        if len > 0 && s[1+len..].starts_with('>') {
+            Some((&s[1..len+1], len+2))
+        } else {
+            None
+        }
+    } else {
+        None
+    }
 }
 
 fn is_digit(b: u8) -> bool {
@@ -975,6 +1027,17 @@ mod tests {
     }
 
     #[test]
+    fn named_backref() {
+        assert_eq!(
+            p("(?<i>.)\\k<i>"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(Expr::Any { newline: false })),
+                Expr::Backref(1),
+            ])
+        );
+    }
+
+    #[test]
     fn lookaround() {
         assert_eq!(
             p("(?=a)"),
@@ -1161,8 +1224,27 @@ mod tests {
     }
 
     #[test]
+    fn invalid_group_name_backref() {
+        assert_error("\\k<id>(?<id>.)", "Invalid group name in back reference: id");
+    }
+
+    #[test]
+    fn named_backref_only() {
+        assert_error("(?<id>.)\\1", "Numbered backref/call not allowed because named group was used, use a named backref instead");
+        assert_error("(a)\\1(?<name>b)", "Numbered backref/call not allowed because named group was used, use a named backref instead");
+    }
+
+    #[test]
+    fn invalid_group_name() {
+        assert_error("(?<id)", "Could not parse group name");
+        assert_error("(?<>)", "Could not parse group name");
+        assert_error("(?<#>)", "Could not parse group name");
+        assert_error("\\kxxx<id>", "Could not parse group name");
+    }
+
+
+    #[test]
     fn unknown_flag() {
-        assert_error("(?<name>[-*_])", "Unknown group flag: (?<");
         assert_error("(?-:a)", "Unknown group flag: (?-:");
         assert_error("(?)", "Unknown group flag: (?)");
         assert_error("(?--)", "Unknown group flag: (?--");

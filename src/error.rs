@@ -37,6 +37,12 @@ pub enum Error {
     InvalidBackref,
     /// Regex crate error
     InnerError(regex::Error),
+    /// Couldn't parse group name
+    InvalidGroupName,
+    /// Invalid group id in escape sequence
+    InvalidGroupNameBackref(String),
+    /// Once named groups are used you cannot refer to groups by number
+    NamedBackrefOnly,
 
     // Run time errors
     /// Max stack size exceeded for backtracking while executing regex.
@@ -81,6 +87,9 @@ impl fmt::Display for Error {
             Error::StackOverflow => write!(f, "Max stack size exceeded for backtracking"),
             Error::BacktrackLimitExceeded => write!(f, "Max limit for backtracking count exceeded"),
             Error::__Nonexhaustive => unreachable!(),
+            Error::InvalidGroupName => write!(f, "Could not parse group name"),
+            Error::InvalidGroupNameBackref(s) => write!(f, "Invalid group name in back reference: {}", s),
+            Error::NamedBackrefOnly => write!(f, "Numbered backref/call not allowed because named group was used, use a named backref instead"),
         }
     }
 }
