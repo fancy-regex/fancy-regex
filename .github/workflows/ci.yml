@@ -38,8 +38,7 @@ jobs:
     strategy:
       matrix:
         rust:
-          # MSRV (minimum supported Rust version)
-          - 1.32.0
+          - 1.32.0 # MSRV (minimum supported Rust version)
           - stable
           - beta
     steps:
@@ -82,10 +81,6 @@ jobs:
   clippy:
     name: clippy
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        rust:
-          - stable
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
@@ -93,7 +88,7 @@ jobs:
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: stable
+          toolchain: 1.32.0 # MSRV
           profile: minimal
           override: true
           components: clippy

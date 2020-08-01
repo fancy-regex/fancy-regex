@@ -20,7 +20,6 @@
 
 //! Compilation of regexes to VM.
 
-use regex;
 use std::usize;
 
 use crate::analyze::Info;
