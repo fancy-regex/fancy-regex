@@ -33,7 +33,7 @@ use crate::LookAround::*;
 use crate::Result;
 use crate::MAX_RECURSION;
 
-const FLAG_CASEI: u32 = 1 << 0;
+const FLAG_CASEI: u32 = 1;
 const FLAG_MULTI: u32 = 1 << 1;
 const FLAG_DOTNL: u32 = 1 << 2;
 const FLAG_SWAP_GREED: u32 = 1 << 3;
@@ -87,7 +87,7 @@ impl<'a> Parser<'a> {
             return Ok((ix, Expr::Alt(children)));
         }
         // can't have numeric backrefs and named backrefs
-        if self.numeric_backrefs && (self.named_groups.len() > 0) {
+        if self.numeric_backrefs && !self.named_groups.is_empty() {
             return Err(Error::NamedBackrefOnly);
         }
         Ok((ix, child))
@@ -655,14 +655,14 @@ fn parse_decimal(s: &str, ix: usize) -> Option<(usize, usize)> {
 // of the string we used.
 fn parse_id(s: &str) -> Option<(&str, usize)> {
     // the first character should be '<'
-    if !s.starts_with("<") {
+    if !s.starts_with('<') {
         return None;
     }
 
     // look for the next character that isn't alphanumeric or an underscore
     if let Some(len) = s[1..].find(|c: char| !c.is_alphanumeric() && c != '_') {
         if len > 0 && s[1 + len..].starts_with('>') {
-            Some((&s[1..len + 1], len + 2))
+            Some((&s[1..=len], len + 2))
         } else {
             None
         }
