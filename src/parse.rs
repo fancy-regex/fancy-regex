@@ -33,12 +33,12 @@ use crate::LookAround::*;
 use crate::Result;
 use crate::MAX_RECURSION;
 
-const FLAG_CASEI: u32 = (1 << 0);
-const FLAG_MULTI: u32 = (1 << 1);
-const FLAG_DOTNL: u32 = (1 << 2);
-const FLAG_SWAP_GREED: u32 = (1 << 3);
-const FLAG_IGNORE_SPACE: u32 = (1 << 4);
-const FLAG_UNICODE: u32 = (1 << 5);
+const FLAG_CASEI: u32 = 1 << 0;
+const FLAG_MULTI: u32 = 1 << 1;
+const FLAG_DOTNL: u32 = 1 << 2;
+const FLAG_SWAP_GREED: u32 = 1 << 3;
+const FLAG_IGNORE_SPACE: u32 = 1 << 4;
+const FLAG_UNICODE: u32 = 1 << 5;
 
 #[derive(Debug)]
 pub(crate) struct Parser<'a> {
