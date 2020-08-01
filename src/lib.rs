@@ -507,7 +507,7 @@ impl<'t> Match<'t> {
     }
 }
 
-#[allow(clippy::len_without_is_empty)]
+#[allow(clippy::len_without_is_empty)] // follow regex's API
 impl<'t> Captures<'t> {
     /// Get the capture group by its index in the regex.
     ///

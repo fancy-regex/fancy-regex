@@ -10,7 +10,7 @@ NFA-based implementations (exemplified by
 
 [![docs](https://docs.rs/fancy-regex/badge.svg)](https://docs.rs/fancy-regex)
 [![crate](https://img.shields.io/crates/v/fancy-regex.svg)](https://crates.io/crates/fancy-regex)
-[![build status](https://travis-ci.com/fancy-regex/fancy-regex.svg?branch=main)](https://travis-ci.com/fancy-regex/fancy-regex)
+[![ci](https://github.com/fancy-regex/fancy-regex/workflows/ci/badge.svg)](https://github.com/fancy-regex/fancy-regex/actions?query=workflow%3Aci)
 [![codecov](https://codecov.io/gh/fancy-regex/fancy-regex/branch/main/graph/badge.svg)](https://codecov.io/gh/fancy-regex/fancy-regex)
 
 A goal is to be as efficient as possible. For a given regex, the NFA
