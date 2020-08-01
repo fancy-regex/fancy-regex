@@ -22,9 +22,9 @@
 
 use bit_set::BitSet;
 use regex::escape;
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::usize;
-use std::collections::HashMap;
 
 use crate::codepoint_len;
 use crate::Error;
@@ -47,7 +47,7 @@ pub(crate) struct Parser<'a> {
     flags: u32,
     named_groups: HashMap<String, usize>,
     numeric_backrefs: bool,
-    curr_group: usize,  // need to keep track of which group number we're parsing
+    curr_group: usize, // need to keep track of which group number we're parsing
 }
 
 impl<'a> Parser<'a> {
@@ -271,7 +271,7 @@ impl<'a> Parser<'a> {
             }
             return Err(Error::InvalidBackref);
         } else if b == b'k' {
-            if let Some((id, skip)) = parse_id(&self.re[ix+2..]) {
+            if let Some((id, skip)) = parse_id(&self.re[ix + 2..]) {
                 if let Some(group) = self.named_groups.get(id) {
                     return Ok((ix + skip + 2, Expr::Backref(*group)));
                 }
@@ -502,9 +502,9 @@ impl<'a> Parser<'a> {
             (Some(LookBehindNeg), 3)
         } else if self.re[ix..].starts_with("?<") {
             self.curr_group += 1; // this is a capture group
-            if let Some((id, skip)) = parse_id(&self.re[ix+1..]) {
+            if let Some((id, skip)) = parse_id(&self.re[ix + 1..]) {
                 self.named_groups.insert(id.to_string(), self.curr_group);
-                (None, skip+1)
+                (None, skip + 1)
             } else {
                 return Err(Error::InvalidGroupName);
             }
@@ -588,9 +588,7 @@ impl<'a> Parser<'a> {
                     self.flags = oldflags;
                     return Ok((ix + 1, child));
                 }
-                _ => {
-                    return Err(unknown_flag(self.re, start, ix))
-                },
+                _ => return Err(unknown_flag(self.re, start, ix)),
             }
             ix += 1;
         }
@@ -663,8 +661,8 @@ fn parse_id(s: &str) -> Option<(&str, usize)> {
 
     // look for the next character that isn't alphanumeric or an underscore
     if let Some(len) = s[1..].find(|c: char| !c.is_alphanumeric() && c != '_') {
-        if len > 0 && s[1+len..].starts_with('>') {
-            Some((&s[1..len+1], len+2))
+        if len > 0 && s[1 + len..].starts_with('>') {
+            Some((&s[1..len + 1], len + 2))
         } else {
             None
         }
@@ -1225,7 +1223,10 @@ mod tests {
 
     #[test]
     fn invalid_group_name_backref() {
-        assert_error("\\k<id>(?<id>.)", "Invalid group name in back reference: id");
+        assert_error(
+            "\\k<id>(?<id>.)",
+            "Invalid group name in back reference: id",
+        );
     }
 
     #[test]
@@ -1241,7 +1242,6 @@ mod tests {
         assert_error("(?<#>)", "Could not parse group name");
         assert_error("\\kxxx<id>", "Could not parse group name");
     }
-
 
     #[test]
     fn unknown_flag() {

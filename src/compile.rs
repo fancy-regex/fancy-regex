@@ -203,15 +203,27 @@ impl Compiler {
 
     fn compile_concat(&mut self, info: &Info<'_>, hard: bool) -> Result<()> {
         // First: determine a prefix which is constant size and not hard.
-        let prefix_end = info.children.iter().take_while(|c| c.const_size && !c.hard).count();
+        let prefix_end = info
+            .children
+            .iter()
+            .take_while(|c| c.const_size && !c.hard)
+            .count();
 
         // If incoming difficulty is not hard, the suffix after the last
         // hard child can be done with NFA.
         let suffix_len = if !hard {
-            info.children[prefix_end..].iter().rev().take_while(|c| !c.hard).count()
+            info.children[prefix_end..]
+                .iter()
+                .rev()
+                .take_while(|c| !c.hard)
+                .count()
         } else {
             // Even for hard, we can delegate a const-sized suffix
-            info.children[prefix_end..].iter().rev().take_while(|c| c.const_size && !c.hard).count()
+            info.children[prefix_end..]
+                .iter()
+                .rev()
+                .take_while(|c| c.const_size && !c.hard)
+                .count()
         };
         let suffix_begin = info.children.len() - suffix_len;
 
