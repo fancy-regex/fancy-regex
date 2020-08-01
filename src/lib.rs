@@ -507,6 +507,7 @@ impl<'t> Match<'t> {
     }
 }
 
+#[allow(clippy::len_without_is_empty)]
 impl<'t> Captures<'t> {
     /// Get the capture group by its index in the regex.
     ///
@@ -544,7 +545,8 @@ impl<'t> Captures<'t> {
         SubCaptureMatches { caps: self, i: 0 }
     }
 
-    /// How many groups were captured.
+    /// How many groups were captured. This is always at least 1 because group 0 returns the whole
+    /// match.
     pub fn len(&self) -> usize {
         match &self.0 {
             CapturesImpl::Wrap { locations, .. } => locations.len(),
