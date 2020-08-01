@@ -10,8 +10,8 @@ NFA-based implementations (exemplified by
 
 [![docs](https://docs.rs/fancy-regex/badge.svg)](https://docs.rs/fancy-regex)
 [![crate](https://img.shields.io/crates/v/fancy-regex.svg)](https://crates.io/crates/fancy-regex)
-[![build status](https://travis-ci.com/fancy-regex/fancy-regex.svg?branch=master)](https://travis-ci.com/fancy-regex/fancy-regex)
-[![codecov](https://codecov.io/gh/fancy-regex/fancy-regex/branch/master/graph/badge.svg)](https://codecov.io/gh/fancy-regex/fancy-regex)
+[![build status](https://travis-ci.com/fancy-regex/fancy-regex.svg?branch=main)](https://travis-ci.com/fancy-regex/fancy-regex)
+[![codecov](https://codecov.io/gh/fancy-regex/fancy-regex/branch/main/graph/badge.svg)](https://codecov.io/gh/fancy-regex/fancy-regex)
 
 A goal is to be as efficient as possible. For a given regex, the NFA
 implementation has asymptotic running time linear in the length of the
