@@ -3,11 +3,27 @@ use fancy_regex::{Captures, Match, Result};
 mod common;
 
 #[test]
+fn capture_names() {
+    let regex = common::regex("(?<foo>)()(?P<bar>)");
+    let capture_names = regex.capture_names().collect::<Vec<_>>();
+    assert_eq!(capture_names, vec![None, Some("foo"), None, Some("bar")]);
+}
+
+#[test]
 fn captures_fancy() {
     let captures = captures(r"\s*(\w+)(?=\.)", "foo bar.");
     assert_eq!(captures.len(), 2);
     assert_match(captures.get(0), " bar", 3, 7);
     assert_match(captures.get(1), "bar", 4, 7);
+    assert!(captures.get(2).is_none());
+}
+
+#[test]
+fn captures_fancy_named() {
+    let captures = captures(r"\s*(?<name>\w+)(?=\.)", "foo bar.");
+    assert_eq!(captures.len(), 2);
+    assert_match(captures.get(0), " bar", 3, 7);
+    assert_match(captures.name("name"), "bar", 4, 7);
     assert!(captures.get(2).is_none());
 }
 

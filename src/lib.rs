@@ -141,10 +141,13 @@ mod vm;
 
 use crate::analyze::analyze;
 use crate::compile::compile;
-use crate::parse::Parser;
+use crate::parse::{ParseOutput, Parser};
 use crate::vm::Prog;
 
 pub use crate::error::{Error, Result};
+use std::collections::HashMap;
+use std::fmt::{Debug, Formatter};
+use std::sync::Arc;
 
 const MAX_RECURSION: usize = 64;
 
@@ -155,7 +158,10 @@ const MAX_RECURSION: usize = 64;
 pub struct RegexBuilder(RegexOptions);
 
 /// A compiled regular expression.
-pub struct Regex(RegexImpl);
+pub struct Regex {
+    inner: RegexImpl,
+    capture_names: Arc<HashMap<String, usize>>,
+}
 
 // Separate enum because we don't want to expose any of this
 enum RegexImpl {
@@ -181,7 +187,10 @@ pub struct Match<'t> {
 
 /// A set of capture groups found for a regex.
 #[derive(Debug)]
-pub struct Captures<'t>(CapturesImpl<'t>);
+pub struct Captures<'t> {
+    inner: CapturesImpl<'t>,
+    names: HashMap<String, usize>,
+}
 
 #[derive(Debug)]
 enum CapturesImpl<'t> {
@@ -291,7 +300,7 @@ impl Regex {
     }
 
     fn new_options(options: RegexOptions) -> Result<Regex> {
-        let (raw_e, backrefs) = Expr::parse(&options.pattern)?;
+        let ParseOutput(raw_e, backrefs, capture_names) = Expr::parse_ext(&options.pattern)?;
 
         // wrapper to search for re at arbitrary start position,
         // and to capture the match bounds
@@ -323,20 +332,26 @@ impl Regex {
             };
             raw_e.to_str(&mut re_cooked, 0);
             let inner = compile::compile_inner(&re_cooked, &options)?;
-            return Ok(Regex(RegexImpl::Wrap { inner, options }));
+            return Ok(Regex {
+                inner: RegexImpl::Wrap { inner, options },
+                capture_names,
+            });
         }
 
         let prog = compile(&info)?;
-        Ok(Regex(RegexImpl::Fancy {
-            prog,
-            n_groups: info.end_group,
-            options,
-        }))
+        Ok(Regex {
+            inner: RegexImpl::Fancy {
+                prog,
+                n_groups: info.end_group,
+                options,
+            },
+            capture_names,
+        })
     }
 
     /// Returns the original string of this regex.
     pub fn as_str(&self) -> &str {
-        match &self.0 {
+        match &self.inner {
             RegexImpl::Wrap { options, .. } => &options.pattern,
             RegexImpl::Fancy { options, .. } => &options.pattern,
         }
@@ -355,7 +370,7 @@ impl Regex {
     /// assert!(re.is_match("mirror mirror on the wall").unwrap());
     /// ```
     pub fn is_match(&self, text: &str) -> Result<bool> {
-        match &self.0 {
+        match &self.inner {
             RegexImpl::Wrap { ref inner, .. } => Ok(inner.is_match(text)),
             RegexImpl::Fancy {
                 ref prog, options, ..
@@ -382,7 +397,7 @@ impl Regex {
     /// assert_eq!(re.find("so fancy!").unwrap().unwrap().as_str(), "fancy");
     /// ```
     pub fn find<'t>(&self, text: &'t str) -> Result<Option<Match<'t>>> {
-        match &self.0 {
+        match &self.inner {
             RegexImpl::Wrap { inner, .. } => Ok(inner
                 .find(text)
                 .map(|m| Match::new(text, m.start(), m.end()))),
@@ -452,11 +467,25 @@ impl Regex {
     /// of the string slice.
     ///
     pub fn captures_from_pos<'t>(&self, text: &'t str, pos: usize) -> Result<Option<Captures<'t>>> {
-        match &self.0 {
+        let names = self
+            .capture_names()
+            .enumerate()
+            .filter_map(|(i, name)| name.map(|name| (name.to_string(), i)))
+            .collect();
+        // let mut names = HashMap::new();
+        // for (i, name) in self.capture_names().enumerate() {
+        //     if let Some(name) = name {
+        //         names.insert(name, i);
+        //     }
+        // }
+        match &self.inner {
             RegexImpl::Wrap { inner, .. } => {
                 let mut locations = inner.capture_locations();
                 let result = inner.captures_read_at(&mut locations, text, pos);
-                Ok(result.map(|_| Captures(CapturesImpl::Wrap { text, locations })))
+                Ok(result.map(|_| Captures {
+                    inner: CapturesImpl::Wrap { text, locations },
+                    names,
+                }))
             }
             RegexImpl::Fancy {
                 prog,
@@ -467,16 +496,37 @@ impl Regex {
                 let result = vm::run(prog, text, pos, 0, options)?;
                 Ok(result.map(|mut saves| {
                     saves.truncate(n_groups * 2);
-                    Captures(CapturesImpl::Fancy { text, saves })
+                    Captures {
+                        inner: CapturesImpl::Fancy { text, saves },
+                        names,
+                    }
                 }))
             }
         }
     }
 
+    /// Returns the number of captures, including the implicit capture of the entire expression.
+    pub fn captures_len(&self) -> usize {
+        match &self.inner {
+            RegexImpl::Wrap { inner, .. } => inner.captures_len(),
+            RegexImpl::Fancy { n_groups, .. } => *n_groups,
+        }
+    }
+
+    /// Returns an iterator over the capture names.
+    pub fn capture_names<'r>(&'r self) -> CaptureNames<'r> {
+        let mut names = Vec::new();
+        names.resize(self.captures_len(), None);
+        for (name, &i) in self.capture_names.iter() {
+            names[i] = Some(name.as_str());
+        }
+        CaptureNames(names.into_iter())
+    }
+
     // for debugging only
     #[doc(hidden)]
     pub fn debug_print(&self) {
-        match &self.0 {
+        match &self.inner {
             RegexImpl::Wrap { inner, .. } => println!("wrapped {:?}", inner),
             RegexImpl::Fancy { prog, .. } => prog.debug_print(),
         }
@@ -514,7 +564,7 @@ impl<'t> Captures<'t> {
     /// If there is no match for that group or the index does not correspond to a group, `None` is
     /// returned. The index 0 returns the whole match.
     pub fn get(&self, i: usize) -> Option<Match<'t>> {
-        match &self.0 {
+        match &self.inner {
             CapturesImpl::Wrap { text, locations } => {
                 locations
                     .get(i)
@@ -539,6 +589,147 @@ impl<'t> Captures<'t> {
         }
     }
 
+    /// Returns the match for a named capture group.  Returns `None` the capture
+    /// group did not match or if there is no group with the given name.
+    pub fn name(&self, name: &str) -> Option<Match<'t>> {
+        self.names.get(name).and_then(|i| self.get(*i))
+    }
+
+    /// Expands all instances of `$name` in `replacement` to the corresponding
+    /// capture group `name`, and writes them to the `dst` buffer given.
+    ///
+    /// `name` may be an integer corresponding to the index of the
+    /// capture group (counted by order of opening parenthesis where `0` is the
+    /// entire match) or it can be a name (consisting of letters, digits or
+    /// underscores) corresponding to a named capture group.
+    ///
+    /// If `name` isn't a valid capture group (whether the name doesn't exist
+    /// or isn't a valid index), then it is replaced with the empty string.
+    ///
+    /// The longest possible name is used. e.g., `$1a` looks up the capture
+    /// group named `1a` and not the capture group at index `1`. To exert more
+    /// precise control over the name, use braces, e.g., `${1}a`.
+    ///
+    /// To write a literal `$` use `$$`.    
+    pub fn expand(&self, replacement: &str, dst: &mut String) {
+        let mut iter = replacement.char_indices();
+        while let Some((i, c)) = iter.next() {
+            let tail = &replacement[i..];
+            if tail.starts_with("$$") {
+                assert_eq!(Some((i + 1, '$')), iter.next());
+                dst.push('$');
+            } else if tail.starts_with("${") {
+                assert_eq!('$', c);
+                assert_eq!(Some((i + 1, '{')), iter.next());
+                let name_start = i + 2;
+                loop {
+                    if let Some((j, c)) = iter.next() {
+                        if c == '}' {
+                            *dst += self.value_of(&replacement[name_start..j]);
+                            break;
+                        }
+                    } else {
+                        *dst += &replacement[i..];
+                        return;
+                    }
+                }
+            } else if c == '$' {
+                let name_start = i + 1;
+                let name_end = loop {
+                    if let Some((j, c)) = iter.next() {
+                        if !c.is_alphanumeric() && c != '_' {
+                            break j;
+                        }
+                    } else {
+                        break replacement.len();
+                    }
+                };
+                *dst += if name_start == name_end {
+                    "$"
+                } else {
+                    self.value_of(&replacement[name_start..name_end])
+                };
+                iter = replacement[name_end..].char_indices();
+            } else {
+                dst.push(c);
+            }
+        }
+    }
+
+    /// Expands all instances of `\\num` or `\\g<name>` in `replacement`
+    /// to the corresponding capture group `num` or `name`, and writes
+    /// them to the `dst` buffer given.
+    ///
+    /// `num` must be an integer corresponding to the index of the
+    /// capture group (counted by order of opening parenthesis where `0` is the
+    /// entire match).
+    ///
+    /// `name` may be an integer or it can be a name corresponding to a named
+    /// capture group.
+    ///
+    /// If `num` or `name` isn't a valid capture group (whether the name doesn't exist
+    /// or isn't a valid index), then it is replaced with the empty string.
+    ///
+    /// The longest possible number is used. e.g., `\\10` looks up capture
+    /// group 10 and not capture group 1 followed by a literal 0.
+    ///
+    /// To write a literal `\\` use `\\\\`.    
+    pub fn expand_backslash(&self, replacement: &str, dst: &mut String) {
+        let mut iter = replacement.char_indices();
+        let mut slice = replacement;
+        while let Some((i, c)) = iter.next() {
+            let tail = &slice[i..];
+            if tail.starts_with("\\\\") {
+                assert_eq!(Some((i + 1, '\\')), iter.next());
+                dst.push('\\');
+            } else if tail.starts_with("\\g<") {
+                assert_eq!('\\', c);
+                assert_eq!(Some((i + 1, 'g')), iter.next());
+                assert_eq!(Some((i + 2, '<')), iter.next());
+                let name_start = i + 3;
+                loop {
+                    if let Some((j, c)) = iter.next() {
+                        if c == '>' {
+                            *dst += self.value_of(&slice[name_start..j]);
+                            break;
+                        }
+                    } else {
+                        *dst += &slice[i..];
+                        return;
+                    }
+                }
+            } else if c == '\\' {
+                let name_start = i + 1;
+                let name_end = loop {
+                    if let Some((j, c)) = iter.next() {
+                        if !c.is_ascii_digit() {
+                            break j;
+                        }
+                    } else {
+                        break slice.len();
+                    }
+                };
+                *dst += if name_start == name_end {
+                    "\\"
+                } else {
+                    self.value_of(&replacement[name_start..name_end])
+                };
+                slice = &slice[name_end..];
+                iter = slice.char_indices();
+            } else {
+                dst.push(c);
+            }
+        }
+    }
+
+    fn value_of(&self, id: &str) -> &'t str {
+        let m = match id.parse::<usize>() {
+            Ok(num) => self.get(num),
+            _ => self.name(id),
+        };
+        m.map_or("", |m| m.as_str())
+    }
+
     /// Iterate over the captured groups in order in which they appeared in the regex. The first
     /// capture corresponds to the whole match.
     pub fn iter<'c>(&'c self) -> SubCaptureMatches<'c, 't> {
@@ -548,7 +739,7 @@ impl<'t> Captures<'t> {
     /// How many groups were captured. This is always at least 1 because group 0 returns the whole
     /// match.
     pub fn len(&self) -> usize {
-        match &self.0 {
+        match &self.inner {
             CapturesImpl::Wrap { locations, .. } => locations.len(),
             CapturesImpl::Fancy { saves, .. } => saves.len() / 2,
         }
@@ -651,6 +842,26 @@ pub enum LookAround {
     LookBehindNeg,
 }
 
+/// An iterator over capture names in a [Regex].  The iterator
+/// returns the name of each group, or [None] if the group has
+/// no name.  Because capture group 0 cannot have a name, the
+/// first item returned is always [None].
+pub struct CaptureNames<'r>(std::vec::IntoIter<Option<&'r str>>);
+
+impl Debug for CaptureNames<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<CaptureNames>")
+    }
+}
+
+impl<'r> Iterator for CaptureNames<'r> {
+    type Item = Option<&'r str>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next()
+    }
+}
+
 // silly to write my own, but this is super-fast for the common 1-digit
 // case.
 fn push_usize(s: &mut String, x: usize) {
@@ -677,9 +888,13 @@ impl Expr {
     /// Parse the regex and return an expression (AST) and a bit set with the indexes of groups
     /// that are referenced by backrefs.
     pub fn parse(re: &str) -> Result<(Expr, BitSet)> {
-        Parser::parse(re)
+        let ParseOutput(expr, backrefs, _) = Self::parse_ext(re)?;
+        Ok((expr, backrefs))
     }
 
+    pub(crate) fn parse_ext(re: &str) -> Result<ParseOutput> {
+        Parser::parse(re)
+    }
     /// Convert expression to a regex string in the regex crate's syntax.
     ///
     /// # Panics

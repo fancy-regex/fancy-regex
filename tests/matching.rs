@@ -1,4 +1,4 @@
-use fancy_regex::{Error, RegexBuilder};
+use fancy_regex::{Captures, Error, RegexBuilder};
 
 mod common;
 
@@ -112,6 +112,77 @@ fn end_of_hard_expression_cannot_be_delegated() {
     assert_match(r"((?!x)(?:a|ab))c", "abc");
 }
 
+#[test]
+fn expand() {
+    let regex = common::regex("(a)(b)(?<π>c)(?P<x>d)");
+    let cap = regex.captures("abcd").unwrap().expect("matched");
+    assert_expansion(&cap, "$0", "abcd");
+    assert_expansion(&cap, "$1", "a");
+    assert_expansion(&cap, "$2", "b");
+    assert_expansion(&cap, "$3", "c");
+    assert_expansion(&cap, "$4", "d");
+    assert_expansion(&cap, "$π", "c");
+    assert_expansion(&cap, "$x", "d");
+    assert_expansion(&cap, "$0π", "");
+    assert_expansion(&cap, "$1π", "");
+    assert_expansion(&cap, "$2π", "");
+    assert_expansion(&cap, "$3π", "");
+    assert_expansion(&cap, "$4π", "");
+    assert_expansion(&cap, "$ππ", "");
+    assert_expansion(&cap, "$xπ", "");
+    assert_expansion(&cap, "${0}π", "abcdπ");
+    assert_expansion(&cap, "${1}π", "aπ");
+    assert_expansion(&cap, "${2}π", "bπ");
+    assert_expansion(&cap, "${3}π", "cπ");
+    assert_expansion(&cap, "${4}π", "dπ");
+    assert_expansion(&cap, "${π}π", "cπ");
+    assert_expansion(&cap, "${x}π", "dπ");
+    assert_expansion(&cap, "$", "$");
+    assert_expansion(&cap, "$π√", "c√");
+    assert_expansion(&cap, "$x√", "d√");
+    assert_expansion(&cap, "$$π", "$π");
+    assert_expansion(&cap, "${π", "${π");
+    assert_backlash_expansion(&cap, "\\0", "abcd");
+    assert_backlash_expansion(&cap, "\\1", "a");
+    assert_backlash_expansion(&cap, "\\2", "b");
+    assert_backlash_expansion(&cap, "\\3", "c");
+    assert_backlash_expansion(&cap, "\\4", "d");
+    assert_backlash_expansion(&cap, "\\π", "\\π");
+    assert_backlash_expansion(&cap, "\\x", "\\x");
+    assert_backlash_expansion(&cap, "\\0π", "abcdπ");
+    assert_backlash_expansion(&cap, "\\1π", "aπ");
+    assert_backlash_expansion(&cap, "\\2π", "bπ");
+    assert_backlash_expansion(&cap, "\\3π", "cπ");
+    assert_backlash_expansion(&cap, "\\4π", "dπ");
+    assert_backlash_expansion(&cap, "\\ππ", "\\ππ");
+    assert_backlash_expansion(&cap, "\\xπ", "\\xπ");
+    assert_backlash_expansion(&cap, "\\g<0>π", "abcdπ");
+    assert_backlash_expansion(&cap, "\\g<1>π", "aπ");
+    assert_backlash_expansion(&cap, "\\g<2>π", "bπ");
+    assert_backlash_expansion(&cap, "\\g<3>π", "cπ");
+    assert_backlash_expansion(&cap, "\\g<4>π", "dπ");
+    assert_backlash_expansion(&cap, "\\g<π>π", "cπ");
+    assert_backlash_expansion(&cap, "\\g<x>π", "dπ");
+    assert_backlash_expansion(&cap, "\\", "\\");
+    assert_backlash_expansion(&cap, "\\\\π", "\\π");
+    assert_backlash_expansion(&cap, "\\g<π", "\\g<π");
+}
+
+#[track_caller]
+fn assert_expansion(cap: &Captures, replacement: &str, text: &str) {
+    let mut buf = String::new();
+    cap.expand(replacement, &mut buf);
+    assert_eq!(buf, text);
+}
+
+#[track_caller]
+fn assert_backlash_expansion(cap: &Captures, replacement: &str, text: &str) {
+    let mut buf = String::new();
+    cap.expand_backslash(replacement, &mut buf);
+    assert_eq!(buf, text);
+}
+
+#[track_caller]
 fn assert_match(re: &str, text: &str) {
     let result = match_text(re, text);
     assert_eq!(
@@ -121,6 +192,7 @@ fn assert_match(re: &str, text: &str) {
     );
 }
 
+#[track_caller]
 fn assert_no_match(re: &str, text: &str) {
     let result = match_text(re, text);
     assert_eq!(
@@ -130,6 +202,7 @@ fn assert_no_match(re: &str, text: &str) {
     );
 }
 
+#[track_caller]
 fn match_text(re: &str, text: &str) -> bool {
     let regex = common::regex(re);
     let result = regex.is_match(text);

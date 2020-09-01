@@ -125,7 +125,6 @@ Still in development, though the basic ideas are in place. Currently,
 the following features are missing:
 
 * Iterator methods likes `find_iter` and `captures_iter`
-* Named capture groups (including in the API)
 * Procedure calls and recursive expressions
 
 ## Acknowledgements

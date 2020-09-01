@@ -32,6 +32,7 @@ use crate::Expr;
 use crate::LookAround::*;
 use crate::Result;
 use crate::MAX_RECURSION;
+use std::sync::Arc;
 
 const FLAG_CASEI: u32 = 1;
 const FLAG_MULTI: u32 = 1 << 1;
@@ -50,23 +51,25 @@ pub(crate) struct Parser<'a> {
     curr_group: usize, // need to keep track of which group number we're parsing
 }
 
+pub(crate) struct ParseOutput(pub Expr, pub BitSet, pub Arc<HashMap<String, usize>>);
+
 impl<'a> Parser<'a> {
     /// Parse the regex and return an expression (AST) and a bit set with the indexes of groups
     /// that are referenced by backrefs.
-    pub(crate) fn parse(re: &str) -> Result<(Expr, BitSet)> {
+    pub(crate) fn parse(re: &str) -> Result<ParseOutput> {
         let mut p = Parser::new(re);
         let (ix, result) = p.parse_re(0, 0)?;
         if ix < re.len() {
             return Err(Error::ParseError);
         }
-        Ok((result, p.backrefs))
+        Ok(ParseOutput(result, p.backrefs, Arc::new(p.named_groups)))
     }
 
     fn new(re: &str) -> Parser<'_> {
         Parser {
             re,
             backrefs: BitSet::new(),
-            named_groups: HashMap::new(),
+            named_groups: Default::default(),
             numeric_backrefs: false,
             flags: FLAG_UNICODE,
             curr_group: 0,
@@ -505,6 +508,14 @@ impl<'a> Parser<'a> {
             if let Some((id, skip)) = parse_id(&self.re[ix + 1..]) {
                 self.named_groups.insert(id.to_string(), self.curr_group);
                 (None, skip + 1)
+            } else {
+                return Err(Error::InvalidGroupName);
+            }
+        } else if self.re[ix..].starts_with("?P<") {
+            self.curr_group += 1; // this is a capture group
+            if let Some((id, skip)) = parse_id(&self.re[ix + 2..]) {
+                self.named_groups.insert(id.to_string(), self.curr_group);
+                (None, skip + 2)
             } else {
                 return Err(Error::InvalidGroupName);
             }

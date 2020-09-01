@@ -533,6 +533,7 @@ mod tests {
 
     use super::*;
     use crate::analyze::analyze;
+    use crate::parse::ParseOutput;
     use crate::vm::Insn::*;
     use bit_set::BitSet;
     use matches::assert_matches;
@@ -628,7 +629,7 @@ mod tests {
     }
 
     fn compile_prog(re: &str) -> Vec<Insn> {
-        let (expr, backrefs) = Expr::parse(re).unwrap();
+        let ParseOutput(expr, backrefs, _) = Expr::parse_ext(re).unwrap();
         let info = analyze(&expr, &backrefs).unwrap();
         let prog = compile(&info).unwrap();
         prog.body
