@@ -30,13 +30,13 @@ use regex::Regex;
 
 fn parse_lifetime_re(c: &mut Criterion) {
     c.bench_function("parse_lifetime_re", |b| {
-        b.iter(|| Expr::parse("\\'[a-zA-Z_][a-zA-Z0-9_]*(?!\\')\\b").unwrap())
+        b.iter(|| Expr::parse_tree("\\'[a-zA-Z_][a-zA-Z0-9_]*(?!\\')\\b").unwrap())
     });
 }
 
 fn parse_literal_re(c: &mut Criterion) {
     c.bench_function("parse_literal_re", |b| {
-        b.iter(|| Expr::parse("^\\\\([!-/:-@\\[-`\\{-~aftnrv]|[0-7]{1,3}|x[0-9a-fA-F]{2}|x\\{[0-9a-fA-F]{1,6}\\})").unwrap())
+        b.iter(|| Expr::parse_tree("^\\\\([!-/:-@\\[-`\\{-~aftnrv]|[0-7]{1,3}|x[0-9a-fA-F]{2}|x\\{[0-9a-fA-F]{1,6}\\})").unwrap())
     });
 }
 
@@ -48,21 +48,19 @@ fn parse_literal_re_regex(c: &mut Criterion) {
 
 fn parse_misc(c: &mut Criterion) {
     c.bench_function("parse_misc", |b| {
-        b.iter(|| Expr::parse("^\\p{L}|\\p{N}|\\s|.|\\d").unwrap())
+        b.iter(|| Expr::parse_tree("^\\p{L}|\\p{N}|\\s|.|\\d").unwrap())
     });
 }
 
 fn analyze_literal_re(c: &mut Criterion) {
     let re = "^\\\\([!-/:-@\\[-`\\{-~aftnrv]|[0-7]{1,3}|x[0-9a-fA-F]{2}|x\\{[0-9a-fA-F]{1,6}\\})";
-    let (e, br) = Expr::parse(re).unwrap();
-    c.bench_function("analyze_literal_re", |b| {
-        b.iter(|| analyze(&e, &br).unwrap())
-    });
+    let tree = Expr::parse_tree(re).unwrap();
+    c.bench_function("analyze_literal_re", |b| b.iter(|| analyze(&tree).unwrap()));
 }
 
 fn run_backtrack(c: &mut Criterion) {
-    let (e, br) = Expr::parse("^.*?(([ab]+)\\1b)").unwrap();
-    let a = analyze(&e, &br).unwrap();
+    let tree = Expr::parse_tree("^.*?(([ab]+)\\1b)").unwrap();
+    let a = analyze(&tree).unwrap();
     let p = compile(&a).unwrap();
     c.bench_function("run_backtrack", |b| {
         b.iter(|| run_default(&p, "babab", 0).unwrap())
@@ -72,8 +70,8 @@ fn run_backtrack(c: &mut Criterion) {
 // The following regex is a pathological case for backtracking
 // implementations, see README.md:
 fn run_tricky(c: &mut Criterion) {
-    let (e, br) = Expr::parse("(a|b|ab)*bc").unwrap();
-    let a = analyze(&e, &br).unwrap();
+    let tree = Expr::parse_tree("(a|b|ab)*bc").unwrap();
+    let a = analyze(&tree).unwrap();
     let p = compile(&a).unwrap();
     let mut s = String::new();
     for _ in 0..28 {
@@ -84,8 +82,8 @@ fn run_tricky(c: &mut Criterion) {
 }
 
 fn run_backtrack_limit(c: &mut Criterion) {
-    let (e, br) = Expr::parse("(?i)(a|b|ab)*(?=c)").unwrap();
-    let a = analyze(&e, &br).unwrap();
+    let tree = Expr::parse_tree("(?i)(a|b|ab)*(?=c)").unwrap();
+    let a = analyze(&tree).unwrap();
     let p = compile(&a).unwrap();
     let s = "abababababababababababababababababababababababababababab";
     c.bench_function("run_backtrack_limit", |b| {

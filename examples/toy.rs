@@ -30,13 +30,13 @@ fn main() {
     if let Some(cmd) = args.next() {
         if cmd == "parse" {
             if let Some(re) = args.next() {
-                let e = Expr::parse(&re);
+                let e = Expr::parse_tree(&re);
                 println!("{:#?}", e);
             }
         } else if cmd == "analyze" {
             if let Some(re) = args.next() {
-                let (e, backrefs) = Expr::parse(&re).unwrap();
-                let a = analyze(&e, &backrefs);
+                let tree = Expr::parse_tree(&re).unwrap();
+                let a = analyze(&tree);
                 println!("{:#?}", a);
             }
         } else if cmd == "compile" {
@@ -78,8 +78,8 @@ fn main() {
             }
         } else if cmd == "trace-inner" {
             if let Some(re) = args.next() {
-                let (e, backrefs) = Expr::parse(&re).unwrap();
-                let a = analyze(&e, &backrefs).unwrap();
+                let tree = Expr::parse_tree(&re).unwrap();
+                let a = analyze(&tree).unwrap();
                 let p = compile(&a).unwrap();
                 if let Some(s) = args.next() {
                     run_trace(&p, &s, 0).unwrap();
@@ -120,7 +120,7 @@ fn graph(re: &str) {
 }
 
 fn prog(re: &str) -> Prog {
-    let (expr, backrefs) = Expr::parse(re).expect("Expected parsing regex to work");
-    let result = analyze(&expr, &backrefs).expect("Expected analyze to succeed");
+    let tree = Expr::parse_tree(re).expect("Expected parsing regex to work");
+    let result = analyze(&tree).expect("Expected analyze to succeed");
     compile(&result).expect("Expected compile to succeed")
 }

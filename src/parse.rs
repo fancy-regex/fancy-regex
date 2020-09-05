@@ -32,7 +32,6 @@ use crate::Expr;
 use crate::LookAround::*;
 use crate::Result;
 use crate::MAX_RECURSION;
-use std::sync::Arc;
 
 const FLAG_CASEI: u32 = 1;
 const FLAG_MULTI: u32 = 1 << 1;
@@ -41,35 +40,73 @@ const FLAG_SWAP_GREED: u32 = 1 << 3;
 const FLAG_IGNORE_SPACE: u32 = 1 << 4;
 const FLAG_UNICODE: u32 = 1 << 5;
 
+pub(crate) type GroupNames = HashMap<String, usize>;
+
+#[derive(Debug)]
+pub struct ExprTree {
+    pub expr: Expr,
+    pub backrefs: BitSet,
+    pub group_names: GroupNames,
+}
+
+impl ExprTree {
+    /// Replaced named backrefs with numeric backrefs.
+    fn remove_named_backrefs(&mut self) -> Result<()> {
+        let mut result = Ok(());
+        let group_names = &self.group_names;
+        let backrefs = &mut self.backrefs;
+        self.expr.walk_mut(&mut |expr| {
+            if let Expr::NamedBackref(name) = expr {
+                match group_names.get(name) {
+                    Some(&num) => {
+                        backrefs.insert(num);
+                        *expr = Expr::Backref(num);
+                    }
+                    None => result = Err(Error::InvalidBackref),
+                }
+            }
+        });
+        result
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct Parser<'a> {
     re: &'a str, // source
     backrefs: BitSet,
     flags: u32,
-    named_groups: HashMap<String, usize>,
+    named_groups: GroupNames,
+    has_named_backrefs: bool,
     numeric_backrefs: bool,
     curr_group: usize, // need to keep track of which group number we're parsing
 }
 
-pub(crate) struct ParseOutput(pub Expr, pub BitSet, pub Arc<HashMap<String, usize>>);
-
 impl<'a> Parser<'a> {
     /// Parse the regex and return an expression (AST) and a bit set with the indexes of groups
     /// that are referenced by backrefs.
-    pub(crate) fn parse(re: &str) -> Result<ParseOutput> {
+    pub(crate) fn parse(re: &str) -> Result<ExprTree> {
         let mut p = Parser::new(re);
-        let (ix, result) = p.parse_re(0, 0)?;
+        let (ix, expr) = p.parse_re(0, 0)?;
         if ix < re.len() {
             return Err(Error::ParseError);
         }
-        Ok(ParseOutput(result, p.backrefs, Arc::new(p.named_groups)))
+        let mut tree = ExprTree {
+            expr,
+            backrefs: Default::default(),
+            group_names: p.named_groups,
+        };
+        if p.has_named_backrefs {
+            tree.remove_named_backrefs()?;
+        }
+        Ok(tree)
     }
 
     fn new(re: &str) -> Parser<'_> {
         Parser {
             re,
-            backrefs: BitSet::new(),
+            backrefs: Default::default(),
             named_groups: Default::default(),
+            has_named_backrefs: false,
             numeric_backrefs: false,
             flags: FLAG_UNICODE,
             curr_group: 0,
@@ -255,6 +292,26 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_backref(&self, ix: usize, open: &str, close: &str) -> Result<(usize, Expr)> {
+        if let Some((id, skip)) = parse_id(&self.re[ix..], open, close) {
+            let group = if let Some(group) = self.named_groups.get(id) {
+                Some(*group)
+            } else if let Ok(group) = id.parse() {
+                Some(group)
+            } else {
+                None
+            };
+            if let Some(group) = group {
+                return Ok((ix + skip, Expr::Backref(group)));
+            }
+            // here the name is parsed but it is invalid
+            return Err(Error::InvalidGroupNameBackref(id.to_string()));
+        } else {
+            // in this case the name can't be parsed
+            return Err(Error::InvalidGroupName);
+        }
+    }
+
     // ix points to \ character
     fn parse_escape(&mut self, ix: usize) -> Result<(usize, Expr)> {
         if ix + 1 == self.re.len() {
@@ -274,16 +331,7 @@ impl<'a> Parser<'a> {
             }
             return Err(Error::InvalidBackref);
         } else if b == b'k' {
-            if let Some((id, skip)) = parse_id(&self.re[ix + 2..]) {
-                if let Some(group) = self.named_groups.get(id) {
-                    return Ok((ix + skip + 2, Expr::Backref(*group)));
-                }
-                // here the name is parsed but it is invalid
-                return Err(Error::InvalidGroupNameBackref(id.to_string()));
-            } else {
-                // in this case the name can't be parsed
-                return Err(Error::InvalidGroupName);
-            }
+            return self.parse_backref(ix + 2, "<", ">");
         } else if b == b'A' || b == b'z' || b == b'b' || b == b'B' {
             size = 0;
         } else if (b | 32) == b'd'
@@ -504,21 +552,25 @@ impl<'a> Parser<'a> {
         } else if self.re[ix..].starts_with("?<!") {
             (Some(LookBehindNeg), 3)
         } else if self.re[ix..].starts_with("?<") {
-            self.curr_group += 1; // this is a capture group
-            if let Some((id, skip)) = parse_id(&self.re[ix + 1..]) {
+            // Named capture group using Oniguruma syntax.
+            self.curr_group += 1;
+            if let Some((id, skip)) = parse_id(&self.re[ix + 1..], "<", ">") {
                 self.named_groups.insert(id.to_string(), self.curr_group);
                 (None, skip + 1)
             } else {
                 return Err(Error::InvalidGroupName);
             }
         } else if self.re[ix..].starts_with("?P<") {
+            // Named capture group using Python syntax.
             self.curr_group += 1; // this is a capture group
-            if let Some((id, skip)) = parse_id(&self.re[ix + 2..]) {
+            if let Some((id, skip)) = parse_id(&self.re[ix + 2..], "<", ">") {
                 self.named_groups.insert(id.to_string(), self.curr_group);
                 (None, skip + 2)
             } else {
                 return Err(Error::InvalidGroupName);
             }
+        } else if self.re[ix..].starts_with("?P=") {
+            return self.parse_backref(ix + 3, "", ")");
         } else if self.re[ix..].starts_with("?>") {
             (None, 2)
         } else if self.re[ix..].starts_with('?') {
@@ -654,7 +706,7 @@ impl<'a> Parser<'a> {
 }
 
 // return (ix, value)
-fn parse_decimal(s: &str, ix: usize) -> Option<(usize, usize)> {
+pub(crate) fn parse_decimal(s: &str, ix: usize) -> Option<(usize, usize)> {
     let mut end = ix;
     while end < s.len() && is_digit(s.as_bytes()[end]) {
         end += 1;
@@ -662,24 +714,34 @@ fn parse_decimal(s: &str, ix: usize) -> Option<(usize, usize)> {
     usize::from_str(&s[ix..end]).ok().map(|val| (end, val))
 }
 
-// finds the an ID between < and > and returns (id, skip) where skip is how much
-// of the string we used.
-fn parse_id(s: &str) -> Option<(&str, usize)> {
-    // the first character should be '<'
-    if !s.starts_with('<') {
+/// Attempts to parse an identifier between the specified opening and closing
+/// delimiters.  On success, returns `Some((id, skip))`, where `skip` is how much
+/// of the string was used.
+pub(crate) fn parse_id<'a>(s: &'a str, open: &'_ str, close: &'_ str) -> Option<(&'a str, usize)> {
+    debug_assert!(!close.starts_with(is_id_char));
+
+    if !s.starts_with(open) {
         return None;
     }
 
-    // look for the next character that isn't alphanumeric or an underscore
-    if let Some(len) = s[1..].find(|c: char| !c.is_alphanumeric() && c != '_') {
-        if len > 0 && s[1 + len..].starts_with('>') {
-            Some((&s[1..=len], len + 2))
-        } else {
-            None
+    let id_start = open.len();
+    let id_len = match s[id_start..].find(|c: char| !is_id_char(c)) {
+        Some(id_len) if s[id_start + id_len..].starts_with(close) => Some(id_len),
+        None if close.is_empty() => Some(s.len()),
+        _ => None,
+    };
+    match id_len {
+        Some(0) => None,
+        Some(id_len) => {
+            let id_end = id_start + id_len;
+            Some((&s[id_start..id_end], id_end + close.len()))
         }
-    } else {
-        None
+        _ => None,
     }
+}
+
+fn is_id_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
 }
 
 fn is_digit(b: u8) -> bool {
@@ -699,21 +761,23 @@ pub(crate) fn make_literal(s: &str) -> Expr {
 
 #[cfg(test)]
 mod tests {
-    use crate::parse::make_literal;
+    use crate::parse::{make_literal, parse_id};
     use crate::Expr;
     use crate::LookAround::*;
     use std::usize;
 
     fn p(s: &str) -> Expr {
-        Expr::parse(s).unwrap().0
+        Expr::parse_tree(s).unwrap().expr
     }
 
+    #[track_caller]
     fn fail(s: &str) {
-        assert!(Expr::parse(s).is_err());
+        assert!(Expr::parse_tree(s).is_err());
     }
 
+    #[track_caller]
     fn assert_error(re: &str, expected_error: &str) {
-        let result = Expr::parse(re);
+        let result = Expr::parse_tree(re);
         assert!(result.is_err());
         assert_eq!(&format!("{}", result.err().unwrap()), expected_error);
     }
@@ -748,6 +812,16 @@ mod tests {
     fn literal_special() {
         assert_eq!(p("}"), make_literal("}"));
         assert_eq!(p("]"), make_literal("]"));
+    }
+
+    #[test]
+    fn parse_id_test() {
+        assert_eq!(parse_id("foo.", "", ""), Some(("foo", 3)));
+        assert_eq!(parse_id("{foo}", "{", "}"), Some(("foo", 5)));
+        assert_eq!(parse_id("{foo.", "{", "}"), None);
+        assert_eq!(parse_id("{foo", "{", "}"), None);
+        assert_eq!(parse_id("{}", "{", "}"), None);
+        assert_eq!(parse_id("", "", ""), None);
     }
 
     #[test]
@@ -1113,11 +1187,11 @@ mod tests {
 
     #[test]
     fn invalid_flags() {
-        assert!(Expr::parse("(?").is_err());
-        assert!(Expr::parse("(?)").is_err());
-        assert!(Expr::parse("(?-)").is_err());
-        assert!(Expr::parse("(?-:a)").is_err());
-        assert!(Expr::parse("(?q:a)").is_err());
+        assert!(Expr::parse_tree("(?").is_err());
+        assert!(Expr::parse_tree("(?)").is_err());
+        assert!(Expr::parse_tree("(?-)").is_err());
+        assert!(Expr::parse_tree("(?-:a)").is_err());
+        assert!(Expr::parse_tree("(?q:a)").is_err());
     }
 
     #[test]

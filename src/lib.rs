@@ -88,29 +88,45 @@ assert_eq!(group.as_str(), "20");
 
 # Syntax
 
-The regex syntax is based on the [regex] crate's, with some additional supported syntax. Escapes:
+The regex syntax is based on the [regex] crate's, with some additional supported syntax.
 
-```norun
-\h    hex digit ([0-9A-Fa-f])
-\H    not hex digit ([^0-9A-Fa-f])
-\e    escape control character (\x1B)
-```
+Escapes:
+
+`\h`
+: hex digit (`[0-9A-Fa-f]`) \
+`\H`
+: not hex digit (`[^0-9A-Fa-f]`) \
+`\e`
+: escape control character (`\x1B`)
 
 Backreferences:
 
-```norun
-\1    match the exact string that the first capture group matched
-\2    backref to the second capture group, etc
-```
+`\1`
+: match the exact string that the first capture group matched \
+`\2`
+: backref to the second capture group, etc
+
+Named capture groups:
+
+`(?<name>exp)`
+: match *exp*, creating capture group named *name* \
+'\k<name>`
+: match the exact string that the capture group named *name* matched
+`(?P<name>exp)`
+: same as `(?<name>exp)` for compatibility with Python, etc. \
+`(?P=name)`
+: same as `\k<name>` for compatibility with Python, etc. \
 
 Look-around assertions for matching without changing the current position:
 
-```norun
-(?=exp)    look-ahead, succeeds if exp matches to the right of the current position
-(?!exp)    negative look-ahead, succeeds if exp doesn't match to the right
-(?<=exp)   look-behind, succeeds if exp matches to the left of the current position
-(?<!exp)   negative look-behind, succeeds if exp doesn't match to the left
-```
+`(?=exp)`
+: look-ahead, succeeds if *exp* matches to the right of the current position \
+`(?!exp)`
+: negative look-ahead, succeeds if *exp* doesn't match to the right \
+`(?<=exp)`
+: look-behind, succeeds if *exp* matches to the left of the current position \
+`(?<!exp)`
+: negative look-behind, succeeds if *exp* doesn't match to the left
 
 Atomic groups using `(?>exp)` to prevent backtracking within `exp`, e.g.:
 
@@ -129,25 +145,26 @@ assert!(!re.is_match("abc").unwrap());
 #![deny(missing_docs)]
 #![deny(missing_debug_implementations)]
 
-use bit_set::BitSet;
+use std::collections::HashMap;
 use std::fmt;
+use std::fmt::{Debug, Formatter};
+use std::sync::Arc;
 use std::usize;
 
 mod analyze;
 mod compile;
 mod error;
+mod expand;
 mod parse;
 mod vm;
 
 use crate::analyze::analyze;
 use crate::compile::compile;
-use crate::parse::{ParseOutput, Parser};
+use crate::parse::{ExprTree, GroupNames, Parser};
 use crate::vm::Prog;
 
 pub use crate::error::{Error, Result};
-use std::collections::HashMap;
-use std::fmt::{Debug, Formatter};
-use std::sync::Arc;
+use crate::expand::Expander;
 
 const MAX_RECURSION: usize = 64;
 
@@ -160,7 +177,7 @@ pub struct RegexBuilder(RegexOptions);
 /// A compiled regular expression.
 pub struct Regex {
     inner: RegexImpl,
-    capture_names: Arc<HashMap<String, usize>>,
+    group_names: Arc<GroupNames>,
 }
 
 // Separate enum because we don't want to expose any of this
@@ -300,21 +317,24 @@ impl Regex {
     }
 
     fn new_options(options: RegexOptions) -> Result<Regex> {
-        let ParseOutput(raw_e, backrefs, capture_names) = Expr::parse_ext(&options.pattern)?;
+        let raw_tree = Expr::parse_tree(&options.pattern)?;
 
         // wrapper to search for re at arbitrary start position,
         // and to capture the match bounds
-        let e = Expr::Concat(vec![
-            Expr::Repeat {
-                child: Box::new(Expr::Any { newline: true }),
-                lo: 0,
-                hi: usize::MAX,
-                greedy: false,
-            },
-            Expr::Group(Box::new(raw_e)),
-        ]);
+        let tree = ExprTree {
+            expr: Expr::Concat(vec![
+                Expr::Repeat {
+                    child: Box::new(Expr::Any { newline: true }),
+                    lo: 0,
+                    hi: usize::MAX,
+                    greedy: false,
+                },
+                Expr::Group(Box::new(raw_tree.expr)),
+            ]),
+            ..raw_tree
+        };
 
-        let info = analyze(&e, &backrefs)?;
+        let info = analyze(&tree)?;
 
         let inner_info = &info.children[1].children[0]; // references inner expr
         if !inner_info.hard {
@@ -322,8 +342,8 @@ impl Regex {
 
             // we do our own to_str because escapes are different
             let mut re_cooked = String::new();
-            // same as raw_e above, but it was moved, so traverse to find it
-            let raw_e = match e {
+            // same as raw_tree.expr above, but it was moved, so traverse to find it
+            let raw_e = match tree.expr {
                 Expr::Concat(ref v) => match v[1] {
                     Expr::Group(ref child) => child,
                     _ => unreachable!(),
@@ -334,7 +354,7 @@ impl Regex {
             let inner = compile::compile_inner(&re_cooked, &options)?;
             return Ok(Regex {
                 inner: RegexImpl::Wrap { inner, options },
-                capture_names,
+                group_names: Arc::new(tree.group_names),
             });
         }
 
@@ -345,7 +365,7 @@ impl Regex {
                 n_groups: info.end_group,
                 options,
             },
-            capture_names,
+            group_names: Arc::new(tree.group_names),
         })
     }
 
@@ -517,7 +537,7 @@ impl Regex {
     pub fn capture_names<'r>(&'r self) -> CaptureNames<'r> {
         let mut names = Vec::new();
         names.resize(self.captures_len(), None);
-        for (name, &i) in self.capture_names.iter() {
+        for (name, &i) in self.group_names.iter() {
             names[i] = Some(name.as_str());
         }
         CaptureNames(names.into_iter())
@@ -595,139 +615,64 @@ impl<'t> Captures<'t> {
         self.names.get(name).and_then(|i| self.get(*i))
     }
 
-    /// Expands all instances of `$name` in `replacement` to the corresponding
+    /// Expands all instances of `$group` in `replacement` to the corresponding
     /// capture group `name`, and writes them to the `dst` buffer given.
     ///
-    /// `name` may be an integer corresponding to the index of the
+    /// `group` may be an integer corresponding to the index of the
     /// capture group (counted by order of opening parenthesis where `0` is the
     /// entire match) or it can be a name (consisting of letters, digits or
     /// underscores) corresponding to a named capture group.
     ///
-    /// If `name` isn't a valid capture group (whether the name doesn't exist
+    /// If `group` isn't a valid capture group (whether the name doesn't exist
     /// or isn't a valid index), then it is replaced with the empty string.
     ///
     /// The longest possible name is used. e.g., `$1a` looks up the capture
     /// group named `1a` and not the capture group at index `1`. To exert more
     /// precise control over the name, use braces, e.g., `${1}a`.
     ///
-    /// To write a literal `$` use `$$`.    
+    /// To write a literal `$`, use `$$`.    
     pub fn expand(&self, replacement: &str, dst: &mut String) {
-        let mut iter = replacement.char_indices();
-        while let Some((i, c)) = iter.next() {
-            let tail = &replacement[i..];
-            if tail.starts_with("$$") {
-                assert_eq!(Some((i + 1, '$')), iter.next());
-                dst.push('$');
-            } else if tail.starts_with("${") {
-                assert_eq!('$', c);
-                assert_eq!(Some((i + 1, '{')), iter.next());
-                let name_start = i + 2;
-                loop {
-                    if let Some((j, c)) = iter.next() {
-                        if c == '}' {
-                            *dst += self.value_of(&replacement[name_start..j]);
-                            break;
-                        }
-                    } else {
-                        *dst += &replacement[i..];
-                        return;
-                    }
-                }
-            } else if c == '$' {
-                let name_start = i + 1;
-                let name_end = loop {
-                    if let Some((j, c)) = iter.next() {
-                        if !c.is_alphanumeric() && c != '_' {
-                            break j;
-                        }
-                    } else {
-                        break replacement.len();
-                    }
-                };
-                *dst += if name_start == name_end {
-                    "$"
-                } else {
-                    self.value_of(&replacement[name_start..name_end])
-                };
-                iter = replacement[name_end..].char_indices();
-            } else {
-                dst.push(c);
-            }
+        Expander {
+            sub_char: '$',
+            open: "{",
+            close: "}",
+            allow_undelimited_name: true,
         }
+        .expand(self, replacement, dst)
     }
 
-    /// Expands all instances of `\\num` or `\\g<name>` in `replacement`
+    /// Alternate version of [`expand`] using a syntax compatible with
+    /// certain other regex implementations.
+    ///
+    /// Expands all instances of `\num` or `\g<name>` in `replacement`
     /// to the corresponding capture group `num` or `name`, and writes
     /// them to the `dst` buffer given.
     ///
-    /// `num` must be an integer corresponding to the index of the
+    /// `name` may be an integer corresponding to the index of the
     /// capture group (counted by order of opening parenthesis where `0` is the
-    /// entire match).
+    /// entire match) or it can be a name (consisting of letters, digits or
+    /// underscores) corresponding to a named capture group.
     ///
-    /// `name` may be an integer or it can be a name corresponding to a named
+    /// `num` must be an integer corresponding to the index of the
     /// capture group.
     ///
     /// If `num` or `name` isn't a valid capture group (whether the name doesn't exist
     /// or isn't a valid index), then it is replaced with the empty string.
     ///
-    /// The longest possible number is used. e.g., `\\10` looks up capture
+    /// The longest possible number is used. e.g., `\10` looks up capture
     /// group 10 and not capture group 1 followed by a literal 0.
     ///
-    /// To write a literal `\\` use `\\\\`.    
+    /// To write a literal `\`, use `\\`.
+    ///
+    /// [`expand`]: #method.expand
     pub fn expand_backslash(&self, replacement: &str, dst: &mut String) {
-        let mut iter = replacement.char_indices();
-        let mut slice = replacement;
-        while let Some((i, c)) = iter.next() {
-            let tail = &slice[i..];
-            if tail.starts_with("\\\\") {
-                assert_eq!(Some((i + 1, '\\')), iter.next());
-                dst.push('\\');
-            } else if tail.starts_with("\\g<") {
-                assert_eq!('\\', c);
-                assert_eq!(Some((i + 1, 'g')), iter.next());
-                assert_eq!(Some((i + 2, '<')), iter.next());
-                let name_start = i + 3;
-                loop {
-                    if let Some((j, c)) = iter.next() {
-                        if c == '>' {
-                            *dst += self.value_of(&slice[name_start..j]);
-                            break;
-                        }
-                    } else {
-                        *dst += &slice[i..];
-                        return;
-                    }
-                }
-            } else if c == '\\' {
-                let name_start = i + 1;
-                let name_end = loop {
-                    if let Some((j, c)) = iter.next() {
-                        if !c.is_ascii_digit() {
-                            break j;
-                        }
-                    } else {
-                        break slice.len();
-                    }
-                };
-                *dst += if name_start == name_end {
-                    "\\"
-                } else {
-                    self.value_of(&replacement[name_start..name_end])
-                };
-                slice = &slice[name_end..];
-                iter = slice.char_indices();
-            } else {
-                dst.push(c);
-            }
+        Expander {
+            sub_char: '\\',
+            open: "g<",
+            close: ">",
+            allow_undelimited_name: false,
         }
-    }
-
-    fn value_of(&self, id: &str) -> &'t str {
-        let m = match id.parse::<usize>() {
-            Ok(num) => self.get(num),
-            _ => self.name(id),
-        };
-        m.map_or("", |m| m.as_str())
+        .expand(self, replacement, dst)
     }
 
     /// Iterate over the captured groups in order in which they appeared in the regex. The first
@@ -824,6 +769,8 @@ pub enum Expr {
     /// Back reference to a capture group, e.g. `\1` in `(abc|def)\1` references the captured group
     /// and the whole regex matches either `abcabc` or `defdef`.
     Backref(usize),
+    /// Back reference to a named capture group.
+    NamedBackref(String),
     /// Atomic non-capturing group, e.g. `(?>ab|a)` in text that contains `ab` will match `ab` and
     /// never backtrack and try `a`, even if matching fails after the atomic group.
     AtomicGroup(Box<Expr>),
@@ -887,14 +834,10 @@ fn push_quoted(buf: &mut String, s: &str) {
 impl Expr {
     /// Parse the regex and return an expression (AST) and a bit set with the indexes of groups
     /// that are referenced by backrefs.
-    pub fn parse(re: &str) -> Result<(Expr, BitSet)> {
-        let ParseOutput(expr, backrefs, _) = Self::parse_ext(re)?;
-        Ok((expr, backrefs))
-    }
-
-    pub(crate) fn parse_ext(re: &str) -> Result<ParseOutput> {
+    pub fn parse_tree(re: &str) -> Result<ExprTree> {
         Parser::parse(re)
     }
+
     /// Convert expression to a regex string in the regex crate's syntax.
     ///
     /// # Panics
@@ -1007,6 +950,19 @@ impl Expr {
                 }
             }
             _ => panic!("attempting to format hard expr"),
+        }
+    }
+
+    pub(crate) fn walk_mut(&mut self, f: &mut impl FnMut(&mut Self)) {
+        f(self);
+        match self {
+            Expr::Concat(children) => children.iter_mut().for_each(|child| child.walk_mut(f)),
+            Expr::Alt(children) => children.iter_mut().for_each(|child| child.walk_mut(f)),
+            Expr::Group(child) => child.walk_mut(f),
+            Expr::LookAround(child, _) => child.walk_mut(f),
+            Expr::Repeat { child, .. } => child.walk_mut(f),
+            Expr::AtomicGroup(child) => child.walk_mut(f),
+            _ => {}
         }
     }
 }
