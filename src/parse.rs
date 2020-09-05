@@ -40,34 +40,13 @@ const FLAG_SWAP_GREED: u32 = 1 << 3;
 const FLAG_IGNORE_SPACE: u32 = 1 << 4;
 const FLAG_UNICODE: u32 = 1 << 5;
 
-pub(crate) type GroupNames = HashMap<String, usize>;
+pub(crate) type NamedGroups = HashMap<String, usize>;
 
 #[derive(Debug)]
 pub struct ExprTree {
     pub expr: Expr,
     pub backrefs: BitSet,
-    pub group_names: GroupNames,
-}
-
-impl ExprTree {
-    /// Replaced named backrefs with numeric backrefs.
-    fn remove_named_backrefs(&mut self) -> Result<()> {
-        let mut result = Ok(());
-        let group_names = &self.group_names;
-        let backrefs = &mut self.backrefs;
-        self.expr.walk_mut(&mut |expr| {
-            if let Expr::NamedBackref(name) = expr {
-                match group_names.get(name) {
-                    Some(&num) => {
-                        backrefs.insert(num);
-                        *expr = Expr::Backref(num);
-                    }
-                    None => result = Err(Error::InvalidBackref),
-                }
-            }
-        });
-        result
-    }
+    pub named_groups: NamedGroups,
 }
 
 #[derive(Debug)]
@@ -75,8 +54,7 @@ pub(crate) struct Parser<'a> {
     re: &'a str, // source
     backrefs: BitSet,
     flags: u32,
-    named_groups: GroupNames,
-    has_named_backrefs: bool,
+    named_groups: NamedGroups,
     numeric_backrefs: bool,
     curr_group: usize, // need to keep track of which group number we're parsing
 }
@@ -90,15 +68,11 @@ impl<'a> Parser<'a> {
         if ix < re.len() {
             return Err(Error::ParseError);
         }
-        let mut tree = ExprTree {
+        Ok(ExprTree {
             expr,
             backrefs: Default::default(),
-            group_names: p.named_groups,
-        };
-        if p.has_named_backrefs {
-            tree.remove_named_backrefs()?;
-        }
-        Ok(tree)
+            named_groups: p.named_groups,
+        })
     }
 
     fn new(re: &str) -> Parser<'_> {
@@ -106,7 +80,6 @@ impl<'a> Parser<'a> {
             re,
             backrefs: Default::default(),
             named_groups: Default::default(),
-            has_named_backrefs: false,
             numeric_backrefs: false,
             flags: FLAG_UNICODE,
             curr_group: 0,

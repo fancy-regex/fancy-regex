@@ -160,7 +160,7 @@ mod vm;
 
 use crate::analyze::analyze;
 use crate::compile::compile;
-use crate::parse::{ExprTree, GroupNames, Parser};
+use crate::parse::{ExprTree, NamedGroups, Parser};
 use crate::vm::Prog;
 
 pub use crate::error::{Error, Result};
@@ -177,7 +177,7 @@ pub struct RegexBuilder(RegexOptions);
 /// A compiled regular expression.
 pub struct Regex {
     inner: RegexImpl,
-    group_names: Arc<GroupNames>,
+    group_names: Arc<NamedGroups>,
 }
 
 // Separate enum because we don't want to expose any of this
@@ -354,7 +354,7 @@ impl Regex {
             let inner = compile::compile_inner(&re_cooked, &options)?;
             return Ok(Regex {
                 inner: RegexImpl::Wrap { inner, options },
-                group_names: Arc::new(tree.group_names),
+                group_names: Arc::new(tree.named_groups),
             });
         }
 
@@ -365,7 +365,7 @@ impl Regex {
                 n_groups: info.end_group,
                 options,
             },
-            group_names: Arc::new(tree.group_names),
+            group_names: Arc::new(tree.named_groups),
         })
     }
 
@@ -950,19 +950,6 @@ impl Expr {
                 }
             }
             _ => panic!("attempting to format hard expr"),
-        }
-    }
-
-    pub(crate) fn walk_mut(&mut self, f: &mut impl FnMut(&mut Self)) {
-        f(self);
-        match self {
-            Expr::Concat(children) => children.iter_mut().for_each(|child| child.walk_mut(f)),
-            Expr::Alt(children) => children.iter_mut().for_each(|child| child.walk_mut(f)),
-            Expr::Group(child) => child.walk_mut(f),
-            Expr::LookAround(child, _) => child.walk_mut(f),
-            Expr::Repeat { child, .. } => child.walk_mut(f),
-            Expr::AtomicGroup(child) => child.walk_mut(f),
-            _ => {}
         }
     }
 }

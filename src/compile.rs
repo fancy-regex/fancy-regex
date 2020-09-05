@@ -559,7 +559,7 @@ mod tests {
                 },
             ]),
             backrefs: BitSet::new(),
-            group_names: Default::default(),
+            named_groups: Default::default(),
         };
         let info = analyze(&tree).unwrap();
 
