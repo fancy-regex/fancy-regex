@@ -534,7 +534,7 @@ impl Regex {
     }
 
     /// Returns an iterator over the capture names.
-    pub fn capture_names<'r>(&'r self) -> CaptureNames<'r> {
+    pub fn capture_names(&self) -> CaptureNames {
         let mut names = Vec::new();
         names.resize(self.captures_len(), None);
         for (name, &i) in self.group_names.iter() {
@@ -876,11 +876,8 @@ impl Expr {
                     buf.push_str("(?:");
                 }
 
-                let is_empty = |e: &Expr| match e {
-                    Expr::Empty => true,
-                    _ => false,
-                };
-                let contains_empty = children.iter().any(&is_empty);
+                let is_empty = |e: &Expr| matches!(e, Expr::Empty);
+                let contains_empty = children.iter().any(is_empty);
                 if contains_empty {
                     buf.push_str("(?:");
                 }

@@ -278,10 +278,10 @@ impl<'a> Parser<'a> {
                 return Ok((ix + skip, Expr::Backref(group)));
             }
             // here the name is parsed but it is invalid
-            return Err(Error::InvalidGroupNameBackref(id.to_string()));
+            Err(Error::InvalidGroupNameBackref(id.to_string()))
         } else {
             // in this case the name can't be parsed
-            return Err(Error::InvalidGroupName);
+            Err(Error::InvalidGroupName)
         }
     }
 

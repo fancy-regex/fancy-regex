@@ -29,11 +29,15 @@ impl Expander {
                     if let Some(m) = captures.name(id) {
                         *dst += m.as_str();
                     } else if let Ok(num) = id.parse() {
-                        captures.get(num).map(|m| *dst += m.as_str());
+                        if let Some(m) = captures.get(num) {
+                            *dst += m.as_str();
+                        }
                     }
                     skip
                 } else if let Some((skip, num)) = parse_decimal(tail, 0) {
-                    captures.get(num).map(|m| *dst += m.as_str());
+                    if let Some(m) = captures.get(num) {
+                        *dst += m.as_str();
+                    }
                     skip
                 } else {
                     dst.push(self.sub_char);
