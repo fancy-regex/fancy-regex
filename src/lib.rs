@@ -814,7 +814,11 @@ impl Expr {
                     buf.push_str("(?:");
                 }
 
-                let is_empty = |e: &Expr| matches!(e, Expr::Empty);
+                let is_empty = |e: &Expr| match e {
+                    Expr::Empty => true,
+                    _ => false,
+                };
+
                 let contains_empty = children.iter().any(is_empty);
                 if contains_empty {
                     buf.push_str("(?:");
