@@ -1,4 +1,4 @@
-use fancy_regex::{Captures, Match, Result};
+use fancy_regex::{Captures, Expander, Match, Result};
 
 mod common;
 
@@ -205,4 +205,36 @@ fn assert_backlash_expansion(cap: &Captures, replacement: &str, text: &str) {
     let mut buf = String::new();
     cap.expand_backslash(replacement, &mut buf);
     assert_eq!(buf, text);
+}
+
+#[test]
+fn expander_errors() {
+    let regex = common::regex("(a)(?<x>b)");
+    let cap = regex.captures("ab").unwrap().expect("matched");
+    let exp = Expander::builder('$')
+        .delimiters("{", "}")
+        .allow_undelimited_name(true)
+        .strict(true)
+        .build();
+    let mut out = String::new();
+
+    // Substitution char at end of template.
+    assert!(exp.expand(&cap, "$", &mut out).is_err());
+
+    // Substitution char not followed by a name or number.
+    assert!(exp.expand(&cap, "$.", &mut out).is_err());
+
+    // Unmatched group number.
+    assert!(exp.expand(&cap, "$5", &mut out).is_err());
+    assert!(exp.expand(&cap, "${5}", &mut out).is_err());
+
+    // Unmatched group name.
+    assert!(exp.expand(&cap, "$xx", &mut out).is_err());
+    assert!(exp.expand(&cap, "${xx}", &mut out).is_err());
+
+    // Empty delimiter pair.
+    assert!(exp.expand(&cap, "${}", &mut out).is_err());
+
+    // Unterminated delimiter pair.
+    assert!(exp.expand(&cap, "${", &mut out).is_err());
 }

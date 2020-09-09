@@ -163,7 +163,7 @@ use crate::parse::{ExprTree, NamedGroups, Parser};
 use crate::vm::Prog;
 
 pub use crate::error::{Error, Result};
-use crate::expand::Expander;
+pub use crate::expand::{Expander, ExpanderBuilder};
 
 const MAX_RECURSION: usize = 64;
 
@@ -621,13 +621,12 @@ impl<'t> Captures<'t> {
     ///
     /// To write a literal `$`, use `$$`.    
     pub fn expand(&self, replacement: &str, dst: &mut String) {
-        Expander {
-            sub_char: '$',
-            open: "{",
-            close: "}",
-            allow_undelimited_name: true,
-        }
-        .expand(self, replacement, dst)
+        Expander::builder('$')
+            .delimiters("{", "}")
+            .allow_undelimited_name(true)
+            .build()
+            .expand(self, replacement, dst)
+            .expect("expansion succeeded");
     }
 
     /// Alternate version of [`expand`] using a syntax compatible with
@@ -655,13 +654,12 @@ impl<'t> Captures<'t> {
     ///
     /// [`expand`]: #method.expand
     pub fn expand_backslash(&self, replacement: &str, dst: &mut String) {
-        Expander {
-            sub_char: '\\',
-            open: "g<",
-            close: ">",
-            allow_undelimited_name: false,
-        }
-        .expand(self, replacement, dst)
+        Expander::builder('\\')
+            .delimiters("g<", ">")
+            .allow_undelimited_name(false)
+            .build()
+            .expand(self, replacement, dst)
+            .expect("expansion succeeded");
     }
 
     /// Returns the match for a named capture group.  Returns `None` the capture
