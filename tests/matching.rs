@@ -112,7 +112,7 @@ fn end_of_hard_expression_cannot_be_delegated() {
     assert_match(r"((?!x)(?:a|ab))c", "abc");
 }
 
-#[track_caller]
+#[cfg_attr(feature = "track_caller", track_caller)]
 fn assert_match(re: &str, text: &str) {
     let result = match_text(re, text);
     assert_eq!(
@@ -122,7 +122,7 @@ fn assert_match(re: &str, text: &str) {
     );
 }
 
-#[track_caller]
+#[cfg_attr(feature = "track_caller", track_caller)]
 fn assert_no_match(re: &str, text: &str) {
     let result = match_text(re, text);
     assert_eq!(
@@ -132,7 +132,7 @@ fn assert_no_match(re: &str, text: &str) {
     );
 }
 
-#[track_caller]
+#[cfg_attr(feature = "track_caller", track_caller)]
 fn match_text(re: &str, text: &str) -> bool {
     let regex = common::regex(re);
     let result = regex.is_match(text);

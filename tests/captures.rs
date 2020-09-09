@@ -105,14 +105,14 @@ fn captures_from_pos_looking_left() {
     assert_match(captures.get(1), "x", 1, 2);
 }
 
-#[track_caller]
+#[cfg_attr(feature = "track_caller", track_caller)]
 fn captures<'a>(re: &str, text: &'a str) -> Captures<'a> {
     let regex = common::regex(re);
     let result = regex.captures(text);
     assert_captures(result)
 }
 
-#[track_caller]
+#[cfg_attr(feature = "track_caller", track_caller)]
 fn assert_captures(result: Result<Option<Captures<'_>>>) -> Captures<'_> {
     assert!(
         result.is_ok(),
@@ -128,7 +128,7 @@ fn assert_captures(result: Result<Option<Captures<'_>>>) -> Captures<'_> {
     captures.unwrap()
 }
 
-#[track_caller]
+#[cfg_attr(feature = "track_caller", track_caller)]
 fn assert_match(m: Option<Match<'_>>, expected_text: &str, start: usize, end: usize) {
     assert!(m.is_some(), "Expected match, but was {:?}", m);
     let m = m.unwrap();

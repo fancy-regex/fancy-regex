@@ -743,12 +743,12 @@ mod tests {
         Expr::parse_tree(s).unwrap().expr
     }
 
-    #[track_caller]
+    #[cfg_attr(feature = "track_caller", track_caller)]
     fn fail(s: &str) {
         assert!(Expr::parse_tree(s).is_err());
     }
 
-    #[track_caller]
+    #[cfg_attr(feature = "track_caller", track_caller)]
     fn assert_error(re: &str, expected_error: &str) {
         let result = Expr::parse_tree(re);
         assert!(result.is_err());
