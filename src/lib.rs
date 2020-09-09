@@ -154,7 +154,6 @@ use std::usize;
 mod analyze;
 mod compile;
 mod error;
-mod expand;
 mod parse;
 mod vm;
 
@@ -164,7 +163,6 @@ use crate::parse::{ExprTree, NamedGroups, Parser};
 use crate::vm::Prog;
 
 pub use crate::error::{Error, Result};
-use crate::expand::Expander;
 
 const MAX_RECURSION: usize = 64;
 
@@ -613,66 +611,6 @@ impl<'t> Captures<'t> {
     /// group did not match or if there is no group with the given name.
     pub fn name(&self, name: &str) -> Option<Match<'t>> {
         self.names.get(name).and_then(|i| self.get(*i))
-    }
-
-    /// Expands all instances of `$group` in `replacement` to the corresponding
-    /// capture group `name`, and writes them to the `dst` buffer given.
-    ///
-    /// `group` may be an integer corresponding to the index of the
-    /// capture group (counted by order of opening parenthesis where `0` is the
-    /// entire match) or it can be a name (consisting of letters, digits or
-    /// underscores) corresponding to a named capture group.
-    ///
-    /// If `group` isn't a valid capture group (whether the name doesn't exist
-    /// or isn't a valid index), then it is replaced with the empty string.
-    ///
-    /// The longest possible name is used. e.g., `$1a` looks up the capture
-    /// group named `1a` and not the capture group at index `1`. To exert more
-    /// precise control over the name, use braces, e.g., `${1}a`.
-    ///
-    /// To write a literal `$`, use `$$`.    
-    pub fn expand(&self, replacement: &str, dst: &mut String) {
-        Expander {
-            sub_char: '$',
-            open: "{",
-            close: "}",
-            allow_undelimited_name: true,
-        }
-        .expand(self, replacement, dst)
-    }
-
-    /// Alternate version of [`expand`] using a syntax compatible with
-    /// certain other regex implementations.
-    ///
-    /// Expands all instances of `\num` or `\g<name>` in `replacement`
-    /// to the corresponding capture group `num` or `name`, and writes
-    /// them to the `dst` buffer given.
-    ///
-    /// `name` may be an integer corresponding to the index of the
-    /// capture group (counted by order of opening parenthesis where `0` is the
-    /// entire match) or it can be a name (consisting of letters, digits or
-    /// underscores) corresponding to a named capture group.
-    ///
-    /// `num` must be an integer corresponding to the index of the
-    /// capture group.
-    ///
-    /// If `num` or `name` isn't a valid capture group (whether the name doesn't exist
-    /// or isn't a valid index), then it is replaced with the empty string.
-    ///
-    /// The longest possible number is used. e.g., `\10` looks up capture
-    /// group 10 and not capture group 1 followed by a literal 0.
-    ///
-    /// To write a literal `\`, use `\\`.
-    ///
-    /// [`expand`]: #method.expand
-    pub fn expand_backslash(&self, replacement: &str, dst: &mut String) {
-        Expander {
-            sub_char: '\\',
-            open: "g<",
-            close: ">",
-            allow_undelimited_name: false,
-        }
-        .expand(self, replacement, dst)
     }
 
     /// Iterate over the captured groups in order in which they appeared in the regex. The first
