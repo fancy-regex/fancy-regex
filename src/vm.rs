@@ -35,7 +35,7 @@
 //!
 //! A very simple program for the regex `a`:
 //!
-//! ```norun
+//! ```text
 //! 0: Lit("a")
 //! 1: End
 //! ```
@@ -47,7 +47,7 @@
 //!
 //! Example program for the regex `ab|ac`:
 //!
-//! ```norun
+//! ```text
 //! 0: Split(1, 4)
 //! 1: Lit("a")
 //! 2: Lit("b")
