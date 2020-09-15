@@ -110,12 +110,12 @@ Named capture groups:
 
 `(?<name>exp)`
 : match *exp*, creating capture group named *name* \
-'\k<name>`
-: match the exact string that the capture group named *name* matched
+`\k<name>`
+: match the exact string that the capture group named *name* matched \
 `(?P<name>exp)`
 : same as `(?<name>exp)` for compatibility with Python, etc. \
 `(?P=name)`
-: same as `\k<name>` for compatibility with Python, etc. \
+: same as `\k<name>` for compatibility with Python, etc.
 
 Look-around assertions for matching without changing the current position:
 
@@ -145,7 +145,6 @@ assert!(!re.is_match("abc").unwrap());
 #![deny(missing_docs)]
 #![deny(missing_debug_implementations)]
 
-use std::collections::HashMap;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
@@ -175,7 +174,7 @@ pub struct RegexBuilder(RegexOptions);
 /// A compiled regular expression.
 pub struct Regex {
     inner: RegexImpl,
-    group_names: Arc<NamedGroups>,
+    named_groups: Arc<NamedGroups>,
 }
 
 // Separate enum because we don't want to expose any of this
@@ -204,7 +203,7 @@ pub struct Match<'t> {
 #[derive(Debug)]
 pub struct Captures<'t> {
     inner: CapturesImpl<'t>,
-    names: HashMap<String, usize>,
+    named_groups: Arc<NamedGroups>,
 }
 
 #[derive(Debug)]
@@ -352,7 +351,7 @@ impl Regex {
             let inner = compile::compile_inner(&re_cooked, &options)?;
             return Ok(Regex {
                 inner: RegexImpl::Wrap { inner, options },
-                group_names: Arc::new(tree.named_groups),
+                named_groups: Arc::new(tree.named_groups),
             });
         }
 
@@ -363,7 +362,7 @@ impl Regex {
                 n_groups: info.end_group,
                 options,
             },
-            group_names: Arc::new(tree.named_groups),
+            named_groups: Arc::new(tree.named_groups),
         })
     }
 
@@ -485,24 +484,14 @@ impl Regex {
     /// of the string slice.
     ///
     pub fn captures_from_pos<'t>(&self, text: &'t str, pos: usize) -> Result<Option<Captures<'t>>> {
-        let names = self
-            .capture_names()
-            .enumerate()
-            .filter_map(|(i, name)| name.map(|name| (name.to_string(), i)))
-            .collect();
-        // let mut names = HashMap::new();
-        // for (i, name) in self.capture_names().enumerate() {
-        //     if let Some(name) = name {
-        //         names.insert(name, i);
-        //     }
-        // }
+        let named_groups = self.named_groups.clone();
         match &self.inner {
             RegexImpl::Wrap { inner, .. } => {
                 let mut locations = inner.capture_locations();
                 let result = inner.captures_read_at(&mut locations, text, pos);
                 Ok(result.map(|_| Captures {
                     inner: CapturesImpl::Wrap { text, locations },
-                    names,
+                    named_groups,
                 }))
             }
             RegexImpl::Fancy {
@@ -516,7 +505,7 @@ impl Regex {
                     saves.truncate(n_groups * 2);
                     Captures {
                         inner: CapturesImpl::Fancy { text, saves },
-                        names,
+                        named_groups,
                     }
                 }))
             }
@@ -535,7 +524,7 @@ impl Regex {
     pub fn capture_names(&self) -> CaptureNames {
         let mut names = Vec::new();
         names.resize(self.captures_len(), None);
-        for (name, &i) in self.group_names.iter() {
+        for (name, &i) in self.named_groups.iter() {
             names[i] = Some(name.as_str());
         }
         CaptureNames(names.into_iter())
@@ -610,7 +599,7 @@ impl<'t> Captures<'t> {
     /// Returns the match for a named capture group.  Returns `None` the capture
     /// group did not match or if there is no group with the given name.
     pub fn name(&self, name: &str) -> Option<Match<'t>> {
-        self.names.get(name).and_then(|i| self.get(*i))
+        self.named_groups.get(name).and_then(|i| self.get(*i))
     }
 
     /// Iterate over the captured groups in order in which they appeared in the regex. The first
