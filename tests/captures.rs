@@ -193,14 +193,14 @@ fn expand() {
     assert_backlash_expansion(&cap, "\\g<π", "\\g<π");
 }
 
-#[track_caller]
+#[cfg_attr(feature = "track_caller", track_caller)]
 fn assert_expansion(cap: &Captures, replacement: &str, text: &str) {
     let mut buf = String::new();
     cap.expand(replacement, &mut buf);
     assert_eq!(buf, text);
 }
 
-#[track_caller]
+#[cfg_attr(feature = "track_caller", track_caller)]
 fn assert_backlash_expansion(cap: &Captures, replacement: &str, text: &str) {
     let mut buf = String::new();
     cap.expand_backslash(replacement, &mut buf);
