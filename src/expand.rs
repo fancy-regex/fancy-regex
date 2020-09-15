@@ -1,5 +1,6 @@
 use crate::parse::{parse_decimal, parse_id};
-use crate::{Captures, Error, Result};
+use crate::Captures;
+use std::io;
 
 /// A set of options for expanding a template string using the contents
 /// of capture groups.  Create using the `builder` method.
@@ -15,6 +16,36 @@ pub struct Expander<'a> {
 struct Delimiters<'a> {
     open: &'a str,
     close: &'a str,
+}
+
+impl Expander<'static> {
+    /// Returns an expander that uses Python-compatible syntax.
+    ///
+    /// Expands all instances of `\num` or `\g<name>` in `replacement`
+    /// to the corresponding capture group `num` or `name`, and writes
+    /// them to the `dst` buffer given.
+    ///
+    /// `name` may be an integer corresponding to the index of the
+    /// capture group (counted by order of opening parenthesis where `0` is the
+    /// entire match) or it can be a name (consisting of letters, digits or
+    /// underscores) corresponding to a named capture group.
+    ///
+    /// `num` must be an integer corresponding to the index of the
+    /// capture group.
+    ///
+    /// If `num` or `name` isn't a valid capture group (whether the name doesn't exist
+    /// or isn't a valid index), then it is replaced with the empty string.
+    ///
+    /// The longest possible number is used. e.g., `\10` looks up capture
+    /// group 10 and not capture group 1 followed by a literal 0.
+    ///
+    /// To write a literal `\`, use `\\`.
+    pub fn python() -> Self {
+        Expander::builder('\\')
+            .delimiters("g<", ">")
+            .allow_undelimited_name(false)
+            .build()
+    }
 }
 
 impl<'a> Expander<'a> {
@@ -36,22 +67,32 @@ impl<'a> Expander<'a> {
 
     /// Expands the template string `template` using the syntax defined
     /// by this expander and the values of capture groups from `captures`.
+    ///
+    /// Always succeeds when this expander is not strict.
+    pub fn expand<'t>(&self, captures: &Captures<'t>, template: &str) -> io::Result<String> {
+        let mut cursor = io::Cursor::new(Vec::new());
+        self.expand_to(&mut cursor, captures, template)?;
+        Ok(String::from_utf8(cursor.into_inner()).expect("expansion is UTF-8"))
+    }
+
+    /// Expands the template string `template` using the syntax defined
+    /// by this expander and the values of capture groups from `captures`.
     /// The output is appended to `dst`.
     ///
     /// Always succeeds when this expander is not strict.  When an error is
     /// reported, a partial expansion may be appended to `dst`.
-    pub fn expand<'t>(
+    pub fn expand_to<'t>(
         &self,
+        mut dst: impl io::Write,
         captures: &Captures<'t>,
         template: &str,
-        dst: &mut String,
-    ) -> Result<()> {
-        let mut iter = template.chars();
-        while let Some(c) = iter.next() {
+    ) -> io::Result<()> {
+        let mut iter = template.char_indices();
+        while let Some((index, c)) = iter.next() {
             if c == self.sub_char {
                 let tail = iter.as_str();
                 let skip = if tail.starts_with(self.sub_char) {
-                    dst.push(self.sub_char);
+                    write!(dst, "{}", self.sub_char)?;
                     1
                 } else if let Some((id, skip)) = self
                     .delimiters
@@ -70,30 +111,45 @@ impl<'a> Expander<'a> {
                     })
                 {
                     if let Some(m) = captures.name(id) {
-                        *dst += m.as_str();
+                        write!(dst, "{}", m.as_str())?;
                     } else if let Some(m) = id.parse().ok().and_then(|num| captures.get(num)) {
-                        *dst += m.as_str();
+                        write!(dst, "{}", m.as_str())?;
                     } else if self.strict {
-                        return Err(Error::InvalidGroupName);
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("invalid substitution group: {:?}", id),
+                        ));
                     }
                     skip
                 } else if let Some((skip, num)) = parse_decimal(tail, 0) {
                     if let Some(m) = captures.get(num) {
-                        *dst += m.as_str();
+                        write!(dst, "{}", m.as_str())?;
                     }
                     skip
                 } else if self.strict {
-                    return Err(Error::ParseError);
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("invalid substitution sequence as position {}", index),
+                    ));
                 } else {
-                    dst.push(self.sub_char);
+                    write!(dst, "{}", self.sub_char)?;
                     0
                 };
-                iter = iter.as_str()[skip..].chars();
+                iter = iter.as_str()[skip..].char_indices();
             } else {
-                dst.push(c);
+                write!(dst, "{}", c)?;
             }
         }
         Ok(())
+    }
+}
+
+impl<'a> Default for Expander<'a> {
+    fn default() -> Self {
+        Expander::builder('$')
+            .delimiters("{", "}")
+            .allow_undelimited_name(true)
+            .build()
     }
 }
 

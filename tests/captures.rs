@@ -216,25 +216,24 @@ fn expander_errors() {
         .allow_undelimited_name(true)
         .strict(true)
         .build();
-    let mut out = String::new();
 
     // Substitution char at end of template.
-    assert!(exp.expand(&cap, "$", &mut out).is_err());
+    assert!(exp.expand(&cap, "$").is_err());
 
     // Substitution char not followed by a name or number.
-    assert!(exp.expand(&cap, "$.", &mut out).is_err());
+    assert!(exp.expand(&cap, "$.").is_err());
 
     // Unmatched group number.
-    assert!(exp.expand(&cap, "$5", &mut out).is_err());
-    assert!(exp.expand(&cap, "${5}", &mut out).is_err());
+    assert!(exp.expand(&cap, "$5").is_err());
+    assert!(exp.expand(&cap, "${5}").is_err());
 
     // Unmatched group name.
-    assert!(exp.expand(&cap, "$xx", &mut out).is_err());
-    assert!(exp.expand(&cap, "${xx}", &mut out).is_err());
+    assert!(exp.expand(&cap, "$xx").is_err());
+    assert!(exp.expand(&cap, "${xx}").is_err());
 
     // Empty delimiter pair.
-    assert!(exp.expand(&cap, "${}", &mut out).is_err());
+    assert!(exp.expand(&cap, "${}").is_err());
 
     // Unterminated delimiter pair.
-    assert!(exp.expand(&cap, "${", &mut out).is_err());
+    assert!(exp.expand(&cap, "${").is_err());
 }

@@ -147,6 +147,7 @@ assert!(!re.is_match("abc").unwrap());
 
 use std::fmt;
 use std::fmt::{Debug, Formatter};
+use std::mem;
 use std::sync::Arc;
 use std::usize;
 
@@ -164,6 +165,7 @@ use crate::vm::Prog;
 
 pub use crate::error::{Error, Result};
 pub use crate::expand::{Expander, ExpanderBuilder};
+use std::io::Cursor;
 
 const MAX_RECURSION: usize = 64;
 
@@ -601,7 +603,7 @@ impl<'t> Captures<'t> {
     /// Returns the match for a named capture group.  Returns `None` the capture
     /// group did not match or if there is no group with the given name.
     pub fn name(&self, name: &str) -> Option<Match<'t>> {
-        self.names.get(name).and_then(|i| self.get(*i))
+        self.named_groups.get(name).and_then(|i| self.get(*i))
     }
 
     /// Expands all instances of `$group` in `replacement` to the corresponding
@@ -621,12 +623,11 @@ impl<'t> Captures<'t> {
     ///
     /// To write a literal `$`, use `$$`.    
     pub fn expand(&self, replacement: &str, dst: &mut String) {
-        Expander::builder('$')
-            .delimiters("{", "}")
-            .allow_undelimited_name(true)
-            .build()
-            .expand(self, replacement, dst)
+        let mut cursor = Cursor::new(mem::take(dst).into_bytes());
+        Expander::default()
+            .expand_to(&mut cursor, self, replacement)
             .expect("expansion succeeded");
+        *dst = String::from_utf8(cursor.into_inner()).expect("expansion is UTF-8");
     }
 
     /// Alternate version of [`expand`] using a syntax compatible with
@@ -654,18 +655,11 @@ impl<'t> Captures<'t> {
     ///
     /// [`expand`]: #method.expand
     pub fn expand_backslash(&self, replacement: &str, dst: &mut String) {
-        Expander::builder('\\')
-            .delimiters("g<", ">")
-            .allow_undelimited_name(false)
-            .build()
-            .expand(self, replacement, dst)
+        let mut cursor = Cursor::new(mem::take(dst).into_bytes());
+        Expander::python()
+            .expand_to(&mut cursor, self, replacement)
             .expect("expansion succeeded");
-    }
-
-    /// Returns the match for a named capture group.  Returns `None` the capture
-    /// group did not match or if there is no group with the given name.
-    pub fn name(&self, name: &str) -> Option<Match<'t>> {
-        self.named_groups.get(name).and_then(|i| self.get(*i))
+        *dst = String::from_utf8(cursor.into_inner()).expect("expansion is UTF-8");
     }
 
     /// Iterate over the captured groups in order in which they appeared in the regex. The first
