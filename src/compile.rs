@@ -161,6 +161,9 @@ impl Compiler {
                 // TODO: might want to have more specialized impls
                 self.compile_delegate(info)?;
             }
+            Expr::NamedBackref(_) => {
+                unreachable!("named backrefs should have been eliminated");
+            }
         }
         Ok(())
     }
@@ -533,28 +536,32 @@ mod tests {
 
     use super::*;
     use crate::analyze::analyze;
+    use crate::parse::ExprTree;
     use crate::vm::Insn::*;
     use bit_set::BitSet;
     use matches::assert_matches;
 
     #[test]
     fn jumps_for_alternation() {
-        let expr = Expr::Alt(vec![
-            Expr::Literal {
-                val: "a".into(),
-                casei: false,
-            },
-            Expr::Literal {
-                val: "b".into(),
-                casei: false,
-            },
-            Expr::Literal {
-                val: "c".into(),
-                casei: false,
-            },
-        ]);
-        let backrefs = BitSet::new();
-        let info = analyze(&expr, &backrefs).unwrap();
+        let tree = ExprTree {
+            expr: Expr::Alt(vec![
+                Expr::Literal {
+                    val: "a".into(),
+                    casei: false,
+                },
+                Expr::Literal {
+                    val: "b".into(),
+                    casei: false,
+                },
+                Expr::Literal {
+                    val: "c".into(),
+                    casei: false,
+                },
+            ]),
+            backrefs: BitSet::new(),
+            named_groups: Default::default(),
+        };
+        let info = analyze(&tree).unwrap();
 
         let mut c = Compiler::new(0);
         // Force "hard" so that compiler doesn't just delegate
@@ -628,8 +635,8 @@ mod tests {
     }
 
     fn compile_prog(re: &str) -> Vec<Insn> {
-        let (expr, backrefs) = Expr::parse(re).unwrap();
-        let info = analyze(&expr, &backrefs).unwrap();
+        let tree = Expr::parse_tree(re).unwrap();
+        let info = analyze(&tree).unwrap();
         let prog = compile(&info).unwrap();
         prog.body
     }

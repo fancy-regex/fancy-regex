@@ -24,6 +24,7 @@ use bit_set::BitSet;
 use std::cmp::min;
 use std::usize;
 
+use crate::parse::{ExprTree, NamedGroups};
 use crate::Error;
 use crate::Expr;
 use crate::Result;
@@ -72,6 +73,7 @@ impl<'a> Info<'a> {
 struct Analyzer<'a> {
     backrefs: &'a BitSet,
     group_ix: usize,
+    group_names: &'a NamedGroups,
 }
 
 impl<'a> Analyzer<'a> {
@@ -169,6 +171,12 @@ impl<'a> Analyzer<'a> {
                 }
                 hard = true;
             }
+            Expr::NamedBackref(ref name) => {
+                if !self.group_names.contains_key(name) {
+                    return Err(Error::InvalidBackref);
+                }
+                hard = true;
+            }
             Expr::AtomicGroup(ref child) => {
                 let child_info = self.visit(child)?;
                 min_size = child_info.min_size;
@@ -200,13 +208,14 @@ fn literal_const_size(_: &str, _: bool) -> bool {
 }
 
 /// Analyze the parsed expression to determine whether it requires fancy features.
-pub fn analyze<'a>(expr: &'a Expr, backrefs: &'a BitSet) -> Result<Info<'a>> {
+pub fn analyze<'a>(tree: &'a ExprTree) -> Result<Info<'a>> {
     let mut analyzer = Analyzer {
-        backrefs,
+        backrefs: &tree.backrefs,
         group_ix: 0,
+        group_names: &tree.named_groups,
     };
 
-    analyzer.visit(expr)
+    analyzer.visit(&tree.expr)
 }
 
 #[cfg(test)]
@@ -232,33 +241,30 @@ mod tests {
 
     #[test]
     fn invalid_backref_1() {
-        let (e, backrefs) = Expr::parse(".\\0").unwrap();
-        assert!(analyze(&e, &backrefs).is_err());
+        assert!(analyze(&Expr::parse_tree(".\\0").unwrap()).is_err());
     }
 
     #[test]
     fn invalid_backref_2() {
-        let (e, backrefs) = Expr::parse("(.\\1)").unwrap();
-        assert!(analyze(&e, &backrefs).is_err());
+        assert!(analyze(&Expr::parse_tree("(.\\1)").unwrap()).is_err());
     }
 
     #[test]
     fn invalid_backref_3() {
-        let (e, backrefs) = Expr::parse("\\1(.)").unwrap();
-        assert!(analyze(&e, &backrefs).is_err());
+        assert!(analyze(&Expr::parse_tree("\\1(.)").unwrap()).is_err());
     }
 
     #[test]
     fn is_literal() {
-        let (e, backrefs) = Expr::parse("abc").unwrap();
-        let info = analyze(&e, &backrefs).unwrap();
+        let tree = Expr::parse_tree("abc").unwrap();
+        let info = analyze(&tree).unwrap();
         assert_eq!(info.is_literal(), true);
     }
 
     #[test]
     fn is_literal_with_repeat() {
-        let (e, backrefs) = Expr::parse("abc*").unwrap();
-        let info = analyze(&e, &backrefs).unwrap();
+        let tree = Expr::parse_tree("abc*").unwrap();
+        let info = analyze(&tree).unwrap();
         assert_eq!(info.is_literal(), false);
     }
 }

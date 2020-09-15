@@ -88,29 +88,45 @@ assert_eq!(group.as_str(), "20");
 
 # Syntax
 
-The regex syntax is based on the [regex] crate's, with some additional supported syntax. Escapes:
+The regex syntax is based on the [regex] crate's, with some additional supported syntax.
 
-```norun
-\h    hex digit ([0-9A-Fa-f])
-\H    not hex digit ([^0-9A-Fa-f])
-\e    escape control character (\x1B)
-```
+Escapes:
+
+`\h`
+: hex digit (`[0-9A-Fa-f]`) \
+`\H`
+: not hex digit (`[^0-9A-Fa-f]`) \
+`\e`
+: escape control character (`\x1B`)
 
 Backreferences:
 
-```norun
-\1    match the exact string that the first capture group matched
-\2    backref to the second capture group, etc
-```
+`\1`
+: match the exact string that the first capture group matched \
+`\2`
+: backref to the second capture group, etc
+
+Named capture groups:
+
+`(?<name>exp)`
+: match *exp*, creating capture group named *name* \
+`\k<name>`
+: match the exact string that the capture group named *name* matched \
+`(?P<name>exp)`
+: same as `(?<name>exp)` for compatibility with Python, etc. \
+`(?P=name)`
+: same as `\k<name>` for compatibility with Python, etc.
 
 Look-around assertions for matching without changing the current position:
 
-```norun
-(?=exp)    look-ahead, succeeds if exp matches to the right of the current position
-(?!exp)    negative look-ahead, succeeds if exp doesn't match to the right
-(?<=exp)   look-behind, succeeds if exp matches to the left of the current position
-(?<!exp)   negative look-behind, succeeds if exp doesn't match to the left
-```
+`(?=exp)`
+: look-ahead, succeeds if *exp* matches to the right of the current position \
+`(?!exp)`
+: negative look-ahead, succeeds if *exp* doesn't match to the right \
+`(?<=exp)`
+: look-behind, succeeds if *exp* matches to the left of the current position \
+`(?<!exp)`
+: negative look-behind, succeeds if *exp* doesn't match to the left
 
 Atomic groups using `(?>exp)` to prevent backtracking within `exp`, e.g.:
 
@@ -129,8 +145,9 @@ assert!(!re.is_match("abc").unwrap());
 #![deny(missing_docs)]
 #![deny(missing_debug_implementations)]
 
-use bit_set::BitSet;
 use std::fmt;
+use std::fmt::{Debug, Formatter};
+use std::sync::Arc;
 use std::usize;
 
 mod analyze;
@@ -141,7 +158,7 @@ mod vm;
 
 use crate::analyze::analyze;
 use crate::compile::compile;
-use crate::parse::Parser;
+use crate::parse::{ExprTree, NamedGroups, Parser};
 use crate::vm::Prog;
 
 pub use crate::error::{Error, Result};
@@ -155,7 +172,10 @@ const MAX_RECURSION: usize = 64;
 pub struct RegexBuilder(RegexOptions);
 
 /// A compiled regular expression.
-pub struct Regex(RegexImpl);
+pub struct Regex {
+    inner: RegexImpl,
+    named_groups: Arc<NamedGroups>,
+}
 
 // Separate enum because we don't want to expose any of this
 enum RegexImpl {
@@ -181,7 +201,10 @@ pub struct Match<'t> {
 
 /// A set of capture groups found for a regex.
 #[derive(Debug)]
-pub struct Captures<'t>(CapturesImpl<'t>);
+pub struct Captures<'t> {
+    inner: CapturesImpl<'t>,
+    named_groups: Arc<NamedGroups>,
+}
 
 #[derive(Debug)]
 enum CapturesImpl<'t> {
@@ -291,21 +314,24 @@ impl Regex {
     }
 
     fn new_options(options: RegexOptions) -> Result<Regex> {
-        let (raw_e, backrefs) = Expr::parse(&options.pattern)?;
+        let raw_tree = Expr::parse_tree(&options.pattern)?;
 
         // wrapper to search for re at arbitrary start position,
         // and to capture the match bounds
-        let e = Expr::Concat(vec![
-            Expr::Repeat {
-                child: Box::new(Expr::Any { newline: true }),
-                lo: 0,
-                hi: usize::MAX,
-                greedy: false,
-            },
-            Expr::Group(Box::new(raw_e)),
-        ]);
+        let tree = ExprTree {
+            expr: Expr::Concat(vec![
+                Expr::Repeat {
+                    child: Box::new(Expr::Any { newline: true }),
+                    lo: 0,
+                    hi: usize::MAX,
+                    greedy: false,
+                },
+                Expr::Group(Box::new(raw_tree.expr)),
+            ]),
+            ..raw_tree
+        };
 
-        let info = analyze(&e, &backrefs)?;
+        let info = analyze(&tree)?;
 
         let inner_info = &info.children[1].children[0]; // references inner expr
         if !inner_info.hard {
@@ -313,8 +339,8 @@ impl Regex {
 
             // we do our own to_str because escapes are different
             let mut re_cooked = String::new();
-            // same as raw_e above, but it was moved, so traverse to find it
-            let raw_e = match e {
+            // same as raw_tree.expr above, but it was moved, so traverse to find it
+            let raw_e = match tree.expr {
                 Expr::Concat(ref v) => match v[1] {
                     Expr::Group(ref child) => child,
                     _ => unreachable!(),
@@ -323,20 +349,26 @@ impl Regex {
             };
             raw_e.to_str(&mut re_cooked, 0);
             let inner = compile::compile_inner(&re_cooked, &options)?;
-            return Ok(Regex(RegexImpl::Wrap { inner, options }));
+            return Ok(Regex {
+                inner: RegexImpl::Wrap { inner, options },
+                named_groups: Arc::new(tree.named_groups),
+            });
         }
 
         let prog = compile(&info)?;
-        Ok(Regex(RegexImpl::Fancy {
-            prog,
-            n_groups: info.end_group,
-            options,
-        }))
+        Ok(Regex {
+            inner: RegexImpl::Fancy {
+                prog,
+                n_groups: info.end_group,
+                options,
+            },
+            named_groups: Arc::new(tree.named_groups),
+        })
     }
 
     /// Returns the original string of this regex.
     pub fn as_str(&self) -> &str {
-        match &self.0 {
+        match &self.inner {
             RegexImpl::Wrap { options, .. } => &options.pattern,
             RegexImpl::Fancy { options, .. } => &options.pattern,
         }
@@ -355,7 +387,7 @@ impl Regex {
     /// assert!(re.is_match("mirror mirror on the wall").unwrap());
     /// ```
     pub fn is_match(&self, text: &str) -> Result<bool> {
-        match &self.0 {
+        match &self.inner {
             RegexImpl::Wrap { ref inner, .. } => Ok(inner.is_match(text)),
             RegexImpl::Fancy {
                 ref prog, options, ..
@@ -382,7 +414,7 @@ impl Regex {
     /// assert_eq!(re.find("so fancy!").unwrap().unwrap().as_str(), "fancy");
     /// ```
     pub fn find<'t>(&self, text: &'t str) -> Result<Option<Match<'t>>> {
-        match &self.0 {
+        match &self.inner {
             RegexImpl::Wrap { inner, .. } => Ok(inner
                 .find(text)
                 .map(|m| Match::new(text, m.start(), m.end()))),
@@ -452,11 +484,15 @@ impl Regex {
     /// of the string slice.
     ///
     pub fn captures_from_pos<'t>(&self, text: &'t str, pos: usize) -> Result<Option<Captures<'t>>> {
-        match &self.0 {
+        let named_groups = self.named_groups.clone();
+        match &self.inner {
             RegexImpl::Wrap { inner, .. } => {
                 let mut locations = inner.capture_locations();
                 let result = inner.captures_read_at(&mut locations, text, pos);
-                Ok(result.map(|_| Captures(CapturesImpl::Wrap { text, locations })))
+                Ok(result.map(|_| Captures {
+                    inner: CapturesImpl::Wrap { text, locations },
+                    named_groups,
+                }))
             }
             RegexImpl::Fancy {
                 prog,
@@ -467,16 +503,37 @@ impl Regex {
                 let result = vm::run(prog, text, pos, 0, options)?;
                 Ok(result.map(|mut saves| {
                     saves.truncate(n_groups * 2);
-                    Captures(CapturesImpl::Fancy { text, saves })
+                    Captures {
+                        inner: CapturesImpl::Fancy { text, saves },
+                        named_groups,
+                    }
                 }))
             }
         }
     }
 
+    /// Returns the number of captures, including the implicit capture of the entire expression.
+    pub fn captures_len(&self) -> usize {
+        match &self.inner {
+            RegexImpl::Wrap { inner, .. } => inner.captures_len(),
+            RegexImpl::Fancy { n_groups, .. } => *n_groups,
+        }
+    }
+
+    /// Returns an iterator over the capture names.
+    pub fn capture_names(&self) -> CaptureNames {
+        let mut names = Vec::new();
+        names.resize(self.captures_len(), None);
+        for (name, &i) in self.named_groups.iter() {
+            names[i] = Some(name.as_str());
+        }
+        CaptureNames(names.into_iter())
+    }
+
     // for debugging only
     #[doc(hidden)]
     pub fn debug_print(&self) {
-        match &self.0 {
+        match &self.inner {
             RegexImpl::Wrap { inner, .. } => println!("wrapped {:?}", inner),
             RegexImpl::Fancy { prog, .. } => prog.debug_print(),
         }
@@ -514,7 +571,7 @@ impl<'t> Captures<'t> {
     /// If there is no match for that group or the index does not correspond to a group, `None` is
     /// returned. The index 0 returns the whole match.
     pub fn get(&self, i: usize) -> Option<Match<'t>> {
-        match &self.0 {
+        match &self.inner {
             CapturesImpl::Wrap { text, locations } => {
                 locations
                     .get(i)
@@ -539,6 +596,12 @@ impl<'t> Captures<'t> {
         }
     }
 
+    /// Returns the match for a named capture group.  Returns `None` the capture
+    /// group did not match or if there is no group with the given name.
+    pub fn name(&self, name: &str) -> Option<Match<'t>> {
+        self.named_groups.get(name).and_then(|i| self.get(*i))
+    }
+
     /// Iterate over the captured groups in order in which they appeared in the regex. The first
     /// capture corresponds to the whole match.
     pub fn iter<'c>(&'c self) -> SubCaptureMatches<'c, 't> {
@@ -548,7 +611,7 @@ impl<'t> Captures<'t> {
     /// How many groups were captured. This is always at least 1 because group 0 returns the whole
     /// match.
     pub fn len(&self) -> usize {
-        match &self.0 {
+        match &self.inner {
             CapturesImpl::Wrap { locations, .. } => locations.len(),
             CapturesImpl::Fancy { saves, .. } => saves.len() / 2,
         }
@@ -633,6 +696,8 @@ pub enum Expr {
     /// Back reference to a capture group, e.g. `\1` in `(abc|def)\1` references the captured group
     /// and the whole regex matches either `abcabc` or `defdef`.
     Backref(usize),
+    /// Back reference to a named capture group.
+    NamedBackref(String),
     /// Atomic non-capturing group, e.g. `(?>ab|a)` in text that contains `ab` will match `ab` and
     /// never backtrack and try `a`, even if matching fails after the atomic group.
     AtomicGroup(Box<Expr>),
@@ -649,6 +714,26 @@ pub enum LookAround {
     LookBehind,
     /// Negative look-behind assertion, e.g. `(?<!a)`
     LookBehindNeg,
+}
+
+/// An iterator over capture names in a [Regex].  The iterator
+/// returns the name of each group, or [None] if the group has
+/// no name.  Because capture group 0 cannot have a name, the
+/// first item returned is always [None].
+pub struct CaptureNames<'r>(std::vec::IntoIter<Option<&'r str>>);
+
+impl Debug for CaptureNames<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<CaptureNames>")
+    }
+}
+
+impl<'r> Iterator for CaptureNames<'r> {
+    type Item = Option<&'r str>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next()
+    }
 }
 
 // silly to write my own, but this is super-fast for the common 1-digit
@@ -676,7 +761,7 @@ fn push_quoted(buf: &mut String, s: &str) {
 impl Expr {
     /// Parse the regex and return an expression (AST) and a bit set with the indexes of groups
     /// that are referenced by backrefs.
-    pub fn parse(re: &str) -> Result<(Expr, BitSet)> {
+    pub fn parse_tree(re: &str) -> Result<ExprTree> {
         Parser::parse(re)
     }
 
@@ -722,7 +807,8 @@ impl Expr {
                     Expr::Empty => true,
                     _ => false,
                 };
-                let contains_empty = children.iter().any(&is_empty);
+
+                let contains_empty = children.iter().any(is_empty);
                 if contains_empty {
                     buf.push_str("(?:");
                 }

@@ -3,11 +3,27 @@ use fancy_regex::{Captures, Match, Result};
 mod common;
 
 #[test]
+fn capture_names() {
+    let regex = common::regex("(?<foo>)()(?P<bar>)");
+    let capture_names = regex.capture_names().collect::<Vec<_>>();
+    assert_eq!(capture_names, vec![None, Some("foo"), None, Some("bar")]);
+}
+
+#[test]
 fn captures_fancy() {
     let captures = captures(r"\s*(\w+)(?=\.)", "foo bar.");
     assert_eq!(captures.len(), 2);
     assert_match(captures.get(0), " bar", 3, 7);
     assert_match(captures.get(1), "bar", 4, 7);
+    assert!(captures.get(2).is_none());
+}
+
+#[test]
+fn captures_fancy_named() {
+    let captures = captures(r"\s*(?<name>\w+)(?=\.)", "foo bar.");
+    assert_eq!(captures.len(), 2);
+    assert_match(captures.get(0), " bar", 3, 7);
+    assert_match(captures.name("name"), "bar", 4, 7);
     assert!(captures.get(2).is_none());
 }
 
@@ -53,6 +69,26 @@ fn captures_from_pos() {
     assert_eq!(matches.len(), 2);
     assert_match(matches[0], "33", 6, 8);
     assert_match(matches[1], "3", 6, 7);
+
+    let regex = common::regex(r"(?P<foo>\d+)\k<foo>");
+    let captures = assert_captures(regex.captures_from_pos(text, 3));
+    assert_eq!(captures.len(), 2);
+    assert_match(captures.get(0), "33", 6, 8);
+    assert_match(captures.name("foo"), "3", 6, 7);
+    let matches: Vec<_> = captures.iter().collect();
+    assert_eq!(matches.len(), 2);
+    assert_match(matches[0], "33", 6, 8);
+    assert_match(matches[1], "3", 6, 7);
+
+    let regex = common::regex(r"(?P<foo>\d+)(?P=foo)");
+    let captures = assert_captures(regex.captures_from_pos(text, 3));
+    assert_eq!(captures.len(), 2);
+    assert_match(captures.get(0), "33", 6, 8);
+    assert_match(captures.name("foo"), "3", 6, 7);
+    let matches: Vec<_> = captures.iter().collect();
+    assert_eq!(matches.len(), 2);
+    assert_match(matches[0], "33", 6, 8);
+    assert_match(matches[1], "3", 6, 7);
 }
 
 #[test]
@@ -69,12 +105,14 @@ fn captures_from_pos_looking_left() {
     assert_match(captures.get(1), "x", 1, 2);
 }
 
+#[cfg_attr(feature = "track_caller", track_caller)]
 fn captures<'a>(re: &str, text: &'a str) -> Captures<'a> {
     let regex = common::regex(re);
     let result = regex.captures(text);
     assert_captures(result)
 }
 
+#[cfg_attr(feature = "track_caller", track_caller)]
 fn assert_captures(result: Result<Option<Captures<'_>>>) -> Captures<'_> {
     assert!(
         result.is_ok(),
@@ -90,6 +128,7 @@ fn assert_captures(result: Result<Option<Captures<'_>>>) -> Captures<'_> {
     captures.unwrap()
 }
 
+#[cfg_attr(feature = "track_caller", track_caller)]
 fn assert_match(m: Option<Match<'_>>, expected_text: &str, start: usize, end: usize) {
     assert!(m.is_some(), "Expected match, but was {:?}", m);
     let m = m.unwrap();
