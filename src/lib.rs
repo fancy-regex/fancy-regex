@@ -147,7 +147,6 @@ assert!(!re.is_match("abc").unwrap());
 
 use std::fmt;
 use std::fmt::{Debug, Formatter};
-use std::mem;
 use std::sync::Arc;
 use std::usize;
 
@@ -164,8 +163,7 @@ use crate::parse::{ExprTree, NamedGroups, Parser};
 use crate::vm::Prog;
 
 pub use crate::error::{Error, Result};
-pub use crate::expand::{Expander, ExpanderBuilder};
-use std::io::Cursor;
+pub use crate::expand::Expander;
 
 const MAX_RECURSION: usize = 64;
 
@@ -610,7 +608,7 @@ impl<'t> Captures<'t> {
     /// capture group `name`, and writes them to the `dst` buffer given.
     ///
     /// `group` may be an integer corresponding to the index of the
-    /// capture group (counted by order of opening parenthesis where `0` is the
+    /// capture group (counted by order of opening parenthesis where `\0` is the
     /// entire match) or it can be a name (consisting of letters, digits or
     /// underscores) corresponding to a named capture group.
     ///
@@ -621,45 +619,15 @@ impl<'t> Captures<'t> {
     /// group named `1a` and not the capture group at index `1`. To exert more
     /// precise control over the name, use braces, e.g., `${1}a`.
     ///
-    /// To write a literal `$`, use `$$`.    
+    /// To write a literal `$`, use `$$`.
+    ///
+    /// For more control over expansion, see [`Expander`].
+    ///
+    /// [`Expander`]: expand/struct.Expander.html
     pub fn expand(&self, replacement: &str, dst: &mut String) {
-        let mut cursor = Cursor::new(mem::take(dst).into_bytes());
         Expander::default()
-            .expand_to(&mut cursor, self, replacement)
+            .append_expansion(dst, self, replacement)
             .expect("expansion succeeded");
-        *dst = String::from_utf8(cursor.into_inner()).expect("expansion is UTF-8");
-    }
-
-    /// Alternate version of [`expand`] using a syntax compatible with
-    /// certain other regex implementations.
-    ///
-    /// Expands all instances of `\num` or `\g<name>` in `replacement`
-    /// to the corresponding capture group `num` or `name`, and writes
-    /// them to the `dst` buffer given.
-    ///
-    /// `name` may be an integer corresponding to the index of the
-    /// capture group (counted by order of opening parenthesis where `0` is the
-    /// entire match) or it can be a name (consisting of letters, digits or
-    /// underscores) corresponding to a named capture group.
-    ///
-    /// `num` must be an integer corresponding to the index of the
-    /// capture group.
-    ///
-    /// If `num` or `name` isn't a valid capture group (whether the name doesn't exist
-    /// or isn't a valid index), then it is replaced with the empty string.
-    ///
-    /// The longest possible number is used. e.g., `\10` looks up capture
-    /// group 10 and not capture group 1 followed by a literal 0.
-    ///
-    /// To write a literal `\`, use `\\`.
-    ///
-    /// [`expand`]: #method.expand
-    pub fn expand_backslash(&self, replacement: &str, dst: &mut String) {
-        let mut cursor = Cursor::new(mem::take(dst).into_bytes());
-        Expander::python()
-            .expand_to(&mut cursor, self, replacement)
-            .expect("expansion succeeded");
-        *dst = String::from_utf8(cursor.into_inner()).expect("expansion is UTF-8");
     }
 
     /// Iterate over the captured groups in order in which they appeared in the regex. The first
