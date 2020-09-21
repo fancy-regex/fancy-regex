@@ -566,6 +566,7 @@ impl<'t> Match<'t> {
         &self.text[self.start..self.end]
     }
 
+    /// Creates a new match from the given text and byte offsets.
     fn new(text: &'t str, start: usize, end: usize) -> Match<'t> {
         Match { text, start, end }
     }
