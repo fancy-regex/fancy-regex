@@ -572,6 +572,18 @@ impl<'t> Match<'t> {
     }
 }
 
+impl<'t> From<Match<'t>> for &'t str {
+    fn from(m: Match<'t>) -> &'t str {
+        m.as_str()
+    }
+}
+
+impl<'t> From<Match<'t>> for Range<usize> {
+    fn from(m: Match<'t>) -> Range<usize> {
+        m.range()
+    }
+}
+
 #[allow(clippy::len_without_is_empty)] // follow regex's API
 impl<'t> Captures<'t> {
     /// Get the capture group by its index in the regex.
