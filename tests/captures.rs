@@ -204,7 +204,7 @@ fn assert_expansion(cap: &Captures, replacement: &str, text: &str) {
 #[cfg_attr(feature = "track_caller", track_caller)]
 fn assert_python_expansion(cap: &Captures, replacement: &str, text: &str) {
     assert_eq!(
-        Expander::python().expansion(cap, replacement).unwrap(),
+        Expander::python().expansion(replacement, cap).unwrap(),
         text
     );
 }
@@ -227,22 +227,22 @@ fn expander_errors() {
     exp.set_strict(true);
 
     // Substitution char at end of template.
-    assert!(exp.expansion(&cap, "$").is_err());
+    assert!(exp.expansion("$", &cap).is_err());
 
     // Substitution char not followed by a name or number.
-    assert!(exp.expansion(&cap, "$.").is_err());
+    assert!(exp.expansion("$.", &cap).is_err());
 
     // Unmatched group number.
-    assert!(exp.expansion(&cap, "$5").is_err());
-    assert!(exp.expansion(&cap, "${5}").is_err());
+    assert!(exp.expansion("$5", &cap).is_err());
+    assert!(exp.expansion("${5}", &cap).is_err());
 
     // Unmatched group name.
-    assert!(exp.expansion(&cap, "$xx").is_err());
-    assert!(exp.expansion(&cap, "${xx}").is_err());
+    assert!(exp.expansion("$xx", &cap).is_err());
+    assert!(exp.expansion("${xx}", &cap).is_err());
 
     // Empty delimiter pair.
-    assert!(exp.expansion(&cap, "${}").is_err());
+    assert!(exp.expansion("${}", &cap).is_err());
 
     // Unterminated delimiter pair.
-    assert!(exp.expansion(&cap, "${").is_err());
+    assert!(exp.expansion("${", &cap).is_err());
 }

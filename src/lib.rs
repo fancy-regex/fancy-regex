@@ -626,7 +626,7 @@ impl<'t> Captures<'t> {
     /// [`Expander`]: expand/struct.Expander.html
     pub fn expand(&self, replacement: &str, dst: &mut String) {
         Expander::default()
-            .append_expansion(dst, self, replacement)
+            .append_expansion(dst, replacement, self)
             .expect("expansion succeeded");
     }
 

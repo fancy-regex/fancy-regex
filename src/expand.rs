@@ -5,7 +5,7 @@ use std::io;
 use std::mem;
 
 /// A set of options for expanding a template string using the contents
-/// of capture groups.  Create using the `builder` method.
+/// of capture groups.
 #[derive(Debug)]
 pub struct Expander {
     sub_char: char,
@@ -79,9 +79,9 @@ impl Expander {
     /// by this expander and the values of capture groups from `captures`.
     ///
     /// Always succeeds when this expander is not strict.
-    pub fn expansion<'t>(&self, captures: &Captures<'t>, template: &str) -> io::Result<String> {
+    pub fn expansion<'t>(&self, template: &str, captures: &Captures<'t>) -> io::Result<String> {
         let mut cursor = io::Cursor::new(Vec::new());
-        self.write_expansion(&mut cursor, captures, template)?;
+        self.write_expansion(&mut cursor, template, captures)?;
         Ok(String::from_utf8(cursor.into_inner()).expect("expansion is UTF-8"))
     }
 
@@ -90,11 +90,11 @@ impl Expander {
     pub fn append_expansion<'t>(
         &self,
         dst: &mut String,
-        captures: &Captures<'t>,
         template: &str,
+        captures: &Captures<'t>,
     ) -> io::Result<()> {
         let mut cursor = io::Cursor::new(mem::replace(dst, String::new()).into_bytes());
-        self.write_expansion(&mut cursor, captures, template)?;
+        self.write_expansion(&mut cursor, template, captures)?;
         *dst = String::from_utf8(cursor.into_inner()).expect("expansion is UTF-8");
         Ok(())
     }
@@ -104,8 +104,8 @@ impl Expander {
     pub fn write_expansion<'t>(
         &self,
         mut dst: impl io::Write,
-        captures: &Captures<'t>,
         template: &str,
+        captures: &Captures<'t>,
     ) -> io::Result<()> {
         debug_assert!(!self.open.is_empty());
         debug_assert!(!self.close.is_empty());
