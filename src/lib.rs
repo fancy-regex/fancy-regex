@@ -419,9 +419,10 @@ impl Regex {
             RegexImpl::Wrap { inner, .. } => Ok(inner
                 .find(text)
                 .map(|m| Match::new(text, m.start(), m.end()))),
-            RegexImpl::Fancy { prog, options, .. } => vm::run(prog, text, 0, 0, options)?
-                .map(|saves| Ok(Match::new(text, saves[0], saves[1])))
-                .transpose(),
+            RegexImpl::Fancy { prog, options, .. } => {
+                let result = vm::run(prog, text, 0, 0, options)?;
+                Ok(result.map(|saves| Match::new(text, saves[0], saves[1])))
+            }
         }
     }
 
