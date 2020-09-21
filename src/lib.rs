@@ -147,6 +147,7 @@ assert!(!re.is_match("abc").unwrap());
 
 use std::fmt;
 use std::fmt::{Debug, Formatter};
+use std::ops::Range;
 use std::sync::Arc;
 use std::usize;
 
@@ -551,6 +552,12 @@ impl<'t> Match<'t> {
     #[inline]
     pub fn end(&self) -> usize {
         self.end
+    }
+
+    /// Returns the range over the starting and ending byte offsets of the match in text.
+    #[inline]
+    pub fn range(&self) -> Range<usize> {
+        self.start..self.end
     }
 
     /// Returns the matched text.
