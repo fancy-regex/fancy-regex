@@ -1,4 +1,5 @@
-use fancy_regex::{Captures, Match, Result};
+use fancy_regex::{Captures, Expander, Match, Result};
+use std::borrow::Cow;
 
 mod common;
 
@@ -135,4 +136,113 @@ fn assert_match(m: Option<Match<'_>>, expected_text: &str, start: usize, end: us
     assert_eq!(m.as_str(), expected_text);
     assert_eq!(m.start(), start);
     assert_eq!(m.end(), end);
+}
+
+#[test]
+fn expand() {
+    let regex = common::regex("(a)(b)(?<π>c)(?P<x>d)");
+    let cap = regex.captures("abcd").unwrap().expect("matched");
+    assert_expansion(&cap, "$0", "abcd");
+    assert_expansion(&cap, "$1", "a");
+    assert_expansion(&cap, "$2", "b");
+    assert_expansion(&cap, "$3", "c");
+    assert_expansion(&cap, "$4", "d");
+    assert_expansion(&cap, "$π", "c");
+    assert_expansion(&cap, "$x", "d");
+    assert_expansion(&cap, "$0π", "");
+    assert_expansion(&cap, "$1π", "");
+    assert_expansion(&cap, "$2π", "");
+    assert_expansion(&cap, "$3π", "");
+    assert_expansion(&cap, "$4π", "");
+    assert_expansion(&cap, "$ππ", "");
+    assert_expansion(&cap, "$xπ", "");
+    assert_expansion(&cap, "${0}π", "abcdπ");
+    assert_expansion(&cap, "${1}π", "aπ");
+    assert_expansion(&cap, "${2}π", "bπ");
+    assert_expansion(&cap, "${3}π", "cπ");
+    assert_expansion(&cap, "${4}π", "dπ");
+    assert_expansion(&cap, "${π}π", "cπ");
+    assert_expansion(&cap, "${x}π", "dπ");
+    assert_expansion(&cap, "$", "$");
+    assert_expansion(&cap, "$π√", "c√");
+    assert_expansion(&cap, "$x√", "d√");
+    assert_expansion(&cap, "$$π", "$π");
+    assert_expansion(&cap, "${π", "${π");
+    assert_python_expansion(&cap, "\\0", "abcd");
+    assert_python_expansion(&cap, "\\1", "a");
+    assert_python_expansion(&cap, "\\2", "b");
+    assert_python_expansion(&cap, "\\3", "c");
+    assert_python_expansion(&cap, "\\4", "d");
+    assert_python_expansion(&cap, "\\π", "\\π");
+    assert_python_expansion(&cap, "\\x", "\\x");
+    assert_python_expansion(&cap, "\\0π", "abcdπ");
+    assert_python_expansion(&cap, "\\1π", "aπ");
+    assert_python_expansion(&cap, "\\2π", "bπ");
+    assert_python_expansion(&cap, "\\3π", "cπ");
+    assert_python_expansion(&cap, "\\4π", "dπ");
+    assert_python_expansion(&cap, "\\ππ", "\\ππ");
+    assert_python_expansion(&cap, "\\xπ", "\\xπ");
+    assert_python_expansion(&cap, "\\g<0>π", "abcdπ");
+    assert_python_expansion(&cap, "\\g<1>π", "aπ");
+    assert_python_expansion(&cap, "\\g<2>π", "bπ");
+    assert_python_expansion(&cap, "\\g<3>π", "cπ");
+    assert_python_expansion(&cap, "\\g<4>π", "dπ");
+    assert_python_expansion(&cap, "\\g<π>π", "cπ");
+    assert_python_expansion(&cap, "\\g<x>π", "dπ");
+    assert_python_expansion(&cap, "\\", "\\");
+    assert_python_expansion(&cap, "\\\\π", "\\π");
+    assert_python_expansion(&cap, "\\g<π", "\\g<π");
+}
+
+#[cfg_attr(feature = "track_caller", track_caller)]
+fn assert_expansion(cap: &Captures, replacement: &str, text: &str) {
+    let mut buf = String::new();
+    cap.expand(replacement, &mut buf);
+    assert_eq!(buf, text);
+}
+
+#[cfg_attr(feature = "track_caller", track_caller)]
+fn assert_python_expansion(cap: &Captures, replacement: &str, text: &str) {
+    assert_eq!(
+        Expander::python().expansion(replacement, cap).unwrap(),
+        text
+    );
+}
+
+#[test]
+fn expander_quote() {
+    match Expander::default().quote("hello") {
+        Cow::Borrowed(s) => assert_eq!(s, "hello"),
+        _ => panic!("string should be borrowed"),
+    }
+    assert_eq!(Expander::default().quote("a$b\\c"), "a$$b\\c");
+    assert_eq!(Expander::python().quote("a$b\\c"), "a$b\\\\c");
+}
+
+#[test]
+fn expander_errors() {
+    let regex = common::regex("(a)(?<x>b)");
+    let cap = regex.captures("ab").unwrap().expect("matched");
+    let mut exp = Expander::default();
+    exp.set_strict(true);
+
+    // Substitution char at end of template.
+    assert!(exp.expansion("$", &cap).is_err());
+
+    // Substitution char not followed by a name or number.
+    assert!(exp.expansion("$.", &cap).is_err());
+
+    // Unmatched group number.
+    assert!(exp.expansion("$5", &cap).is_err());
+    assert!(exp.expansion("${5}", &cap).is_err());
+
+    // Unmatched group name.
+    assert!(exp.expansion("$xx", &cap).is_err());
+    assert!(exp.expansion("${xx}", &cap).is_err());
+
+    // Empty delimiter pair.
+    assert!(exp.expansion("${}", &cap).is_err());
+
+    // Unterminated delimiter pair.
+    assert!(exp.expansion("${", &cap).is_err());
 }
