@@ -1,5 +1,5 @@
 use crate::parse::{parse_decimal, parse_id};
-use crate::Captures;
+use crate::{Captures, Error, Regex};
 use std::borrow::Cow;
 use std::io;
 use std::mem;
@@ -12,7 +12,20 @@ pub struct Expander {
     open: &'static str,
     close: &'static str,
     allow_undelimited_name: bool,
-    strict: bool,
+}
+
+impl Default for Expander {
+    /// Returns the default expander used by [`Captures::expand`].
+    ///
+    /// [`Captures::expand`]: struct.Captures.html#expand
+    fn default() -> Self {
+        Expander {
+            sub_char: '$',
+            open: "{",
+            close: "}",
+            allow_undelimited_name: true,
+        }
+    }
 }
 
 impl Expander {
@@ -37,22 +50,48 @@ impl Expander {
     /// group 10 and not capture group 1 followed by a literal 0.
     ///
     /// To write a literal `\`, use `\\`.
-    pub fn python() -> Self {
+    pub fn python() -> Expander {
         Expander {
             sub_char: '\\',
             open: "g<",
             close: ">",
             allow_undelimited_name: false,
-            strict: false,
         }
     }
 
-    /// Sets whether this expander will report errors caused by unknown
-    /// group names and unclosed substitution expressions.
+    /// Checks `template` for errors.  The following conditions are checked for:
     ///
-    /// Expanders are non-strict by default.
-    pub fn set_strict(&mut self, value: bool) {
-        self.strict = value;
+    /// - A reference to a numbered group that does not exist in `regex`
+    /// - A reference to a numbered group (other than 0) when `regex` contains named groups
+    /// - A reference to a named group that does not occur in `regex`
+    /// - An opening group name delimiter without a closing delimiter
+    /// - Using an empty string as a group name
+    pub fn check(&self, template: &str, regex: &Regex) -> crate::Result<()> {
+        let on_group_num = |num| {
+            if num == 0 {
+                Ok(())
+            } else if !regex.named_groups.is_empty() {
+                Err(Error::NamedBackrefOnly)
+            } else if num < regex.captures_len() {
+                Ok(())
+            } else {
+                Err(Error::InvalidBackref)
+            }
+        };
+        self.exec(template, |step| match step {
+            Step::Char(_) => Ok(()),
+            Step::GroupName(name) => {
+                if regex.named_groups.contains_key(name) {
+                    Ok(())
+                } else if let Ok(num) = name.parse() {
+                    on_group_num(num)
+                } else {
+                    Err(Error::InvalidBackref)
+                }
+            }
+            Step::GroupNum(num) => on_group_num(num),
+            Step::Error => Err(Error::ParseError),
+        })
     }
 
     /// Quotes the substitution character in `text` so it appears literally
@@ -77,44 +116,67 @@ impl Expander {
 
     /// Expands the template string `template` using the syntax defined
     /// by this expander and the values of capture groups from `captures`.
-    ///
-    /// Always succeeds when this expander is not strict.
-    pub fn expansion<'t>(&self, template: &str, captures: &Captures<'t>) -> io::Result<String> {
-        let mut cursor = io::Cursor::new(Vec::new());
-        self.write_expansion(&mut cursor, template, captures)?;
-        Ok(String::from_utf8(cursor.into_inner()).expect("expansion is UTF-8"))
+    pub fn expansion(&self, template: &str, captures: &Captures<'_>) -> String {
+        let mut cursor = io::Cursor::new(Vec::with_capacity(template.len()));
+        self.write_expansion(&mut cursor, template, captures)
+            .expect("expansion succeeded");
+        String::from_utf8(cursor.into_inner()).expect("expansion is UTF-8")
     }
 
-    /// Appends the expansion produced by `expansion` to `dst`.  Possibly more efficient
-    /// than calling `expansion` directly.
-    pub fn append_expansion<'t>(
-        &self,
-        dst: &mut String,
-        template: &str,
-        captures: &Captures<'t>,
-    ) -> io::Result<()> {
+    /// Appends the expansion produced by `expansion` to `dst`.  Potentially more efficient
+    /// than calling `expansion` directly and appending to an existing string.
+    pub fn append_expansion(&self, dst: &mut String, template: &str, captures: &Captures<'_>) {
+        let pos = dst.len();
         let mut cursor = io::Cursor::new(mem::replace(dst, String::new()).into_bytes());
-        self.write_expansion(&mut cursor, template, captures)?;
+        cursor.set_position(pos as u64);
+        self.write_expansion(&mut cursor, template, captures)
+            .expect("expansion succeeded");
         *dst = String::from_utf8(cursor.into_inner()).expect("expansion is UTF-8");
-        Ok(())
     }
 
-    /// Writes the expansion produced by `expansion` to `dst`.  Possibly more efficient
-    /// than calling `expansion` directly.
-    pub fn write_expansion<'t>(
+    /// Writes the expansion produced by `expansion` to `dst`.  Potentially more efficient
+    /// than calling `expansion` directly and writing the result.
+    pub fn write_expansion(
         &self,
         mut dst: impl io::Write,
         template: &str,
-        captures: &Captures<'t>,
+        captures: &Captures<'_>,
     ) -> io::Result<()> {
+        self.exec(template, |step| match step {
+            Step::Char(c) => write!(dst, "{}", c),
+            Step::GroupName(name) => {
+                if let Some(m) = captures.name(name) {
+                    write!(dst, "{}", m.as_str())
+                } else if let Some(m) = name.parse().ok().and_then(|num| captures.get(num)) {
+                    write!(dst, "{}", m.as_str())
+                } else {
+                    Ok(())
+                }
+            }
+            Step::GroupNum(num) => {
+                if let Some(m) = captures.get(num) {
+                    write!(dst, "{}", m.as_str())
+                } else {
+                    Ok(())
+                }
+            }
+            Step::Error => Ok(()),
+        })
+    }
+
+    fn exec<'t, E>(
+        &self,
+        template: &'t str,
+        mut f: impl FnMut(Step<'t>) -> Result<(), E>,
+    ) -> Result<(), E> {
         debug_assert!(!self.open.is_empty());
         debug_assert!(!self.close.is_empty());
-        let mut iter = template.char_indices();
-        while let Some((index, c)) = iter.next() {
+        let mut iter = template.chars();
+        while let Some(c) = iter.next() {
             if c == self.sub_char {
                 let tail = iter.as_str();
                 let skip = if tail.starts_with(self.sub_char) {
-                    write!(dst, "{}", self.sub_char)?;
+                    f(Step::Char(self.sub_char))?;
                     1
                 } else if let Some((id, skip)) =
                     parse_id(tail, self.open, self.close).or_else(|| {
@@ -125,51 +187,28 @@ impl Expander {
                         }
                     })
                 {
-                    if let Some(m) = captures.name(id) {
-                        write!(dst, "{}", m.as_str())?;
-                    } else if let Some(m) = id.parse().ok().and_then(|num| captures.get(num)) {
-                        write!(dst, "{}", m.as_str())?;
-                    } else if self.strict {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!("invalid substitution group: {:?}", id),
-                        ));
-                    }
+                    f(Step::GroupName(id))?;
                     skip
                 } else if let Some((skip, num)) = parse_decimal(tail, 0) {
-                    if let Some(m) = captures.get(num) {
-                        write!(dst, "{}", m.as_str())?;
-                    }
+                    f(Step::GroupNum(num))?;
                     skip
-                } else if self.strict {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("invalid substitution sequence at position {}", index),
-                    ));
                 } else {
-                    write!(dst, "{}", self.sub_char)?;
+                    f(Step::Error)?;
+                    f(Step::Char(self.sub_char))?;
                     0
                 };
-                iter = iter.as_str()[skip..].char_indices();
+                iter = iter.as_str()[skip..].chars();
             } else {
-                write!(dst, "{}", c)?;
+                f(Step::Char(c))?;
             }
         }
         Ok(())
     }
 }
 
-/// The default expander used by [`Captures::expand`].
-///
-/// [`Captures::expand`]: struct.Captures.html#expand
-impl Default for Expander {
-    fn default() -> Self {
-        Expander {
-            sub_char: '$',
-            open: "{",
-            close: "}",
-            allow_undelimited_name: true,
-            strict: false,
-        }
-    }
+enum Step<'a> {
+    Char(char),
+    GroupName(&'a str),
+    GroupNum(usize),
+    Error,
 }

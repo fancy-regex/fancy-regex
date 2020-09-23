@@ -625,9 +625,7 @@ impl<'t> Captures<'t> {
     ///
     /// [`Expander`]: expand/struct.Expander.html
     pub fn expand(&self, replacement: &str, dst: &mut String) {
-        Expander::default()
-            .append_expansion(dst, replacement, self)
-            .expect("expansion succeeded");
+        Expander::default().append_expansion(dst, replacement, self);
     }
 
     /// Iterate over the captured groups in order in which they appeared in the regex. The first
