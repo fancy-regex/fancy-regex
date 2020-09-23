@@ -1,4 +1,4 @@
-use fancy_regex::{Captures, Expander, Match, Result};
+use fancy_regex::{Captures, Error, Expander, Match, Result};
 use std::borrow::Cow;
 
 mod common;
@@ -196,17 +196,14 @@ fn expand() {
 
 #[cfg_attr(feature = "track_caller", track_caller)]
 fn assert_expansion(cap: &Captures, replacement: &str, text: &str) {
-    let mut buf = String::new();
+    let mut buf = "before".to_string();
     cap.expand(replacement, &mut buf);
-    assert_eq!(buf, text);
+    assert_eq!(buf, format!("before{}", text));
 }
 
 #[cfg_attr(feature = "track_caller", track_caller)]
 fn assert_python_expansion(cap: &Captures, replacement: &str, text: &str) {
-    assert_eq!(
-        Expander::python().expansion(replacement, cap).unwrap(),
-        text
-    );
+    assert_eq!(Expander::python().expansion(replacement, cap), text);
 }
 
 #[test]
@@ -221,28 +218,44 @@ fn expander_quote() {
 
 #[test]
 fn expander_errors() {
-    let regex = common::regex("(a)(?<x>b)");
-    let cap = regex.captures("ab").unwrap().expect("matched");
-    let mut exp = Expander::default();
-    exp.set_strict(true);
+    let with_names = common::regex("(?<x>a)");
+    let without_names = common::regex("(a)");
+    let exp = Expander::default();
+
+    macro_rules! assert_err {
+        ($expr:expr, $err:pat) => {
+            match $expr {
+                Err($err) => {}
+                x => panic!("wrong result: {:?}", x),
+            }
+        };
+    }
 
     // Substitution char at end of template.
-    assert!(exp.expansion("$", &cap).is_err());
+    assert_err!(exp.check("$", &with_names), Error::ParseError);
 
     // Substitution char not followed by a name or number.
-    assert!(exp.expansion("$.", &cap).is_err());
-
-    // Unmatched group number.
-    assert!(exp.expansion("$5", &cap).is_err());
-    assert!(exp.expansion("${5}", &cap).is_err());
-
-    // Unmatched group name.
-    assert!(exp.expansion("$xx", &cap).is_err());
-    assert!(exp.expansion("${xx}", &cap).is_err());
+    assert_err!(exp.check("$.", &with_names), Error::ParseError);
 
     // Empty delimiter pair.
-    assert!(exp.expansion("${}", &cap).is_err());
+    assert_err!(exp.check("${}", &with_names), Error::ParseError);
 
     // Unterminated delimiter pair.
-    assert!(exp.expansion("${", &cap).is_err());
+    assert_err!(exp.check("${", &with_names), Error::ParseError);
+
+    // Group 0 is always OK.
+    assert!(exp.check("$0", &with_names).is_ok());
+    assert!(exp.check("$0", &without_names).is_ok());
+
+    // Can't use numbers with named groups.
+    assert_err!(exp.check("$1", &with_names), Error::NamedBackrefOnly);
+    assert_err!(exp.check("${1}", &with_names), Error::NamedBackrefOnly);
+
+    // Unmatched group number.
+    assert_err!(exp.check("$2", &without_names), Error::InvalidBackref);
+    assert_err!(exp.check("${2}", &without_names), Error::InvalidBackref);
+
+    // Unmatched group name.
+    assert_err!(exp.check("$xx", &with_names), Error::InvalidBackref);
+    assert_err!(exp.check("${xx}", &with_names), Error::InvalidBackref);
 }
