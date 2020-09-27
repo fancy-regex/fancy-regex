@@ -1,6 +1,15 @@
 mod common;
 
-use fancy_regex::Regex;
+use fancy_regex::{Match, Regex};
+use std::ops::Range;
+
+#[test]
+fn match_api() {
+    let m = find_match(r"(\w+)", "... test").unwrap();
+    assert_eq!(m.range(), (4..8));
+    assert_eq!(Range::from(m), (4..8));
+    assert_eq!(m.as_str(), "test");
+}
 
 #[test]
 fn find_wrap() {
@@ -126,6 +135,10 @@ fn delegates_match_unicode_scalar_value() {
 }
 
 fn find(re: &str, text: &str) -> Option<(usize, usize)> {
+    find_match(re, text).map(|m| (m.start(), m.end()))
+}
+
+fn find_match<'t>(re: &str, text: &'t str) -> Option<Match<'t>> {
     let regex = common::regex(re);
     let result = regex.find(text);
     assert!(
@@ -133,5 +146,5 @@ fn find(re: &str, text: &str) -> Option<(usize, usize)> {
         "Expected find to succeed, but was {:?}",
         result
     );
-    result.unwrap().map(|m| (m.start(), m.end()))
+    result.unwrap()
 }
