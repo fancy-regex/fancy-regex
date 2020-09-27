@@ -147,6 +147,7 @@ assert!(!re.is_match("abc").unwrap());
 
 use std::fmt;
 use std::fmt::{Debug, Formatter};
+use std::ops::Range;
 use std::sync::Arc;
 use std::usize;
 
@@ -555,14 +556,33 @@ impl<'t> Match<'t> {
         self.end
     }
 
+    /// Returns the range over the starting and ending byte offsets of the match in text.
+    #[inline]
+    pub fn range(&self) -> Range<usize> {
+        self.start..self.end
+    }
+
     /// Returns the matched text.
     #[inline]
     pub fn as_str(&self) -> &'t str {
         &self.text[self.start..self.end]
     }
 
+    /// Creates a new match from the given text and byte offsets.
     fn new(text: &'t str, start: usize, end: usize) -> Match<'t> {
         Match { text, start, end }
+    }
+}
+
+impl<'t> From<Match<'t>> for &'t str {
+    fn from(m: Match<'t>) -> &'t str {
+        m.as_str()
+    }
+}
+
+impl<'t> From<Match<'t>> for Range<usize> {
+    fn from(m: Match<'t>) -> Range<usize> {
+        m.range()
     }
 }
 
