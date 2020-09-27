@@ -304,6 +304,7 @@ impl<'a> Parser<'a> {
             }
             return Err(Error::InvalidBackref);
         } else if b == b'k' {
+            // Named backref: \k<name>
             return self.parse_backref(ix + 2, "<", ">");
         } else if b == b'A' || b == b'z' || b == b'b' || b == b'B' {
             size = 0;
@@ -525,7 +526,7 @@ impl<'a> Parser<'a> {
         } else if self.re[ix..].starts_with("?<!") {
             (Some(LookBehindNeg), 3)
         } else if self.re[ix..].starts_with("?<") {
-            // Named capture group using Oniguruma syntax.
+            // Named capture group using Oniguruma syntax: (?<name>...)
             self.curr_group += 1;
             if let Some((id, skip)) = parse_id(&self.re[ix + 1..], "<", ">") {
                 self.named_groups.insert(id.to_string(), self.curr_group);
@@ -534,7 +535,7 @@ impl<'a> Parser<'a> {
                 return Err(Error::InvalidGroupName);
             }
         } else if self.re[ix..].starts_with("?P<") {
-            // Named capture group using Python syntax.
+            // Named capture group using Python syntax: (?P<name>...)
             self.curr_group += 1; // this is a capture group
             if let Some((id, skip)) = parse_id(&self.re[ix + 2..], "<", ">") {
                 self.named_groups.insert(id.to_string(), self.curr_group);
@@ -543,6 +544,7 @@ impl<'a> Parser<'a> {
                 return Err(Error::InvalidGroupName);
             }
         } else if self.re[ix..].starts_with("?P=") {
+            // Backref using Python syntax: (?P=name)
             return self.parse_backref(ix + 3, "", ")");
         } else if self.re[ix..].starts_with("?>") {
             (None, 2)

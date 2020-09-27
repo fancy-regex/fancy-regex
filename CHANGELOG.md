@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
+## [0.4.0] - 2020-09-27
+### Added
+- Support for named groups and backrefs:
+  - Capture with `(?<name>...)` or `(?P<name>...)`
+  - Backref with `\k<name>` or `(?P=name)`
+  - `Captures::name` to get matched group by name
+  - `Regex::capture_names` to get capture names in regex
+- Support for expanding matches using a replacement template string
+  - `Captures::expand` for regex crate compatible syntax
+  - See `Expander` for python-compatible syntax and advanced usage
+- `Match::range` and some `From` impls for convenience
+
 ## [0.3.5] - 2020-04-28
 ### Changed
 - Include string snippet in errors for unknown group and invalid escape
@@ -75,6 +87,7 @@ with the exception that 0.x versions can break between minor versions.
 ### Added
 - Initial release
 
+[0.4.0]: https://github.com/fancy-regex/fancy-regex/compare/0.3.5...0.4.0
 [0.3.5]: https://github.com/fancy-regex/fancy-regex/compare/0.3.4...0.3.5
 [0.3.4]: https://github.com/fancy-regex/fancy-regex/compare/0.3.3...0.3.4
 [0.3.3]: https://github.com/fancy-regex/fancy-regex/compare/0.3.2...0.3.3
