@@ -55,16 +55,16 @@ impl Expander {
         self.strict = value;
     }
 
-    /// Quotes the substitution character in `text` so it appears literally
+    /// Escapes the substitution character in `text` so it appears literally
     /// in the output of `expansion`.
     ///
     /// ```
     /// assert_eq!(
-    ///     fancy_regex::Expander::default().quote("Has a literal $ sign."),
+    ///     fancy_regex::Expander::default().escape("Has a literal $ sign."),
     ///     "Has a literal $$ sign.",
     /// );
     /// ```
-    pub fn quote<'a>(&self, text: &'a str) -> Cow<'a, str> {
+    pub fn escape<'a>(&self, text: &'a str) -> Cow<'a, str> {
         if text.contains(self.sub_char) {
             let mut quoted = String::with_capacity(self.sub_char.len_utf8() * 2);
             quoted.push(self.sub_char);
@@ -73,6 +73,12 @@ impl Expander {
         } else {
             Cow::Borrowed(text)
         }
+    }
+
+    #[doc(hidden)]
+    #[deprecated(since = "0.3.6", note = "Use `escape` instead.")]
+    pub fn quote<'a>(&self, text: &'a str) -> Cow<'a, str> {
+        self.escape(text)
     }
 
     /// Expands the template string `template` using the syntax defined
