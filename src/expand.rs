@@ -76,7 +76,7 @@ impl Expander {
     }
 
     #[doc(hidden)]
-    #[deprecated(since = "0.3.6", note = "Use `escape` instead.")]
+    #[deprecated(since = "0.4.0", note = "Use `escape` instead.")]
     pub fn quote<'a>(&self, text: &'a str) -> Cow<'a, str> {
         self.escape(text)
     }
