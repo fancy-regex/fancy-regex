@@ -207,13 +207,13 @@ fn assert_python_expansion(cap: &Captures, replacement: &str, text: &str) {
 }
 
 #[test]
-fn expander_quote() {
-    match Expander::default().quote("hello") {
+fn expander_escape() {
+    match Expander::default().escape("hello") {
         Cow::Borrowed(s) => assert_eq!(s, "hello"),
         _ => panic!("string should be borrowed"),
     }
-    assert_eq!(Expander::default().quote("a$b\\c"), "a$$b\\c");
-    assert_eq!(Expander::python().quote("a$b\\c"), "a$b\\\\c");
+    assert_eq!(Expander::default().escape("a$b\\c"), "a$$b\\c");
+    assert_eq!(Expander::python().escape("a$b\\c"), "a$b\\\\c");
 }
 
 #[test]

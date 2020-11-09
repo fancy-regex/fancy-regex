@@ -165,6 +165,7 @@ use crate::vm::Prog;
 
 pub use crate::error::{Error, Result};
 pub use crate::expand::Expander;
+use std::borrow::Cow;
 
 const MAX_RECURSION: usize = 64;
 
@@ -793,14 +794,35 @@ fn push_usize(s: &mut String, x: usize) {
     }
 }
 
+fn is_special(c: char) -> bool {
+    match c {
+        '\\' | '.' | '+' | '*' | '?' | '(' | ')' | '|' | '[' | ']' | '{' | '}' | '^' | '$'
+        | '#' => true,
+        _ => false,
+    }
+}
+
 fn push_quoted(buf: &mut String, s: &str) {
     for c in s.chars() {
-        match c {
-            '\\' | '.' | '+' | '*' | '?' | '(' | ')' | '|' | '[' | ']' | '{' | '}' | '^' | '$'
-            | '#' => buf.push('\\'),
-            _ => (),
+        if is_special(c) {
+            buf.push('\\');
         }
         buf.push(c);
+    }
+}
+
+/// Escapes special characters in `text` with '\\'.  Returns a string which, when interpreted
+/// as a regex, matches exactly `text`.
+pub fn escape(text: &str) -> Cow<str> {
+    // Using bytes() is OK because all special characters are single bytes.
+    match text.bytes().filter(|&b| is_special(b as char)).count() {
+        0 => Cow::Borrowed(text),
+        n => {
+            // The capacity calculation is exact because '\\' is a single byte.
+            let mut buf = String::with_capacity(text.len() + n);
+            push_quoted(&mut buf, text);
+            Cow::Owned(buf)
+        }
     }
 }
 
@@ -995,6 +1017,7 @@ mod tests {
     use crate::parse::make_literal;
     use crate::Expr;
     use crate::Regex;
+    use std::borrow::Cow;
     use std::usize;
     //use detect_possible_backref;
 
@@ -1066,6 +1089,22 @@ mod tests {
         assert_eq!(to_str(repeat(0, usize::MAX, false)), "a*?");
         assert_eq!(to_str(repeat(1, usize::MAX, true)), "a+");
         assert_eq!(to_str(repeat(1, usize::MAX, false)), "a+?");
+    }
+
+    #[test]
+    fn escape() {
+        // Check that strings that need no quoting are borrowed, and that non-special punctuation
+        // is not quoted.
+        match crate::escape("@foo") {
+            Cow::Borrowed(s) => assert_eq!(s, "@foo"),
+            _ => panic!("Value should be borrowed."),
+        }
+
+        // Check typical usage.
+        assert_eq!(crate::escape("fo*o").into_owned(), "fo\\*o");
+
+        // Check that multibyte characters are handled correctly.
+        assert_eq!(crate::escape("fø*ø").into_owned(), "fø\\*ø");
     }
 
     /*
