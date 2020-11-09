@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
+## [0.4.1] - 2020-11-09
+### Added
+- `escape` function to escape special characters in a string so that it
+  matches literally
+
 ## [0.4.0] - 2020-09-27
 ### Added
 - Support for named groups and backrefs:
