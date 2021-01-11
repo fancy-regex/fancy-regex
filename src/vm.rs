@@ -672,7 +672,6 @@ pub(crate) fn run(
 mod tests {
     use super::*;
     use quickcheck::{quickcheck, Arbitrary, Gen};
-    use rand::Rng;
 
     #[test]
     fn state_push_pop() {
@@ -787,11 +786,14 @@ mod tests {
     }
 
     impl Arbitrary for Operation {
-        fn arbitrary<G: Gen>(g: &mut G) -> Self {
-            match g.gen_range(0, 3) {
-                0 => Operation::Push,
-                1 => Operation::Pop,
-                _ => Operation::Save(g.gen_range(0, 5), g.gen_range(0, usize::MAX)),
+        fn arbitrary(g: &mut Gen) -> Self {
+            match g.choose(&[0, 1, 2]) {
+                Some(0) => Operation::Push,
+                Some(1) => Operation::Pop,
+                _ => Operation::Save(
+                    *g.choose(&[0usize, 1, 2, 3, 4]).unwrap(),
+                    usize::arbitrary(g),
+                ),
             }
         }
     }
