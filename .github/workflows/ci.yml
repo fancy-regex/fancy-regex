@@ -38,7 +38,7 @@ jobs:
     strategy:
       matrix:
         rust:
-          - 1.32.0 # MSRV (minimum supported Rust version)
+          - 1.41.1 # MSRV (minimum supported Rust version)
           - stable
           - beta
     steps:
