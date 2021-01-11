@@ -790,7 +790,10 @@ mod tests {
             match g.choose(&[0, 1, 2]) {
                 Some(0) => Operation::Push,
                 Some(1) => Operation::Pop,
-                _ => Operation::Save(*g.choose(&[0usize, 1, 2, 3, 4]).unwrap(), usize::arbitrary(g)),
+                _ => Operation::Save(
+                    *g.choose(&[0usize, 1, 2, 3, 4]).unwrap(),
+                    usize::arbitrary(g),
+                ),
             }
         }
     }
