@@ -19,8 +19,7 @@ regex = "1.2" # when we go to >= 1.3.8, we can get rid of the `contains_empty` w
 bit-set = "0.5"
 
 [dev-dependencies]
-criterion = "= 0.3.0" # pinned because 0.3.1 doesn't work on Rust 1.32
-rayon-core = "= 1.7.0" # dependency of criterion, pinned to work on Rust 1.32
+criterion = "0.3.3"
 matches = "0.1.8"
 quickcheck = "0.7"
 rand = "0.5"

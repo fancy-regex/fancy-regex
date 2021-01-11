@@ -409,7 +409,7 @@ pub fn run_default(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>
 }
 
 /// Run the program with options.
-#[allow(clippy::cyclomatic_complexity)]
+#[allow(clippy::cognitive_complexity)]
 pub(crate) fn run(
     prog: &Prog,
     s: &str,
