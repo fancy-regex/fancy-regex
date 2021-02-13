@@ -604,8 +604,8 @@ impl Regex {
     /// assert_eq!(mat.end(), 12);
     /// ```
     ///
-    /// Note that in some cases this is not the same as using the `captures`
-    /// methods and passing a slice of the string, see [Regex::captures_from_pos()] for details.
+    /// Note that in some cases this is not the same as using the `find`
+    /// method and passing a slice of the string, see [Regex::captures_from_pos()] for details.
     pub fn find_from_pos<'t>(&self, text: &'t str, pos: usize) -> Result<Option<Match<'t>>> {
         match &self.inner {
             RegexImpl::Wrap { inner, .. } => Ok(inner
