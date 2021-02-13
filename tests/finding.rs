@@ -134,6 +134,53 @@ fn delegates_match_unicode_scalar_value() {
     assert_eq!(find(r".(?=\ba+)", "\u{1F60A}a"), Some((0, 4)));
 }
 
+#[test]
+fn find_iter() {
+    let text = "11 22 33";
+
+    for (i, mat) in common::regex(r"(\d)\d").find_iter(text).enumerate() {
+        let mat = mat.unwrap();
+
+        match i {
+            0 => assert_eq!((mat.start(), mat.end()), (0, 2)),
+            1 => assert_eq!((mat.start(), mat.end()), (3, 5)),
+            2 => assert_eq!((mat.start(), mat.end()), (6, 8)),
+            i => panic!("Expected 3 captures, got {}", i + 1),
+        }
+    }
+}
+
+#[test]
+fn find_iter_overlapping_lookahead() {
+    let text = "abcdef";
+
+    for (i, mat) in common::regex(r"[a-z]{2}(?=[a-z])").find_iter(text).enumerate() {
+        let mat = mat.unwrap();
+
+        match i {
+            0 => assert_eq!((mat.start(), mat.end()), (0, 2)),
+            1 => assert_eq!((mat.start(), mat.end()), (2, 4)),
+            i => panic!("Expected 2 captures, got {}", i + 1),
+        }
+    }
+}
+
+#[test]
+fn find_iter_zero_length() {
+    let text = "ab1c2";
+
+    for (i, mat) in common::regex(r"\d*(?=[a-z])").find_iter(text).enumerate() {
+        let mat = mat.unwrap();
+
+        match i {
+            0 => assert_eq!((mat.start(), mat.end()), (0, 0)),
+            1 => assert_eq!((mat.start(), mat.end()), (1, 1)),
+            2 => assert_eq!((mat.start(), mat.end()), (2, 3)),
+            i => panic!("Expected 3 captures, got {}", i + 1),
+        }
+    }
+}
+
 fn find(re: &str, text: &str) -> Option<(usize, usize)> {
     find_match(re, text).map(|m| (m.start(), m.end()))
 }

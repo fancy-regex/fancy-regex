@@ -48,6 +48,34 @@ fn captures_after_lookbehind() {
 }
 
 #[test]
+fn captures_iter() {
+    let text = "11 21 33";
+
+    for (i, captures) in common::regex(r"(?P<num>\d)\d").captures_iter(text).enumerate() {
+        let captures = captures.unwrap();
+
+        match i {
+            0 => {
+                assert_eq!(captures.len(), 2);
+                assert_match(captures.get(0), "11", 0, 2);
+                assert_match(captures.name("num"), "1", 0, 1);
+            },
+            1 => {
+                assert_eq!(captures.len(), 2);
+                assert_match(captures.get(0), "21", 3, 5);
+                assert_match(captures.name("num"), "2", 3, 4);
+            },
+            2 => {
+                assert_eq!(captures.len(), 2);
+                assert_match(captures.get(0), "33", 6, 8);
+                assert_match(captures.name("num"), "3", 6, 7);
+            },
+            i => panic!("Expected 3 captures, got {}", i + 1)
+        }
+    }  
+}
+
+#[test]
 fn captures_from_pos() {
     let text = "11 21 33";
 
