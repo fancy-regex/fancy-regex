@@ -238,6 +238,18 @@ pub struct Matches<'r, 't> {
     last_match: Option<usize>,
 }
 
+impl<'r, 't> Matches<'r, 't> {
+    /// Return the text being searched.
+    pub fn text(&self) -> &'t str {
+        self.text
+    }
+
+    /// Return the underlying regex.
+    pub fn regex(&self) -> &'r Regex {
+        &self.re
+    }
+}
+
 impl<'r, 't> Iterator for Matches<'r, 't> {
     type Item = Result<Match<'t>>;
 
@@ -251,9 +263,7 @@ impl<'r, 't> Iterator for Matches<'r, 't> {
         let mat = match self.re.find_from_pos(self.text, self.last_end) {
             Err(error) => return Some(Err(error)),
             Ok(None) => return None,
-            Ok(Some(captures)) => {
-                captures
-            },
+            Ok(Some(captures)) => captures,
         };
 
         if mat.start == mat.end {
@@ -286,6 +296,18 @@ impl<'r, 't> Iterator for Matches<'r, 't> {
 #[derive(Debug)]
 pub struct CaptureMatches<'r, 't>(Matches<'r, 't>);
 
+impl<'r, 't> CaptureMatches<'r, 't> {
+    /// Return the text being searched.
+    pub fn text(&self) -> &'t str {
+        self.0.text
+    }
+
+    /// Return the underlying regex.
+    pub fn regex(&self) -> &'r Regex {
+        &self.0.re
+    }
+}
+
 impl<'r, 't> Iterator for CaptureMatches<'r, 't> {
     type Item = Result<Captures<'t>>;
 
@@ -299,12 +321,12 @@ impl<'r, 't> Iterator for CaptureMatches<'r, 't> {
         let captures = match self.0.re.captures_from_pos(self.0.text, self.0.last_end) {
             Err(error) => return Some(Err(error)),
             Ok(None) => return None,
-            Ok(Some(captures)) => {
-                captures
-            },
+            Ok(Some(captures)) => captures,
         };
 
-        let mat = captures.get(0).expect("`Captures` is expected to have entire match at 0th position");
+        let mat = captures
+            .get(0)
+            .expect("`Captures` is expected to have entire match at 0th position");
         if mat.start == mat.end {
             self.0.last_end = next_utf8(self.0.text, mat.end);
             if Some(mat.end) == self.0.last_match {
@@ -313,7 +335,7 @@ impl<'r, 't> Iterator for CaptureMatches<'r, 't> {
         } else {
             self.0.last_end = mat.end;
         }
-        
+
         self.0.last_match = Some(mat.end);
 
         Some(Ok(captures))
@@ -523,7 +545,7 @@ impl Regex {
     ///
     /// If you have capturing groups in your regex that you want to extract, use the [Regex::captures_iter()]
     /// method.
-    /// 
+    ///
     /// # Example
     ///
     /// Find all words followed by an exclamation point:
@@ -539,7 +561,12 @@ impl Regex {
     /// assert!(matches.next().is_none());
     /// ```
     pub fn find_iter<'r, 't>(&'r self, text: &'t str) -> Matches<'r, 't> {
-        Matches { re: &self, text, last_end: 0, last_match: None }
+        Matches {
+            re: &self,
+            text,
+            last_end: 0,
+            last_match: None,
+        }
     }
 
     /// Find the first match in the input text.

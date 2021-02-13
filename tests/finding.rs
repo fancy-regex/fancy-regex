@@ -154,7 +154,10 @@ fn find_iter() {
 fn find_iter_overlapping_lookahead() {
     let text = "abcdef";
 
-    for (i, mat) in common::regex(r"[a-z]{2}(?=[a-z])").find_iter(text).enumerate() {
+    for (i, mat) in common::regex(r"[a-z]{2}(?=[a-z])")
+        .find_iter(text)
+        .enumerate()
+    {
         let mat = mat.unwrap();
 
         match i {
@@ -179,6 +182,17 @@ fn find_iter_zero_length() {
             i => panic!("Expected 3 captures, got {}", i + 1),
         }
     }
+}
+
+#[test]
+fn find_iter_attributes() {
+    let text = "ab1c2";
+    let regex = common::regex(r"\d*(?=[a-z])");
+
+    let matches = regex.find_iter(text);
+
+    assert_eq!(matches.text(), text);
+    assert_eq!(regex.as_str(), matches.regex().as_str());
 }
 
 fn find(re: &str, text: &str) -> Option<(usize, usize)> {
