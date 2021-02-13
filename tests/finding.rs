@@ -185,6 +185,21 @@ fn find_iter_zero_length() {
 }
 
 #[test]
+fn find_iter_zero_length_longer_codepoint() {
+    let text = "é1é";
+
+    for (i, mat) in common::regex(r"\d*(?=é)").find_iter(text).enumerate() {
+        let mat = mat.unwrap();
+
+        match i {
+            0 => assert_eq!((mat.start(), mat.end()), (0, 0)),
+            1 => assert_eq!((mat.start(), mat.end()), (2, 3)),
+            i => panic!("Expected 2 captures, got {}", i + 1),
+        }
+    }
+}
+
+#[test]
 fn find_iter_attributes() {
     let text = "ab1c2";
     let regex = common::regex(r"\d*(?=[a-z])");

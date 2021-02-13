@@ -203,26 +203,6 @@ pub struct Match<'t> {
     end: usize,
 }
 
-/// Returns the smallest possible index of the next valid UTF-8 sequence
-/// starting after `i`.
-/// Adapted from a function with the same name in the `regex` crate.
-fn next_utf8(text: &str, i: usize) -> usize {
-    let b = match text.as_bytes().get(i) {
-        None => return i + 1,
-        Some(&b) => b,
-    };
-    let inc = if b <= 0x7F {
-        1
-    } else if b <= 0b110_11111 {
-        2
-    } else if b <= 0b1110_1111 {
-        3
-    } else {
-        4
-    };
-    i + inc
-}
-
 /// An iterator over all non-overlapping matches for a particular string.
 ///
 /// The iterator yields a `Result<Match>`. The iterator stops when no more
@@ -691,7 +671,7 @@ impl Regex {
     /// ```
     ///
     /// Note that in some cases this is not the same as using the `captures`
-    /// methods and passing a slice of the string, see the capture that we get
+    /// method and passing a slice of the string, see the capture that we get
     /// when we do this:
     ///
     /// ```
@@ -1188,6 +1168,17 @@ fn codepoint_len(b: u8) -> usize {
         b if b < 0xf0 => 3,
         _ => 4,
     }
+}
+
+/// Returns the smallest possible index of the next valid UTF-8 sequence
+/// starting after `i`.
+/// Adapted from a function with the same name in the `regex` crate.
+fn next_utf8(text: &str, i: usize) -> usize {
+    let b = match text.as_bytes().get(i) {
+        None => return i + 1,
+        Some(&b) => b,
+    };
+    i + codepoint_len(b)
 }
 
 // If this returns false, then there is no possible backref in the re
