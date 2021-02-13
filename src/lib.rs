@@ -225,7 +225,7 @@ fn next_utf8(text: &str, i: usize) -> usize {
 
 /// An iterator over all non-overlapping matches for a particular string.
 ///
-/// The iterator yields a `Match` value. The iterator stops when no more
+/// The iterator yields a `Result<Match>`. The iterator stops when no more
 /// matches can be found.
 ///
 /// `'r` is the lifetime of the compiled regular expression and `'t` is the
@@ -263,7 +263,7 @@ impl<'r, 't> Iterator for Matches<'r, 't> {
         let mat = match self.re.find_from_pos(self.text, self.last_end) {
             Err(error) => return Some(Err(error)),
             Ok(None) => return None,
-            Ok(Some(captures)) => captures,
+            Ok(Some(mat)) => mat,
         };
 
         if mat.start == mat.end {
