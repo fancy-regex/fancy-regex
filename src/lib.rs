@@ -521,7 +521,7 @@ impl Regex {
 
     /// Returns an iterator for each successive non-overlapping match in `text`.
     ///
-    /// If you have capturing groups in your regex that you want to extract, use the [captures_iter()]
+    /// If you have capturing groups in your regex that you want to extract, use the [Regex::captures_iter()]
     /// method.
     /// 
     /// # Example
@@ -544,7 +544,7 @@ impl Regex {
 
     /// Find the first match in the input text.
     ///
-    /// If you have capturing groups in your regex that you want to extract, use the [captures()]
+    /// If you have capturing groups in your regex that you want to extract, use the [Regex::captures()]
     /// method.
     ///
     /// # Example
@@ -578,7 +578,7 @@ impl Regex {
     /// ```
     ///
     /// Note that in some cases this is not the same as using the `captures`
-    /// methods and passing a slice of the string, see [captures_from_pos()] for details.
+    /// methods and passing a slice of the string, see [Regex::captures_from_pos()] for details.
     pub fn find_from_pos<'t>(&self, text: &'t str, pos: usize) -> Result<Option<Match<'t>>> {
         match &self.inner {
             RegexImpl::Wrap { inner, .. } => Ok(inner
