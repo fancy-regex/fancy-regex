@@ -124,7 +124,7 @@ from parents to children.
 Still in development, though the basic ideas are in place. Currently,
 the following features are missing:
 
-* Iterator methods likes `find_iter` and `captures_iter`
+* Replace methods like `replace`, `replacen` and `replaceall`
 * Procedure calls and recursive expressions
 
 ## Acknowledgements

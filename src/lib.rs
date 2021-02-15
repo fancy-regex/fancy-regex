@@ -203,6 +203,125 @@ pub struct Match<'t> {
     end: usize,
 }
 
+/// An iterator over all non-overlapping matches for a particular string.
+///
+/// The iterator yields a `Result<Match>`. The iterator stops when no more
+/// matches can be found.
+///
+/// `'r` is the lifetime of the compiled regular expression and `'t` is the
+/// lifetime of the matched string.
+#[derive(Debug)]
+pub struct Matches<'r, 't> {
+    re: &'r Regex,
+    text: &'t str,
+    last_end: usize,
+    last_match: Option<usize>,
+}
+
+impl<'r, 't> Matches<'r, 't> {
+    /// Return the text being searched.
+    pub fn text(&self) -> &'t str {
+        self.text
+    }
+
+    /// Return the underlying regex.
+    pub fn regex(&self) -> &'r Regex {
+        &self.re
+    }
+}
+
+impl<'r, 't> Iterator for Matches<'r, 't> {
+    type Item = Result<Match<'t>>;
+
+    /// Adapted from the `regex` crate. Calls `find_from_pos` repeatedly.
+    /// Ignores empty matches immediately after a match.
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.last_end > self.text.len() {
+            return None;
+        }
+
+        let mat = match self.re.find_from_pos(self.text, self.last_end) {
+            Err(error) => return Some(Err(error)),
+            Ok(None) => return None,
+            Ok(Some(mat)) => mat,
+        };
+
+        if mat.start == mat.end {
+            // This is an empty match. To ensure we make progress, start
+            // the next search at the smallest possible starting position
+            // of the next match following this one.
+            self.last_end = next_utf8(self.text, mat.end);
+            // Don't accept empty matches immediately following a match.
+            // Just move on to the next match.
+            if Some(mat.end) == self.last_match {
+                return self.next();
+            }
+        } else {
+            self.last_end = mat.end;
+        }
+
+        self.last_match = Some(mat.end);
+
+        Some(Ok(mat))
+    }
+}
+
+/// An iterator that yields all non-overlapping capture groups matching a
+/// particular regular expression.
+///
+/// The iterator stops when no more matches can be found.
+///
+/// `'r` is the lifetime of the compiled regular expression and `'t` is the
+/// lifetime of the matched string.
+#[derive(Debug)]
+pub struct CaptureMatches<'r, 't>(Matches<'r, 't>);
+
+impl<'r, 't> CaptureMatches<'r, 't> {
+    /// Return the text being searched.
+    pub fn text(&self) -> &'t str {
+        self.0.text
+    }
+
+    /// Return the underlying regex.
+    pub fn regex(&self) -> &'r Regex {
+        &self.0.re
+    }
+}
+
+impl<'r, 't> Iterator for CaptureMatches<'r, 't> {
+    type Item = Result<Captures<'t>>;
+
+    /// Adapted from the `regex` crate. Calls `captures_from_pos` repeatedly.
+    /// Ignores empty matches immediately after a match.
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.0.last_end > self.0.text.len() {
+            return None;
+        }
+
+        let captures = match self.0.re.captures_from_pos(self.0.text, self.0.last_end) {
+            Err(error) => return Some(Err(error)),
+            Ok(None) => return None,
+            Ok(Some(captures)) => captures,
+        };
+
+        let mat = captures
+            .get(0)
+            .expect("`Captures` is expected to have entire match at 0th position");
+        if mat.start == mat.end {
+            self.0.last_end = next_utf8(self.0.text, mat.end);
+            if Some(mat.end) == self.0.last_match {
+                return self.next();
+            }
+        } else {
+            self.0.last_end = mat.end;
+        }
+
+        self.0.last_match = Some(mat.end);
+
+        Some(Ok(captures))
+    }
+}
+
 /// A set of capture groups found for a regex.
 #[derive(Debug)]
 pub struct Captures<'t> {
@@ -402,9 +521,37 @@ impl Regex {
         }
     }
 
+    /// Returns an iterator for each successive non-overlapping match in `text`.
+    ///
+    /// If you have capturing groups in your regex that you want to extract, use the [Regex::captures_iter()]
+    /// method.
+    ///
+    /// # Example
+    ///
+    /// Find all words followed by an exclamation point:
+    ///
+    /// ```rust
+    /// # use fancy_regex::Regex;
+    ///
+    /// let re = Regex::new(r"\w+(?=!)").unwrap();
+    /// let mut matches = re.find_iter("so fancy! even with! iterators!");
+    /// assert_eq!(matches.next().unwrap().unwrap().as_str(), "fancy");
+    /// assert_eq!(matches.next().unwrap().unwrap().as_str(), "with");
+    /// assert_eq!(matches.next().unwrap().unwrap().as_str(), "iterators");
+    /// assert!(matches.next().is_none());
+    /// ```
+    pub fn find_iter<'r, 't>(&'r self, text: &'t str) -> Matches<'r, 't> {
+        Matches {
+            re: &self,
+            text,
+            last_end: 0,
+            last_match: None,
+        }
+    }
+
     /// Find the first match in the input text.
     ///
-    /// If you have capturing groups in your regex that you want to extract, use the [captures()]
+    /// If you have capturing groups in your regex that you want to extract, use the [Regex::captures()]
     /// method.
     ///
     /// # Example
@@ -418,15 +565,66 @@ impl Regex {
     /// assert_eq!(re.find("so fancy!").unwrap().unwrap().as_str(), "fancy");
     /// ```
     pub fn find<'t>(&self, text: &'t str) -> Result<Option<Match<'t>>> {
+        self.find_from_pos(text, 0)
+    }
+
+    /// Returns the first match in `text`, starting from the specified byte position `pos`.
+    ///
+    /// # Examples
+    ///
+    /// Finding match starting at a position:
+    ///
+    /// ```
+    /// # use fancy_regex::Regex;
+    /// let re = Regex::new(r"(?m:^)(\d+)").unwrap();
+    /// let text = "1 test 123\n2 foo";
+    /// let mat = re.find_from_pos(text, 7).unwrap().unwrap();
+    ///
+    /// assert_eq!(mat.start(), 11);
+    /// assert_eq!(mat.end(), 12);
+    /// ```
+    ///
+    /// Note that in some cases this is not the same as using the `find`
+    /// method and passing a slice of the string, see [Regex::captures_from_pos()] for details.
+    pub fn find_from_pos<'t>(&self, text: &'t str, pos: usize) -> Result<Option<Match<'t>>> {
         match &self.inner {
             RegexImpl::Wrap { inner, .. } => Ok(inner
-                .find(text)
+                .find_at(text, pos)
                 .map(|m| Match::new(text, m.start(), m.end()))),
             RegexImpl::Fancy { prog, options, .. } => {
-                let result = vm::run(prog, text, 0, 0, options)?;
+                let result = vm::run(prog, text, pos, 0, options)?;
                 Ok(result.map(|saves| Match::new(text, saves[0], saves[1])))
             }
         }
+    }
+
+    /// Returns an iterator over all the non-overlapping capture groups matched in `text`.
+    ///
+    /// # Examples
+    ///
+    /// Finding all matches and capturing parts of each:
+    ///
+    /// ```rust
+    /// # use fancy_regex::Regex;
+    ///
+    /// let re = Regex::new(r"(\d{4})-(\d{2})").unwrap();
+    /// let text = "It was between 2018-04 and 2020-01";
+    /// let mut all_captures = re.captures_iter(text);
+    ///
+    /// let first = all_captures.next().unwrap().unwrap();
+    /// assert_eq!(first.get(1).unwrap().as_str(), "2018");
+    /// assert_eq!(first.get(2).unwrap().as_str(), "04");
+    /// assert_eq!(first.get(0).unwrap().as_str(), "2018-04");
+    ///
+    /// let second = all_captures.next().unwrap().unwrap();
+    /// assert_eq!(second.get(1).unwrap().as_str(), "2020");
+    /// assert_eq!(second.get(2).unwrap().as_str(), "01");
+    /// assert_eq!(second.get(0).unwrap().as_str(), "2020-01");
+    ///
+    /// assert!(all_captures.next().is_none());
+    /// ```
+    pub fn captures_iter<'r, 't>(&'r self, text: &'t str) -> CaptureMatches<'r, 't> {
+        CaptureMatches(self.find_iter(text))
     }
 
     /// Returns the capture groups for the first match in `text`.
@@ -473,7 +671,7 @@ impl Regex {
     /// ```
     ///
     /// Note that in some cases this is not the same as using the `captures`
-    /// methods and passing a slice of the string, see the capture that we get
+    /// method and passing a slice of the string, see the capture that we get
     /// when we do this:
     ///
     /// ```
@@ -970,6 +1168,17 @@ fn codepoint_len(b: u8) -> usize {
         b if b < 0xf0 => 3,
         _ => 4,
     }
+}
+
+/// Returns the smallest possible index of the next valid UTF-8 sequence
+/// starting after `i`.
+/// Adapted from a function with the same name in the `regex` crate.
+fn next_utf8(text: &str, i: usize) -> usize {
+    let b = match text.as_bytes().get(i) {
+        None => return i + 1,
+        Some(&b) => b,
+    };
+    i + codepoint_len(b)
 }
 
 // If this returns false, then there is no possible backref in the re
