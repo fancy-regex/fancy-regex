@@ -6,7 +6,11 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
-## [Unreleased]
+## [0.5.0] - 2021-02-15
+### Added
+- Methods `find_iter` and `captures_iter` to iterate over all
+  non-overlapping matches for a string
+- Method `find_from_pos` to `find` starting from a specific position
 ### Changed
 - MSRV (minimum supported Rust version) is now 1.41.1 (from 1.32.0)
 
@@ -96,7 +100,7 @@ with the exception that 0.x versions can break between minor versions.
 ### Added
 - Initial release
 
-[Unreleased]: https://github.com/fancy-regex/fancy-regex/compare/0.4.1...HEAD
+[0.5.0]: https://github.com/fancy-regex/fancy-regex/compare/0.4.1...0.5.0
 [0.4.1]: https://github.com/fancy-regex/fancy-regex/compare/0.4.0...0.4.1
 [0.4.0]: https://github.com/fancy-regex/fancy-regex/compare/0.3.5...0.4.0
 [0.3.5]: https://github.com/fancy-regex/fancy-regex/compare/0.3.4...0.3.5
