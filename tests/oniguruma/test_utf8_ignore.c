@@ -284,10 +284,10 @@
   // Compile failed: UnknownFlag("(?(")
   x2("(a)(?(1+0)b|c)d", "abd", 0, 3);
 
-  // Compile failed: UnknownFlag("(?\'")
+  // Compile failed: UnknownFlag
   x2("(?:(?'name'a)|(?'name'b))(?('name')c|d)e", "ace", 0, 3);
 
-  // Compile failed: UnknownFlag("(?\'")
+  // Compile failed: UnknownFlag
   x2("(?:(?'name'a)|(?'name'b))(?('name')c|d)e", "bce", 0, 3);
 
   // Compile failed: InvalidEscape("\\R")

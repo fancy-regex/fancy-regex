@@ -220,10 +220,9 @@ fn oniguruma() {
             assert!(result.is_some(),
                     "Expected ignored test to fail, but it succeeded. Remove it from the ignore file: {}", &test.source);
             let failure = result.unwrap();
-            assert_eq!(
-                failure, *expected_failure,
-                "Expected failure differed for test, change it in the ignore file: {}",
-                &test.source
+            assert!(failure.starts_with(expected_failure),
+                "Expected failure differed for test, change it in the ignore file: {}\nExpected: {}\nActual  : {}\n",
+                &test.source, &expected_failure, &failure
             );
             ignored += 1;
         } else {
