@@ -148,6 +148,7 @@ assert!(!re.is_match("abc").unwrap());
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::ops::{Index, Range};
+use std::str::FromStr;
 use std::sync::Arc;
 use std::usize;
 
@@ -428,6 +429,15 @@ impl fmt::Display for Regex {
     /// Shows the original regular expression
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.as_str())
+    }
+}
+
+impl FromStr for Regex {
+    type Err = Error;
+
+    /// Attempts to parse a string into a regular expression
+    fn from_str(s: &str) -> Result<Regex> {
+        Regex::new(s)
     }
 }
 
@@ -1334,6 +1344,13 @@ mod tests {
         let s = r"(a+)b\1";
         let regex = Regex::new(s).unwrap();
         assert_eq!(s, format!("{}", regex));
+    }
+
+    #[test]
+    fn from_str() {
+        let s = r"(a+)b\1";
+        let regex = s.parse::<Regex>().unwrap();
+        assert_eq!(regex.as_str(), s);
     }
 
     #[test]
