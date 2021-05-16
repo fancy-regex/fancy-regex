@@ -177,12 +177,14 @@ const MAX_RECURSION: usize = 64;
 pub struct RegexBuilder(RegexOptions);
 
 /// A compiled regular expression.
+#[derive(Clone)]
 pub struct Regex {
     inner: RegexImpl,
     named_groups: Arc<NamedGroups>,
 }
 
 // Separate enum because we don't want to expose any of this
+#[derive(Clone)]
 enum RegexImpl {
     // Do we want to box this? It's pretty big...
     Wrap {
