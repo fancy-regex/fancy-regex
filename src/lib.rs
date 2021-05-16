@@ -424,6 +424,13 @@ impl fmt::Debug for Regex {
     }
 }
 
+impl fmt::Display for Regex {
+    /// Shows the original regular expression
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
 impl Regex {
     /// Parse and compile a regex with default options, see `RegexBuilder`.
     ///
@@ -1273,6 +1280,13 @@ mod tests {
         let regex = Regex::new(s).unwrap();
         assert_eq!(s, regex.as_str());
         assert_eq!(s, format!("{:?}", regex));
+    }
+
+    #[test]
+    fn display() {
+        let s = r"(a+)b\1";
+        let regex = Regex::new(s).unwrap();
+        assert_eq!(s, format!("{}", regex));
     }
 
     #[test]
