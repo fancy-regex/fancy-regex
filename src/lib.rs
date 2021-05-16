@@ -147,7 +147,7 @@ assert!(!re.is_match("abc").unwrap());
 
 use std::fmt;
 use std::fmt::{Debug, Formatter};
-use std::ops::Range;
+use std::ops::{Index, Range};
 use std::sync::Arc;
 use std::usize;
 
@@ -867,6 +867,53 @@ impl<'t> Captures<'t> {
             CapturesImpl::Wrap { locations, .. } => locations.len(),
             CapturesImpl::Fancy { saves, .. } => saves.len() / 2,
         }
+    }
+}
+
+/// Copied from [`regex::Captures`]...
+///
+/// Get a group by index.
+///
+/// `'t` is the lifetime of the matched text.
+///
+/// The text can't outlive the `Captures` object if this method is
+/// used, because of how `Index` is defined (normally `a[i]` is part
+/// of `a` and can't outlive it); to do that, use `get()` instead.
+///
+/// # Panics
+///
+/// If there is no group at the given index.
+impl<'t> Index<usize> for Captures<'t> {
+    type Output = str;
+
+    fn index(&self, i: usize) -> &str {
+        self.get(i)
+            .map(|m| m.as_str())
+            .unwrap_or_else(|| panic!("no group at index '{}'", i))
+    }
+}
+
+/// Copied from [`regex::Captures`]...
+///
+/// Get a group by name.
+///
+/// `'t` is the lifetime of the matched text and `'i` is the lifetime
+/// of the group name (the index).
+///
+/// The text can't outlive the `Captures` object if this method is
+/// used, because of how `Index` is defined (normally `a[i]` is part
+/// of `a` and can't outlive it); to do that, use `name` instead.
+///
+/// # Panics
+///
+/// If there is no group named by the given value.
+impl<'t, 'i> Index<&'i str> for Captures<'t> {
+    type Output = str;
+
+    fn index<'a>(&'a self, name: &'i str) -> &'a str {
+        self.name(name)
+            .map(|m| m.as_str())
+            .unwrap_or_else(|| panic!("no group named '{}'", name))
     }
 }
 
