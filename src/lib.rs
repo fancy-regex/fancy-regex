@@ -147,7 +147,8 @@ assert!(!re.is_match("abc").unwrap());
 
 use std::fmt;
 use std::fmt::{Debug, Formatter};
-use std::ops::Range;
+use std::ops::{Index, Range};
+use std::str::FromStr;
 use std::sync::Arc;
 use std::usize;
 
@@ -176,12 +177,14 @@ const MAX_RECURSION: usize = 64;
 pub struct RegexBuilder(RegexOptions);
 
 /// A compiled regular expression.
+#[derive(Clone)]
 pub struct Regex {
     inner: RegexImpl,
     named_groups: Arc<NamedGroups>,
 }
 
 // Separate enum because we don't want to expose any of this
+#[derive(Clone)]
 enum RegexImpl {
     // Do we want to box this? It's pretty big...
     Wrap {
@@ -421,6 +424,22 @@ impl fmt::Debug for Regex {
     /// Shows the original regular expression.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.as_str())
+    }
+}
+
+impl fmt::Display for Regex {
+    /// Shows the original regular expression
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl FromStr for Regex {
+    type Err = Error;
+
+    /// Attempts to parse a string into a regular expression
+    fn from_str(s: &str) -> Result<Regex> {
+        Regex::new(s)
     }
 }
 
@@ -863,6 +882,53 @@ impl<'t> Captures<'t> {
     }
 }
 
+/// Copied from [`regex::Captures`]...
+///
+/// Get a group by index.
+///
+/// `'t` is the lifetime of the matched text.
+///
+/// The text can't outlive the `Captures` object if this method is
+/// used, because of how `Index` is defined (normally `a[i]` is part
+/// of `a` and can't outlive it); to do that, use `get()` instead.
+///
+/// # Panics
+///
+/// If there is no group at the given index.
+impl<'t> Index<usize> for Captures<'t> {
+    type Output = str;
+
+    fn index(&self, i: usize) -> &str {
+        self.get(i)
+            .map(|m| m.as_str())
+            .unwrap_or_else(|| panic!("no group at index '{}'", i))
+    }
+}
+
+/// Copied from [`regex::Captures`]...
+///
+/// Get a group by name.
+///
+/// `'t` is the lifetime of the matched text and `'i` is the lifetime
+/// of the group name (the index).
+///
+/// The text can't outlive the `Captures` object if this method is
+/// used, because of how `Index` is defined (normally `a[i]` is part
+/// of `a` and can't outlive it); to do that, use `name` instead.
+///
+/// # Panics
+///
+/// If there is no group named by the given value.
+impl<'t, 'i> Index<&'i str> for Captures<'t> {
+    type Output = str;
+
+    fn index<'a>(&'a self, name: &'i str) -> &'a str {
+        self.name(name)
+            .map(|m| m.as_str())
+            .unwrap_or_else(|| panic!("no group named '{}'", name))
+    }
+}
+
 impl<'c, 't> Iterator for SubCaptureMatches<'c, 't> {
     type Item = Option<Match<'t>>;
 
@@ -1273,6 +1339,20 @@ mod tests {
         let regex = Regex::new(s).unwrap();
         assert_eq!(s, regex.as_str());
         assert_eq!(s, format!("{:?}", regex));
+    }
+
+    #[test]
+    fn display() {
+        let s = r"(a+)b\1";
+        let regex = Regex::new(s).unwrap();
+        assert_eq!(s, format!("{}", regex));
+    }
+
+    #[test]
+    fn from_str() {
+        let s = r"(a+)b\1";
+        let regex = s.parse::<Regex>().unwrap();
+        assert_eq!(regex.as_str(), s);
     }
 
     #[test]

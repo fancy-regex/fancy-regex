@@ -84,7 +84,7 @@ const OPTION_TRACE: u32 = 1;
 const MAX_STACK: usize = 1_000_000;
 
 /// Instruction of the VM.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Insn {
     /// Successful end of program
     End,
@@ -184,7 +184,7 @@ pub enum Insn {
 }
 
 /// Sequence of instructions for the VM to execute.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Prog {
     /// Instructions of the program
     pub body: Vec<Insn>,

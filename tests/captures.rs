@@ -1,5 +1,6 @@
 use fancy_regex::{Captures, Error, Expander, Match, Result};
 use std::borrow::Cow;
+use std::ops::Index;
 
 mod common;
 
@@ -25,6 +26,8 @@ fn captures_fancy_named() {
     assert_eq!(captures.len(), 2);
     assert_match(captures.get(0), " bar", 3, 7);
     assert_match(captures.name("name"), "bar", 4, 7);
+    assert_eq!(captures.index(0), " bar");
+    assert_eq!(captures.index("name"), "bar");
     assert!(captures.get(2).is_none());
 }
 
