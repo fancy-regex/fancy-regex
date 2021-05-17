@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
+## [0.6.0] - 2021-05-17
+### Added
+- `Regex` now implements `Clone`, `Display`, `FromStr`
+- `Captures` now implements `Index<usize>` to access captures by number
+  and `Index<&str>` to access by name
+
 ## [0.5.0] - 2021-02-15
 ### Added
 - Methods `find_iter` and `captures_iter` to iterate over all
@@ -100,6 +106,7 @@ with the exception that 0.x versions can break between minor versions.
 ### Added
 - Initial release
 
+[0.6.0]: https://github.com/fancy-regex/fancy-regex/compare/0.5.0...0.6.0
 [0.5.0]: https://github.com/fancy-regex/fancy-regex/compare/0.4.1...0.5.0
 [0.4.1]: https://github.com/fancy-regex/fancy-regex/compare/0.4.0...0.4.1
 [0.4.0]: https://github.com/fancy-regex/fancy-regex/compare/0.3.5...0.4.0
