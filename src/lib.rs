@@ -157,6 +157,7 @@ mod compile;
 mod error;
 mod expand;
 mod parse;
+mod replacer;
 mod vm;
 
 use crate::analyze::analyze;
@@ -166,6 +167,7 @@ use crate::vm::Prog;
 
 pub use crate::error::{Error, Result};
 pub use crate::expand::Expander;
+pub use crate::replacer::{NoExpand, Replacer, ReplacerRef};
 use std::borrow::Cow;
 
 const MAX_RECURSION: usize = 64;
@@ -758,6 +760,178 @@ impl Regex {
             RegexImpl::Wrap { inner, .. } => println!("wrapped {:?}", inner),
             RegexImpl::Fancy { prog, .. } => prog.debug_print(),
         }
+    }
+
+    /// Replaces the leftmost-first match with the replacement provided.
+    /// The replacement can be a regular string (where `$N` and `$name` are
+    /// expanded to match capture groups) or a function that takes the matches'
+    /// `Captures` and returns the replaced string.
+    ///
+    /// If no match is found, then a copy of the string is returned unchanged.
+    ///
+    /// # Replacement string syntax
+    ///
+    /// All instances of `$name` in the replacement text is replaced with the
+    /// corresponding capture group `name`.
+    ///
+    /// `name` may be an integer corresponding to the index of the
+    /// capture group (counted by order of opening parenthesis where `0` is the
+    /// entire match) or it can be a name (consisting of letters, digits or
+    /// underscores) corresponding to a named capture group.
+    ///
+    /// If `name` isn't a valid capture group (whether the name doesn't exist
+    /// or isn't a valid index), then it is replaced with the empty string.
+    ///
+    /// The longest possible name is used. e.g., `$1a` looks up the capture
+    /// group named `1a` and not the capture group at index `1`. To exert more
+    /// precise control over the name, use braces, e.g., `${1}a`.
+    ///
+    /// To write a literal `$` use `$$`.
+    ///
+    /// # Examples
+    ///
+    /// Note that this function is polymorphic with respect to the replacement.
+    /// In typical usage, this can just be a normal string:
+    ///
+    /// ```rust
+    /// # use fancy_regex::Regex;
+    /// let re = Regex::new("[^01]+").unwrap();
+    /// assert_eq!(re.replace("1078910", ""), "1010");
+    /// ```
+    ///
+    /// But anything satisfying the `Replacer` trait will work. For example,
+    /// a closure of type `|&Captures| -> String` provides direct access to the
+    /// captures corresponding to a match. This allows one to access
+    /// capturing group matches easily:
+    ///
+    /// ```rust
+    /// # use fancy_regex::{Regex, Captures};
+    /// let re = Regex::new(r"([^,\s]+),\s+(\S+)").unwrap();
+    /// let result = re.replace("Springsteen, Bruce", |caps: &Captures| {
+    ///     format!("{} {}", &caps[2], &caps[1])
+    /// });
+    /// assert_eq!(result, "Bruce Springsteen");
+    /// ```
+    ///
+    /// But this is a bit cumbersome to use all the time. Instead, a simple
+    /// syntax is supported that expands `$name` into the corresponding capture
+    /// group. Here's the last example, but using this expansion technique
+    /// with named capture groups:
+    ///
+    /// ```rust
+    /// # use fancy_regex::Regex;
+    /// let re = Regex::new(r"(?P<last>[^,\s]+),\s+(?P<first>\S+)").unwrap();
+    /// let result = re.replace("Springsteen, Bruce", "$first $last");
+    /// assert_eq!(result, "Bruce Springsteen");
+    /// ```
+    ///
+    /// Note that using `$2` instead of `$first` or `$1` instead of `$last`
+    /// would produce the same result. To write a literal `$` use `$$`.
+    ///
+    /// Sometimes the replacement string requires use of curly braces to
+    /// delineate a capture group replacement and surrounding literal text.
+    /// For example, if we wanted to join two words together with an
+    /// underscore:
+    ///
+    /// ```rust
+    /// # use fancy_regex::Regex;
+    /// let re = Regex::new(r"(?P<first>\w+)\s+(?P<second>\w+)").unwrap();
+    /// let result = re.replace("deep fried", "${first}_$second");
+    /// assert_eq!(result, "deep_fried");
+    /// ```
+    ///
+    /// Without the curly braces, the capture group name `first_` would be
+    /// used, and since it doesn't exist, it would be replaced with the empty
+    /// string.
+    ///
+    /// Finally, sometimes you just want to replace a literal string with no
+    /// regard for capturing group expansion. This can be done by wrapping a
+    /// byte string with `NoExpand`:
+    ///
+    /// ```rust
+    /// # use fancy_regex::Regex;
+    /// use fancy_regex::NoExpand;
+    ///
+    /// let re = Regex::new(r"(?P<last>[^,\s]+),\s+(\S+)").unwrap();
+    /// let result = re.replace("Springsteen, Bruce", NoExpand("$2 $last"));
+    /// assert_eq!(result, "$2 $last");
+    /// ```
+    pub fn replace<'t, R: Replacer>(&self, text: &'t str, rep: R) -> Cow<'t, str> {
+        self.replacen(text, 1, rep)
+    }
+
+    /// Replaces all non-overlapping matches in `text` with the replacement
+    /// provided. This is the same as calling `replacen` with `limit` set to
+    /// `0`.
+    ///
+    /// See the documentation for `replace` for details on how to access
+    /// capturing group matches in the replacement string.
+    pub fn replace_all<'t, R: Replacer>(&self, text: &'t str, rep: R) -> Cow<'t, str> {
+        self.replacen(text, 0, rep)
+    }
+
+    /// Replaces at most `limit` non-overlapping matches in `text` with the
+    /// replacement provided. If `limit` is 0, then all non-overlapping matches
+    /// are replaced.
+    ///
+    /// See the documentation for `replace` for details on how to access
+    /// capturing group matches in the replacement string.
+    pub fn replacen<'t, R: Replacer>(
+        &self,
+        text: &'t str,
+        limit: usize,
+        mut rep: R,
+    ) -> Cow<'t, str> {
+        // If we know that the replacement doesn't have any capture expansions,
+        // then we can fast path. The fast path can make a tremendous
+        // difference:
+        //
+        //   1) We use `find_iter` instead of `captures_iter`. Not asking for
+        //      captures generally makes the regex engines faster.
+        //   2) We don't need to look up all of the capture groups and do
+        //      replacements inside the replacement string. We just push it
+        //      at each match and be done with it.
+        if let Some(rep) = rep.no_expansion() {
+            let mut it = self.find_iter(text).enumerate().peekable();
+            if it.peek().is_none() {
+                return Cow::Borrowed(text);
+            }
+            let mut new = String::with_capacity(text.len());
+            let mut last_match = 0;
+            for (i, m) in it {
+                let m = m.unwrap();
+                if limit > 0 && i >= limit {
+                    break;
+                }
+                new.push_str(&text[last_match..m.start()]);
+                new.push_str(&rep);
+                last_match = m.end();
+            }
+            new.push_str(&text[last_match..]);
+            return Cow::Owned(new);
+        }
+
+        // The slower path, which we use if the replacement needs access to
+        // capture groups.
+        let mut it = self.captures_iter(text).enumerate().peekable();
+        if it.peek().is_none() {
+            return Cow::Borrowed(text);
+        }
+        let mut new = String::with_capacity(text.len());
+        let mut last_match = 0;
+        for (i, cap) in it {
+            let cap = cap.unwrap();
+            if limit > 0 && i >= limit {
+                break;
+            }
+            // unwrap on 0 is OK because captures only reports matches
+            let m = cap.get(0).unwrap();
+            new.push_str(&text[last_match..m.start()]);
+            rep.replace_append(&cap, &mut new);
+            last_match = m.end();
+        }
+        new.push_str(&text[last_match..]);
+        Cow::Owned(new)
     }
 }
 
