@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
+## [0.7.0] - 2021-07-12
+### Added
+- `Regex` now has replace methods like the regex crate:
+  - `replace` - single replacement
+  - `replace_all` - replace all non-overlapping matches
+  - `replacen` - configurable number of replacements
+
 ## [0.6.0] - 2021-05-17
 ### Added
 - `Regex` now implements `Clone`, `Display`, `FromStr`
@@ -106,6 +113,7 @@ with the exception that 0.x versions can break between minor versions.
 ### Added
 - Initial release
 
+[0.7.0]: https://github.com/fancy-regex/fancy-regex/compare/0.6.0...0.7.0
 [0.6.0]: https://github.com/fancy-regex/fancy-regex/compare/0.5.0...0.6.0
 [0.5.0]: https://github.com/fancy-regex/fancy-regex/compare/0.4.1...0.5.0
 [0.4.1]: https://github.com/fancy-regex/fancy-regex/compare/0.4.0...0.4.1
