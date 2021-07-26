@@ -224,3 +224,11 @@ fn find_match<'t>(re: &str, text: &'t str) -> Option<Match<'t>> {
     );
     result.unwrap()
 }
+
+#[test]
+fn incomplete_escape_sequences() {
+    // See GH-76
+    assert!(Regex::new("\\u").is_err());
+    assert!(Regex::new("\\U").is_err());
+    assert!(Regex::new("\\x").is_err());
+}
