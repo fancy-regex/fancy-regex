@@ -149,6 +149,9 @@ impl<'a> Parser<'a> {
                 }
                 _ => return Ok((ix, child)),
             };
+            if let Expr::LookAround(_, _) = child {
+                return Err(Error::TargetNotRepeatable);
+            }
             ix += 1;
             ix = self.optional_whitespace(ix)?;
             let mut greedy = true;
@@ -1314,6 +1317,13 @@ mod tests {
         assert_error("(?--)", "Unknown group flag: (?--");
         // Check that we don't split on char boundary
         assert_error("(?\u{1F60A})", "Unknown group flag: (?\u{1F60A}");
+    }
+
+    #[test]
+    fn no_quantifiers_on_lookarounds() {
+        assert_error("(?=hello)+", "Target of repeat operator is invalid");
+        assert_error("(?<!hello)+", "Target of repeat operator is invalid");
+        assert_error("(?<=hello){2,3}", "Target of repeat operator is invalid");
     }
 
     // found by cargo fuzz, then minimized
