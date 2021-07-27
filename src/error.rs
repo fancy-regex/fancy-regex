@@ -44,7 +44,7 @@ pub enum Error {
     /// Once named groups are used you cannot refer to groups by number
     NamedBackrefOnly,
 
-    /// Quantifier on lookaround
+    /// Quantifier on lookaround or other zero-width assertion
     TargetNotRepeatable,
 
     // Run time errors
