@@ -6,9 +6,11 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
+## [0.7.1] - 2021-07-29
 ### Fixed
-
-- Panic on incomplete escape sequences in input regexes
+- Fix panic on incomplete escape sequences in input regexes
+- Disallow quantifers on lookarounds and other zero-width assertion
+  expressions, e.g. the `+` in `(?=hello)+`
 
 ## [0.7.0] - 2021-07-12
 ### Added
@@ -117,6 +119,7 @@ with the exception that 0.x versions can break between minor versions.
 ### Added
 - Initial release
 
+[0.7.1]: https://github.com/fancy-regex/fancy-regex/compare/0.7.0...0.7.1
 [0.7.0]: https://github.com/fancy-regex/fancy-regex/compare/0.6.0...0.7.0
 [0.6.0]: https://github.com/fancy-regex/fancy-regex/compare/0.5.0...0.6.0
 [0.5.0]: https://github.com/fancy-regex/fancy-regex/compare/0.4.1...0.5.0
