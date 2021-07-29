@@ -7,5 +7,8 @@ follow the [Rust Code of Conduct](https://www.rust-lang.org/en-US/conduct.html).
 Patching processes for this project are somewhat informal, as it's
 maintained by a small group. No Contributor License Agreement is needed.
 
-If this is your first substantive pull  request in this repo, feel free
+If this is your first substantive pull request in this repo, feel free
 to add yourself to the AUTHORS file.
+
+Make sure to run `cargo test` and `cargo fmt` to make sure your changes
+pass the tests and are formatted as expected.
