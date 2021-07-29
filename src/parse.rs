@@ -149,6 +149,9 @@ impl<'a> Parser<'a> {
                 }
                 _ => return Ok((ix, child)),
             };
+            if !self.is_repeatable(&child) {
+                return Err(Error::TargetNotRepeatable);
+            }
             ix += 1;
             ix = self.optional_whitespace(ix)?;
             let mut greedy = true;
@@ -170,6 +173,18 @@ impl<'a> Parser<'a> {
             return Ok((ix, node));
         }
         Ok((ix, child))
+    }
+
+    fn is_repeatable(&self, child: &Expr) -> bool {
+        match child {
+            Expr::LookAround(_, _) => false,
+            Expr::Empty => false,
+            Expr::StartText => false,
+            Expr::EndText => false,
+            Expr::StartLine => false,
+            Expr::EndLine => false,
+            _ => true,
+        }
     }
 
     // ix, lo, hi
@@ -1314,6 +1329,19 @@ mod tests {
         assert_error("(?--)", "Unknown group flag: (?--");
         // Check that we don't split on char boundary
         assert_error("(?\u{1F60A})", "Unknown group flag: (?\u{1F60A}");
+    }
+
+    #[test]
+    fn no_quantifiers_on_lookarounds() {
+        assert_error("(?=hello)+", "Target of repeat operator is invalid");
+        assert_error("(?<!hello)*", "Target of repeat operator is invalid");
+        assert_error("(?<=hello){2,3}", "Target of repeat operator is invalid");
+        assert_error("(?!hello)?", "Target of repeat operator is invalid");
+        assert_error("^?", "Target of repeat operator is invalid");
+        assert_error("${2}", "Target of repeat operator is invalid");
+        assert_error("(?m)^?", "Target of repeat operator is invalid");
+        assert_error("(?m)${2}", "Target of repeat operator is invalid");
+        assert_error("(a|b|?)", "Target of repeat operator is invalid");
     }
 
     // found by cargo fuzz, then minimized

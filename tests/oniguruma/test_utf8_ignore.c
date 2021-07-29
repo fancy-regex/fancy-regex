@@ -918,24 +918,10 @@
   // Compile failed: UnknownFlag("(?(")
   x2("((?()0+)+++(((0\\g<0>)0)|())++++((?(1)(0\\g<0>))++++++0*())++++((?(1)(0\\g<1>)+)++++++++++*())++++((?(1)((0)\\g<0>)+)++())+0++*+++(((0\\g<0>))*())++++((?(1)(0\\g<0>)+)++++++++++*|)++++*+++((?(1)((0)\\g<0>)+)+++++++++())++*|)++++((?()0))|", "abcde", 0, 0);
 
-  // Compile failed: InnerError(Syntax(
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // regex parse error:
-  //     (?:[ab]|(*MAX{2}).)*
-  //              ^
-  // error: repetition operator missing expression
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // ))
+  // Compile failed: TargetNotRepeatable
   x2("(?:[ab]|(*MAX{2}).)*", "abcbaaccaaa", 0, 7);
 
-  // Compile failed: InnerError(Syntax(
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // regex parse error:
-  //     (?:(*COUNT[AB]\{X\})[ab]|(*COUNT[CD]\{X\})[cd])*(*CMP\{AB,<,CD\})
-  //         ^
-  // error: repetition operator missing expression
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // ))
+  // Compile failed: TargetNotRepeatable
   x2("(?:(*COUNT[AB]{X})[ab]|(*COUNT[CD]{X})[cd])*(*CMP{AB,<,CD})",
      "abababcdab", 5, 8);
 
