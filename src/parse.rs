@@ -390,6 +390,10 @@ impl<'a> Parser<'a> {
 
     // ix points after '\x', eg to 'A0' or '{12345}', or after `\u` or `\U`
     fn parse_hex(&self, ix: usize, digits: usize) -> Result<(usize, Expr)> {
+        if ix >= self.re.len() {
+            // Incomplete escape sequence
+            return Err(Error::InvalidHex);
+        }
         let bytes = self.re.as_bytes();
         let b = bytes[ix];
         let (end, s) = if ix + digits <= self.re.len()
