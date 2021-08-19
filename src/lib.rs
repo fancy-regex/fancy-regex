@@ -936,6 +936,12 @@ impl Regex {
 }
 
 impl<'t> Match<'t> {
+    /// Returns the text being searched.
+    #[inline]
+    pub fn text(&self) -> &'t str {
+        self.text
+    }
+
     /// Returns the starting byte offset of the match in the text.
     #[inline]
     pub fn start(&self) -> usize {
