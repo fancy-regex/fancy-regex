@@ -201,11 +201,20 @@ enum RegexImpl {
 }
 
 /// A single match of a regex or group in an input text
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub struct Match<'t> {
     text: &'t str,
     start: usize,
     end: usize,
+}
+
+impl Debug for Match<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Match")
+            .field("as_str", &self.as_str())
+            .field("range", &self.range())
+            .finish()
+    }
 }
 
 /// An iterator over all non-overlapping matches for a particular string.
@@ -215,7 +224,7 @@ pub struct Match<'t> {
 ///
 /// `'r` is the lifetime of the compiled regular expression and `'t` is the
 /// lifetime of the matched string.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Matches<'r, 't> {
     re: &'r Regex,
     text: &'t str,
@@ -278,7 +287,7 @@ impl<'r, 't> Iterator for Matches<'r, 't> {
 ///
 /// `'r` is the lifetime of the compiled regular expression and `'t` is the
 /// lifetime of the matched string.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct CaptureMatches<'r, 't>(Matches<'r, 't>);
 
 impl<'r, 't> CaptureMatches<'r, 't> {
@@ -570,6 +579,16 @@ impl Regex {
         }
     }
 
+    ///
+    pub fn find_iter_from_pos<'r, 't>(&'r self, text: &'t str, pos: usize) -> Matches<'r, 't> {
+        Matches {
+            re: &self,
+            text,
+            last_end: pos,
+            last_match: None,
+        }
+    }
+
     /// Find the first match in the input text.
     ///
     /// If you have capturing groups in your regex that you want to extract, use the [Regex::captures()]
@@ -646,6 +665,15 @@ impl Regex {
     /// ```
     pub fn captures_iter<'r, 't>(&'r self, text: &'t str) -> CaptureMatches<'r, 't> {
         CaptureMatches(self.find_iter(text))
+    }
+
+    ///
+    pub fn captures_iter_from_pos<'r, 't>(
+        &'r self,
+        text: &'t str,
+        pos: usize,
+    ) -> CaptureMatches<'r, 't> {
+        CaptureMatches(self.find_iter_from_pos(text, pos))
     }
 
     /// Returns the capture groups for the first match in `text`.
@@ -936,6 +964,12 @@ impl Regex {
 }
 
 impl<'t> Match<'t> {
+    /// Return the text being searched.
+    #[inline]
+    pub fn text(&self) -> &'t str {
+        self.text
+    }
+
     /// Returns the starting byte offset of the match in the text.
     #[inline]
     pub fn start(&self) -> usize {
@@ -963,6 +997,59 @@ impl<'t> Match<'t> {
     /// Creates a new match from the given text and byte offsets.
     fn new(text: &'t str, start: usize, end: usize) -> Match<'t> {
         Match { text, start, end }
+    }
+}
+
+impl<'t> From<&'t str> for Match<'t> {
+    fn from(text: &'t str) -> Self {
+        Self::new(text, 0, text.len())
+    }
+}
+
+// Inner Search
+impl<'t> Match<'t> {
+    ///
+    pub fn find(&self, re: &'t Regex) -> Result<Option<Match<'t>>> {
+        self.find_from_pos(re, self.start)
+    }
+
+    ///
+    pub fn find_from_pos(&self, re: &'t Regex, pos: usize) -> Result<Option<Match<'t>>> {
+        assert!(pos >= self.start);
+        re.find_from_pos(&self.text[0..self.end], pos)
+    }
+
+    ///
+    pub fn find_iter(&self, re: &'t Regex) -> Matches<'t, 't> {
+        re.find_iter_from_pos(&self.text[0..self.end], self.start)
+    }
+
+    ///
+    pub fn find_iter_from_pos(&self, re: &'t Regex, pos: usize) -> Matches<'t, 't> {
+        assert!(pos >= self.start);
+        re.find_iter_from_pos(&self.text[0..self.end], pos)
+    }
+
+    ///
+    pub fn captures(&self, re: &'t Regex) -> Result<Option<Captures<'t>>> {
+        self.captures_from_pos(re, self.start)
+    }
+
+    ///
+    pub fn captures_from_pos(&self, re: &'t Regex, pos: usize) -> Result<Option<Captures<'t>>> {
+        assert!(pos >= self.start);
+        re.captures_from_pos(&self.text[0..self.end], pos)
+    }
+
+    ///
+    pub fn captures_iter(&self, re: &'t Regex) -> CaptureMatches<'t, 't> {
+        re.captures_iter_from_pos(&self.text[0..self.end], self.start)
+    }
+
+    ///
+    pub fn captures_iter_from_pos(&self, re: &'t Regex, pos: usize) -> CaptureMatches<'t, 't> {
+        assert!(pos >= self.start);
+        re.captures_iter_from_pos(&self.text[0..self.end], pos)
     }
 }
 
