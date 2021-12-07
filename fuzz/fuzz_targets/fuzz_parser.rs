@@ -1,13 +1,6 @@
 #![no_main]
+use libfuzzer_sys::fuzz_target;
 
-#[macro_use]
-extern crate libfuzzer_sys;
-extern crate fancy_regex;
-
-use fancy_regex::Expr;
-
-fuzz_target!(|data: &[u8]| {
-    if let Ok(s) = std::str::from_utf8(data) {
-        let _ = Expr::parse(s);
-    }
+fuzz_target!(|data: &str| {
+    let _ = fancy_regex::Expr::parse_tree(data);
 });
