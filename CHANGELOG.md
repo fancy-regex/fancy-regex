@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
+## Unreleased
+### Changed
+- MSRV (minimum supported Rust version) is now 1.42.0 (from 1.41.1)
+
 ## [0.7.1] - 2021-07-29
 ### Fixed
 - Fix panic on incomplete escape sequences in input regexes
