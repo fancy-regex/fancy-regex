@@ -92,12 +92,6 @@
   // No match found
   x2("(?m:.b)", "a\nb", 1, 3);
 
-  // Match found at start 0 and end 1 (expected 0 and 0)
-  x2("|a", "a", 0, 0);
-
-  // Match found at start 0 and end 1 (expected 0 and 0)
-  x2("(|a)", "a", 0, 0);
-
   // Compile failed: InvalidEscape("\\G")
   x2("a|\\Gz", "bza", 2, 3);
 
