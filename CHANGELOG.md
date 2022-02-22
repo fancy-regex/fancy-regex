@@ -6,7 +6,12 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
-## Unreleased
+## [0.8.0] - 2022-02-22
+### Added
+- Allow users to disable any of the `unicode` and `perf-*` features of
+  the regex crate. Disabling these features can reduce compile time
+  and/or binary size for use cases where these features are not needed.
+  (All features remain enabled by default.)
 ### Changed
 - MSRV (minimum supported Rust version) is now 1.42.0 (from 1.41.1)
 
@@ -123,6 +128,7 @@ with the exception that 0.x versions can break between minor versions.
 ### Added
 - Initial release
 
+[0.8.0]: https://github.com/fancy-regex/fancy-regex/compare/0.7.1...0.8.0
 [0.7.1]: https://github.com/fancy-regex/fancy-regex/compare/0.7.0...0.7.1
 [0.7.0]: https://github.com/fancy-regex/fancy-regex/compare/0.6.0...0.7.0
 [0.6.0]: https://github.com/fancy-regex/fancy-regex/compare/0.5.0...0.6.0
