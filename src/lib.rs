@@ -1186,6 +1186,8 @@ pub enum Expr {
     /// Atomic non-capturing group, e.g. `(?>ab|a)` in text that contains `ab` will match `ab` and
     /// never backtrack and try `a`, even if matching fails after the atomic group.
     AtomicGroup(Box<Expr>),
+    /// Keep matched text so far out of overall match
+    KeepOut,
 }
 
 /// Type of look-around assertion as used for a look-around expression.

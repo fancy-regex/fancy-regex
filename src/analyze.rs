@@ -185,6 +185,9 @@ impl<'a> Analyzer<'a> {
                 hard = true; // TODO: possibly could weaken
                 children.push(child_info);
             }
+            Expr::KeepOut => {
+                hard = true;
+            }
         };
 
         Ok(Info {

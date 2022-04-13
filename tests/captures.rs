@@ -51,6 +51,44 @@ fn captures_after_lookbehind() {
 }
 
 #[test]
+fn captures_with_keepout_inside_at_end() {
+    let captures = captures(r"\s*(\w+\K)(?=\.)", "foo bar.");
+    assert_eq!(captures.len(), 2);
+    assert_match(captures.get(0), "", 7, 7);
+    assert_match(captures.get(1), "bar", 4, 7);
+    assert!(captures.get(2).is_none());
+}
+
+#[test]
+fn captures_with_keepout_inside_in_middle() {
+    let captures = captures(r"\s*(b\Kar)(?=\.)", "foo bar.");
+    assert_eq!(captures.len(), 2);
+    assert_match(captures.get(0), "ar", 5, 7);
+    assert_match(captures.get(1), "bar", 4, 7);
+    assert!(captures.get(2).is_none());
+}
+
+#[test]
+fn captures_with_keepout_between() {
+    let captures = captures(r"(\w+)\K\s*(\w+)(?=\.)", "foo bar.");
+    assert_eq!(captures.len(), 3);
+    assert_match(captures.get(0), " bar", 3, 7);
+    assert_match(captures.get(1), "foo", 0, 3);
+    assert_match(captures.get(2), "bar", 4, 7);
+    assert!(captures.get(3).is_none());
+}
+
+#[test]
+fn captures_with_nested_keepout() {
+    let captures = captures(r"(\w\K)+\s*(\w+)(?=\.)", "foo bar.");
+    assert_eq!(captures.len(), 3);
+    assert_match(captures.get(0), " bar", 3, 7);
+    assert_match(captures.get(1), "o", 2, 3);
+    assert_match(captures.get(2), "bar", 4, 7);
+    assert!(captures.get(3).is_none());
+}
+
+#[test]
 fn captures_iter() {
     let text = "11 21 33";
 

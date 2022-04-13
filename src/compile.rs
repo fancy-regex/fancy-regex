@@ -164,6 +164,9 @@ impl Compiler {
             Expr::NamedBackref(_) => {
                 unreachable!("named backrefs should have been eliminated");
             }
+            Expr::KeepOut => {
+                self.b.add(Insn::Save(0));
+            }
         }
         Ok(())
     }

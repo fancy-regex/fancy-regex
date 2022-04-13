@@ -314,21 +314,6 @@
   // Compile failed: InvalidEscape("\\O")
   x2("(?-m:\\O)", "\n", 0, 1);
 
-  // Compile failed: InvalidEscape("\\K")
-  x2("\\K", "a", 0, 0);
-
-  // Compile failed: InvalidEscape("\\K")
-  x2("a\\K", "a", 1, 1);
-
-  // Compile failed: InvalidEscape("\\K")
-  x2("a\\Kb", "ab", 1, 2);
-
-  // Compile failed: InvalidEscape("\\K")
-  x2("(a\\Kb|ac\\Kd)", "acd", 2, 3);
-
-  // Compile failed: InvalidEscape("\\K")
-  x2("(a\\Kb|\\Kac\\K)*", "acababacab", 9, 10);
-
   // No match found
   x2("(?:()|())*\\1", "abc", 0, 0);
 
