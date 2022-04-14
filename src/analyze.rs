@@ -187,6 +187,7 @@ impl<'a> Analyzer<'a> {
             }
             Expr::KeepOut => {
                 hard = true;
+                const_size = true;
             }
         };
 
