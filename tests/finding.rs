@@ -145,7 +145,8 @@ fn keepout_matches_in_correct_place() {
 fn keepout_in_lookarounds_match_in_correct_place() {
     assert_eq!(find(r"(?<=a\Kb)c", "abc"), Some((1, 3)));
     assert_eq!(find(r"(?<!a\Kb)c", "axc"), Some((2, 3)));
-    //assert_eq!(find(r"a(?=b\Kc)", "abc"), Some((1, 1)));
+    assert_eq!(find(r"a(?=b\Kc)", "abc"), Some((1, 1)));
+    assert_eq!(find(r"a(?=b\Kc)..", "abc"), Some((2, 3)));
     assert_eq!(find(r"a(?!b\Kc)", "abx"), Some((0, 1)));
 }
 
