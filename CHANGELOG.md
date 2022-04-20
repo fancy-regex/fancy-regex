@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
+## [Unreleased]
+### Added
+- Added support for `\K` keep out
+
 ## [0.8.0] - 2022-02-22
 ### Added
 - Allow users to disable any of the `unicode` and `perf-*` features of

@@ -439,8 +439,9 @@ pub(crate) fn run(
                     if option_flags & OPTION_TRACE != 0 {
                         println!("saves: {:?}", state.saves);
                     }
-                    if state.saves[0] > state.saves[1] {
-                        state.save(0, state.saves[1]);
+                    let slot1 = state.get(1);
+                    if state.get(0) > slot1 {
+                        state.save(0, slot1);
                     }
                     return Ok(Some(state.saves));
                 }
