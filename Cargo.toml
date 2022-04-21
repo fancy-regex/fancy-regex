@@ -1,6 +1,6 @@
 [package]
 name = "fancy-regex"
-version = "0.8.0" # remember to update html_root_url
+version = "0.9.0" # remember to update html_root_url
 authors = ["Raph Levien <raph@google.com>", "Robin Stocker <robin@nibor.org>"]
 edition = "2018"
 license = "MIT"
