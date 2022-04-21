@@ -79,6 +79,7 @@ use crate::Result;
 use crate::{codepoint_len, RegexOptions};
 
 const OPTION_TRACE: u32 = 1;
+pub(crate) const OPTION_SKIPPED_EMPTY_MATCH: u32 = 2;
 
 // TODO: make configurable
 const MAX_STACK: usize = 1_000_000;
@@ -656,7 +657,7 @@ pub(crate) fn run(
                     }
                 }
                 Insn::ContinueFromPreviousMatchEnd => {
-                    if ix > pos {
+                    if ix > pos || option_flags & OPTION_SKIPPED_EMPTY_MATCH != 0 {
                         break 'fail;
                     }
                 }

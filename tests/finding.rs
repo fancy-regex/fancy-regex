@@ -236,6 +236,20 @@ fn find_iter_continue_from_previous_match_end() {
 }
 
 #[test]
+fn find_iter_continue_from_previous_match_end_with_zero_width_match() {
+    let text = "1122 33";
+
+    for (i, mat) in common::regex(r"\G\d*").find_iter(text).enumerate() {
+        let mat = mat.unwrap();
+
+        match i {
+            0 => assert_eq!((mat.start(), mat.end()), (0, 4)),
+            i => panic!("Expected 1 result, got {}", i + 1),
+        }
+    }
+}
+
+#[test]
 fn find_iter_attributes() {
     let text = "ab1c2";
     let regex = common::regex(r"\d*(?=[a-z])");
