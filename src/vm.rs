@@ -181,6 +181,8 @@ pub enum Insn {
         /// The last group number
         end_group: usize,
     },
+    /// Anchor to match at the position where the previous match ended
+    ContinueFromPreviousMatchEnd,
 }
 
 /// Sequence of instructions for the VM to execute.
@@ -651,6 +653,11 @@ pub(crate) fn run(
                         } else {
                             break 'fail;
                         }
+                    }
+                }
+                Insn::ContinueFromPreviousMatchEnd => {
+                    if ix > pos {
+                        break 'fail;
                     }
                 }
             }

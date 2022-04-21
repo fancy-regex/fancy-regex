@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
+## Unreleased
+### Added
+- Support for `\G` (anchor to end of previous match): Using a regex
+  like `\G\w` will match each letter of `foo` in `foo bar` but
+  nothing else.
+
 ## [0.9.0] - 2022-04-21
 ### Added
 - Support for `\K` (keep out): Using a regex like `@\K\w+` will match

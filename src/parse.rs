@@ -387,6 +387,8 @@ impl<'a> Parser<'a> {
             }
         } else if b == b'K' {
             return Ok((end, Expr::KeepOut));
+        } else if b == b'G' {
+            return Ok((end, Expr::ContinueFromPreviousMatchEnd));
         } else if b'a' <= (b | 32) && (b | 32) <= b'z' {
             return Err(Error::InvalidEscape(format!("\\{}", &self.re[ix + 1..end])));
         } else if 0x20 <= b && b <= 0x7f {

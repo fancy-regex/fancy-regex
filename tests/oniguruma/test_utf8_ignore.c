@@ -10,9 +10,6 @@
   // Compile failed: InvalidEscape("\\O")
   x2("$\\O", "bb\n", 2, 3);
 
-  // Compile failed: InvalidEscape("\\G")
-  x2("\\G", "", 0, 0);
-
   // Compile failed: InvalidEscape("\\Z")
   x2("\\Z", "", 0, 0);
 
@@ -56,9 +53,6 @@
   // Compile failed: InvalidEscape("\\Z")
   x2("a\\Z", "a", 0, 1);
 
-  // Compile failed: InvalidEscape("\\G")
-  x2("\\Gaz", "az", 0, 2);
-
   // No match found
   x2("(?i:ss)", "\xc3\x9f", 0, 2);
 
@@ -91,12 +85,6 @@
 
   // No match found
   x2("(?m:.b)", "a\nb", 1, 3);
-
-  // Compile failed: InvalidEscape("\\G")
-  x2("a|\\Gz", "bza", 2, 3);
-
-  // Compile failed: InvalidEscape("\\G")
-  x2("a|\\Gz", "za", 0, 1);
 
   // Compile failed: InvalidEscape("\\Z")
   x2("a|b\\Z", "ba", 1, 2);
@@ -503,20 +491,11 @@
   // Compile failed: InvalidEscape("\\Z")
   x2("かきく\\Z", "かきく\n", 0, 9);
 
-  // Compile failed: InvalidEscape("\\G")
-  x2("\\Gぽぴ", "ぽぴ", 0, 6);
-
   // No match found
   x2("(?m:よ.)", "よ\n", 0, 4);
 
   // No match found
   x2("(?m:.め)", "ま\nめ", 3, 7);
-
-  // Compile failed: InvalidEscape("\\G")
-  x2("鬼|\\G車", "け車鬼", 6, 9);
-
-  // Compile failed: InvalidEscape("\\G")
-  x2("鬼|\\G車", "車鬼", 0, 3);
 
   // Compile failed: InvalidEscape("\\Z")
   x2("鬼|車\\Z", "車鬼", 3, 6);

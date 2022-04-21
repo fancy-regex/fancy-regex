@@ -189,6 +189,10 @@ impl<'a> Analyzer<'a> {
                 hard = true;
                 const_size = true;
             }
+            Expr::ContinueFromPreviousMatchEnd => {
+                hard = true;
+                const_size = true;
+            }
         };
 
         Ok(Info {

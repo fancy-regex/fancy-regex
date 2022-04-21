@@ -151,6 +151,11 @@ fn keepout_in_lookarounds_match_in_correct_place() {
 }
 
 #[test]
+fn find_no_matches_when_continuing_from_previous_match_end_and_no_match_at_start_of_text() {
+    assert_eq!(find(r"\G(\d)\d", " 1122 33"), None);
+}
+
+#[test]
 fn find_iter() {
     let text = "11 22 33";
 
@@ -211,6 +216,21 @@ fn find_iter_zero_length_longer_codepoint() {
             0 => assert_eq!((mat.start(), mat.end()), (0, 0)),
             1 => assert_eq!((mat.start(), mat.end()), (2, 3)),
             i => panic!("Expected 2 captures, got {}", i + 1),
+        }
+    }
+}
+
+#[test]
+fn find_iter_continue_from_previous_match_end() {
+    let text = "1122 33";
+
+    for (i, mat) in common::regex(r"\G(\d)\d").find_iter(text).enumerate() {
+        let mat = mat.unwrap();
+
+        match i {
+            0 => assert_eq!((mat.start(), mat.end()), (0, 2)),
+            1 => assert_eq!((mat.start(), mat.end()), (2, 4)),
+            i => panic!("Expected 2 results, got {}", i + 1),
         }
     }
 }

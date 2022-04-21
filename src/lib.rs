@@ -1190,6 +1190,8 @@ pub enum Expr {
     AtomicGroup(Box<Expr>),
     /// Keep matched text so far out of overall match
     KeepOut,
+    /// Anchor to match at the position where the previous match ended
+    ContinueFromPreviousMatchEnd,
 }
 
 /// Type of look-around assertion as used for a look-around expression.
