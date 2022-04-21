@@ -385,6 +385,8 @@ impl<'a> Parser<'a> {
                     end += codepoint_len(b);
                 }
             }
+        } else if b == b'K' {
+            return Ok((end, Expr::KeepOut));
         } else if b'a' <= (b | 32) && (b | 32) <= b'z' {
             return Err(Error::InvalidEscape(format!("\\{}", &self.re[ix + 1..end])));
         } else if 0x20 <= b && b <= 0x7f {
@@ -1342,6 +1344,14 @@ mod tests {
         assert_error("(?m)^?", "Target of repeat operator is invalid");
         assert_error("(?m)${2}", "Target of repeat operator is invalid");
         assert_error("(a|b|?)", "Target of repeat operator is invalid");
+    }
+
+    #[test]
+    fn keepout() {
+        assert_eq!(
+            p("a\\Kb"),
+            Expr::Concat(vec![make_literal("a"), Expr::KeepOut, make_literal("b"),])
+        );
     }
 
     // found by cargo fuzz, then minimized

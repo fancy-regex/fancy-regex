@@ -135,6 +135,22 @@ fn delegates_match_unicode_scalar_value() {
 }
 
 #[test]
+fn keepout_matches_in_correct_place() {
+    assert_eq!(find(r"a\Kb", "aaab"), Some((3, 4)));
+    assert_eq!(find(r".+\Kb", "aaab"), Some((3, 4)));
+    assert_eq!(find(r"(?:aaa\K)b", "aaab"), Some((3, 4)));
+}
+
+#[test]
+fn keepout_in_lookarounds_match_in_correct_place() {
+    assert_eq!(find(r"(?<=a\Kb)c", "abc"), Some((1, 3)));
+    assert_eq!(find(r"(?<!a\Kb)c", "axc"), Some((2, 3)));
+    assert_eq!(find(r"a(?=b\Kc)", "abc"), Some((1, 1)));
+    assert_eq!(find(r"a(?=b\Kc)..", "abc"), Some((2, 3)));
+    assert_eq!(find(r"a(?!b\Kc)", "abx"), Some((0, 1)));
+}
+
+#[test]
 fn find_iter() {
     let text = "11 22 33";
 
