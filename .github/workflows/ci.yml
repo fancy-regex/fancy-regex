@@ -57,6 +57,30 @@ jobs:
         with:
           command: test
 
+  example:
+    name: example
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+          - stable
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          profile: minimal
+          override: true
+
+      - name: Run cargo run --example
+        uses: actions-rs/cargo@v1
+        with:
+          command: run
+          args: --example toy trace '\d*' '1122 33'
+
   fmt:
     name: rustfmt
     runs-on: ubuntu-latest
