@@ -99,7 +99,9 @@ Escapes:
 `\e`
 : escape control character (`\x1B`) \
 `\K`
-: keep text matched so far out of the overall match
+: keep text matched so far out of the overall match \
+`\G`
+: anchor to where the previous match ended
 
 Backreferences:
 
