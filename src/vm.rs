@@ -78,8 +78,8 @@ use crate::Error;
 use crate::Result;
 use crate::{codepoint_len, RegexOptions};
 
-const OPTION_TRACE: u32 = 1;
-pub(crate) const OPTION_SKIPPED_EMPTY_MATCH: u32 = 2;
+const OPTION_TRACE: u32 = 1 << 0;
+pub(crate) const OPTION_SKIPPED_EMPTY_MATCH: u32 = 1 << 1;
 
 // TODO: make configurable
 const MAX_STACK: usize = 1_000_000;
