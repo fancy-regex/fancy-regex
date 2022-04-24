@@ -1,0 +1,5 @@
+project: fancy-regex
+target: fuzz_parser
+
+cmds:
+  - cmd: /fuzz_parser 
