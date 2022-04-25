@@ -439,9 +439,12 @@ pub(crate) fn run(
                     if option_flags & OPTION_TRACE != 0 {
                         println!("saves: {:?}", state.saves);
                     }
-                    let slot1 = state.get(1);
-                    if state.get(0) > slot1 {
-                        state.save(0, slot1);
+                    if let Some(&slot1) = state.saves.get(1) {
+                        // With some features like keep out (\K), the match start can be after
+                        // the match end. Cap the start to <= end.
+                        if state.get(0) > slot1 {
+                            state.save(0, slot1);
+                        }
                     }
                     return Ok(Some(state.saves));
                 }
