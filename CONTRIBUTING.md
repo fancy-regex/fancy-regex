@@ -12,3 +12,7 @@ to add yourself to the AUTHORS file.
 
 Make sure to run `cargo test` and `cargo fmt` to make sure your changes
 pass the tests and are formatted as expected.
+
+When adding support for new syntax (i.e. for better compatibility with
+oniguruma syntax), remember to update the "Syntax" section of the
+documentation comments in `lib.rs`.

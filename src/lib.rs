@@ -97,7 +97,9 @@ Escapes:
 `\H`
 : not hex digit (`[^0-9A-Fa-f]`) \
 `\e`
-: escape control character (`\x1B`)
+: escape control character (`\x1B`) \
+`\K`
+: keep text matched so far out of the overall match
 
 Backreferences:
 
