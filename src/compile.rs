@@ -167,6 +167,9 @@ impl Compiler {
             Expr::KeepOut => {
                 self.b.add(Insn::Save(0));
             }
+            Expr::ContinueFromPreviousMatchEnd => {
+                self.b.add(Insn::ContinueFromPreviousMatchEnd);
+            }
         }
         Ok(())
     }

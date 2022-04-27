@@ -99,7 +99,9 @@ Escapes:
 `\e`
 : escape control character (`\x1B`) \
 `\K`
-: keep text matched so far out of the overall match
+: keep text matched so far out of the overall match \
+`\G`
+: anchor to where the previous match ended
 
 Backreferences:
 
@@ -165,7 +167,7 @@ mod vm;
 use crate::analyze::analyze;
 use crate::compile::compile;
 use crate::parse::{ExprTree, NamedGroups, Parser};
-use crate::vm::Prog;
+use crate::vm::{Prog, OPTION_SKIPPED_EMPTY_MATCH};
 
 pub use crate::error::{Error, Result};
 pub use crate::expand::Expander;
@@ -247,11 +249,24 @@ impl<'r, 't> Iterator for Matches<'r, 't> {
             return None;
         }
 
-        let mat = match self.re.find_from_pos(self.text, self.last_end) {
-            Err(error) => return Some(Err(error)),
-            Ok(None) => return None,
-            Ok(Some(mat)) => mat,
+        let option_flags = if let Some(last_match) = self.last_match {
+            if self.last_end > last_match {
+                OPTION_SKIPPED_EMPTY_MATCH
+            } else {
+                0
+            }
+        } else {
+            0
         };
+        let mat =
+            match self
+                .re
+                .find_from_pos_with_option_flags(self.text, self.last_end, option_flags)
+            {
+                Err(error) => return Some(Err(error)),
+                Ok(None) => return None,
+                Ok(Some(mat)) => mat,
+            };
 
         if mat.start == mat.end {
             // This is an empty match. To ensure we make progress, start
@@ -610,12 +625,21 @@ impl Regex {
     /// Note that in some cases this is not the same as using the `find`
     /// method and passing a slice of the string, see [Regex::captures_from_pos()] for details.
     pub fn find_from_pos<'t>(&self, text: &'t str, pos: usize) -> Result<Option<Match<'t>>> {
+        self.find_from_pos_with_option_flags(text, pos, 0)
+    }
+
+    fn find_from_pos_with_option_flags<'t>(
+        &self,
+        text: &'t str,
+        pos: usize,
+        option_flags: u32,
+    ) -> Result<Option<Match<'t>>> {
         match &self.inner {
             RegexImpl::Wrap { inner, .. } => Ok(inner
                 .find_at(text, pos)
                 .map(|m| Match::new(text, m.start(), m.end()))),
             RegexImpl::Fancy { prog, options, .. } => {
-                let result = vm::run(prog, text, pos, 0, options)?;
+                let result = vm::run(prog, text, pos, option_flags, options)?;
                 Ok(result.map(|saves| Match::new(text, saves[0], saves[1])))
             }
         }
@@ -1190,6 +1214,8 @@ pub enum Expr {
     AtomicGroup(Box<Expr>),
     /// Keep matched text so far out of overall match
     KeepOut,
+    /// Anchor to match at the position where the previous match ended
+    ContinueFromPreviousMatchEnd,
 }
 
 /// Type of look-around assertion as used for a look-around expression.
