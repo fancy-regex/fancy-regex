@@ -99,9 +99,9 @@ Escapes:
 `\e`
 : escape control character (`\x1B`) \
 `\K`
-: keep text matched so far out of the overall match \
+: keep text matched so far out of the overall match ([docs](https://www.regular-expressions.info/keep.html))\
 `\G`
-: anchor to where the previous match ended
+: anchor to where the previous match ended ([docs](https://www.regular-expressions.info/continue.html))
 
 Backreferences:
 

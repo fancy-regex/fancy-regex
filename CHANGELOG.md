@@ -8,13 +8,13 @@ with the exception that 0.x versions can break between minor versions.
 
 ## Unreleased
 ### Added
-- Support for `\G` (anchor to end of previous match): Using a regex
+- Support for `\G` ([anchor to end of previous match](https://www.regular-expressions.info/continue.html)): Using a regex
   like `\G\w` will match each letter of `foo` in `foo bar` but
   nothing else.
 
 ## [0.9.0] - 2022-04-21
 ### Added
-- Support for `\K` (keep out): Using a regex like `@\K\w+` will match
+- Support for `\K` ([keep out](https://www.regular-expressions.info/keep.html)): Using a regex like `@\K\w+` will match
   things like `@foo` but the resulting match text will only include
   `foo`, keeping out the `@`.
 
