@@ -20,7 +20,7 @@
 
 //! Backtracking VM for implementing fancy regexes.
 //!
-//! Read https://swtch.com/~rsc/regexp/regexp2.html for a good introduction for how this works.
+//! Read <https://swtch.com/~rsc/regexp/regexp2.html> for a good introduction for how this works.
 //!
 //! The VM executes a sequence of instructions (a program) against an input string. It keeps track
 //! of a program counter (PC) and an index into the string (IX). Execution can have one or more
@@ -78,7 +78,14 @@ use crate::Error;
 use crate::Result;
 use crate::{codepoint_len, RegexOptions};
 
+/// Enable tracing of VM execution. Only for debugging/investigating.
 const OPTION_TRACE: u32 = 1 << 0;
+/// When iterating over all matches within a text (e.g. with `find_iter`), empty matches need to be
+/// handled specially. If we kept matching at the same position, we'd never stop. So what we do
+/// after we've had an empty match, is to advance the position where matching is attempted.
+/// If `\G` is used in the pattern, that means it no longer matches. If we didn't tell the VM about
+/// the fact that we skipped because of an empty match, it would still treat `\G` as matching. So
+/// this option is for communicating that to the VM. Phew.
 pub(crate) const OPTION_SKIPPED_EMPTY_MATCH: u32 = 1 << 1;
 
 // TODO: make configurable
