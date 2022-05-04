@@ -396,7 +396,7 @@ impl Compiler {
     fn compile_lookaround_inner(&mut self, inner: &Info<'_>, la: LookAround) -> Result<()> {
         if la == LookBehind || la == LookBehindNeg {
             if !inner.const_size {
-                return Err(Error::LookBehindNotConst);
+                return Err(Error::LookBehindNotConst(0));
             }
             self.b.add(Insn::GoBack(inner.min_size));
         }

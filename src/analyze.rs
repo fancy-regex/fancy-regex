@@ -167,13 +167,13 @@ impl<'a> Analyzer<'a> {
             }
             Expr::Backref(group) => {
                 if group >= self.group_ix {
-                    return Err(Error::InvalidBackref);
+                    return Err(Error::InvalidBackref(0));
                 }
                 hard = true;
             }
             Expr::NamedBackref(ref name) => {
                 if !self.group_names.contains_key(name) {
-                    return Err(Error::InvalidBackref);
+                    return Err(Error::InvalidBackref(0));
                 }
                 hard = true;
             }

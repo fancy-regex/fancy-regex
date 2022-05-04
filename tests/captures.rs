@@ -315,16 +315,16 @@ fn expander_errors() {
     }
 
     // Substitution char at end of template.
-    assert_err!(exp.check("$", &with_names), Error::ParseError);
+    assert_err!(exp.check("$", &with_names), Error::ParseError(_, _));
 
     // Substitution char not followed by a name or number.
-    assert_err!(exp.check("$.", &with_names), Error::ParseError);
+    assert_err!(exp.check("$.", &with_names), Error::ParseError(_, _));
 
     // Empty delimiter pair.
-    assert_err!(exp.check("${}", &with_names), Error::ParseError);
+    assert_err!(exp.check("${}", &with_names), Error::ParseError(_, _));
 
     // Unterminated delimiter pair.
-    assert_err!(exp.check("${", &with_names), Error::ParseError);
+    assert_err!(exp.check("${", &with_names), Error::ParseError(_, _));
 
     // Group 0 is always OK.
     assert!(exp.check("$0", &with_names).is_ok());
@@ -335,10 +335,10 @@ fn expander_errors() {
     assert_err!(exp.check("${1}", &with_names), Error::NamedBackrefOnly);
 
     // Unmatched group number.
-    assert_err!(exp.check("$2", &without_names), Error::InvalidBackref);
-    assert_err!(exp.check("${2}", &without_names), Error::InvalidBackref);
+    assert_err!(exp.check("$2", &without_names), Error::InvalidBackref(_));
+    assert_err!(exp.check("${2}", &without_names), Error::InvalidBackref(_));
 
     // Unmatched group name.
-    assert_err!(exp.check("$xx", &with_names), Error::InvalidBackref);
-    assert_err!(exp.check("${xx}", &with_names), Error::InvalidBackref);
+    assert_err!(exp.check("$xx", &with_names), Error::InvalidBackref(_));
+    assert_err!(exp.check("${xx}", &with_names), Error::InvalidBackref(_));
 }
