@@ -73,6 +73,7 @@ use regex::Regex;
 use std::collections::BTreeSet;
 use std::usize;
 
+use crate::error::RuntimeError;
 use crate::prev_codepoint_ix;
 use crate::Error;
 use crate::Result;
@@ -274,7 +275,7 @@ impl State {
             self.trace_stack("push");
             Ok(())
         } else {
-            Err(Error::StackOverflow)
+            Err(Error::RuntimeError(RuntimeError::StackOverflow))
         }
     }
 
@@ -681,7 +682,7 @@ pub(crate) fn run(
 
         backtrack_count += 1;
         if backtrack_count > options.backtrack_limit {
-            return Err(Error::BacktrackLimitExceeded);
+            return Err(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded));
         }
 
         let (newpc, newix) = state.pop();

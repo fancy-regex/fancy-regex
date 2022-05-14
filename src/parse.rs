@@ -27,9 +27,11 @@ use std::str::FromStr;
 use std::usize;
 
 use crate::codepoint_len;
+use crate::CompileError;
 use crate::Error;
 use crate::Expr;
 use crate::LookAround::*;
+use crate::ParseError;
 use crate::Result;
 use crate::MAX_RECURSION;
 
@@ -68,7 +70,7 @@ impl<'a> Parser<'a> {
         if ix < re.len() {
             return Err(Error::ParseError(
                 ix,
-                "end of string not reached".to_string(),
+                ParseError::GeneralParseError("end of string not reached".to_string()),
             ));
         }
         Ok(ExprTree {
@@ -104,7 +106,7 @@ impl<'a> Parser<'a> {
         }
         // can't have numeric backrefs and named backrefs
         if self.numeric_backrefs && !self.named_groups.is_empty() {
-            return Err(Error::NamedBackrefOnly);
+            return Err(Error::CompileError(CompileError::NamedBackrefOnly));
         }
         Ok((ix, child))
     }
@@ -153,7 +155,7 @@ impl<'a> Parser<'a> {
                 _ => return Ok((ix, child)),
             };
             if !self.is_repeatable(&child) {
-                return Err(Error::TargetNotRepeatable(ix));
+                return Err(Error::ParseError(ix, ParseError::TargetNotRepeatable));
             }
             ix += 1;
             ix = self.optional_whitespace(ix)?;
@@ -195,7 +197,7 @@ impl<'a> Parser<'a> {
         let ix = self.optional_whitespace(ix + 1)?; // skip opening '{'
         let bytes = self.re.as_bytes();
         if ix == self.re.len() {
-            return Err(Error::InvalidRepeat(ix));
+            return Err(Error::ParseError(ix, ParseError::InvalidRepeat));
         }
         let mut end = ix;
         let lo = if bytes[ix] == b',' {
@@ -204,11 +206,11 @@ impl<'a> Parser<'a> {
             end = next;
             lo
         } else {
-            return Err(Error::InvalidRepeat(ix));
+            return Err(Error::ParseError(ix, ParseError::InvalidRepeat));
         };
         let ix = self.optional_whitespace(end)?; // past lo number
         if ix == self.re.len() {
-            return Err(Error::InvalidRepeat(ix));
+            return Err(Error::ParseError(ix, ParseError::InvalidRepeat));
         }
         end = ix;
         let hi = match bytes[ix] {
@@ -222,11 +224,11 @@ impl<'a> Parser<'a> {
                     usize::MAX
                 }
             }
-            _ => return Err(Error::InvalidRepeat(ix)),
+            _ => return Err(Error::ParseError(ix, ParseError::InvalidRepeat)),
         };
         let ix = self.optional_whitespace(end)?; // past hi number
         if ix == self.re.len() || bytes[ix] != b'}' {
-            return Err(Error::InvalidRepeat(ix));
+            return Err(Error::ParseError(ix, ParseError::InvalidRepeat));
         }
         Ok((ix + 1, lo, hi))
     }
@@ -296,10 +298,13 @@ impl<'a> Parser<'a> {
                 return Ok((ix + skip, Expr::Backref(group)));
             }
             // here the name is parsed but it is invalid
-            Err(Error::InvalidGroupNameBackref(ix, id.to_string()))
+            Err(Error::ParseError(
+                ix,
+                ParseError::InvalidGroupNameBackref(id.to_string()),
+            ))
         } else {
             // in this case the name can't be parsed
-            Err(Error::InvalidGroupName(ix))
+            Err(Error::ParseError(ix, ParseError::InvalidGroupName))
         }
     }
 
@@ -311,13 +316,13 @@ impl<'a> Parser<'a> {
                 return Ok((end, Expr::Backref(group)));
             }
         }
-        return Err(Error::InvalidBackref(ix));
+        return Err(Error::ParseError(ix, ParseError::InvalidBackref));
     }
 
     // ix points to \ character
     fn parse_escape(&mut self, ix: usize) -> Result<(usize, Expr)> {
         if ix + 1 == self.re.len() {
-            return Err(Error::TrailingBackslash(ix));
+            return Err(Error::ParseError(ix, ParseError::TrailingBackslash));
         }
         let bytes = self.re.as_bytes();
         let b = bytes[ix + 1];
@@ -375,9 +380,9 @@ impl<'a> Parser<'a> {
         } else if (b | 32) == b'p' {
             // allow whitespace?
             if end == self.re.len() {
-                return Err(Error::InvalidEscape(
+                return Err(Error::ParseError(
                     ix,
-                    "\\p must be followed by a unicode name".to_string(),
+                    ParseError::InvalidEscape("\\p must be followed by a unicode name".to_string()),
                 ));
             }
             let b = bytes[end];
@@ -385,7 +390,7 @@ impl<'a> Parser<'a> {
             if b == b'{' {
                 loop {
                     if end == self.re.len() {
-                        return Err(Error::UnclosedUnicodeName(ix));
+                        return Err(Error::ParseError(ix, ParseError::UnclosedUnicodeName));
                     }
                     let b = bytes[end];
                     if b == b'}' {
@@ -400,9 +405,9 @@ impl<'a> Parser<'a> {
         } else if b == b'G' {
             return Ok((end, Expr::ContinueFromPreviousMatchEnd));
         } else if b'a' <= (b | 32) && (b | 32) <= b'z' {
-            return Err(Error::InvalidEscape(
+            return Err(Error::ParseError(
                 ix,
-                format!("\\{}", &self.re[ix + 1..end]),
+                ParseError::InvalidEscape(format!("\\{}", &self.re[ix + 1..end])),
             ));
         } else if 0x20 <= b && b <= 0x7f {
             // printable ASCII (including space, see issue #29)
@@ -424,7 +429,7 @@ impl<'a> Parser<'a> {
     fn parse_hex(&self, ix: usize, digits: usize) -> Result<(usize, Expr)> {
         if ix >= self.re.len() {
             // Incomplete escape sequence
-            return Err(Error::InvalidHex(ix));
+            return Err(Error::ParseError(ix, ParseError::InvalidHex));
         }
         let bytes = self.re.as_bytes();
         let b = bytes[ix];
@@ -438,7 +443,7 @@ impl<'a> Parser<'a> {
             let mut endhex = starthex;
             loop {
                 if endhex == self.re.len() {
-                    return Err(Error::InvalidHex(ix));
+                    return Err(Error::ParseError(ix, ParseError::InvalidHex));
                 }
                 let b = bytes[endhex];
                 if endhex > starthex && b == b'}' {
@@ -447,12 +452,12 @@ impl<'a> Parser<'a> {
                 if is_hex_digit(b) && endhex < starthex + 8 {
                     endhex += 1;
                 } else {
-                    return Err(Error::InvalidHex(ix));
+                    return Err(Error::ParseError(ix, ParseError::InvalidHex));
                 }
             }
             (endhex + 1, &self.re[starthex..endhex])
         } else {
-            return Err(Error::InvalidHex(ix));
+            return Err(Error::ParseError(ix, ParseError::InvalidHex));
         };
         let codepoint = u32::from_str_radix(s, 16).unwrap();
         if let Some(c) = ::std::char::from_u32(codepoint) {
@@ -466,7 +471,7 @@ impl<'a> Parser<'a> {
                 },
             ))
         } else {
-            Err(Error::InvalidCodepointValue(ix))
+            Err(Error::ParseError(ix, ParseError::InvalidCodepointValue))
         }
     }
 
@@ -491,12 +496,12 @@ impl<'a> Parser<'a> {
 
         loop {
             if ix == self.re.len() {
-                return Err(Error::InvalidClass(ix));
+                return Err(Error::ParseError(ix, ParseError::InvalidClass));
             }
             let end = match bytes[ix] {
                 b'\\' => {
                     if ix + 1 == self.re.len() {
-                        return Err(Error::InvalidClass(ix));
+                        return Err(Error::ParseError(ix, ParseError::InvalidClass));
                     }
 
                     // We support more escapes than regex, so parse it ourselves before delegating.
@@ -509,7 +514,7 @@ impl<'a> Parser<'a> {
                             class.push_str(&inner);
                         }
                         _ => {
-                            return Err(Error::InvalidClass(ix));
+                            return Err(Error::ParseError(ix, ParseError::InvalidClass));
                         }
                     }
                     end
@@ -550,7 +555,7 @@ impl<'a> Parser<'a> {
     fn parse_group(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
         let depth = depth + 1;
         if depth >= MAX_RECURSION {
-            return Err(Error::RecursionExceeded(ix));
+            return Err(Error::ParseError(ix, ParseError::RecursionExceeded));
         }
         let ix = self.optional_whitespace(ix + 1)?;
         let (la, skip) = if self.re[ix..].starts_with("?=") {
@@ -568,7 +573,7 @@ impl<'a> Parser<'a> {
                 self.named_groups.insert(id.to_string(), self.curr_group);
                 (None, skip + 1)
             } else {
-                return Err(Error::InvalidGroupName(ix));
+                return Err(Error::ParseError(ix, ParseError::InvalidGroupName));
             }
         } else if self.re[ix..].starts_with("?P<") {
             // Named capture group using Python syntax: (?P<name>...)
@@ -577,7 +582,7 @@ impl<'a> Parser<'a> {
                 self.named_groups.insert(id.to_string(), self.curr_group);
                 (None, skip + 2)
             } else {
-                return Err(Error::InvalidGroupName(ix));
+                return Err(Error::ParseError(ix, ParseError::InvalidGroupName));
             }
         } else if self.re[ix..].starts_with("?P=") {
             // Backref using Python syntax: (?P=name)
@@ -594,9 +599,12 @@ impl<'a> Parser<'a> {
         let (ix, child) = self.parse_re(ix, depth)?;
         let ix = self.optional_whitespace(ix)?;
         if ix == self.re.len() {
-            return Err(Error::UnclosedOpenParen(ix));
+            return Err(Error::ParseError(ix, ParseError::UnclosedOpenParen));
         } else if self.re.as_bytes()[ix] != b')' {
-            return Err(Error::ParseError(ix, "expected close paren".to_string()));
+            return Err(Error::ParseError(
+                ix,
+                ParseError::GeneralParseError("expected close paren".to_string()),
+            ));
         };
         let result = match (la, skip) {
             (Some(la), _) => Expr::LookAround(Box::new(child), la),
@@ -613,7 +621,7 @@ impl<'a> Parser<'a> {
         fn unknown_flag(re: &str, start: usize, end: usize) -> Error {
             let after_end = end + codepoint_len(re.as_bytes()[end]);
             let s = format!("(?{}", &re[start..after_end]);
-            Error::UnknownFlag(start, s)
+            Error::ParseError(start, ParseError::UnknownFlag(s))
         }
 
         let mut ix = start;
@@ -622,7 +630,7 @@ impl<'a> Parser<'a> {
         loop {
             ix = self.optional_whitespace(ix)?;
             if ix == self.re.len() {
-                return Err(Error::UnclosedOpenParen(ix));
+                return Err(Error::ParseError(ix, ParseError::UnclosedOpenParen));
             }
             let b = self.re.as_bytes()[ix];
             match b {
@@ -633,7 +641,7 @@ impl<'a> Parser<'a> {
                 b'x' => self.update_flag(FLAG_IGNORE_SPACE, neg),
                 b'u' => {
                     if neg {
-                        return Err(Error::NonUnicodeUnsupported(ix));
+                        return Err(Error::ParseError(ix, ParseError::NonUnicodeUnsupported));
                     }
                 }
                 b'-' => {
@@ -655,9 +663,12 @@ impl<'a> Parser<'a> {
                     ix += 1;
                     let (ix, child) = self.parse_re(ix, depth)?;
                     if ix == self.re.len() {
-                        return Err(Error::UnclosedOpenParen(ix));
+                        return Err(Error::ParseError(ix, ParseError::UnclosedOpenParen));
                     } else if self.re.as_bytes()[ix] != b')' {
-                        return Err(Error::ParseError(ix, "expected close paren".to_string()));
+                        return Err(Error::ParseError(
+                            ix,
+                            ParseError::GeneralParseError("expected close paren".to_string()),
+                        ));
                     };
                     self.flags = oldflags;
                     return Ok((ix + 1, child));
@@ -698,7 +709,7 @@ impl<'a> Parser<'a> {
                     ix += 3;
                     loop {
                         if ix >= self.re.len() {
-                            return Err(Error::UnclosedOpenParen(ix));
+                            return Err(Error::ParseError(ix, ParseError::UnclosedOpenParen));
                         }
                         match bytes[ix] {
                             b')' => {
@@ -892,26 +903,32 @@ mod tests {
 
     #[test]
     fn invalid_escape() {
-        assert_error("\\", "Backslash without following character at position 0");
-        assert_error("\\q", "Invalid escape at position 0: \\q");
-        assert_error("\\xAG", "Invalid hex escape at position 2");
-        assert_error("\\xA", "Invalid hex escape at position 2");
-        assert_error("\\x{}", "Invalid hex escape at position 2");
-        assert_error("\\x{AG}", "Invalid hex escape at position 2");
-        assert_error("\\x{42", "Invalid hex escape at position 2");
+        assert_error(
+            "\\",
+            "Parsing error at position 0: Backslash without following character",
+        );
+        assert_error("\\q", "Parsing error at position 0: Invalid escape: \\q");
+        assert_error("\\xAG", "Parsing error at position 2: Invalid hex escape");
+        assert_error("\\xA", "Parsing error at position 2: Invalid hex escape");
+        assert_error("\\x{}", "Parsing error at position 2: Invalid hex escape");
+        assert_error("\\x{AG}", "Parsing error at position 2: Invalid hex escape");
+        assert_error("\\x{42", "Parsing error at position 2: Invalid hex escape");
         assert_error(
             "\\x{D800}",
-            "Invalid codepoint for hex or unicode escape at position 2",
+            "Parsing error at position 2: Invalid codepoint for hex or unicode escape",
         );
         assert_error(
             "\\x{110000}",
-            "Invalid codepoint for hex or unicode escape at position 2",
+            "Parsing error at position 2: Invalid codepoint for hex or unicode escape",
         );
-        assert_error("\\u123", "Invalid hex escape at position 2");
-        assert_error("\\u123x", "Invalid hex escape at position 2");
-        assert_error("\\u{}", "Invalid hex escape at position 2");
-        assert_error("\\U1234567", "Invalid hex escape at position 2");
-        assert_error("\\U{}", "Invalid hex escape at position 2");
+        assert_error("\\u123", "Parsing error at position 2: Invalid hex escape");
+        assert_error("\\u123x", "Parsing error at position 2: Invalid hex escape");
+        assert_error("\\u{}", "Parsing error at position 2: Invalid hex escape");
+        assert_error(
+            "\\U1234567",
+            "Parsing error at position 2: Invalid hex escape",
+        );
+        assert_error("\\U{}", "Parsing error at position 2: Invalid hex escape");
     }
 
     #[test]
@@ -1327,33 +1344,54 @@ mod tests {
     fn invalid_group_name_backref() {
         assert_error(
             "\\k<id>(?<id>.)",
-            "Invalid group name in back reference at position 2: id",
+            "Parsing error at position 2: Invalid group name in back reference: id",
         );
     }
 
     #[test]
     fn named_backref_only() {
-        assert_error("(?<id>.)\\1", "Numbered backref/call not allowed because named group was used, use a named backref instead");
-        assert_error("(a)\\1(?<name>b)", "Numbered backref/call not allowed because named group was used, use a named backref instead");
+        assert_error("(?<id>.)\\1", "Error compiling regex: Numbered backref/call not allowed because named group was used, use a named backref instead");
+        assert_error("(a)\\1(?<name>b)", "Error compiling regex: Numbered backref/call not allowed because named group was used, use a named backref instead");
     }
 
     #[test]
     fn invalid_group_name() {
-        assert_error("(?<id)", "Could not parse group name at position 1");
-        assert_error("(?<>)", "Could not parse group name at position 1");
-        assert_error("(?<#>)", "Could not parse group name at position 1");
-        assert_error("\\kxxx<id>", "Could not parse group name at position 2");
+        assert_error(
+            "(?<id)",
+            "Parsing error at position 1: Could not parse group name",
+        );
+        assert_error(
+            "(?<>)",
+            "Parsing error at position 1: Could not parse group name",
+        );
+        assert_error(
+            "(?<#>)",
+            "Parsing error at position 1: Could not parse group name",
+        );
+        assert_error(
+            "\\kxxx<id>",
+            "Parsing error at position 2: Could not parse group name",
+        );
     }
 
     #[test]
     fn unknown_flag() {
-        assert_error("(?-:a)", "Unknown group flag at position 2: (?-:");
-        assert_error("(?)", "Unknown group flag at position 2: (?)");
-        assert_error("(?--)", "Unknown group flag at position 2: (?--");
+        assert_error(
+            "(?-:a)",
+            "Parsing error at position 2: Unknown group flag: (?-:",
+        );
+        assert_error(
+            "(?)",
+            "Parsing error at position 2: Unknown group flag: (?)",
+        );
+        assert_error(
+            "(?--)",
+            "Parsing error at position 2: Unknown group flag: (?--",
+        );
         // Check that we don't split on char boundary
         assert_error(
             "(?\u{1F60A})",
-            "Unknown group flag at position 2: (?\u{1F60A}",
+            "Parsing error at position 2: Unknown group flag: (?\u{1F60A}",
         );
     }
 
@@ -1361,33 +1399,39 @@ mod tests {
     fn no_quantifiers_on_lookarounds() {
         assert_error(
             "(?=hello)+",
-            "Target of repeat operator is invalid at position 9",
+            "Parsing error at position 9: Target of repeat operator is invalid",
         );
         assert_error(
             "(?<!hello)*",
-            "Target of repeat operator is invalid at position 10",
+            "Parsing error at position 10: Target of repeat operator is invalid",
         );
         assert_error(
             "(?<=hello){2,3}",
-            "Target of repeat operator is invalid at position 14",
+            "Parsing error at position 14: Target of repeat operator is invalid",
         );
         assert_error(
             "(?!hello)?",
-            "Target of repeat operator is invalid at position 9",
+            "Parsing error at position 9: Target of repeat operator is invalid",
         );
-        assert_error("^?", "Target of repeat operator is invalid at position 1");
-        assert_error("${2}", "Target of repeat operator is invalid at position 3");
+        assert_error(
+            "^?",
+            "Parsing error at position 1: Target of repeat operator is invalid",
+        );
+        assert_error(
+            "${2}",
+            "Parsing error at position 3: Target of repeat operator is invalid",
+        );
         assert_error(
             "(?m)^?",
-            "Target of repeat operator is invalid at position 5",
+            "Parsing error at position 5: Target of repeat operator is invalid",
         );
         assert_error(
             "(?m)${2}",
-            "Target of repeat operator is invalid at position 7",
+            "Parsing error at position 7: Target of repeat operator is invalid",
         );
         assert_error(
             "(a|b|?)",
-            "Target of repeat operator is invalid at position 5",
+            "Parsing error at position 5: Target of repeat operator is invalid",
         );
     }
 

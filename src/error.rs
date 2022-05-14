@@ -5,51 +5,89 @@ pub type Result<T> = ::std::result::Result<T, Error>;
 
 pub type ParseErrorPosition = usize;
 
-/// An error for the result of compiling or running a regex.
+/// An error as the result of parsing, compiling or running a regex.
 #[derive(Debug)]
 pub enum Error {
-    // Compile time errors
+    /// An error as a result of parsing a regex pattern, with the position where the error occurred
+    ParseError(ParseErrorPosition, ParseError),
+    /// An error as a result of compiling a regex
+    CompileError(CompileError),
+    /// An error as a result of running a regex
+    RuntimeError(RuntimeError),
+
+    /// This enum may grow additional variants, so this makes sure clients don't count on exhaustive
+    /// matching. Otherwise, adding a new variant could break existing code.
+    #[doc(hidden)]
+    __Nonexhaustive,
+}
+
+/// An error for the result of parsing a regex pattern.
+#[derive(Debug)]
+pub enum ParseError {
     /// General parsing error
-    ParseError(ParseErrorPosition, String),
+    GeneralParseError(String),
     /// Opening parenthesis without closing parenthesis, e.g. `(a|b`
-    UnclosedOpenParen(ParseErrorPosition),
+    UnclosedOpenParen,
     /// Invalid repeat syntax
-    InvalidRepeat(ParseErrorPosition),
+    InvalidRepeat,
     /// Pattern too deeply nested
-    RecursionExceeded(ParseErrorPosition),
-    /// Look-behind assertion without constant size
-    LookBehindNotConst(ParseErrorPosition),
+    RecursionExceeded,
     /// Backslash without following character
-    TrailingBackslash(ParseErrorPosition),
+    TrailingBackslash,
     /// Invalid escape
-    InvalidEscape(ParseErrorPosition, String),
+    InvalidEscape(String),
     /// Unicode escape not closed
-    UnclosedUnicodeName(ParseErrorPosition),
+    UnclosedUnicodeName,
     /// Invalid hex escape
-    InvalidHex(ParseErrorPosition),
+    InvalidHex,
     /// Invalid codepoint for hex or unicode escape
-    InvalidCodepointValue(ParseErrorPosition),
+    InvalidCodepointValue,
     /// Invalid character class
-    InvalidClass(ParseErrorPosition),
+    InvalidClass,
     /// Unknown group flag
-    UnknownFlag(ParseErrorPosition, String),
+    UnknownFlag(String),
     /// Disabling Unicode not supported
-    NonUnicodeUnsupported(ParseErrorPosition),
+    NonUnicodeUnsupported,
     /// Invalid back reference
-    InvalidBackref(ParseErrorPosition),
+    InvalidBackref,
+    /// Quantifier on lookaround or other zero-width assertion
+    TargetNotRepeatable,
+    /// Couldn't parse group name
+    InvalidGroupName,
+    /// Invalid group id in escape sequence
+    InvalidGroupNameBackref(String),
+
+    /// This enum may grow additional variants, so this makes sure clients don't count on exhaustive
+    /// matching. Otherwise, adding a new variant could break existing code.
+    #[doc(hidden)]
+    __Nonexhaustive,
+}
+
+/// An error as the result of compiling a regex.
+#[derive(Debug)]
+pub enum CompileError {
     /// Regex crate error
     InnerError(regex::Error),
+    /// Look-behind assertion without constant size
+    LookBehindNotConst,
     /// Couldn't parse group name
-    InvalidGroupName(ParseErrorPosition),
+    InvalidGroupName,
     /// Invalid group id in escape sequence
-    InvalidGroupNameBackref(ParseErrorPosition, String),
+    InvalidGroupNameBackref(String),
+    /// Invalid back reference
+    InvalidBackref,
     /// Once named groups are used you cannot refer to groups by number
     NamedBackrefOnly,
 
-    /// Quantifier on lookaround or other zero-width assertion
-    TargetNotRepeatable(ParseErrorPosition),
+    /// This enum may grow additional variants, so this makes sure clients don't count on exhaustive
+    /// matching. Otherwise, adding a new variant could break existing code.
+    #[doc(hidden)]
+    __Nonexhaustive,
+}
 
-    // Run time errors
+/// An error as the result of executing a regex.
+#[derive(Debug)]
+pub enum RuntimeError {
     /// Max stack size exceeded for backtracking while executing regex.
     StackOverflow,
     /// Max limit for backtracking count exceeded while executing the regex.
@@ -65,37 +103,87 @@ pub enum Error {
 
 impl ::std::error::Error for Error {}
 
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ParseError::GeneralParseError(s) => write!(f, "General parsing error: {}", s),
+            ParseError::UnclosedOpenParen => {
+                write!(f, "Opening parenthesis without closing parenthesis")
+            }
+            ParseError::InvalidRepeat => write!(f, "Invalid repeat syntax"),
+            ParseError::RecursionExceeded => write!(f, "Pattern too deeply nested"),
+            ParseError::TrailingBackslash => write!(f, "Backslash without following character"),
+            ParseError::InvalidEscape(s) => write!(f, "Invalid escape: {}", s),
+            ParseError::UnclosedUnicodeName => write!(f, "Unicode escape not closed"),
+            ParseError::InvalidHex => write!(f, "Invalid hex escape"),
+            ParseError::InvalidCodepointValue => {
+                write!(f, "Invalid codepoint for hex or unicode escape")
+            }
+            ParseError::InvalidClass => write!(f, "Invalid character class"),
+            ParseError::UnknownFlag(s) => write!(f, "Unknown group flag: {}", s),
+            ParseError::NonUnicodeUnsupported => write!(f, "Disabling Unicode not supported"),
+            ParseError::InvalidBackref => write!(f, "Invalid back reference"),
+            ParseError::InvalidGroupName => write!(f, "Could not parse group name"),
+            ParseError::InvalidGroupNameBackref(s) => {
+                write!(f, "Invalid group name in back reference: {}", s)
+            }
+            ParseError::TargetNotRepeatable => write!(f, "Target of repeat operator is invalid"),
+
+            ParseError::__Nonexhaustive => unreachable!(),
+        }
+    }
+}
+
+impl fmt::Display for CompileError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            CompileError::InnerError(e) => write!(f, "Regex error: {}", e),
+            CompileError::LookBehindNotConst => {
+                write!(f, "Look-behind assertion without constant size")
+            },
+            CompileError::InvalidGroupName => write!(f, "Could not parse group name"),
+            CompileError::InvalidGroupNameBackref(s) => write!(f, "Invalid group name in back reference: {}", s),
+            CompileError::InvalidBackref => write!(f, "Invalid back reference"),
+            CompileError::NamedBackrefOnly => write!(f, "Numbered backref/call not allowed because named group was used, use a named backref instead"),
+
+            CompileError::__Nonexhaustive => unreachable!(),
+        }
+    }
+}
+
+impl fmt::Display for RuntimeError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            RuntimeError::StackOverflow => write!(f, "Max stack size exceeded for backtracking"),
+            RuntimeError::BacktrackLimitExceeded => {
+                write!(f, "Max limit for backtracking count exceeded")
+            }
+
+            RuntimeError::__Nonexhaustive => unreachable!(),
+        }
+    }
+}
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        // We should make these more helpful, e.g. by including the parts of the regex that lead to
-        // the error.
         match self {
-            Error::ParseError(position, s) => write!(f, "General parsing error at position {}: {}", position, s),
-            Error::UnclosedOpenParen(position) => {
-                write!(f, "Opening parenthesis without closing parenthesis at position {}", position)
+            Error::ParseError(position, parse_error) => {
+                write!(f, "Parsing error at position {}: {}", position, parse_error)
             }
-            Error::InvalidRepeat(position) => write!(f, "Invalid repeat syntax at position {}", position),
-            Error::RecursionExceeded(position) => write!(f, "Pattern too deeply nested at position {}", position),
-            Error::LookBehindNotConst(position) => write!(f, "Look-behind assertion without constant size at position {}", position),
-            Error::TrailingBackslash(position) => write!(f, "Backslash without following character at position {}", position),
-            Error::InvalidEscape(position, s) => write!(f, "Invalid escape at position {}: {}", position, s),
-            Error::UnclosedUnicodeName(position) => write!(f, "Unicode escape not closed at position {}", position),
-            Error::InvalidHex(position) => write!(f, "Invalid hex escape at position {}", position),
-            Error::InvalidCodepointValue(position) => {
-                write!(f, "Invalid codepoint for hex or unicode escape at position {}", position)
+            Error::CompileError(compile_error) => {
+                write!(f, "Error compiling regex: {}", compile_error)
             }
-            Error::InvalidClass(position) => write!(f, "Invalid character class at position {}", position),
-            Error::UnknownFlag(position, s) => write!(f, "Unknown group flag at position {}: {}", position, s),
-            Error::NonUnicodeUnsupported(position) => write!(f, "Disabling Unicode not supported at position {}", position),
-            Error::InvalidBackref(position) => write!(f, "Invalid back reference at position {}", position),
-            Error::InnerError(e) => write!(f, "Regex error: {}", e),
-            Error::StackOverflow => write!(f, "Max stack size exceeded for backtracking"),
-            Error::BacktrackLimitExceeded => write!(f, "Max limit for backtracking count exceeded"),
+            Error::RuntimeError(runtime_error) => {
+                write!(f, "Error executing regex: {}", runtime_error)
+            }
+
             Error::__Nonexhaustive => unreachable!(),
-            Error::InvalidGroupName(position) => write!(f, "Could not parse group name at position {}", position),
-            Error::InvalidGroupNameBackref(position, s) => write!(f, "Invalid group name in back reference at position {}: {}", position, s),
-            Error::TargetNotRepeatable(position) => write!(f, "Target of repeat operator is invalid at position {}", position),
-            Error::NamedBackrefOnly => write!(f, "Numbered backref/call not allowed because named group was used, use a named backref instead"),
         }
+    }
+}
+
+impl From<CompileError> for Error {
+    fn from(compile_error: CompileError) -> Self {
+        Error::CompileError(compile_error)
     }
 }

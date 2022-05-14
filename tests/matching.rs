@@ -1,4 +1,4 @@
-use fancy_regex::{Error, RegexBuilder};
+use fancy_regex::{Error, RegexBuilder, RuntimeError};
 
 mod common;
 
@@ -100,8 +100,8 @@ fn backtrack_limit() {
     let result = re.is_match(s);
     assert!(result.is_err());
     match result.err() {
-        Some(Error::BacktrackLimitExceeded) => {}
-        _ => panic!("Expected Error::BacktrackLimitExceeded"),
+        Some(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded)) => {}
+        _ => panic!("Expected RuntimeError::BacktrackLimitExceeded"),
     }
 }
 
