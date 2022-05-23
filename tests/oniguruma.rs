@@ -220,7 +220,11 @@ fn oniguruma() {
             assert!(result.is_some(),
                     "Expected ignored test to fail, but it succeeded. Remove it from the ignore file: {}", &test.source);
             let failure = result.unwrap();
-            assert!(failure.starts_with(expected_failure),
+            // rustc before version 1.53 unnecessarily escapes slashes in debug format strings
+            // meaning when run on our MSRV, we get different failure text than on the latest stable Rust
+            // so here we try removing the backslash when comparing. After our MSRV is bumped up to
+            // 1.53 or higher, we can remove this part again.
+            assert!(failure.starts_with(expected_failure) || failure.replace("\\", "").starts_with(expected_failure),
                 "Expected failure differed for test, change it in the ignore file: {}\nExpected: {}\nActual  : {}\n",
                 &test.source, &expected_failure, &failure
             );
