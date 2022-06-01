@@ -24,6 +24,7 @@ use std::usize;
 
 use crate::analyze::Info;
 use crate::vm::{Insn, Prog};
+use crate::CompileError;
 use crate::Error;
 use crate::Expr;
 use crate::LookAround;
@@ -396,7 +397,7 @@ impl Compiler {
     fn compile_lookaround_inner(&mut self, inner: &Info<'_>, la: LookAround) -> Result<()> {
         if la == LookBehind || la == LookBehindNeg {
             if !inner.const_size {
-                return Err(Error::LookBehindNotConst);
+                return Err(Error::CompileError(CompileError::LookBehindNotConst));
             }
             self.b.add(Insn::GoBack(inner.min_size));
         }
@@ -450,7 +451,10 @@ pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<re
         builder.dfa_size_limit(dfa_size_limit);
     }
 
-    builder.build().map_err(Error::InnerError)
+    builder
+        .build()
+        .map_err(CompileError::InnerError)
+        .map_err(Error::CompileError)
 }
 
 /// Compile the analyzed expressions into a program.

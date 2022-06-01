@@ -169,7 +169,7 @@ use crate::compile::compile;
 use crate::parse::{ExprTree, NamedGroups, Parser};
 use crate::vm::{Prog, OPTION_SKIPPED_EMPTY_MATCH};
 
-pub use crate::error::{Error, Result};
+pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
 pub use crate::expand::Expander;
 pub use crate::replacer::{NoExpand, Replacer, ReplacerRef};
 use std::borrow::Cow;

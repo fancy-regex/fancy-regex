@@ -1,4 +1,4 @@
-use fancy_regex::{Captures, Error, Expander, Match, Result};
+use fancy_regex::{Captures, CompileError, Error, Expander, Match, Result};
 use std::borrow::Cow;
 use std::ops::Index;
 
@@ -315,30 +315,48 @@ fn expander_errors() {
     }
 
     // Substitution char at end of template.
-    assert_err!(exp.check("$", &with_names), Error::ParseError);
+    assert_err!(exp.check("$", &with_names), Error::ParseError(_, _));
 
     // Substitution char not followed by a name or number.
-    assert_err!(exp.check("$.", &with_names), Error::ParseError);
+    assert_err!(exp.check("$.", &with_names), Error::ParseError(_, _));
 
     // Empty delimiter pair.
-    assert_err!(exp.check("${}", &with_names), Error::ParseError);
+    assert_err!(exp.check("${}", &with_names), Error::ParseError(_, _));
 
     // Unterminated delimiter pair.
-    assert_err!(exp.check("${", &with_names), Error::ParseError);
+    assert_err!(exp.check("${", &with_names), Error::ParseError(_, _));
 
     // Group 0 is always OK.
     assert!(exp.check("$0", &with_names).is_ok());
     assert!(exp.check("$0", &without_names).is_ok());
 
     // Can't use numbers with named groups.
-    assert_err!(exp.check("$1", &with_names), Error::NamedBackrefOnly);
-    assert_err!(exp.check("${1}", &with_names), Error::NamedBackrefOnly);
+    assert_err!(
+        exp.check("$1", &with_names),
+        Error::CompileError(CompileError::NamedBackrefOnly)
+    );
+    assert_err!(
+        exp.check("${1}", &with_names),
+        Error::CompileError(CompileError::NamedBackrefOnly)
+    );
 
     // Unmatched group number.
-    assert_err!(exp.check("$2", &without_names), Error::InvalidBackref);
-    assert_err!(exp.check("${2}", &without_names), Error::InvalidBackref);
+    assert_err!(
+        exp.check("$2", &without_names),
+        Error::CompileError(CompileError::InvalidBackref)
+    );
+    assert_err!(
+        exp.check("${2}", &without_names),
+        Error::CompileError(CompileError::InvalidBackref)
+    );
 
     // Unmatched group name.
-    assert_err!(exp.check("$xx", &with_names), Error::InvalidBackref);
-    assert_err!(exp.check("${xx}", &with_names), Error::InvalidBackref);
+    assert_err!(
+        exp.check("$xx", &with_names),
+        Error::CompileError(CompileError::InvalidBackref)
+    );
+    assert_err!(
+        exp.check("${xx}", &with_names),
+        Error::CompileError(CompileError::InvalidBackref)
+    );
 }

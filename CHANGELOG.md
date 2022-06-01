@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
+## Unreleased
+### Changed
+- Updated parse errors to show the position they occurred at.
+
 ## [0.10.0] - 2022-04-28
 ### Added
 - Support for `\G` ([anchor to end of previous match](https://www.regular-expressions.info/continue.html)): Using a regex

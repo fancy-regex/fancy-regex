@@ -25,6 +25,7 @@ use std::cmp::min;
 use std::usize;
 
 use crate::parse::{ExprTree, NamedGroups};
+use crate::CompileError;
 use crate::Error;
 use crate::Expr;
 use crate::Result;
@@ -167,13 +168,13 @@ impl<'a> Analyzer<'a> {
             }
             Expr::Backref(group) => {
                 if group >= self.group_ix {
-                    return Err(Error::InvalidBackref);
+                    return Err(Error::CompileError(CompileError::InvalidBackref));
                 }
                 hard = true;
             }
             Expr::NamedBackref(ref name) => {
                 if !self.group_names.contains_key(name) {
-                    return Err(Error::InvalidBackref);
+                    return Err(Error::CompileError(CompileError::InvalidBackref));
                 }
                 hard = true;
             }

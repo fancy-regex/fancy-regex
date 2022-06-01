@@ -1,5 +1,5 @@
 use crate::parse::{parse_decimal, parse_id};
-use crate::{Captures, Error, Regex};
+use crate::{Captures, CompileError, Error, ParseError, Regex};
 use std::borrow::Cow;
 use std::io;
 use std::mem;
@@ -71,11 +71,11 @@ impl Expander {
             if num == 0 {
                 Ok(())
             } else if !regex.named_groups.is_empty() {
-                Err(Error::NamedBackrefOnly)
+                Err(Error::CompileError(CompileError::NamedBackrefOnly))
             } else if num < regex.captures_len() {
                 Ok(())
             } else {
-                Err(Error::InvalidBackref)
+                Err(Error::CompileError(CompileError::InvalidBackref))
             }
         };
         self.exec(template, |step| match step {
@@ -86,11 +86,16 @@ impl Expander {
                 } else if let Ok(num) = name.parse() {
                     on_group_num(num)
                 } else {
-                    Err(Error::InvalidBackref)
+                    Err(Error::CompileError(CompileError::InvalidBackref))
                 }
             }
             Step::GroupNum(num) => on_group_num(num),
-            Step::Error => Err(Error::ParseError),
+            Step::Error => Err(Error::ParseError(
+                0,
+                ParseError::GeneralParseError(
+                    "parse error in template while expanding".to_string(),
+                ),
+            )),
         })
     }
 
