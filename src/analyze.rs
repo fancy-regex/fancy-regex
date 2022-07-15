@@ -24,7 +24,7 @@ use bit_set::BitSet;
 use std::cmp::min;
 use std::usize;
 
-use crate::parse::{ExprTree, NamedGroups};
+use crate::parse::ExprTree;
 use crate::CompileError;
 use crate::Error;
 use crate::Expr;
@@ -74,7 +74,6 @@ impl<'a> Info<'a> {
 struct Analyzer<'a> {
     backrefs: &'a BitSet,
     group_ix: usize,
-    group_names: &'a NamedGroups,
 }
 
 impl<'a> Analyzer<'a> {
@@ -172,12 +171,6 @@ impl<'a> Analyzer<'a> {
                 }
                 hard = true;
             }
-            Expr::NamedBackref(ref name) => {
-                if !self.group_names.contains_key(name) {
-                    return Err(Error::CompileError(CompileError::InvalidBackref));
-                }
-                hard = true;
-            }
             Expr::AtomicGroup(ref child) => {
                 let child_info = self.visit(child)?;
                 min_size = child_info.min_size;
@@ -221,7 +214,6 @@ pub fn analyze<'a>(tree: &'a ExprTree) -> Result<Info<'a>> {
     let mut analyzer = Analyzer {
         backrefs: &tree.backrefs,
         group_ix: 0,
-        group_names: &tree.named_groups,
     };
 
     analyzer.visit(&tree.expr)

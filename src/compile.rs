@@ -162,9 +162,6 @@ impl Compiler {
                 // TODO: might want to have more specialized impls
                 self.compile_delegate(info)?;
             }
-            Expr::NamedBackref(_) => {
-                unreachable!("named backrefs should have been eliminated");
-            }
             Expr::KeepOut => {
                 self.b.add(Insn::Save(0));
             }
