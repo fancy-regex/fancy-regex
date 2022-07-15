@@ -142,6 +142,15 @@ assert!(re.is_match("abcc").unwrap());
 assert!(!re.is_match("abc").unwrap());
 ```
 
+Conditionals - if/then/else:
+
+`(?(1))`
+: continue only if first capture group matched \
+`(?(<name>))`
+: continue only if capture group named *name* matched \
+`(?(1)true_branch|false_branch)`
+: if the first capture group matched then execute the true_branch regex expression, else execute false_branch ([docs](https://www.regular-expressions.info/conditional.html))
+
 [regex]: https://crates.io/crates/regex
 */
 
@@ -1214,6 +1223,8 @@ pub enum Expr {
     KeepOut,
     /// Anchor to match at the position where the previous match ended
     ContinueFromPreviousMatchEnd,
+    /// Conditional expression based on whether the numbered capture group matched or not
+    BackrefExistsCondition(usize),
 }
 
 /// Type of look-around assertion as used for a look-around expression.

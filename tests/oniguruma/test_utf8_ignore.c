@@ -239,31 +239,13 @@
   // Compile failed: ParseError(2, InvalidEscape("\\g"))
   x3("(A\\g'0')|B", "AAAAB", 0, 5, 1);
 
-  // Compile failed: ParseError(6, UnknownFlag("(?("))
-  x2("(a*)(?(1))aa", "aaaaa", 0, 5);
-
-  // Compile failed: ParseError(6, UnknownFlag("(?("))
+  // Compile failed: ParseError(10, GeneralParseError("expected conditional to be a backreference or at least an expression for when the condition is true"))
   x2("(a*)(?(-1))aa", "aaaaa", 0, 5);
 
-  // Compile failed: ParseError(14, UnknownFlag("(?("))
-  x2("(?<name>aaa)(?('name'))aa", "aaaaa", 0, 5);
-
-  // Compile failed: ParseError(5, UnknownFlag("(?("))
-  x2("(a)(?(1)aa|bb)a", "aaaaa", 0, 4);
-
-  // Compile failed: ParseError(11, UnknownFlag("(?("))
-  x2("(?:aa|())(?(<1>)aa|bb)a", "aabba", 0, 5);
-
-  // Compile failed: ParseError(11, UnknownFlag("(?("))
-  x2("(?:aa|())(?('1')aa|bb|cc)a", "aacca", 0, 5);
-
-  // Compile failed: ParseError(6, UnknownFlag("(?("))
+  // Match found at start 0 and end 2 (expected 0 and 1)
   x3("(a*)(?(1)aa|a)b", "aaab", 0, 1, 1);
 
-  // Compile failed: ParseError(5, UnknownFlag("(?("))
-  x2("(a)(?(1)|)c", "ac", 0, 2);
-
-  // Compile failed: ParseError(5, UnknownFlag("(?("))
+  // Compile failed: ParseError(7, GeneralParseError("next byte isn't a closing paren after condition"))
   x2("(a)(?(1+0)b|c)d", "abd", 0, 3);
 
   // Compile failed: ParseError(5, UnknownFlag("(?'"))
@@ -317,29 +299,14 @@
   // Compile failed: ParseError(14, InvalidEscape("\\g"))
   x2("((?<x>abc){0}a\\g<x>d)+", "aabcd", 0, 5);
 
-  // Compile failed: ParseError(3, UnknownFlag("(?("))
-  x2("((?(abc)true|false))+", "false", 0, 5);
-
-  // Compile failed: ParseError(12, UnknownFlag("(?("))
-  x2("()(?<x>ab)(?(<x>)a|b)", "aba", 0, 3);
-
-  // Compile failed: ParseError(6, UnknownFlag("(?("))
-  x2("(?<=(?(a)a|bb))z", "aaz", 2, 3);
-
   // Match found at start 0 and end 3 (expected 0 and 6)
   x2("(?<x>a)(?<x>b)(\\k<x>)+", "abbaab", 0, 6);
-
-  // Compile failed: ParseError(3, UnknownFlag("(?("))
-  x2("((?(a)b|c))(\\1)", "abab", 0, 4);
 
   // Compile failed: ParseError(8, InvalidEscape("\\g"))
   x2("(?<x>$|b\\g<x>)", "bbb", 0, 3);
 
-  // Compile failed: ParseError(7, UnknownFlag("(?("))
+  // Compile failed: ParseError(16, InvalidEscape("\\g"))
   x2("(?<x>(?(a)a|b)|c\\g<x>)", "cccb", 0, 4);
-
-  // Compile failed: ParseError(5, UnknownFlag("(?("))
-  x2("(a)(?(1)a*|b*)+", "aaaa", 0, 4);
 
   // Compile failed: ParseError(1, InvalidEscape("\\o"))
   x2("[\\o{101}]", "A", 0, 1);
@@ -873,7 +840,7 @@
   // Compile failed: ParseError(2, InvalidHex)
   x2("\\x1", "\x01", 0, 1);
 
-  // Compile failed: ParseError(3, UnknownFlag("(?("))
+  // Compile failed: ParseError(10, TargetNotRepeatable)
   x2("((?()0+)+++(((0\\g<0>)0)|())++++((?(1)(0\\g<0>))++++++0*())++++((?(1)(0\\g<1>)+)++++++++++*())++++((?(1)((0)\\g<0>)+)++())+0++*+++(((0\\g<0>))*())++++((?(1)(0\\g<0>)+)++++++++++*|)++++*+++((?(1)((0)\\g<0>)+)+++++++++())++*|)++++((?()0))|", "abcde", 0, 0);
 
   // Compile failed: ParseError(9, TargetNotRepeatable)
@@ -883,10 +850,10 @@
   x2("(?:(*COUNT[AB]{X})[ab]|(*COUNT[CD]{X})[cd])*(*CMP{AB,<,CD})",
      "abababcdab", 5, 8);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?("))
+  // Compile failed: ParseError(3, TargetNotRepeatable)
   x2("(?(?{....})123|456)", "123", 0, 3);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?("))
+  // Compile failed: ParseError(3, TargetNotRepeatable)
   x2("(?(*FAIL)123|456)", "456", 0, 3);
 
   // Compile failed: ParseError(0, InvalidEscape("\\g"))

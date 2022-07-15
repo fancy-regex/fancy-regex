@@ -7,6 +7,8 @@ This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html
 with the exception that 0.x versions can break between minor versions.
 
 ## Unreleased
+### Added
+- Support for [conditionals](https://www.regular-expressions.info/conditional.html).
 ### Changed
 - Updated parse errors to show the position they occurred at.
 

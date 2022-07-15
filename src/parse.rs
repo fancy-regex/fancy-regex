@@ -589,6 +589,8 @@ impl<'a> Parser<'a> {
             return self.parse_named_backref(ix + 3, "", ")");
         } else if self.re[ix..].starts_with("?>") {
             (None, 2)
+        } else if self.re[ix..].starts_with("?(") {
+            return self.parse_conditional(ix + 2, depth);
         } else if self.re[ix..].starts_with('?') {
             return self.parse_flags(ix, depth);
         } else {
@@ -677,6 +679,78 @@ impl<'a> Parser<'a> {
             }
             ix += 1;
         }
+    }
+
+    fn parse_conditional(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
+        let bytes = self.re.as_bytes();
+        let b = bytes[ix];
+        let (next, condition) = if is_digit(b) {
+            self.parse_numbered_backref(ix)?
+        } else if b == b'\'' {
+            self.parse_named_backref(ix, "'", "'")?
+        } else if b == b'<' {
+            self.parse_named_backref(ix, "<", ">")?
+        } else {
+            self.parse_re(ix, depth)?
+        };
+        let b = bytes[next];
+        if b != b')' {
+            return Err(Error::ParseError(
+                next,
+                ParseError::GeneralParseError(
+                    "next byte isn't a closing paren after condition".to_string(),
+                ),
+            ));
+        }
+        let (end, child) = self.parse_re(next + 1, depth)?;
+        let b = bytes[end];
+        if b != b')' {
+            return Err(Error::ParseError(
+                end,
+                ParseError::GeneralParseError(
+                    "next byte isn't a closing paren at after condition".to_string(),
+                ),
+            ));
+        }
+        if end == next + 1 {
+            // Backreference validity checker
+            if let Expr::Backref(group) = condition {
+                return Ok((end + 1, Expr::BackrefExistsCondition(group)));
+            } else {
+                return Err(Error::ParseError(
+                    end,
+                    ParseError::GeneralParseError(
+                        "expected conditional to be a backreference or at least an expression for when the condition is true".to_string()
+                    )
+                ));
+            }
+        }
+        let if_true: Expr;
+        let mut if_false: Expr = Expr::Empty;
+        if let Expr::Alt(mut alternatives) = child {
+            // the truth branch will be the first alternative
+            if_true = alternatives.remove(0);
+            // if there is only one alternative left, take it out the Expr::Alt
+            if alternatives.len() == 1 {
+                if_false = alternatives.pop().expect("expected 2 alternatives");
+            } else {
+                // otherwise the remaining branches become the false branch
+                if_false = Expr::Alt(alternatives);
+            }
+        } else {
+            // there is only one branch - the truth branch. i.e. "if" without "else"
+            if_true = child;
+        }
+        let inner_condition = if let Expr::Backref(group) = condition {
+            Expr::BackrefExistsCondition(group)
+        } else {
+            condition
+        };
+
+        Ok((
+            end + 1,
+            Expr::Alt(vec![Expr::Concat(vec![inner_condition, if_true]), if_false]),
+        ))
     }
 
     fn flag(&self, flag: u32) -> bool {
@@ -1440,6 +1514,91 @@ mod tests {
         assert_eq!(
             p("a\\Kb"),
             Expr::Concat(vec![make_literal("a"), Expr::KeepOut, make_literal("b"),])
+        );
+    }
+
+    #[test]
+    fn backref_exists_condition() {
+        assert_eq!(
+            p("(h)?(?(1))"),
+            Expr::Concat(vec![
+                Expr::Repeat {
+                    child: Box::new(Expr::Group(Box::new(make_literal("h")))),
+                    lo: 0,
+                    hi: 1,
+                    greedy: true
+                },
+                Expr::BackrefExistsCondition(1)
+            ])
+        );
+        assert_eq!(
+            p("(?<h>h)?(?('h'))"),
+            Expr::Concat(vec![
+                Expr::Repeat {
+                    child: Box::new(Expr::Group(Box::new(make_literal("h")))),
+                    lo: 0,
+                    hi: 1,
+                    greedy: true
+                },
+                Expr::BackrefExistsCondition(1)
+            ])
+        );
+    }
+
+    #[test]
+    fn conditional() {
+        assert_eq!(
+            p("(h)?(?(1)i|x)"),
+            Expr::Concat(vec![
+                Expr::Repeat {
+                    child: Box::new(Expr::Group(Box::new(make_literal("h")))),
+                    lo: 0,
+                    hi: 1,
+                    greedy: true
+                },
+                Expr::Alt(vec![
+                    Expr::Concat(vec![Expr::BackrefExistsCondition(1), make_literal("i"),]),
+                    make_literal("x"),
+                ]),
+            ])
+        );
+
+        assert_eq!(
+            p("(h)?(?(1)i)"),
+            Expr::Concat(vec![
+                Expr::Repeat {
+                    child: Box::new(Expr::Group(Box::new(make_literal("h")))),
+                    lo: 0,
+                    hi: 1,
+                    greedy: true
+                },
+                Expr::Alt(vec![
+                    Expr::Concat(vec![Expr::BackrefExistsCondition(1), make_literal("i"),]),
+                    Expr::Empty
+                ]),
+            ])
+        );
+
+        assert_eq!(
+            p("(h)?(?(1)ii|xy|z)"),
+            Expr::Concat(vec![
+                Expr::Repeat {
+                    child: Box::new(Expr::Group(Box::new(make_literal("h")))),
+                    lo: 0,
+                    hi: 1,
+                    greedy: true
+                },
+                Expr::Alt(vec![
+                    Expr::Concat(vec![
+                        Expr::BackrefExistsCondition(1),
+                        Expr::Concat(vec![make_literal("i"), make_literal("i"),]),
+                    ]),
+                    Expr::Alt(vec![
+                        Expr::Concat(vec![make_literal("x"), make_literal("y"),]),
+                        make_literal("z"),
+                    ])
+                ]),
+            ])
         );
     }
 

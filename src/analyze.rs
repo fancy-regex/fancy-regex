@@ -187,6 +187,13 @@ impl<'a> Analyzer<'a> {
                 hard = true;
                 const_size = true;
             }
+            Expr::BackrefExistsCondition(group) => {
+                if group >= self.group_ix {
+                    return Err(Error::CompileError(CompileError::InvalidBackref));
+                }
+                hard = true;
+                const_size = true;
+            }
         };
 
         Ok(Info {
