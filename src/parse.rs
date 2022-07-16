@@ -590,7 +590,7 @@ impl<'a> Parser<'a> {
         } else if self.re[ix..].starts_with("?>") {
             (None, 2)
         } else if self.re[ix..].starts_with("?(") {
-            return self.parse_conditional(ix + 2, depth);
+            return self.parse_conditional(ix + 1, depth);
         } else if self.re[ix..].starts_with('?') {
             return self.parse_flags(ix, depth);
         } else {
@@ -683,36 +683,33 @@ impl<'a> Parser<'a> {
 
     fn parse_conditional(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
         let bytes = self.re.as_bytes();
-        let b = bytes[ix];
-        let (next, condition) = if is_digit(b) {
-            self.parse_numbered_backref(ix)?
+        // get the character after the open paren
+        let b = bytes[ix + 1];
+        let mut expect_close_paren = true;
+        let (mut next, condition) = if is_digit(b) {
+            self.parse_numbered_backref(ix + 1)?
         } else if b == b'\'' {
-            self.parse_named_backref(ix, "'", "'")?
+            self.parse_named_backref(ix + 1, "'", "'")?
         } else if b == b'<' {
-            self.parse_named_backref(ix, "<", ">")?
+            self.parse_named_backref(ix + 1, "<", ">")?
         } else {
-            self.parse_re(ix, depth)?
+            expect_close_paren = false;
+            self.parse_group(ix, depth)?
         };
-        let b = bytes[next];
-        if b != b')' {
-            return Err(Error::ParseError(
-                next,
-                ParseError::GeneralParseError(
-                    "next byte isn't a closing paren after condition".to_string(),
-                ),
-            ));
+        if expect_close_paren {
+            let b = bytes[next];
+            if b != b')' {
+                return Err(Error::ParseError(
+                    next,
+                    ParseError::GeneralParseError(
+                        "next byte isn't a closing paren after condition".to_string(),
+                    ),
+                ));
+            }
+            next += 1;
         }
-        let (end, child) = self.parse_re(next + 1, depth)?;
-        let b = bytes[end];
-        if b != b')' {
-            return Err(Error::ParseError(
-                end,
-                ParseError::GeneralParseError(
-                    "next byte isn't a closing paren at after condition".to_string(),
-                ),
-            ));
-        }
-        if end == next + 1 {
+        let (end, child) = self.parse_re(next, depth)?;
+        if end == next {
             // Backreference validity checker
             if let Expr::Backref(group) = condition {
                 return Ok((end + 1, Expr::BackrefExistsCondition(group)));
@@ -1598,6 +1595,20 @@ mod tests {
                         make_literal("z"),
                     ])
                 ]),
+            ])
+        );
+
+        assert_eq!(
+            p("((?(a)b|c))(\\1)"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(Expr::Alt(vec![
+                    Expr::Concat(vec![
+                        Expr::Group(Box::new(make_literal("a"))),
+                        make_literal("b")
+                    ]),
+                    make_literal("c")
+                ]))),
+                Expr::Group(Box::new(Expr::Backref(1)))
             ])
         );
     }

@@ -112,6 +112,27 @@ fn end_of_hard_expression_cannot_be_delegated() {
     assert_match(r"((?!x)(?:a|ab))c", "abc");
 }
 
+#[test]
+fn backreference_validity_checker() {
+    assert_match(r"(a)(?(1))", "a");
+    assert_match(r"(?<group1>a)(?('group1'))b", "ab");
+    assert_match(r"(a)(b)?(?(2))", "ab");
+    assert_no_match(r"(a)(b)?(?(2))", "a");
+}
+
+#[test]
+fn conditional() {
+    assert_match(r"(a)?b(?(1)c|d)", "bd");
+    assert_match(r"(a)?b(?(1)c|d)", "abc");
+    assert_no_match(r"(a)?b(?(1)c|d)", "bc");
+
+    assert_match(r"^(?(?=\d)\w+|!)$", "!");
+    assert_match(r"^(?(?=\d)\w+|!)$", "5abc");
+    assert_match(r"^(?(\d)abc|!)$", "5abc");
+    assert_no_match(r"^(?(\d)abc|!)$", "5!");
+    assert_no_match(r"^(?(\d)abc|\d!)$", "5!");
+}
+
 #[cfg_attr(feature = "track_caller", track_caller)]
 fn assert_match(re: &str, text: &str) {
     let result = match_text(re, text);

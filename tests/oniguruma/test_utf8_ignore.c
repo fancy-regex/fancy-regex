@@ -850,7 +850,7 @@
   x2("(?:(*COUNT[AB]{X})[ab]|(*COUNT[CD]{X})[cd])*(*CMP{AB,<,CD})",
      "abababcdab", 5, 8);
 
-  // Compile failed: ParseError(3, TargetNotRepeatable)
+  // Compile failed: ParseError(4, UnknownFlag("(?{"))
   x2("(?(?{....})123|456)", "123", 0, 3);
 
   // Compile failed: ParseError(3, TargetNotRepeatable)
