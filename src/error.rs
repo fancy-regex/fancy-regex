@@ -78,6 +78,8 @@ pub enum CompileError {
     InvalidBackref,
     /// Once named groups are used you cannot refer to groups by number
     NamedBackrefOnly,
+    /// Invalid conditional expression
+    InvalidConditionalExpression,
 
     /// This enum may grow additional variants, so this makes sure clients don't count on exhaustive
     /// matching. Otherwise, adding a new variant could break existing code.
@@ -145,6 +147,7 @@ impl fmt::Display for CompileError {
             CompileError::InvalidGroupNameBackref(s) => write!(f, "Invalid group name in back reference: {}", s),
             CompileError::InvalidBackref => write!(f, "Invalid back reference"),
             CompileError::NamedBackrefOnly => write!(f, "Numbered backref/call not allowed because named group was used, use a named backref instead"),
+            CompileError::InvalidConditionalExpression => write!(f, "Conditional expressions must use a lookaround or a backreference validity checker"),
 
             CompileError::__Nonexhaustive => unreachable!(),
         }

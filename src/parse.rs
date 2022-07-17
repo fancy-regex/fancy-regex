@@ -746,7 +746,15 @@ impl<'a> Parser<'a> {
 
         Ok((
             end + 1,
-            Expr::Alt(vec![Expr::Concat(vec![inner_condition, if_true]), if_false]),
+            if if_true == Expr::Empty && if_false == Expr::Empty {
+                inner_condition
+            } else {
+                Expr::Conditional {
+                    condition: Box::new(inner_condition),
+                    true_branch: Box::new(if_true),
+                    false_branch: Box::new(if_false),
+                }
+            },
         ))
     }
 
@@ -1553,10 +1561,11 @@ mod tests {
                     hi: 1,
                     greedy: true
                 },
-                Expr::Alt(vec![
-                    Expr::Concat(vec![Expr::BackrefExistsCondition(1), make_literal("i"),]),
-                    make_literal("x"),
-                ]),
+                Expr::Conditional {
+                    condition: Box::new(Expr::BackrefExistsCondition(1)),
+                    true_branch: Box::new(make_literal("i")),
+                    false_branch: Box::new(make_literal("x")),
+                },
             ])
         );
 
@@ -1569,10 +1578,11 @@ mod tests {
                     hi: 1,
                     greedy: true
                 },
-                Expr::Alt(vec![
-                    Expr::Concat(vec![Expr::BackrefExistsCondition(1), make_literal("i"),]),
-                    Expr::Empty
-                ]),
+                Expr::Conditional {
+                    condition: Box::new(Expr::BackrefExistsCondition(1)),
+                    true_branch: Box::new(make_literal("i")),
+                    false_branch: Box::new(Expr::Empty),
+                },
             ])
         );
 
@@ -1585,30 +1595,56 @@ mod tests {
                     hi: 1,
                     greedy: true
                 },
-                Expr::Alt(vec![
-                    Expr::Concat(vec![
-                        Expr::BackrefExistsCondition(1),
-                        Expr::Concat(vec![make_literal("i"), make_literal("i"),]),
-                    ]),
-                    Expr::Alt(vec![
+                Expr::Conditional {
+                    condition: Box::new(Expr::BackrefExistsCondition(1)),
+                    true_branch: Box::new(Expr::Concat(
+                        vec![make_literal("i"), make_literal("i"),]
+                    )),
+                    false_branch: Box::new(Expr::Alt(vec![
                         Expr::Concat(vec![make_literal("x"), make_literal("y"),]),
                         make_literal("z"),
-                    ])
-                ]),
+                    ])),
+                },
             ])
         );
 
         assert_eq!(
             p("((?(a)b|c))(\\1)"),
             Expr::Concat(vec![
-                Expr::Group(Box::new(Expr::Alt(vec![
-                    Expr::Concat(vec![
-                        Expr::Group(Box::new(make_literal("a"))),
-                        make_literal("b")
-                    ]),
-                    make_literal("c")
-                ]))),
+                Expr::Group(Box::new(Expr::Conditional {
+                    condition: Box::new(Expr::Group(Box::new(make_literal("a")))),
+                    true_branch: Box::new(make_literal("b")),
+                    false_branch: Box::new(make_literal("c"))
+                })),
                 Expr::Group(Box::new(Expr::Backref(1)))
+            ])
+        );
+
+        assert_eq!(
+            p(r"^(?(\d)abc|\d!)$"),
+            Expr::Concat(vec![
+                Expr::StartText,
+                Expr::Conditional {
+                    condition: Box::new(Expr::Group(Box::new(Expr::Delegate {
+                        inner: "\\d".to_string(),
+                        size: 1,
+                        casei: false,
+                    }))),
+                    true_branch: Box::new(Expr::Concat(vec![
+                        make_literal("a"),
+                        make_literal("b"),
+                        make_literal("c"),
+                    ])),
+                    false_branch: Box::new(Expr::Concat(vec![
+                        Expr::Delegate {
+                            inner: "\\d".to_string(),
+                            size: 1,
+                            casei: false,
+                        },
+                        make_literal("!"),
+                    ])),
+                },
+                Expr::EndText,
             ])
         );
     }

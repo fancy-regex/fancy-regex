@@ -171,6 +171,9 @@ impl Compiler {
             Expr::ContinueFromPreviousMatchEnd => {
                 self.b.add(Insn::ContinueFromPreviousMatchEnd);
             }
+            Expr::Conditional { .. } => {
+                self.compile_conditional(|compiler, i| compiler.visit(&info.children[i], hard))?;
+            }
         }
         Ok(())
     }
@@ -207,6 +210,48 @@ impl Compiler {
         for jmp_pc in jmps {
             self.b.set_jmp_target(jmp_pc, next_pc);
         }
+        Ok(())
+    }
+
+    fn compile_conditional<F>(&mut self, mut handle_child: F) -> Result<()>
+    where
+        F: FnMut(&mut Compiler, usize) -> Result<()>,
+    {
+        let split_pc = self.b.pc();
+        // add the split instruction - we will update it's second pc later
+        self.b.add(Insn::Split(split_pc + 1, usize::MAX));
+
+        // add the conditional expression
+        handle_child(self, 0)?;
+
+        // jump over the next instruction to the truth branch
+        self.b.add(Insn::Jmp(self.b.pc() + 2));
+
+        // set the second part of the split from above to the current program counter
+        self.b.set_split_target(split_pc, self.b.pc(), true);
+
+        // jump to the false branch - we will update the jump target later
+        let jump_to_false_pc = self.b.pc();
+        self.b.add(Insn::Jmp(0));
+
+        // TODO: add an instruction similar to FailNegativeLookAround which
+        // would clear the split but continue the program.
+        // The idea being that the condition matched, and if the truth branch
+        // doesn't match, we don't want to try the false branch
+
+        // add the truth branch
+        handle_child(self, 1)?;
+        // add an instruction to jump over the false branch - we will update the jump target later
+        let jump_over_false_pc = self.b.pc();
+        self.b.add(Insn::Jmp(0));
+
+        // add the false branch
+        self.b.set_jmp_target(jump_to_false_pc, self.b.pc());
+        handle_child(self, 2)?;
+
+        // update the jump target for jumping over the false branch
+        self.b.set_jmp_target(jump_over_false_pc, self.b.pc());
+
         Ok(())
     }
 
@@ -643,6 +688,22 @@ mod tests {
         assert_delegate(&prog[7], "^x*");
         assert_matches!(prog[8], End);
     }
+
+    /*#[test]
+    fn conditional_expression_can_be_compiled() {
+        let prog = compile_prog(r"(?(?=\d)\wabc|\d!)");
+
+        assert_eq!(prog.len(), 8, "prog: {:?}", prog);
+
+        assert_matches!(prog[0], Split(1, 6));
+        assert_matches!(prog[1], Save(0));
+        assert_delegate_sized(&prog[2], "^\\d");
+        assert_matches!(prog[3], Restore(0));
+        assert_delegate_sized(&prog[4], "^\\wabc");
+        assert_matches!(prog[5], Jmp(7));
+        assert_delegate_sized(&prog[6], "^\\d!");
+        assert_matches!(prog[7], End);
+    }*/
 
     fn compile_prog(re: &str) -> Vec<Insn> {
         let tree = Expr::parse_tree(re).unwrap();

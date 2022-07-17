@@ -1225,6 +1225,15 @@ pub enum Expr {
     ContinueFromPreviousMatchEnd,
     /// Conditional expression based on whether the numbered capture group matched or not
     BackrefExistsCondition(usize),
+    /// If/Then/Else Condition. If there is no Then/Else, these will just be empty expressions.
+    Conditional {
+        /// The conditional expression to evaluate
+        condition: Box<Expr>,
+        /// What to execute if the condition is true
+        true_branch: Box<Expr>,
+        /// What to execute if the condition is false
+        false_branch: Box<Expr>,
+    },
 }
 
 /// Type of look-around assertion as used for a look-around expression.
