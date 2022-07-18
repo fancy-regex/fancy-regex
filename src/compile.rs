@@ -90,13 +90,6 @@ impl VMBuilder {
             _ => panic!("mutating instruction other than Repeat"),
         }
     }
-
-    fn set_prune_target(&mut self, prune_pc: usize, target: usize) {
-        match self.prog[prune_pc] {
-            Insn::SucceedCondition(ref mut x) => *x = target,
-            _ => panic!("mutating instruction other than SucceedCondition"),
-        }
-    }
 }
 
 struct Compiler {
@@ -231,9 +224,8 @@ impl Compiler {
         // add the conditional expression
         handle_child(self, 0)?;
 
-        // mark it as successful to remove the state we added as a split earlier - we'll update the prune target later
-        let prune_pc = self.b.pc();
-        self.b.add(Insn::SucceedCondition(0));
+        // mark it as successful to remove the state we added as a split earlier
+        self.b.add(Insn::SucceedCondition);
 
         // add the truth branch
         handle_child(self, 1)?;
@@ -241,9 +233,8 @@ impl Compiler {
         let jump_over_false_pc = self.b.pc();
         self.b.add(Insn::Jmp(0));
 
-        // add the false branch, update the split and prune targets
+        // add the false branch, update the split target
         self.b.set_split_target(split_pc, self.b.pc(), true);
-        self.b.set_prune_target(prune_pc, self.b.pc());
         handle_child(self, 2)?;
 
         // update the jump target for jumping over the false branch
@@ -686,21 +677,22 @@ mod tests {
         assert_matches!(prog[8], End);
     }
 
-    /*#[test]
+    #[test]
     fn conditional_expression_can_be_compiled() {
         let prog = compile_prog(r"(?(?=\d)\wabc|\d!)");
 
-        assert_eq!(prog.len(), 8, "prog: {:?}", prog);
+        assert_eq!(prog.len(), 9, "prog: {:?}", prog);
 
-        assert_matches!(prog[0], Split(1, 6));
+        assert_matches!(prog[0], Split(1, 7));
         assert_matches!(prog[1], Save(0));
         assert_delegate_sized(&prog[2], "^\\d");
         assert_matches!(prog[3], Restore(0));
-        assert_delegate_sized(&prog[4], "^\\wabc");
-        assert_matches!(prog[5], Jmp(7));
-        assert_delegate_sized(&prog[6], "^\\d!");
-        assert_matches!(prog[7], End);
-    }*/
+        assert_matches!(prog[4], SucceedCondition);
+        assert_delegate_sized(&prog[5], "^\\wabc");
+        assert_matches!(prog[6], Jmp(8));
+        assert_delegate_sized(&prog[7], "^\\d!");
+        assert_matches!(prog[8], End);
+    }
 
     fn compile_prog(re: &str) -> Vec<Insn> {
         let tree = Expr::parse_tree(re).unwrap();
