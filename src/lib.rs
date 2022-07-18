@@ -149,7 +149,9 @@ Conditionals - if/then/else:
 `(?(<name>))`
 : continue only if capture group named *name* matched \
 `(?(1)true_branch|false_branch)`
-: if the first capture group matched then execute the true_branch regex expression, else execute false_branch ([docs](https://www.regular-expressions.info/conditional.html))
+: if the first capture group matched then execute the true_branch regex expression, else execute false_branch ([docs](https://www.regular-expressions.info/conditional.html)) \
+`(?(?=condition)true_branch|false_branch)`
+: if the lookaround matches then execute the true_branch regex expression, else execute false_branch
 
 [regex]: https://crates.io/crates/regex
 */

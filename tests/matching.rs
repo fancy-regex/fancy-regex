@@ -131,6 +131,9 @@ fn conditional() {
     assert_match(r"^(?(?=\d)abc)$", "");
     assert_match(r"^(?(?=\w)abc)$", "abc");
     assert_no_match(r"^(?(?=\d)\wabc|\d!)$", "5!");
+
+    assert_match(r"^(?(\d)abc|\d!)$", "5abc");
+    assert_no_match(r"^(?(\d)abc|\d!)$", "5!");
 }
 
 #[cfg_attr(feature = "track_caller", track_caller)]

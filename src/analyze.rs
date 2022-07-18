@@ -201,15 +201,6 @@ impl<'a> Analyzer<'a> {
             } => {
                 hard = true;
 
-                match **condition {
-                    Expr::BackrefExistsCondition(_) | Expr::LookAround(_, _) => {}
-                    _ => {
-                        return Err(Error::CompileError(
-                            CompileError::InvalidConditionalExpression,
-                        ))
-                    }
-                }
-
                 let child_info_condition = self.visit(condition)?;
                 let child_info_truth = self.visit(true_branch)?;
                 let child_info_false = self.visit(false_branch)?;
@@ -219,7 +210,9 @@ impl<'a> Analyzer<'a> {
                 const_size = child_info_condition.const_size
                     && child_info_truth.const_size
                     && child_info_false.const_size
-                    && child_info_truth.min_size == child_info_false.min_size;
+                    && (child_info_truth.min_size == child_info_false.min_size
+                    // if the condition's size is exactly 1, then it can't fail halfway through, so we can consider it const size if the truth branch is one shorter than the false branch
+                    || child_info_condition.min_size == 1 && child_info_truth.min_size + 1 == child_info_false.min_size);
                 looks_left = child_info_condition.looks_left
                     || child_info_truth.looks_left
                     || child_info_false.looks_left;
@@ -294,11 +287,6 @@ mod tests {
     #[test]
     fn invalid_backref_3() {
         assert!(analyze(&Expr::parse_tree("\\1(.)").unwrap()).is_err());
-    }
-
-    #[test]
-    fn invalid_conditional() {
-        assert!(analyze(&Expr::parse_tree("(?(foo)bar)").unwrap()).is_err());
     }
 
     #[test]

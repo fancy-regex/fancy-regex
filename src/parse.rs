@@ -1647,6 +1647,26 @@ mod tests {
                 Expr::EndText,
             ])
         );
+
+        assert_eq!(
+            p(r"(?(?=\d)\w|!)"),
+            Expr::Conditional {
+                condition: Box::new(Expr::LookAround(
+                    Box::new(Expr::Delegate {
+                        inner: "\\d".to_string(),
+                        size: 1,
+                        casei: false
+                    }),
+                    LookAhead
+                )),
+                true_branch: Box::new(Expr::Delegate {
+                    inner: "\\w".to_string(),
+                    size: 1,
+                    casei: false,
+                }),
+                false_branch: Box::new(make_literal("!")),
+            },
+        );
     }
 
     // found by cargo fuzz, then minimized

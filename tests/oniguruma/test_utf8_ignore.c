@@ -242,9 +242,6 @@
   // Compile failed: ParseError(10, GeneralParseError("expected conditional to be a backreference or at least an expression for when the condition is true"))
   x2("(a*)(?(-1))aa", "aaaaa", 0, 5);
 
-  // Match found at start 0 and end 2 (expected 0 and 1)
-  x3("(a*)(?(1)aa|a)b", "aaab", 0, 1, 1);
-
   // Compile failed: ParseError(7, GeneralParseError("next byte isn't a closing paren after condition"))
   x2("(a)(?(1+0)b|c)d", "abd", 0, 3);
 

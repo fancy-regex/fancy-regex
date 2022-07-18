@@ -90,6 +90,13 @@ impl VMBuilder {
             _ => panic!("mutating instruction other than Repeat"),
         }
     }
+
+    fn set_prune_target(&mut self, prune_pc: usize, target: usize) {
+        match self.prog[prune_pc] {
+            Insn::SucceedCondition(ref mut x) => *x = target,
+            _ => panic!("mutating instruction other than SucceedCondition"),
+        }
+    }
 }
 
 struct Compiler {
@@ -224,20 +231,9 @@ impl Compiler {
         // add the conditional expression
         handle_child(self, 0)?;
 
-        // jump over the next instruction to the truth branch
-        self.b.add(Insn::Jmp(self.b.pc() + 2));
-
-        // set the second part of the split from above to the current program counter
-        self.b.set_split_target(split_pc, self.b.pc(), true);
-
-        // jump to the false branch - we will update the jump target later
-        let jump_to_false_pc = self.b.pc();
-        self.b.add(Insn::Jmp(0));
-
-        // TODO: add an instruction similar to FailNegativeLookAround which
-        // would clear the split but continue the program.
-        // The idea being that the condition matched, and if the truth branch
-        // doesn't match, we don't want to try the false branch
+        // mark it as successful to remove the state we added as a split earlier - we'll update the prune target later
+        let prune_pc = self.b.pc();
+        self.b.add(Insn::SucceedCondition(0));
 
         // add the truth branch
         handle_child(self, 1)?;
@@ -245,8 +241,9 @@ impl Compiler {
         let jump_over_false_pc = self.b.pc();
         self.b.add(Insn::Jmp(0));
 
-        // add the false branch
-        self.b.set_jmp_target(jump_to_false_pc, self.b.pc());
+        // add the false branch, update the split and prune targets
+        self.b.set_split_target(split_pc, self.b.pc(), true);
+        self.b.set_prune_target(prune_pc, self.b.pc());
         handle_child(self, 2)?;
 
         // update the jump target for jumping over the false branch

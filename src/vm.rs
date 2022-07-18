@@ -194,6 +194,8 @@ pub enum Insn {
     ContinueFromPreviousMatchEnd,
     /// Continue only if the specified capture group has already been populated as part of the match
     BackrefExistsCondition(usize),
+    /// Conditional expression succeeded. Prunes the state with the given pc.
+    SucceedCondition(usize),
 }
 
 /// Sequence of instructions for the VM to execute.
@@ -589,6 +591,21 @@ pub(crate) fn run(
                         }
                     }
                     break 'fail;
+                }
+                Insn::SucceedCondition(pc_to_prune) => {
+                    // Reaching this instruction means that the body of the
+                    // condition matched. This means that we need to discard the
+                    // state for when the condition failed, because we don't want
+                    // to explore it (i.e. if the truth branch fails).
+                    loop {
+                        let (popped_pc, _) = state.pop();
+                        if popped_pc == pc_to_prune {
+                            // This is the state whose program counter matches
+                            // the one we need to prune.
+                            break;
+                        }
+                        // TODO: re-add other states?
+                    }
                 }
                 Insn::Backref(slot) => {
                     let lo = state.get(slot);
