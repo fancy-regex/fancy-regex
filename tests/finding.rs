@@ -260,6 +260,13 @@ fn find_iter_attributes() {
     assert_eq!(regex.as_str(), matches.regex().as_str());
 }
 
+#[test]
+fn find_conditional() {
+    assert_eq!(find(r"(?(ab)c|d)", "acd"), Some((2, 3)));
+    assert_eq!(find(r"(a)?b(?(1)c|d)", "abc"), Some((0, 3)));
+    assert_eq!(find(r"(a)?b(?(1)c|d)", "abd"), Some((1, 3)));
+}
+
 fn find(re: &str, text: &str) -> Option<(usize, usize)> {
     find_match(re, text).map(|m| (m.start(), m.end()))
 }

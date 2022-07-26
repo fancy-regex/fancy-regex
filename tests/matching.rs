@@ -118,22 +118,35 @@ fn backreference_validity_checker() {
     assert_match(r"(?<group1>a)(?('group1'))b", "ab");
     assert_match(r"(a)(b)?(?(2))", "ab");
     assert_no_match(r"(a)(b)?(?(2))", "a");
+    assert_match(r"(a)(b?)(?(2))", "a");
 }
 
 #[test]
-fn conditional() {
+fn conditional_with_backref_validity() {
     assert_match(r"(a)?b(?(1)c|d)", "bd");
     assert_match(r"(a)?b(?(1)c|d)", "abc");
+    assert_match(r"(?<group1>a)?b(?(<group1>)c|d)", "abc");
     assert_no_match(r"(a)?b(?(1)c|d)", "bc");
+    assert_no_match(r"^(a)?b(?(1)c|d)$", "abd");
+}
 
-    assert_match(r"^(?(?=\d)\w+|!)$", "!");
-    assert_match(r"^(?(?=\d)\w+|!)$", "5abc");
-    assert_match(r"^(?(?=\d)abc)$", "");
-    assert_match(r"^(?(?=\w)abc)$", "abc");
-    assert_no_match(r"^(?(?=\d)\wabc|\d!)$", "5!");
+#[test]
+fn conditional_with_consuming_condition() {
+    assert_match(r"^(?(ab)c|d)$", "abc");
+    assert_no_match(r"^(?(ab)c|d)$", "abd");
+    assert_no_match(r"^(?(ab)c|d)$", "ad");
 
     assert_match(r"^(?(\d)abc|\d!)$", "5abc");
     assert_no_match(r"^(?(\d)abc|\d!)$", "5!");
+}
+
+#[test]
+fn conditional_with_lookaround_condition() {
+    assert_match(r"^(?((?=\d))\w+|!)$", "!");
+    assert_match(r"^(?((?=\d))\w+|!)$", "5abc");
+    assert_match(r"^(?((?=\d))abc)$", "");
+    assert_match(r"^(?((?=\w))abc)$", "abc");
+    assert_no_match(r"^(?((?=\d))\wabc|\d!)$", "5!");
 }
 
 #[cfg_attr(feature = "track_caller", track_caller)]

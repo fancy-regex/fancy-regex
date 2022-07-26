@@ -217,6 +217,8 @@ impl Compiler {
     where
         F: FnMut(&mut Compiler, usize) -> Result<()>,
     {
+        self.b.add(Insn::BeginAtomic);
+
         let split_pc = self.b.pc();
         // add the split instruction - we will update it's second pc later
         self.b.add(Insn::Split(split_pc + 1, usize::MAX));
@@ -225,7 +227,7 @@ impl Compiler {
         handle_child(self, 0)?;
 
         // mark it as successful to remove the state we added as a split earlier
-        self.b.add(Insn::SucceedCondition);
+        self.b.add(Insn::EndAtomic);
 
         // add the truth branch
         handle_child(self, 1)?;
@@ -679,19 +681,18 @@ mod tests {
 
     #[test]
     fn conditional_expression_can_be_compiled() {
-        let prog = compile_prog(r"(?(?=\d)\wabc|\d!)");
+        let prog = compile_prog(r"(?(ab)c|d)");
 
-        assert_eq!(prog.len(), 9, "prog: {:?}", prog);
+        assert_eq!(prog.len(), 8, "prog: {:?}", prog);
 
-        assert_matches!(prog[0], Split(1, 7));
-        assert_matches!(prog[1], Save(0));
-        assert_delegate_sized(&prog[2], "^\\d");
-        assert_matches!(prog[3], Restore(0));
-        assert_matches!(prog[4], SucceedCondition);
-        assert_delegate_sized(&prog[5], "^\\wabc");
-        assert_matches!(prog[6], Jmp(8));
-        assert_delegate_sized(&prog[7], "^\\d!");
-        assert_matches!(prog[8], End);
+        assert_matches!(prog[0], BeginAtomic);
+        assert_matches!(prog[1], Split(2, 6));
+        assert_matches!(prog[2], Lit(ref l) if l == "ab");
+        assert_matches!(prog[3], EndAtomic);
+        assert_matches!(prog[4], Lit(ref l) if l == "c");
+        assert_matches!(prog[5], Jmp(7));
+        assert_matches!(prog[6], Lit(ref l) if l == "d");
+        assert_matches!(prog[7], End);
     }
 
     fn compile_prog(re: &str) -> Vec<Insn> {

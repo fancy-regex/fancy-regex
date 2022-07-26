@@ -194,8 +194,6 @@ pub enum Insn {
     ContinueFromPreviousMatchEnd,
     /// Continue only if the specified capture group has already been populated as part of the match
     BackrefExistsCondition(usize),
-    /// Conditional expression succeeded
-    SucceedCondition,
 }
 
 /// Sequence of instructions for the VM to execute.
@@ -591,13 +589,6 @@ pub(crate) fn run(
                         }
                     }
                     break 'fail;
-                }
-                Insn::SucceedCondition => {
-                    // Reaching this instruction means that the body of the
-                    // condition matched. This means that we need to discard the
-                    // state for when the condition failed, because we don't want
-                    // to explore it (i.e. if the truth branch fails).
-                    state.pop();
                 }
                 Insn::Backref(slot) => {
                     let lo = state.get(slot);

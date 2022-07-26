@@ -242,7 +242,7 @@
   // Compile failed: ParseError(10, GeneralParseError("expected conditional to be a backreference or at least an expression for when the condition is true"))
   x2("(a*)(?(-1))aa", "aaaaa", 0, 5);
 
-  // Compile failed: ParseError(7, GeneralParseError("next byte isn't a closing paren after condition"))
+  // Compile failed: ParseError(7, GeneralParseError("expected close paren"))
   x2("(a)(?(1+0)b|c)d", "abd", 0, 3);
 
   // Compile failed: ParseError(5, UnknownFlag("(?'"))
@@ -847,7 +847,7 @@
   x2("(?:(*COUNT[AB]{X})[ab]|(*COUNT[CD]{X})[cd])*(*CMP{AB,<,CD})",
      "abababcdab", 5, 8);
 
-  // Compile failed: ParseError(4, UnknownFlag("(?{"))
+  // Compile failed: ParseError(3, TargetNotRepeatable)
   x2("(?(?{....})123|456)", "123", 0, 3);
 
   // Compile failed: ParseError(3, TargetNotRepeatable)
