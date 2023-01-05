@@ -41,6 +41,9 @@ jobs:
           - 1.42.0 # MSRV (minimum supported Rust version)
           - stable
           - beta
+        include:
+          - rust: 1.42.0
+            msrv: true
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
@@ -51,6 +54,13 @@ jobs:
           toolchain: ${{ matrix.rust }}
           profile: minimal
           override: true
+
+      # See https://github.com/matklad/once_cell/issues/201
+      # To test locally, enable the lock file and then run:
+      # $ docker run --rm --user "$(id -u)":"$(id -g)" -v "$PWD":/usr/src/myapp -w /usr/src/myapp rust:1.42.0 cargo test
+      - name: Use Cargo.lock for MSRV
+        if: ${{ matrix.msrv }}
+        run: cp Cargo.lock.msrv Cargo.lock
 
       - name: Run cargo test
         uses: actions-rs/cargo@v1
@@ -106,19 +116,16 @@ jobs:
     name: coverage
     runs-on: ubuntu-latest
     container:
-      image: xd009642/tarpaulin:0.16.0
+      image: xd009642/tarpaulin:0.20.1
       options: --security-opt seccomp=unconfined
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
 
       - name: Generate code coverage
-        uses: actions-rs/cargo@v1
-        with:
-          command: tarpaulin
-          args: --out Xml
+        run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out Xml
 
       - name: Upload to codecov.io
-        uses: codecov/codecov-action@v1
+        uses: codecov/codecov-action@v2
         with:
           fail_ci_if_error: true

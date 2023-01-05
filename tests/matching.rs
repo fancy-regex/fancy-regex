@@ -113,6 +113,11 @@ fn end_of_hard_expression_cannot_be_delegated() {
 }
 
 #[test]
+fn issue103() {
+    assert_no_match(r"(([ab]+)\1b)", "babab");
+}
+
+#[test]
 fn backreference_validity_checker() {
     assert_match(r"(a)(?(1))", "a");
     assert_match(r"(?<group1>a)(?('group1'))b", "ab");
