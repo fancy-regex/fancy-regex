@@ -112,6 +112,11 @@ fn end_of_hard_expression_cannot_be_delegated() {
     assert_match(r"((?!x)(?:a|ab))c", "abc");
 }
 
+#[test]
+fn issue103() {
+    assert_no_match(r"(([ab]+)\1b)", "babab");
+}
+
 #[cfg_attr(feature = "track_caller", track_caller)]
 fn assert_match(re: &str, text: &str) {
     let result = match_text(re, text);

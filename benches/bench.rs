@@ -63,7 +63,11 @@ fn run_backtrack(c: &mut Criterion) {
     let a = analyze(&tree).unwrap();
     let p = compile(&a).unwrap();
     c.bench_function("run_backtrack", |b| {
-        b.iter(|| run_default(&p, "babab", 0).unwrap())
+        b.iter(|| {
+            let result = run_default(&p, "babab", 0).unwrap();
+            assert_eq!(result, Some(vec![0, 5, 0, 2]));
+            return result;
+        })
     });
 }
 
