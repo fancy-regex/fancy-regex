@@ -595,6 +595,10 @@ pub(crate) fn run(
                         break 'fail;
                     }
                     let hi = state.get(slot + 1);
+                    if hi == usize::MAX {
+                        // Referenced group hasn't matched, so the backref doesn't match either
+                        break 'fail;
+                    }
                     let ref_text = &s[lo..hi];
                     let ix_end = ix + ref_text.len();
                     if !matches_literal(s, ix, ix_end, ref_text) {
