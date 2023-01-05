@@ -8,7 +8,9 @@ with the exception that 0.x versions can break between minor versions.
 
 ## Unreleased
 ### Added
-- Support for [conditionals](https://www.regular-expressions.info/conditional.html).
+- Support for [conditionals](https://www.regular-expressions.info/conditional.html): using a regex like
+  `(?<test>a)?b(?(test)c|d)` will try to match `c` after `b` if `a` matched in the capture group named
+  `test`, otherwise `d` after `b` if `a` wasn't captured into the `test` group.
 ### Changed
 - Updated parse errors to show the position they occurred at.
 

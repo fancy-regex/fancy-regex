@@ -217,6 +217,10 @@ impl Compiler {
     where
         F: FnMut(&mut Compiler, usize) -> Result<()>,
     {
+        // here we use atomic group functionality to be able to remove the program counter
+        // relating to the split instruction's second position if the conditional succeeds
+        // This is to ensure that if the condition succeeds, but the "true" branch from the
+        // conditional fails, that it wouldn't jump to the "false" branch.
         self.b.add(Insn::BeginAtomic);
 
         let split_pc = self.b.pc();
