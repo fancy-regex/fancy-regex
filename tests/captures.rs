@@ -89,6 +89,15 @@ fn captures_with_nested_keepout() {
 }
 
 #[test]
+fn captures_with_conditional() {
+    let captures = captures(r"^(?((ab))c|d)$", "abc");
+    assert_eq!(captures.len(), 2);
+    assert_match(captures.get(0), "abc", 0, 3);
+    assert_match(captures.get(1), "ab", 0, 2);
+    assert!(captures.get(2).is_none());
+}
+
+#[test]
 fn captures_iter() {
     let text = "11 21 33";
 

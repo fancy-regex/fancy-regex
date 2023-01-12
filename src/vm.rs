@@ -192,6 +192,8 @@ pub enum Insn {
     },
     /// Anchor to match at the position where the previous match ended
     ContinueFromPreviousMatchEnd,
+    /// Continue only if the specified capture group has already been populated as part of the match
+    BackrefExistsCondition(usize),
 }
 
 /// Sequence of instructions for the VM to execute.
@@ -605,6 +607,13 @@ pub(crate) fn run(
                         break 'fail;
                     }
                     ix = ix_end;
+                }
+                Insn::BackrefExistsCondition(group) => {
+                    let lo = state.get(group * 2);
+                    if lo == usize::MAX {
+                        // Referenced group hasn't matched, so the backref doesn't match either
+                        break 'fail;
+                    }
                 }
                 Insn::BeginAtomic => {
                     let count = state.backtrack_count();

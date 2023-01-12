@@ -589,6 +589,8 @@ impl<'a> Parser<'a> {
             return self.parse_named_backref(ix + 3, "", ")");
         } else if self.re[ix..].starts_with("?>") {
             (None, 2)
+        } else if self.re[ix..].starts_with("?(") {
+            return self.parse_conditional(ix + 2, depth);
         } else if self.re[ix..].starts_with('?') {
             return self.parse_flags(ix, depth);
         } else {
@@ -597,6 +599,16 @@ impl<'a> Parser<'a> {
         };
         let ix = ix + skip;
         let (ix, child) = self.parse_re(ix, depth)?;
+        let ix = self.check_for_close_paren(ix)?;
+        let result = match (la, skip) {
+            (Some(la), _) => Expr::LookAround(Box::new(child), la),
+            (None, 2) => Expr::AtomicGroup(Box::new(child)),
+            _ => Expr::Group(Box::new(child)),
+        };
+        Ok((ix, result))
+    }
+
+    fn check_for_close_paren(&self, ix: usize) -> Result<usize> {
         let ix = self.optional_whitespace(ix)?;
         if ix == self.re.len() {
             return Err(Error::ParseError(ix, ParseError::UnclosedOpenParen));
@@ -605,13 +617,8 @@ impl<'a> Parser<'a> {
                 ix,
                 ParseError::GeneralParseError("expected close paren".to_string()),
             ));
-        };
-        let result = match (la, skip) {
-            (Some(la), _) => Expr::LookAround(Box::new(child), la),
-            (None, 2) => Expr::AtomicGroup(Box::new(child)),
-            _ => Expr::Group(Box::new(child)),
-        };
-        Ok((ix + 1, result))
+        }
+        Ok(ix + 1)
     }
 
     // ix points to `?` in `(?`
@@ -677,6 +684,74 @@ impl<'a> Parser<'a> {
             }
             ix += 1;
         }
+    }
+
+    // ix points to after the last ( in (?(
+    fn parse_conditional(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
+        if ix >= self.re.len() {
+            return Err(Error::ParseError(ix, ParseError::UnclosedOpenParen));
+        }
+        let bytes = self.re.as_bytes();
+        // get the character after the open paren
+        let b = bytes[ix];
+        let (mut next, condition) = if is_digit(b) {
+            self.parse_numbered_backref(ix)?
+        } else if b == b'\'' {
+            self.parse_named_backref(ix, "'", "'")?
+        } else if b == b'<' {
+            self.parse_named_backref(ix, "<", ">")?
+        } else {
+            self.parse_re(ix, depth)?
+        };
+        next = self.check_for_close_paren(next)?;
+        let (end, child) = self.parse_re(next, depth)?;
+        if end == next {
+            // Backreference validity checker
+            if let Expr::Backref(group) = condition {
+                return Ok((end + 1, Expr::BackrefExistsCondition(group)));
+            } else {
+                return Err(Error::ParseError(
+                    end,
+                    ParseError::GeneralParseError(
+                        "expected conditional to be a backreference or at least an expression for when the condition is true".to_string()
+                    )
+                ));
+            }
+        }
+        let if_true: Expr;
+        let mut if_false: Expr = Expr::Empty;
+        if let Expr::Alt(mut alternatives) = child {
+            // the truth branch will be the first alternative
+            if_true = alternatives.remove(0);
+            // if there is only one alternative left, take it out the Expr::Alt
+            if alternatives.len() == 1 {
+                if_false = alternatives.pop().expect("expected 2 alternatives");
+            } else {
+                // otherwise the remaining branches become the false branch
+                if_false = Expr::Alt(alternatives);
+            }
+        } else {
+            // there is only one branch - the truth branch. i.e. "if" without "else"
+            if_true = child;
+        }
+        let inner_condition = if let Expr::Backref(group) = condition {
+            Expr::BackrefExistsCondition(group)
+        } else {
+            condition
+        };
+
+        Ok((
+            end + 1,
+            if if_true == Expr::Empty && if_false == Expr::Empty {
+                inner_condition
+            } else {
+                Expr::Conditional {
+                    condition: Box::new(inner_condition),
+                    true_branch: Box::new(if_true),
+                    false_branch: Box::new(if_false),
+                }
+            },
+        ))
     }
 
     fn flag(&self, flag: u32) -> bool {
@@ -1440,6 +1515,206 @@ mod tests {
         assert_eq!(
             p("a\\Kb"),
             Expr::Concat(vec![make_literal("a"), Expr::KeepOut, make_literal("b"),])
+        );
+    }
+
+    #[test]
+    fn backref_exists_condition() {
+        assert_eq!(
+            p("(h)?(?(1))"),
+            Expr::Concat(vec![
+                Expr::Repeat {
+                    child: Box::new(Expr::Group(Box::new(make_literal("h")))),
+                    lo: 0,
+                    hi: 1,
+                    greedy: true
+                },
+                Expr::BackrefExistsCondition(1)
+            ])
+        );
+        assert_eq!(
+            p("(?<h>h)?(?('h'))"),
+            Expr::Concat(vec![
+                Expr::Repeat {
+                    child: Box::new(Expr::Group(Box::new(make_literal("h")))),
+                    lo: 0,
+                    hi: 1,
+                    greedy: true
+                },
+                Expr::BackrefExistsCondition(1)
+            ])
+        );
+    }
+
+    #[test]
+    fn conditional_non_backref_validity_check_without_branches() {
+        assert_error(
+            "(?(foo))",
+            "Parsing error at position 7: General parsing error: expected conditional to be a backreference or at least an expression for when the condition is true",
+        );
+    }
+
+    #[test]
+    fn conditional_invalid_target_of_repeat_operator() {
+        assert_error(
+            r"(?(?=\d)\w|!)",
+            "Parsing error at position 3: Target of repeat operator is invalid",
+        );
+    }
+
+    #[test]
+    fn backref_condition_with_one_two_or_three_branches() {
+        assert_eq!(
+            p("(h)?(?(1)i|x)"),
+            Expr::Concat(vec![
+                Expr::Repeat {
+                    child: Box::new(Expr::Group(Box::new(make_literal("h")))),
+                    lo: 0,
+                    hi: 1,
+                    greedy: true
+                },
+                Expr::Conditional {
+                    condition: Box::new(Expr::BackrefExistsCondition(1)),
+                    true_branch: Box::new(make_literal("i")),
+                    false_branch: Box::new(make_literal("x")),
+                },
+            ])
+        );
+
+        assert_eq!(
+            p("(h)?(?(1)i)"),
+            Expr::Concat(vec![
+                Expr::Repeat {
+                    child: Box::new(Expr::Group(Box::new(make_literal("h")))),
+                    lo: 0,
+                    hi: 1,
+                    greedy: true
+                },
+                Expr::Conditional {
+                    condition: Box::new(Expr::BackrefExistsCondition(1)),
+                    true_branch: Box::new(make_literal("i")),
+                    false_branch: Box::new(Expr::Empty),
+                },
+            ])
+        );
+
+        assert_eq!(
+            p("(h)?(?(1)ii|xy|z)"),
+            Expr::Concat(vec![
+                Expr::Repeat {
+                    child: Box::new(Expr::Group(Box::new(make_literal("h")))),
+                    lo: 0,
+                    hi: 1,
+                    greedy: true
+                },
+                Expr::Conditional {
+                    condition: Box::new(Expr::BackrefExistsCondition(1)),
+                    true_branch: Box::new(Expr::Concat(
+                        vec![make_literal("i"), make_literal("i"),]
+                    )),
+                    false_branch: Box::new(Expr::Alt(vec![
+                        Expr::Concat(vec![make_literal("x"), make_literal("y"),]),
+                        make_literal("z"),
+                    ])),
+                },
+            ])
+        );
+
+        assert_eq!(
+            p("(?<cap>h)?(?(<cap>)ii|xy|z)"),
+            Expr::Concat(vec![
+                Expr::Repeat {
+                    child: Box::new(Expr::Group(Box::new(make_literal("h")))),
+                    lo: 0,
+                    hi: 1,
+                    greedy: true
+                },
+                Expr::Conditional {
+                    condition: Box::new(Expr::BackrefExistsCondition(1)),
+                    true_branch: Box::new(Expr::Concat(
+                        vec![make_literal("i"), make_literal("i"),]
+                    )),
+                    false_branch: Box::new(Expr::Alt(vec![
+                        Expr::Concat(vec![make_literal("x"), make_literal("y"),]),
+                        make_literal("z"),
+                    ])),
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn conditional() {
+        assert_eq!(
+            p("((?(a)b|c))(\\1)"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(Expr::Conditional {
+                    condition: Box::new(make_literal("a")),
+                    true_branch: Box::new(make_literal("b")),
+                    false_branch: Box::new(make_literal("c"))
+                })),
+                Expr::Group(Box::new(Expr::Backref(1)))
+            ])
+        );
+
+        assert_eq!(
+            p(r"^(?(\d)abc|\d!)$"),
+            Expr::Concat(vec![
+                Expr::StartText,
+                Expr::Conditional {
+                    condition: Box::new(Expr::Delegate {
+                        inner: "\\d".to_string(),
+                        size: 1,
+                        casei: false,
+                    }),
+                    true_branch: Box::new(Expr::Concat(vec![
+                        make_literal("a"),
+                        make_literal("b"),
+                        make_literal("c"),
+                    ])),
+                    false_branch: Box::new(Expr::Concat(vec![
+                        Expr::Delegate {
+                            inner: "\\d".to_string(),
+                            size: 1,
+                            casei: false,
+                        },
+                        make_literal("!"),
+                    ])),
+                },
+                Expr::EndText,
+            ])
+        );
+
+        assert_eq!(
+            p(r"(?((?=\d))\w|!)"),
+            Expr::Conditional {
+                condition: Box::new(Expr::LookAround(
+                    Box::new(Expr::Delegate {
+                        inner: "\\d".to_string(),
+                        size: 1,
+                        casei: false
+                    }),
+                    LookAhead
+                )),
+                true_branch: Box::new(Expr::Delegate {
+                    inner: "\\w".to_string(),
+                    size: 1,
+                    casei: false,
+                }),
+                false_branch: Box::new(make_literal("!")),
+            },
+        );
+
+        assert_eq!(
+            p(r"(?((ab))c|d)"),
+            Expr::Conditional {
+                condition: Box::new(Expr::Group(Box::new(Expr::Concat(vec![
+                    make_literal("a"),
+                    make_literal("b"),
+                ]),))),
+                true_branch: Box::new(make_literal("c")),
+                false_branch: Box::new(make_literal("d")),
+            },
         );
     }
 

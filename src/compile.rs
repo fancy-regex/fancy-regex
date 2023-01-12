@@ -147,6 +147,9 @@ impl Compiler {
             Expr::Backref(group) => {
                 self.b.add(Insn::Backref(group * 2));
             }
+            Expr::BackrefExistsCondition(group) => {
+                self.b.add(Insn::BackrefExistsCondition(group));
+            }
             Expr::AtomicGroup(_) => {
                 // TODO optimization: atomic insns are not needed if the
                 // child doesn't do any backtracking.
@@ -162,14 +165,14 @@ impl Compiler {
                 // TODO: might want to have more specialized impls
                 self.compile_delegate(info)?;
             }
-            Expr::NamedBackref(_) => {
-                unreachable!("named backrefs should have been eliminated");
-            }
             Expr::KeepOut => {
                 self.b.add(Insn::Save(0));
             }
             Expr::ContinueFromPreviousMatchEnd => {
                 self.b.add(Insn::ContinueFromPreviousMatchEnd);
+            }
+            Expr::Conditional { .. } => {
+                self.compile_conditional(|compiler, i| compiler.visit(&info.children[i], hard))?;
             }
         }
         Ok(())
@@ -207,6 +210,42 @@ impl Compiler {
         for jmp_pc in jmps {
             self.b.set_jmp_target(jmp_pc, next_pc);
         }
+        Ok(())
+    }
+
+    fn compile_conditional<F>(&mut self, mut handle_child: F) -> Result<()>
+    where
+        F: FnMut(&mut Compiler, usize) -> Result<()>,
+    {
+        // here we use atomic group functionality to be able to remove the program counter
+        // relating to the split instruction's second position if the conditional succeeds
+        // This is to ensure that if the condition succeeds, but the "true" branch from the
+        // conditional fails, that it wouldn't jump to the "false" branch.
+        self.b.add(Insn::BeginAtomic);
+
+        let split_pc = self.b.pc();
+        // add the split instruction - we will update it's second pc later
+        self.b.add(Insn::Split(split_pc + 1, usize::MAX));
+
+        // add the conditional expression
+        handle_child(self, 0)?;
+
+        // mark it as successful to remove the state we added as a split earlier
+        self.b.add(Insn::EndAtomic);
+
+        // add the truth branch
+        handle_child(self, 1)?;
+        // add an instruction to jump over the false branch - we will update the jump target later
+        let jump_over_false_pc = self.b.pc();
+        self.b.add(Insn::Jmp(0));
+
+        // add the false branch, update the split target
+        self.b.set_split_target(split_pc, self.b.pc(), true);
+        handle_child(self, 2)?;
+
+        // update the jump target for jumping over the false branch
+        self.b.set_jmp_target(jump_over_false_pc, self.b.pc());
+
         Ok(())
     }
 
@@ -642,6 +681,22 @@ mod tests {
         assert_matches!(prog[6], Lit(ref l) if l == "ab");
         assert_delegate(&prog[7], "^x*");
         assert_matches!(prog[8], End);
+    }
+
+    #[test]
+    fn conditional_expression_can_be_compiled() {
+        let prog = compile_prog(r"(?(ab)c|d)");
+
+        assert_eq!(prog.len(), 8, "prog: {:?}", prog);
+
+        assert_matches!(prog[0], BeginAtomic);
+        assert_matches!(prog[1], Split(2, 6));
+        assert_matches!(prog[2], Lit(ref l) if l == "ab");
+        assert_matches!(prog[3], EndAtomic);
+        assert_matches!(prog[4], Lit(ref l) if l == "c");
+        assert_matches!(prog[5], Jmp(7));
+        assert_matches!(prog[6], Lit(ref l) if l == "d");
+        assert_matches!(prog[7], End);
     }
 
     fn compile_prog(re: &str) -> Vec<Insn> {

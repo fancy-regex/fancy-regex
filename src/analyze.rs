@@ -24,7 +24,7 @@ use bit_set::BitSet;
 use std::cmp::min;
 use std::usize;
 
-use crate::parse::{ExprTree, NamedGroups};
+use crate::parse::ExprTree;
 use crate::CompileError;
 use crate::Error;
 use crate::Expr;
@@ -74,7 +74,6 @@ impl<'a> Info<'a> {
 struct Analyzer<'a> {
     backrefs: &'a BitSet,
     group_ix: usize,
-    group_names: &'a NamedGroups,
 }
 
 impl<'a> Analyzer<'a> {
@@ -172,12 +171,6 @@ impl<'a> Analyzer<'a> {
                 }
                 hard = true;
             }
-            Expr::NamedBackref(ref name) => {
-                if !self.group_names.contains_key(name) {
-                    return Err(Error::CompileError(CompileError::InvalidBackref));
-                }
-                hard = true;
-            }
             Expr::AtomicGroup(ref child) => {
                 let child_info = self.visit(child)?;
                 min_size = child_info.min_size;
@@ -193,6 +186,39 @@ impl<'a> Analyzer<'a> {
             Expr::ContinueFromPreviousMatchEnd => {
                 hard = true;
                 const_size = true;
+            }
+            Expr::BackrefExistsCondition(group) => {
+                if group >= self.group_ix {
+                    return Err(Error::CompileError(CompileError::InvalidBackref));
+                }
+                hard = true;
+                const_size = true;
+            }
+            Expr::Conditional {
+                ref condition,
+                ref true_branch,
+                ref false_branch,
+            } => {
+                hard = true;
+
+                let child_info_condition = self.visit(condition)?;
+                let child_info_truth = self.visit(true_branch)?;
+                let child_info_false = self.visit(false_branch)?;
+
+                min_size = child_info_condition.min_size
+                    + min(child_info_truth.min_size, child_info_false.min_size);
+                const_size = child_info_condition.const_size
+                    && child_info_truth.const_size
+                    && child_info_false.const_size
+                    // if the condition's size plus the truth branch's size is equal to the false branch's size then it's const size
+                    && child_info_condition.min_size + child_info_truth.min_size == child_info_false.min_size;
+                looks_left = child_info_condition.looks_left
+                    || child_info_truth.looks_left
+                    || child_info_false.looks_left;
+
+                children.push(child_info_condition);
+                children.push(child_info_truth);
+                children.push(child_info_false);
             }
         };
 
@@ -221,7 +247,6 @@ pub fn analyze<'a>(tree: &'a ExprTree) -> Result<Info<'a>> {
     let mut analyzer = Analyzer {
         backrefs: &tree.backrefs,
         group_ix: 0,
-        group_names: &tree.named_groups,
     };
 
     analyzer.visit(&tree.expr)

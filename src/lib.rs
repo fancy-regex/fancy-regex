@@ -142,6 +142,17 @@ assert!(re.is_match("abcc").unwrap());
 assert!(!re.is_match("abc").unwrap());
 ```
 
+Conditionals - if/then/else:
+
+`(?(1))`
+: continue only if first capture group matched \
+`(?(<name>))`
+: continue only if capture group named *name* matched \
+`(?(1)true_branch|false_branch)`
+: if the first capture group matched then execute the true_branch regex expression, else execute false_branch ([docs](https://www.regular-expressions.info/conditional.html)) \
+`(?(condition)true_branch|false_branch)`
+: if the condition matches then execute the true_branch regex expression, else execute false_branch from the point just before the condition was evaluated
+
 [regex]: https://crates.io/crates/regex
 */
 
@@ -1207,8 +1218,6 @@ pub enum Expr {
     /// Back reference to a capture group, e.g. `\1` in `(abc|def)\1` references the captured group
     /// and the whole regex matches either `abcabc` or `defdef`.
     Backref(usize),
-    /// Back reference to a named capture group.
-    NamedBackref(String),
     /// Atomic non-capturing group, e.g. `(?>ab|a)` in text that contains `ab` will match `ab` and
     /// never backtrack and try `a`, even if matching fails after the atomic group.
     AtomicGroup(Box<Expr>),
@@ -1216,6 +1225,17 @@ pub enum Expr {
     KeepOut,
     /// Anchor to match at the position where the previous match ended
     ContinueFromPreviousMatchEnd,
+    /// Conditional expression based on whether the numbered capture group matched or not
+    BackrefExistsCondition(usize),
+    /// If/Then/Else Condition. If there is no Then/Else, these will just be empty expressions.
+    Conditional {
+        /// The conditional expression to evaluate
+        condition: Box<Expr>,
+        /// What to execute if the condition is true
+        true_branch: Box<Expr>,
+        /// What to execute if the condition is false
+        false_branch: Box<Expr>,
+    },
 }
 
 /// Type of look-around assertion as used for a look-around expression.
