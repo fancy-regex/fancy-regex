@@ -6,13 +6,16 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
-## Unreleased
+## [0.11.0] - 2023-01-12
 ### Added
 - Support for [conditionals](https://www.regular-expressions.info/conditional.html): using a regex like
   `(?<test>a)?b(?(test)c|d)` will try to match `c` after `b` if `a` matched in the capture group named
   `test`, otherwise `d` after `b` if `a` wasn't captured into the `test` group.
 ### Changed
 - Updated parse errors to show the position they occurred at.
+### Fixed
+- Fix panic when backref is used within referenced group itself and
+  group end index is not known yet (#103)
 
 ## [0.10.0] - 2022-04-28
 ### Added
@@ -149,6 +152,7 @@ with the exception that 0.x versions can break between minor versions.
 - Initial release
 
 
+[0.11.0]: https://github.com/fancy-regex/fancy-regex/compare/0.10.0...0.11.0
 [0.10.0]: https://github.com/fancy-regex/fancy-regex/compare/0.9.0...0.10.0
 [0.9.0]: https://github.com/fancy-regex/fancy-regex/compare/0.8.0...0.9.0
 [0.8.0]: https://github.com/fancy-regex/fancy-regex/compare/0.7.1...0.8.0
