@@ -116,7 +116,7 @@ jobs:
     name: coverage
     runs-on: ubuntu-latest
     container:
-      image: xd009642/tarpaulin:0.20.1
+      image: xd009642/tarpaulin:0.23.1
       options: --security-opt seccomp=unconfined
     steps:
       - name: Checkout sources
@@ -126,6 +126,6 @@ jobs:
         run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out Xml
 
       - name: Upload to codecov.io
-        uses: codecov/codecov-action@v2
+        uses: codecov/codecov-action@v3
         with:
           fail_ci_if_error: true
