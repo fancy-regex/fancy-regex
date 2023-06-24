@@ -7,7 +7,7 @@ on:
     branches:
       - main
   schedule:
-    - cron: '00 01 * * *'
+    - cron: '17 01 * * 0'
 jobs:
   check:
     name: check
@@ -113,6 +113,7 @@ jobs:
           args: --all -- --check
 
   coverage:
+    if: ${{ github.event_name != 'schedule' }}
     name: coverage
     runs-on: ubuntu-latest
     container:
