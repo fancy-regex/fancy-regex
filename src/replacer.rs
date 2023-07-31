@@ -1,5 +1,7 @@
+use alloc::borrow::Cow;
+use alloc::string::String;
+
 use crate::Captures;
-use std::borrow::Cow;
 
 /// Replacer describes types that can be used to replace matches in a string.
 ///

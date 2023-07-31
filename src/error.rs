@@ -1,7 +1,8 @@
-use std::fmt;
+use alloc::string::String;
+use core::fmt;
 
 /// Result type for this crate with specific error enum.
-pub type Result<T> = ::std::result::Result<T, Error>;
+pub type Result<T> = ::core::result::Result<T, Error>;
 
 pub type ParseErrorPosition = usize;
 
@@ -101,6 +102,7 @@ pub enum RuntimeError {
     __Nonexhaustive,
 }
 
+#[cfg(feature = "std")]
 impl ::std::error::Error for Error {}
 
 impl fmt::Display for ParseError {

@@ -32,6 +32,12 @@ jobs:
         with:
           command: check
 
+      - name: Run cargo check --no-default-features
+        uses: actions-rs/cargo@v1
+        with:
+          command: check
+          args: --no-default-features
+
   test:
     name: test
     runs-on: ubuntu-latest
