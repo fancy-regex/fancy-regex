@@ -130,7 +130,11 @@ impl Expander {
     /// by this expander and the values of capture groups from `captures`.
     pub fn expansion(&self, template: &str, captures: &Captures<'_>) -> String {
         let mut cursor = Vec::with_capacity(template.len());
+        #[cfg(feature = "std")]
         self.write_expansion(&mut cursor, template, captures)
+            .expect("expansion succeeded");
+        #[cfg(not(feature = "std"))]
+        self.write_expansion_vec(&mut cursor, template, captures)
             .expect("expansion succeeded");
         String::from_utf8(cursor).expect("expansion is UTF-8")
     }
@@ -139,14 +143,49 @@ impl Expander {
     /// than calling `expansion` directly and appending to an existing string.
     pub fn append_expansion(&self, dst: &mut String, template: &str, captures: &Captures<'_>) {
         let mut cursor = core::mem::take(dst).into_bytes();
+        #[cfg(feature = "std")]
         self.write_expansion(&mut cursor, template, captures)
+            .expect("expansion succeeded");
+        #[cfg(not(feature = "std"))]
+        self.write_expansion_vec(&mut cursor, template, captures)
             .expect("expansion succeeded");
         *dst = String::from_utf8(cursor).expect("expansion is UTF-8");
     }
 
     /// Writes the expansion produced by `expansion` to `dst`.  Potentially more efficient
     /// than calling `expansion` directly and writing the result.
+    #[cfg(feature = "std")]
     pub fn write_expansion(
+        &self,
+        mut dst: impl std::io::Write,
+        template: &str,
+        captures: &Captures<'_>,
+    ) -> std::io::Result<()> {
+        self.exec(template, |step| match step {
+            Step::Char(c) => write!(dst, "{}", c),
+            Step::GroupName(name) => {
+                if let Some(m) = captures.name(name) {
+                    write!(dst, "{}", m.as_str())
+                } else if let Some(m) = name.parse().ok().and_then(|num| captures.get(num)) {
+                    write!(dst, "{}", m.as_str())
+                } else {
+                    Ok(())
+                }
+            }
+            Step::GroupNum(num) => {
+                if let Some(m) = captures.get(num) {
+                    write!(dst, "{}", m.as_str())
+                } else {
+                    Ok(())
+                }
+            }
+            Step::Error => Ok(()),
+        })
+    }
+
+    /// Writes the expansion produced by `expansion` to `dst`.  Potentially more efficient
+    /// than calling `expansion` directly and writing the result.
+    pub fn write_expansion_vec(
         &self,
         dst: &mut Vec<u8>,
         template: &str,
