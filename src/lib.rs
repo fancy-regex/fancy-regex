@@ -160,6 +160,7 @@ Conditionals - if/then/else:
 #![deny(missing_docs)]
 #![deny(missing_debug_implementations)]
 
+use std::convert::TryFrom;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::ops::{Index, Range};
@@ -969,6 +970,24 @@ impl Regex {
         }
         new.push_str(&text[last_match..]);
         Cow::Owned(new)
+    }
+}
+
+impl TryFrom<&str> for Regex {
+    type Error = Error;
+
+    /// Attempts to parse a string into a regular expression
+    fn try_from(s: &str) -> Result<Self> {
+        Self::new(s)
+    }
+}
+
+impl TryFrom<String> for Regex {
+    type Error = Error;
+
+    /// Attempts to parse a string into a regular expression
+    fn try_from(s: String) -> Result<Self> {
+        Self::new(&s)
     }
 }
 
