@@ -6,7 +6,7 @@ pub type Result<T> = ::std::result::Result<T, Error>;
 pub type ParseErrorPosition = usize;
 
 /// An error as the result of parsing, compiling or running a regex.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Error {
     /// An error as a result of parsing a regex pattern, with the position where the error occurred
     ParseError(ParseErrorPosition, ParseError),
@@ -22,7 +22,7 @@ pub enum Error {
 }
 
 /// An error for the result of parsing a regex pattern.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ParseError {
     /// General parsing error
     GeneralParseError(String),
@@ -64,7 +64,7 @@ pub enum ParseError {
 }
 
 /// An error as the result of compiling a regex.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum CompileError {
     /// Regex crate error
     InnerError(regex::Error),
@@ -86,7 +86,7 @@ pub enum CompileError {
 }
 
 /// An error as the result of executing a regex.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum RuntimeError {
     /// Max stack size exceeded for backtracking while executing regex.
     StackOverflow,
