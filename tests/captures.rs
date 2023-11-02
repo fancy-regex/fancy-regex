@@ -198,6 +198,24 @@ fn captures_from_pos_looking_left() {
     assert_match(captures.get(1), "x", 1, 2);
 }
 
+#[test]
+fn captures_with_zero_size_in_class() {
+    let re = common::regex(r"(\w)[^\>a]");
+    let mut c = re.captures_iter("awd dar");
+    assert_eq!(c.next().unwrap().unwrap().get(1).unwrap().range(), 0..1);
+    assert_eq!(c.next().unwrap().unwrap().get(1).unwrap().range(), 2..3);
+    assert_eq!(c.next().unwrap().unwrap().get(1).unwrap().range(), 5..6);
+    assert!(c.next().is_none());
+
+    // the following is not compatible with oniguruma
+    let re = common::regex(r"(\w)[\ba]");
+    let mut c = re.captures_iter("awd dar");
+    assert_eq!(c.next().unwrap().unwrap().get(1).unwrap().range(), 2..3);
+    assert_eq!(c.next().unwrap().unwrap().get(1).unwrap().range(), 4..5);
+    assert_eq!(c.next().unwrap().unwrap().get(1).unwrap().range(), 6..7);
+    assert!(c.next().is_none());
+}
+
 #[cfg_attr(feature = "track_caller", track_caller)]
 fn captures<'a>(re: &str, text: &'a str) -> Captures<'static, 'a> {
     let regex = Box::leak(Box::new(common::regex(re)));
