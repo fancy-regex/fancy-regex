@@ -20,8 +20,8 @@ fn character_class_escapes() {
 
     // The regex crate would reject the following because it's not necessary to escape them.
     // Other engines allow to escape any non-alphanumeric character.
-    assert_match(r"[\<]", "<");
-    assert_match(r"[\>]", ">");
+    assert_match(r"[\<]", "a b");
+    assert_match(r"[\>]", "a b");
     assert_match(r"[\.]", ".");
     assert_match(r"[\ ]", " ");
 

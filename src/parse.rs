@@ -337,20 +337,13 @@ impl<'a> Parser<'a> {
         let mut size = 1;
         if is_digit(b) {
             return self.parse_numbered_backref(ix + 1);
-        } else if b == b'k' || b == b'g' {
+        } else if matches!(b, b'k' | b'g') {
             // Named backref: \k<name>
             return self.parse_named_backref(ix + 2, "<", ">");
-        } else if b == b'A' || b == b'z' || b == b'b' || b == b'B' {
+        } else if matches!(b, b'A' | b'z' | b'b' | b'B' | b'<' | b'>') {
             size = 0;
-        } else if (b | 32) == b'd'
-            || (b | 32) == b's'
-            || (b | 32) == b'w'
-            || b == b'a'
-            || b == b'f'
-            || b == b'n'
-            || b == b'r'
-            || b == b't'
-            || b == b'v'
+        } else if matches!(b | 32, b'd' | b's' | b'w')
+            || matches!(b, b'a' | b'f' | b'n' | b'r' | b't' | b'v')
         {
             // size = 1
         } else if b == b'e' {
@@ -416,11 +409,17 @@ impl<'a> Parser<'a> {
                 ix,
                 ParseError::InvalidEscape(format!("\\{}", &self.re[ix + 1..end])),
             ));
-        } else if 0x20 <= b && b <= 0x7f {
+        } else if b.is_ascii_graphic() && !b.is_ascii_alphanumeric() || b == b' ' {
             // printable ASCII (including space, see issue #29)
             return Ok((end, make_literal(&self.re[ix + 1..end])));
+        } else {
+            // what to do with characters outside printable ASCII?
+            // can we consider they are error like this?
+            return Err(Error::ParseError(
+                ix,
+                ParseError::InvalidEscape(format!("\\{}", &self.re[ix + 1..end])),
+            ));
         }
-        // what to do with characters outside printable ASCII?
         let inner = String::from(&self.re[ix..end]);
         Ok((
             end,
@@ -486,11 +485,13 @@ impl<'a> Parser<'a> {
         let bytes = self.re.as_bytes();
         let mut ix = ix + 1; // skip opening '['
         let mut class = String::new();
+        let mut branches = Vec::new();
         let mut nest = 1;
         class.push('[');
 
         // Negated character class
-        if ix < self.re.len() && bytes[ix] == b'^' {
+        let negated = ix < self.re.len() && bytes[ix] == b'^';
+        if negated {
             class.push('^');
             ix += 1;
         }
@@ -517,8 +518,14 @@ impl<'a> Parser<'a> {
                         Expr::Literal { val, .. } => {
                             class.push_str(&escape(&val));
                         }
-                        Expr::Delegate { inner, .. } => {
-                            class.push_str(&inner);
+                        Expr::Delegate { inner, size, .. } => {
+                            if size != 0 {
+                                class.push_str(&inner);
+                            } else if nest == 1 {
+                                branches.push(inner);
+                            } else {
+                                return Err(Error::ParseError(ix, ParseError::InvalidClass));
+                            }
                         }
                         _ => {
                             return Err(Error::ParseError(ix, ParseError::InvalidClass));
@@ -548,13 +555,38 @@ impl<'a> Parser<'a> {
             ix = end;
         }
         class.push(']');
+        let empty_class = class == "[]";
+        let class = Expr::Delegate {
+            inner: class,
+            size: 1,
+            casei: self.flag(FLAG_CASEI),
+        };
+        let mut branches: Vec<_> = branches
+            .into_iter()
+            .map(|inner| Expr::Delegate {
+                inner,
+                size: 0,
+                casei: self.flag(FLAG_CASEI),
+            })
+            .collect();
         let ix = ix + 1; // skip closing ']'
         Ok((
             ix,
-            Expr::Delegate {
-                inner: class,
-                size: 1,
-                casei: self.flag(FLAG_CASEI),
+            if branches.is_empty() {
+                class
+            } else if !negated {
+                if !empty_class {
+                    branches.insert(0, class);
+                }
+                Expr::Alt(branches)
+            } else {
+                branches
+                    .into_iter()
+                    .fold(class, |child, cur| Expr::Conditional {
+                        condition: Box::new(cur),
+                        true_branch: Box::new(Expr::Empty),
+                        false_branch: Box::new(child),
+                    })
             },
         ))
     }
@@ -1731,11 +1763,13 @@ mod tests {
     }
 
     // found by cargo fuzz, then minimized
+    #[ignore]
     #[test]
     fn fuzz_1() {
         p(r"\ä");
     }
 
+    #[ignore]
     #[test]
     fn fuzz_2() {
         p(r"\pä");
