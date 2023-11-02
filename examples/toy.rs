@@ -68,7 +68,7 @@ fn main() {
                 }
             } else {
                 println!("no match");
-            }
+            };
         } else if cmd == "trace" {
             if let Some(re) = args.next() {
                 let prog = prog(&re);

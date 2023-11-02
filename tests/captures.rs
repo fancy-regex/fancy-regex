@@ -199,14 +199,14 @@ fn captures_from_pos_looking_left() {
 }
 
 #[cfg_attr(feature = "track_caller", track_caller)]
-fn captures<'a>(re: &str, text: &'a str) -> Captures<'a> {
-    let regex = common::regex(re);
+fn captures<'a>(re: &str, text: &'a str) -> Captures<'static, 'a> {
+    let regex = Box::leak(Box::new(common::regex(re)));
     let result = regex.captures(text);
     assert_captures(result)
 }
 
 #[cfg_attr(feature = "track_caller", track_caller)]
-fn assert_captures(result: Result<Option<Captures<'_>>>) -> Captures<'_> {
+fn assert_captures<'r, 't>(result: Result<Option<Captures<'r, 't>>>) -> Captures<'r, 't> {
     assert!(
         result.is_ok(),
         "Expected captures to succeed, but was {:?}",

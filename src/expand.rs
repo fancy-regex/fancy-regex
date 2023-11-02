@@ -127,7 +127,7 @@ impl Expander {
 
     /// Expands the template string `template` using the syntax defined
     /// by this expander and the values of capture groups from `captures`.
-    pub fn expansion(&self, template: &str, captures: &Captures<'_>) -> String {
+    pub fn expansion(&self, template: &str, captures: &Captures<'_, '_>) -> String {
         let mut cursor = io::Cursor::new(Vec::with_capacity(template.len()));
         self.write_expansion(&mut cursor, template, captures)
             .expect("expansion succeeded");
@@ -136,7 +136,7 @@ impl Expander {
 
     /// Appends the expansion produced by `expansion` to `dst`.  Potentially more efficient
     /// than calling `expansion` directly and appending to an existing string.
-    pub fn append_expansion(&self, dst: &mut String, template: &str, captures: &Captures<'_>) {
+    pub fn append_expansion(&self, dst: &mut String, template: &str, captures: &Captures<'_, '_>) {
         let pos = dst.len();
         let mut cursor = io::Cursor::new(mem::replace(dst, String::new()).into_bytes());
         cursor.set_position(pos as u64);
@@ -151,7 +151,7 @@ impl Expander {
         &self,
         mut dst: impl io::Write,
         template: &str,
-        captures: &Captures<'_>,
+        captures: &Captures<'_, '_>,
     ) -> io::Result<()> {
         self.exec(template, |step| match step {
             Step::Char(c) => write!(dst, "{}", c),

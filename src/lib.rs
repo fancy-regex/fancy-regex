@@ -160,11 +160,12 @@ Conditionals - if/then/else:
 #![deny(missing_docs)]
 #![deny(missing_debug_implementations)]
 
+use std::borrow::Cow;
+use std::cell::{RefCell, RefMut};
 use std::fmt;
 use std::fmt::{Debug, Formatter};
-use std::ops::{Index, Range};
+use std::ops::{Deref, DerefMut, Index, Range};
 use std::str::FromStr;
-use std::sync::Arc;
 use std::usize;
 
 mod analyze;
@@ -183,7 +184,6 @@ use crate::vm::{Prog, OPTION_SKIPPED_EMPTY_MATCH};
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
 pub use crate::expand::Expander;
 pub use crate::replacer::{NoExpand, Replacer, ReplacerRef};
-use std::borrow::Cow;
 
 const MAX_RECURSION: usize = 64;
 
@@ -197,22 +197,57 @@ pub struct RegexBuilder(RegexOptions);
 #[derive(Clone)]
 pub struct Regex {
     inner: RegexImpl,
-    named_groups: Arc<NamedGroups>,
+    named_groups: NamedGroups,
 }
 
 // Separate enum because we don't want to expose any of this
-#[derive(Clone)]
 enum RegexImpl {
     // Do we want to box this? It's pretty big...
     Wrap {
         inner: regex::Regex,
         options: RegexOptions,
+        locations: RefCell<regex::CaptureLocations>,
     },
     Fancy {
         prog: Prog,
         n_groups: usize,
         options: RegexOptions,
+        saves: RefCell<Vec<usize>>,
     },
+}
+
+impl Clone for RegexImpl {
+    fn clone(&self) -> Self {
+        match self {
+            RegexImpl::Wrap { inner, options, .. } => {
+                let inner = inner.clone();
+                let options = options.clone();
+                let locations = RefCell::new(inner.capture_locations());
+                RegexImpl::Wrap {
+                    inner,
+                    options,
+                    locations,
+                }
+            }
+            RegexImpl::Fancy {
+                prog,
+                n_groups,
+                options,
+                ..
+            } => {
+                let prog = prog.clone();
+                let n_groups = n_groups.clone();
+                let options = options.clone();
+                let locations = RefCell::new(Vec::new());
+                RegexImpl::Fancy {
+                    prog,
+                    n_groups,
+                    options,
+                    saves: locations,
+                }
+            }
+        }
+    }
 }
 
 /// A single match of a regex or group in an input text
@@ -322,7 +357,7 @@ impl<'r, 't> CaptureMatches<'r, 't> {
 }
 
 impl<'r, 't> Iterator for CaptureMatches<'r, 't> {
-    type Item = Result<Captures<'t>>;
+    type Item = Result<Captures<'r, 't>>;
 
     /// Adapted from the `regex` crate. Calls `captures_from_pos` repeatedly.
     /// Ignores empty matches immediately after a match.
@@ -357,27 +392,64 @@ impl<'r, 't> Iterator for CaptureMatches<'r, 't> {
 
 /// A set of capture groups found for a regex.
 #[derive(Debug)]
-pub struct Captures<'t> {
-    inner: CapturesImpl<'t>,
-    named_groups: Arc<NamedGroups>,
+pub struct Captures<'r, 't> {
+    inner: CapturesImpl<'r, 't>,
+    named_groups: &'r NamedGroups,
 }
 
 #[derive(Debug)]
-enum CapturesImpl<'t> {
+enum CapturesImpl<'r, 't> {
     Wrap {
         text: &'t str,
-        locations: regex::CaptureLocations,
+        locations: CowRef<'r, regex::CaptureLocations>,
     },
     Fancy {
         text: &'t str,
-        saves: Vec<usize>,
+        saves: CowRef<'r, Vec<usize>>,
     },
+}
+
+#[derive(Debug)]
+enum CowRef<'r, T> {
+    Borrowed(RefMut<'r, T>),
+    Owned(T),
+}
+
+impl<T> AsRef<T> for CowRef<'_, T> {
+    fn as_ref(&self) -> &T {
+        self
+    }
+}
+
+impl<T> AsMut<T> for CowRef<'_, T> {
+    fn as_mut(&mut self) -> &mut T {
+        self
+    }
+}
+
+impl<T> Deref for CowRef<'_, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        match self {
+            CowRef::Borrowed(borrowed) => borrowed.deref(),
+            CowRef::Owned(owned) => owned,
+        }
+    }
+}
+
+impl<T> DerefMut for CowRef<'_, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        match self {
+            CowRef::Borrowed(borrowed) => borrowed.deref_mut(),
+            CowRef::Owned(owned) => owned,
+        }
+    }
 }
 
 /// Iterator for captured groups in order in which they appear in the regex.
 #[derive(Debug)]
-pub struct SubCaptureMatches<'c, 't> {
-    caps: &'c Captures<'t>,
+pub struct SubCaptureMatches<'r, 't> {
+    caps: &'r Captures<'r, 't>,
     i: usize,
 }
 
@@ -521,9 +593,14 @@ impl Regex {
             };
             raw_e.to_str(&mut re_cooked, 0);
             let inner = compile::compile_inner(&re_cooked, &options)?;
+            let locations = RefCell::new(inner.capture_locations());
             return Ok(Regex {
-                inner: RegexImpl::Wrap { inner, options },
-                named_groups: Arc::new(tree.named_groups),
+                inner: RegexImpl::Wrap {
+                    inner,
+                    options,
+                    locations,
+                },
+                named_groups: tree.named_groups,
             });
         }
 
@@ -533,8 +610,9 @@ impl Regex {
                 prog,
                 n_groups: info.end_group,
                 options,
+                saves: RefCell::new(Vec::new()),
             },
-            named_groups: Arc::new(tree.named_groups),
+            named_groups: tree.named_groups,
         })
     }
 
@@ -564,7 +642,7 @@ impl Regex {
             RegexImpl::Fancy {
                 ref prog, options, ..
             } => {
-                let result = vm::run(prog, text, 0, 0, options)?;
+                let result = vm::run(prog, text, 0, 0, options, Some(0))?;
                 Ok(result.is_some())
             }
         }
@@ -650,7 +728,7 @@ impl Regex {
                 .find_at(text, pos)
                 .map(|m| Match::new(text, m.start(), m.end()))),
             RegexImpl::Fancy { prog, options, .. } => {
-                let result = vm::run(prog, text, pos, option_flags, options)?;
+                let result = vm::run(prog, text, pos, option_flags, options, Some(1))?;
                 Ok(result.map(|saves| Match::new(text, saves[0], saves[1])))
             }
         }
@@ -705,7 +783,7 @@ impl Regex {
     /// assert_eq!(captures.get(3).unwrap().as_str(), "07");
     /// assert_eq!(captures.get(0).unwrap().as_str(), "2018-04-07");
     /// ```
-    pub fn captures<'t>(&self, text: &'t str) -> Result<Option<Captures<'t>>> {
+    pub fn captures<'r, 't>(&'r self, text: &'t str) -> Result<Option<Captures<'r, 't>>> {
         self.captures_from_pos(text, 0)
     }
 
@@ -743,11 +821,20 @@ impl Regex {
     /// This matched the number "123" because it's at the beginning of the text
     /// of the string slice.
     ///
-    pub fn captures_from_pos<'t>(&self, text: &'t str, pos: usize) -> Result<Option<Captures<'t>>> {
-        let named_groups = self.named_groups.clone();
+    pub fn captures_from_pos<'r, 't>(
+        &'r self,
+        text: &'t str,
+        pos: usize,
+    ) -> Result<Option<Captures<'r, 't>>> {
+        let named_groups = &self.named_groups;
         match &self.inner {
-            RegexImpl::Wrap { inner, .. } => {
-                let mut locations = inner.capture_locations();
+            RegexImpl::Wrap {
+                inner, locations, ..
+            } => {
+                let mut locations = locations.try_borrow_mut().map_or_else(
+                    |_| CowRef::Owned(inner.capture_locations()),
+                    CowRef::Borrowed,
+                );
                 let result = inner.captures_read_at(&mut locations, text, pos);
                 Ok(result.map(|_| Captures {
                     inner: CapturesImpl::Wrap { text, locations },
@@ -758,15 +845,16 @@ impl Regex {
                 prog,
                 n_groups,
                 options,
-                ..
+                saves: locations,
             } => {
-                let result = vm::run(prog, text, pos, 0, options)?;
-                Ok(result.map(|mut saves| {
-                    saves.truncate(n_groups * 2);
-                    Captures {
-                        inner: CapturesImpl::Fancy { text, saves },
-                        named_groups,
-                    }
+                let mut saves = locations
+                    .try_borrow_mut()
+                    .map_or_else(|_| CowRef::Owned(Vec::new()), CowRef::Borrowed);
+                saves.clear();
+                let result = vm::run_to(&mut saves, prog, text, pos, 0, options, Some(*n_groups))?;
+                Ok(result.then(|| Captures {
+                    inner: CapturesImpl::Fancy { text, saves },
+                    named_groups,
                 }))
             }
         }
@@ -1016,7 +1104,7 @@ impl<'t> From<Match<'t>> for Range<usize> {
 }
 
 #[allow(clippy::len_without_is_empty)] // follow regex's API
-impl<'t> Captures<'t> {
+impl<'r, 't> Captures<'r, 't> {
     /// Get the capture group by its index in the regex.
     ///
     /// If there is no match for that group or the index does not correspond to a group, `None` is
@@ -1106,7 +1194,7 @@ impl<'t> Captures<'t> {
 /// # Panics
 ///
 /// If there is no group at the given index.
-impl<'t> Index<usize> for Captures<'t> {
+impl<'r, 't> Index<usize> for Captures<'r, 't> {
     type Output = str;
 
     fn index(&self, i: usize) -> &str {
@@ -1130,7 +1218,7 @@ impl<'t> Index<usize> for Captures<'t> {
 /// # Panics
 ///
 /// If there is no group named by the given value.
-impl<'t, 'i> Index<&'i str> for Captures<'t> {
+impl<'r, 't, 'i> Index<&'i str> for Captures<'r, 't> {
     type Output = str;
 
     fn index<'a>(&'a self, name: &'i str) -> &'a str {

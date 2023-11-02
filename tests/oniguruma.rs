@@ -162,7 +162,7 @@ fn run_test(test: &Test) -> Option<String> {
             let result = panic::catch_unwind(|| {
                 // compile regex again instead of using above, otherwise:
                 // "may not be safely transferrable across a catch_unwind boundary"
-                let regex = FancyRegex::new(&pattern).unwrap();
+                let regex = Box::leak(Box::new(FancyRegex::new(&pattern).unwrap()));
                 regex.captures(&text).unwrap()
             });
 
