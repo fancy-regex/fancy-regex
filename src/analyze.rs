@@ -36,13 +36,6 @@ pub struct Info<'a> {
     pub(crate) min_size: usize,
     pub(crate) const_size: bool,
     pub(crate) hard: bool,
-
-    /// Whether the expression's matching could be dependent on what the
-    /// previous character was. E.g. `^` matches if there's no previous
-    /// character; `(?m:^)` matches if the previous character was a newline.
-    /// The matching of `\b` depends on the previous character.
-    pub(crate) looks_left: bool,
-
     pub(crate) expr: &'a Expr,
     pub(crate) children: Vec<Info<'a>>,
 }
@@ -82,7 +75,6 @@ impl<'a> Analyzer<'a> {
         let mut min_size = 0;
         let mut const_size = false;
         let mut hard = false;
-        let mut looks_left = false;
         match *expr {
             Expr::Empty | Expr::EndText | Expr::EndLine => {
                 const_size = true;
@@ -98,13 +90,11 @@ impl<'a> Analyzer<'a> {
             }
             Expr::StartText | Expr::StartLine => {
                 const_size = true;
-                looks_left = true;
             }
             Expr::Concat(ref v) => {
                 const_size = true;
                 for child in v {
                     let child_info = self.visit(child)?;
-                    looks_left |= child_info.looks_left && min_size == 0;
                     min_size += child_info.min_size;
                     const_size &= child_info.const_size;
                     hard |= child_info.hard;
@@ -116,14 +106,12 @@ impl<'a> Analyzer<'a> {
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
                 hard = child_info.hard;
-                looks_left = child_info.looks_left;
                 children.push(child_info);
                 for child in &v[1..] {
                     let child_info = self.visit(child)?;
                     const_size &= child_info.const_size && min_size == child_info.min_size;
                     min_size = min(min_size, child_info.min_size);
                     hard |= child_info.hard;
-                    looks_left |= child_info.looks_left;
                     children.push(child_info);
                 }
             }
@@ -133,7 +121,6 @@ impl<'a> Analyzer<'a> {
                 let child_info = self.visit(child)?;
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
-                looks_left = child_info.looks_left;
                 // If there's a backref to this group, we potentially have to backtrack within the
                 // group. E.g. with `(x|xy)\1` and input `xyxy`, `x` matches but then the backref
                 // doesn't, so we have to backtrack and try `xy`.
@@ -145,7 +132,6 @@ impl<'a> Analyzer<'a> {
                 // min_size = 0
                 const_size = true;
                 hard = true;
-                looks_left = child_info.looks_left;
                 children.push(child_info);
             }
             Expr::Repeat {
@@ -155,14 +141,12 @@ impl<'a> Analyzer<'a> {
                 min_size = child_info.min_size * lo;
                 const_size = child_info.const_size && lo == hi;
                 hard = child_info.hard;
-                looks_left = child_info.looks_left;
                 children.push(child_info);
             }
             Expr::Delegate { size, .. } => {
                 // currently only used for empty and single-char matches
                 min_size = size;
                 const_size = true;
-                looks_left = size == 0; // TODO: conservative for \z
             }
             Expr::Backref(group) => {
                 if group >= self.group_ix {
@@ -174,7 +158,6 @@ impl<'a> Analyzer<'a> {
                 let child_info = self.visit(child)?;
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
-                looks_left = child_info.looks_left;
                 hard = true; // TODO: possibly could weaken
                 children.push(child_info);
             }
@@ -211,9 +194,6 @@ impl<'a> Analyzer<'a> {
                     && child_info_false.const_size
                     // if the condition's size plus the truth branch's size is equal to the false branch's size then it's const size
                     && child_info_condition.min_size + child_info_truth.min_size == child_info_false.min_size;
-                looks_left = child_info_condition.looks_left
-                    || child_info_truth.looks_left
-                    || child_info_false.looks_left;
 
                 children.push(child_info_condition);
                 children.push(child_info_truth);
@@ -229,7 +209,6 @@ impl<'a> Analyzer<'a> {
             min_size,
             const_size,
             hard,
-            looks_left,
         })
     }
 }
@@ -253,23 +232,23 @@ pub fn analyze<'a>(tree: &'a ExprTree) -> Result<Info<'a>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{analyze, literal_const_size};
+    use super::analyze;
+    // use super::literal_const_size;
     use crate::Expr;
-    use regex;
 
-    #[test]
-    fn case_folding_safe() {
-        let re = regex::Regex::new("(?i:ß)").unwrap();
-        if re.is_match("SS") {
-            assert!(!literal_const_size("ß", true));
-        }
+    // #[test]
+    // fn case_folding_safe() {
+    //     let re = regex::Regex::new("(?i:ß)").unwrap();
+    //     if re.is_match("SS") {
+    //         assert!(!literal_const_size("ß", true));
+    //     }
 
-        // Another tricky example, Armenian ECH YIWN
-        let re = regex::Regex::new("(?i:\\x{0587})").unwrap();
-        if re.is_match("\u{0565}\u{0582}") {
-            assert!(!literal_const_size("\u{0587}", true));
-        }
-    }
+    //     // Another tricky example, Armenian ECH YIWN
+    //     let re = regex::Regex::new("(?i:\\x{0587})").unwrap();
+    //     if re.is_match("\u{0565}\u{0582}") {
+    //         assert!(!literal_const_size("\u{0587}", true));
+    //     }
+    // }
 
     #[test]
     fn invalid_backref_1() {

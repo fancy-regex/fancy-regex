@@ -26,9 +26,9 @@ use alloc::vec::Vec;
 use alloc::{format, vec};
 
 use bit_set::BitSet;
-use regex::escape;
 use core::convert::TryInto;
 use core::usize;
+use regex_syntax::escape;
 
 use crate::LookAround::*;
 use crate::{codepoint_len, CompileError, Error, Expr, ParseError, Result, MAX_RECURSION};

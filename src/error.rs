@@ -1,5 +1,6 @@
 use alloc::string::String;
 use core::fmt;
+use regex_automata::meta::BuildError as RaBuildError;
 
 /// Result type for this crate with specific error enum.
 pub type Result<T> = ::core::result::Result<T, Error>;
@@ -61,7 +62,7 @@ pub enum ParseError {
 #[non_exhaustive]
 pub enum CompileError {
     /// Regex crate error
-    InnerError(regex::Error),
+    InnerError(RaBuildError),
     /// Look-behind assertion without constant size
     LookBehindNotConst,
     /// Couldn't parse group name
