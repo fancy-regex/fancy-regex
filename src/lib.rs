@@ -163,8 +163,8 @@ Conditionals - if/then/else:
 use regex_automata::meta::Regex as RaRegex;
 use regex_automata::util::captures::Captures as RaCaptures;
 use regex_automata::Input as RaInput;
+use spin::mutex::{SpinMutex, SpinMutexGuard};
 use std::borrow::Cow;
-use std::cell::{RefCell, RefMut};
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::ops::{Deref, DerefMut, Index, Range};
@@ -209,13 +209,13 @@ enum RegexImpl {
     Wrap {
         inner: RaRegex,
         options: RegexOptions,
-        locations: RefCell<RaCaptures>,
+        locations: SpinMutex<RaCaptures>,
     },
     Fancy {
         prog: Prog,
         n_groups: usize,
         options: RegexOptions,
-        saves: RefCell<Vec<usize>>,
+        saves: SpinMutex<Vec<usize>>,
     },
 }
 
@@ -225,7 +225,7 @@ impl Clone for RegexImpl {
             RegexImpl::Wrap { inner, options, .. } => {
                 let inner = inner.clone();
                 let options = options.clone();
-                let locations = RefCell::new(inner.create_captures());
+                let locations = SpinMutex::new(inner.create_captures());
                 RegexImpl::Wrap {
                     inner,
                     options,
@@ -241,7 +241,7 @@ impl Clone for RegexImpl {
                 let prog = prog.clone();
                 let n_groups = n_groups.clone();
                 let options = options.clone();
-                let locations = RefCell::new(Vec::new());
+                let locations = SpinMutex::new(Vec::new());
                 RegexImpl::Fancy {
                     prog,
                     n_groups,
@@ -404,47 +404,47 @@ pub struct Captures<'r, 't> {
 enum CapturesImpl<'r, 't> {
     Wrap {
         text: &'t str,
-        locations: CowRef<'r, RaCaptures>,
+        locations: CowSpin<'r, RaCaptures>,
     },
     Fancy {
         text: &'t str,
-        saves: CowRef<'r, Vec<usize>>,
+        saves: CowSpin<'r, Vec<usize>>,
     },
 }
 
 #[derive(Debug)]
-enum CowRef<'r, T> {
-    Borrowed(RefMut<'r, T>),
+enum CowSpin<'r, T> {
+    Borrowed(SpinMutexGuard<'r, T>),
     Owned(T),
 }
 
-impl<T> AsRef<T> for CowRef<'_, T> {
+impl<T> AsRef<T> for CowSpin<'_, T> {
     fn as_ref(&self) -> &T {
         self
     }
 }
 
-impl<T> AsMut<T> for CowRef<'_, T> {
+impl<T> AsMut<T> for CowSpin<'_, T> {
     fn as_mut(&mut self) -> &mut T {
         self
     }
 }
 
-impl<T> Deref for CowRef<'_, T> {
+impl<T> Deref for CowSpin<'_, T> {
     type Target = T;
     fn deref(&self) -> &T {
         match self {
-            CowRef::Borrowed(borrowed) => borrowed.deref(),
-            CowRef::Owned(owned) => owned,
+            CowSpin::Borrowed(borrowed) => borrowed.deref(),
+            CowSpin::Owned(owned) => owned,
         }
     }
 }
 
-impl<T> DerefMut for CowRef<'_, T> {
+impl<T> DerefMut for CowSpin<'_, T> {
     fn deref_mut(&mut self) -> &mut T {
         match self {
-            CowRef::Borrowed(borrowed) => borrowed.deref_mut(),
-            CowRef::Owned(owned) => owned,
+            CowSpin::Borrowed(borrowed) => borrowed.deref_mut(),
+            CowSpin::Owned(owned) => owned,
         }
     }
 }
@@ -596,7 +596,7 @@ impl Regex {
             };
             raw_e.to_str(&mut re_cooked, 0);
             let inner = compile::compile_inner(&re_cooked, &options)?;
-            let locations = RefCell::new(inner.create_captures());
+            let locations = SpinMutex::new(inner.create_captures());
             return Ok(Regex {
                 inner: RegexImpl::Wrap {
                     inner,
@@ -613,7 +613,7 @@ impl Regex {
                 prog,
                 n_groups: info.end_group,
                 options,
-                saves: RefCell::new(Vec::new()),
+                saves: SpinMutex::new(Vec::new()),
             },
             named_groups: tree.named_groups,
         })
@@ -834,9 +834,10 @@ impl Regex {
             RegexImpl::Wrap {
                 inner, locations, ..
             } => {
-                let mut locations = locations
-                    .try_borrow_mut()
-                    .map_or_else(|_| CowRef::Owned(inner.create_captures()), CowRef::Borrowed);
+                let mut locations = locations.try_lock().map_or_else(
+                    || CowSpin::Owned(inner.create_captures()),
+                    CowSpin::Borrowed,
+                );
                 inner.captures(RaInput::new(text).span(pos..text.len()), &mut locations);
                 Ok(locations.is_match().then(|| Captures {
                     inner: CapturesImpl::Wrap { text, locations },
@@ -850,8 +851,8 @@ impl Regex {
                 saves: locations,
             } => {
                 let mut saves = locations
-                    .try_borrow_mut()
-                    .map_or_else(|_| CowRef::Owned(Vec::new()), CowRef::Borrowed);
+                    .try_lock()
+                    .map_or_else(|| CowSpin::Owned(Vec::new()), CowSpin::Borrowed);
                 saves.clear();
                 let result = vm::run_to(&mut saves, prog, text, pos, 0, options, Some(*n_groups))?;
                 Ok(result.then(|| Captures {
