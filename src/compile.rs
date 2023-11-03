@@ -20,8 +20,11 @@
 
 //! Compilation of regexes to VM.
 
-use std::cell::RefCell;
+use regex_automata::meta::Regex as RaRegex;
+use regex_automata::meta::{Builder as RaBuilder, Config as RaConfig};
 use std::usize;
+#[cfg(test)]
+use std::{collections::BTreeMap, sync::RwLock};
 
 use crate::analyze::Info;
 use crate::vm::{Insn, Prog};
@@ -482,19 +485,31 @@ impl Compiler {
     }
 }
 
-pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<regex::Regex> {
-    let mut builder = regex::RegexBuilder::new(inner_re);
+#[cfg(test)]
+static PATTERN_MAPPING: RwLock<BTreeMap<String, String>> = RwLock::new(BTreeMap::new());
+
+pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<RaRegex> {
+    let mut config = RaConfig::new();
     if let Some(size_limit) = options.delegate_size_limit {
-        builder.size_limit(size_limit);
+        config = config.nfa_size_limit(Some(size_limit));
     }
     if let Some(dfa_size_limit) = options.delegate_dfa_size_limit {
-        builder.dfa_size_limit(dfa_size_limit);
+        config = config.dfa_size_limit(Some(dfa_size_limit));
     }
 
-    builder
-        .build()
+    let re = RaBuilder::new()
+        .configure(config)
+        .build(inner_re)
         .map_err(CompileError::InnerError)
-        .map_err(Error::CompileError)
+        .map_err(Error::CompileError)?;
+
+    #[cfg(test)]
+    PATTERN_MAPPING
+        .write()
+        .unwrap()
+        .insert(format!("{:?}", re), inner_re.to_owned());
+
+    Ok(re)
 }
 
 /// Compile the analyzed expressions into a program.
@@ -509,7 +524,6 @@ struct DelegateBuilder {
     re: String,
     min_size: usize,
     const_size: bool,
-    looks_left: bool,
     start_group: Option<usize>,
     end_group: usize,
 }
@@ -517,10 +531,9 @@ struct DelegateBuilder {
 impl DelegateBuilder {
     fn new() -> Self {
         Self {
-            re: "^".to_string(),
+            re: String::new(),
             min_size: 0,
             const_size: true,
-            looks_left: false,
             start_group: None,
             end_group: 0,
         }
@@ -530,7 +543,6 @@ impl DelegateBuilder {
         // TODO: might want to detect case of a group with no captures
         //  inside, so we can run find() instead of captures()
 
-        self.looks_left |= info.looks_left && self.min_size == 0;
         self.min_size += info.min_size;
         self.const_size &= info.const_size;
         if self.start_group.is_none() {
@@ -557,26 +569,12 @@ impl DelegateBuilder {
         let end_group = self.end_group;
 
         let compiled = compile_inner(&self.re, options)?;
-        if self.looks_left {
-            // The "s" flag is for allowing `.` to match `\n`
-            let inner1 = ["^(?s:.)", &self.re[1..]].concat();
-            let compiled1 = compile_inner(&inner1, options)?;
-            let locations = RefCell::new(compiled.capture_locations());
-            let locations1 = RefCell::new(compiled1.capture_locations());
-            Ok(Insn::Delegate {
-                inner: Box::new((compiled, locations)),
-                inner1: Some(Box::new((compiled1, locations1))),
-                start_group,
-                end_group,
-            })
-        } else if self.const_size && start_group == end_group {
+        if self.const_size && start_group == end_group {
             let size = self.min_size;
-            Ok(Insn::DelegateSized(Box::new(compiled), size))
+            Ok(Insn::DelegateSized(compiled, size))
         } else {
-            let locations = RefCell::new(compiled.capture_locations());
             Ok(Insn::Delegate {
-                inner: Box::new((compiled, locations)),
-                inner1: None,
+                inner: compiled,
                 start_group,
                 end_group,
             })
@@ -640,7 +638,7 @@ mod tests {
 
         assert_eq!(prog.len(), 5, "prog: {:?}", prog);
         assert_matches!(prog[0], Save(0));
-        assert_delegate(&prog[1], "^ab*");
+        assert_delegate(&prog[1], "ab*");
         assert_matches!(prog[2], Restore(0));
         assert_matches!(prog[3], Lit(ref l) if l == "c");
         assert_matches!(prog[4], End);
@@ -654,7 +652,7 @@ mod tests {
         assert_matches!(prog[0], Split(1, 3));
         assert_matches!(prog[1], Lit(ref l) if l == "x");
         assert_matches!(prog[2], FailNegativeLookAround);
-        assert_delegate(&prog[3], "^(?:a|ab)x*");
+        assert_delegate(&prog[3], "(?:a|ab)x*");
         assert_matches!(prog[4], End);
     }
 
@@ -666,8 +664,8 @@ mod tests {
         assert_matches!(prog[0], Split(1, 3));
         assert_matches!(prog[1], Lit(ref l) if l == "x");
         assert_matches!(prog[2], FailNegativeLookAround);
-        assert_delegate_sized(&prog[3], "^(?:a|b)c");
-        assert_delegate(&prog[4], "^x*");
+        assert_delegate_sized(&prog[3], "(?:a|b)c");
+        assert_delegate(&prog[4], "x*");
         assert_matches!(prog[5], End);
     }
 
@@ -683,7 +681,7 @@ mod tests {
         assert_matches!(prog[4], Lit(ref l) if l == "a");
         assert_matches!(prog[5], Jmp(7));
         assert_matches!(prog[6], Lit(ref l) if l == "ab");
-        assert_delegate(&prog[7], "^x*");
+        assert_delegate(&prog[7], "x*");
         assert_matches!(prog[8], End);
     }
 
@@ -713,7 +711,14 @@ mod tests {
     fn assert_delegate(insn: &Insn, re: &str) {
         match insn {
             Insn::Delegate { inner, .. } => {
-                assert_eq!(inner.0.as_str(), re);
+                assert_eq!(
+                    PATTERN_MAPPING
+                        .read()
+                        .unwrap()
+                        .get(&format!("{:?}", inner))
+                        .unwrap(),
+                    re
+                );
             }
             _ => {
                 panic!("Expected Insn::Delegate but was {:#?}", insn);
@@ -724,7 +729,14 @@ mod tests {
     fn assert_delegate_sized(insn: &Insn, re: &str) {
         match insn {
             Insn::DelegateSized(inner, ..) => {
-                assert_eq!(inner.as_str(), re);
+                assert_eq!(
+                    PATTERN_MAPPING
+                        .read()
+                        .unwrap()
+                        .get(&format!("{:?}", inner))
+                        .unwrap(),
+                    re
+                );
             }
             _ => {
                 panic!("Expected Insn::DelegateSized but was {:#?}", insn);

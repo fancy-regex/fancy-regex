@@ -1,3 +1,4 @@
+use regex_automata::meta::BuildError as RaBuildError;
 use std::fmt;
 
 /// Result type for this crate with specific error enum.
@@ -67,7 +68,7 @@ pub enum ParseError {
 #[derive(Debug)]
 pub enum CompileError {
     /// Regex crate error
-    InnerError(regex::Error),
+    InnerError(RaBuildError),
     /// Look-behind assertion without constant size
     LookBehindNotConst,
     /// Couldn't parse group name

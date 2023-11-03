@@ -69,16 +69,15 @@
 //! 5. We continue with the previously saved thread at PC 4 and IX 0 (backtracking)
 //! 6. Both `Lit("a")` and `Lit("c")` match and we reach `End` -> successful match (index 0 to 2)
 
-
-use regex::CaptureLocations;
-use regex::Regex;
-use std::cell::RefCell;
+use regex_automata::meta::Regex;
+use regex_automata::Anchored;
+use regex_automata::Input;
+use regex_automata::util::primitives::NonMaxUsize;
 use std::collections::BTreeSet;
 use std::usize;
 
 use crate::error::RuntimeError;
 use crate::prev_codepoint_ix;
-use crate::CowRef;
 use crate::Error;
 use crate::Result;
 use crate::{codepoint_len, RegexOptions};
@@ -173,22 +172,11 @@ pub enum Insn {
     /// End of atomic group
     EndAtomic,
     /// Delegate matching to the regex crate for a fixed size
-    DelegateSized(Box<Regex>, usize),
+    DelegateSized(Regex, usize),
     /// Delegate matching to the regex crate
     Delegate {
         /// The regex
-        inner: Box<(Regex, RefCell<CaptureLocations>)>,
-        /// The same regex but matching an additional character on the left.
-        ///
-        /// E.g. if `inner` is `^\b`, `inner1` is `^(?s:.)\b`. Why do we need this? Because `\b`
-        /// needs to know the previous character to work correctly. Let's say we're currently at the
-        /// second character of the string `xy`. Should `\b` match there? No. But if we'd run `^\b`
-        /// against `y`, it would match (incorrect). To do the right thing, we run `^(?s:.)\b`
-        /// against `xy`, which does not match.
-        ///
-        /// We only need this for regexes that "look left", i.e. need to know what the previous
-        /// character was.
-        inner1: Option<Box<(Regex, RefCell<CaptureLocations>)>>,
+        inner: Regex,
         /// The first group number that this regex captures (if it contains groups)
         start_group: usize,
         /// The last group number
@@ -458,6 +446,7 @@ pub(crate) fn run_to(
     n_groups: Option<usize>,
 ) -> Result<bool> {
     let mut state = State::new(prog.n_saves, MAX_STACK, option_flags);
+    let mut inner_slots: Vec<Option<NonMaxUsize>> = Vec::new();
     if option_flags & OPTION_TRACE != 0 {
         println!("pos\tinstruction");
     }
@@ -656,7 +645,8 @@ pub(crate) fn run_to(
                     state.backtrack_cut(count);
                 }
                 Insn::DelegateSized(ref inner, size) => {
-                    if inner.is_match(&s[ix..]) {
+                    let input = Input::new(s).span(ix..s.len()).anchored(Anchored::Yes);
+                    if inner.is_match(input) {
                         // We could analyze for ascii-only, and ix += size in
                         // that case. Unlikely to be speed-limiting though.
                         for _ in 0..size {
@@ -668,46 +658,31 @@ pub(crate) fn run_to(
                 }
                 Insn::Delegate {
                     ref inner,
-                    ref inner1,
                     start_group,
                     end_group,
                 } => {
-                    // Note: Why can't we use `find_at` or `captures_read_at` here instead of the
-                    // `inner1` regex? We only want to match at the current location, so our regexes
-                    // need to have an anchor: `^foo` (without `^`, it would match `foo` anywhere).
-                    // But regex like `^foo` won't match in `bar foo` with `find_at(s, 4)` because
-                    // `^` only matches at the beginning of the text.
-                    let reg = match inner1 {
-                        Some(inner1) if ix > 0 => {
-                            ix = prev_codepoint_ix(s, ix);
-                            inner1
-                        }
-                        _ => inner,
-                    };
-                    let re = &reg.0;
-                    let mut locations = reg
-                        .1
-                        .try_borrow_mut()
-                        .map_or_else(|_| CowRef::Owned(re.capture_locations()), CowRef::Borrowed);
+                    let input = Input::new(s).span(ix..s.len()).anchored(Anchored::Yes);
                     if start_group == end_group {
                         // No groups, so we can use `find` which is faster than `captures_read`
-                        match re.find(&s[ix..]) {
-                            Some(m) => ix += m.end(),
+                        match inner.find(input) {
+                            Some(m) => ix = m.end(),
                             _ => break 'fail,
                         }
                     } else {
-                        if let Some(m) = re.captures_read(&mut locations, &s[ix..]) {
+                        inner_slots.resize((end_group - start_group + 1) * 2, None);
+                        if inner.search_slots(&input, &mut inner_slots).is_some() {
                             for i in 0..(end_group - start_group) {
                                 let slot = (start_group + i) * 2;
-                                if let Some((start, end)) = locations.get(i + 1) {
-                                    state.save(slot, ix + start);
-                                    state.save(slot + 1, ix + end);
+                                if let Some(start) = inner_slots[(i + 1) * 2] {
+                                    let end = inner_slots[(i + 1) * 2 + 1].unwrap();
+                                    state.save(slot, start.get());
+                                    state.save(slot + 1, end.get());
                                 } else {
                                     state.save(slot, usize::MAX);
                                     state.save(slot + 1, usize::MAX);
                                 }
                             }
-                            ix += m.end();
+                            ix = inner_slots[1].unwrap().get();
                         } else {
                             break 'fail;
                         }

@@ -26,7 +26,7 @@ use std::time::Duration;
 
 use fancy_regex::internal::{analyze, compile, run_default};
 use fancy_regex::Expr;
-use regex::Regex;
+use fancy_regex::Regex;
 
 fn parse_lifetime_re(c: &mut Criterion) {
     c.bench_function("parse_lifetime_re", |b| {

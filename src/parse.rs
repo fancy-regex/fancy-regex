@@ -21,7 +21,7 @@
 //! A regex parser yielding an AST.
 
 use bit_set::BitSet;
-use regex::escape;
+use regex_syntax::escape;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::str::FromStr;

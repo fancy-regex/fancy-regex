@@ -15,15 +15,16 @@ exclude = ["/.github/*", "/Cargo.lock.msrv"]
 default = ["unicode", "perf"]
 # Enable #[track_caller] in unit tests.
 track_caller = []
-perf = ["regex/perf"]
-perf-dfa = ["regex/perf-dfa"]
-perf-inline = ["regex/perf-inline"]
-perf-literal = ["regex/perf-literal"]
-perf-cache = ["regex/perf-cache"]
-unicode = ["regex/unicode"]
+perf = ["regex-automata/perf"]
+unicode = ["regex-automata/unicode", "regex-syntax/unicode"]
 
-[dependencies.regex]
-version = "1.3.8"
+[dependencies.regex-automata]
+version = "0.4"
+default-features = false
+features = ["std", "syntax", "meta", "nfa", "dfa", "hybrid"]
+
+[dependencies.regex-syntax]
+version = "0.8"
 default-features = false
 features = ["std"]
 
@@ -34,6 +35,7 @@ bit-set = "0.5"
 criterion = "0.3.0"
 matches = "0.1.8"
 quickcheck = "1.0.1"
+regex = "1.10"
 
 [[bench]]
 name = "bench"
