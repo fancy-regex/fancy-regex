@@ -1350,7 +1350,7 @@ impl Expr {
         ExprTree::parse(re)
     }
 
-    fn to_ast(self, capture_index: &mut u32) -> regex_syntax::ast::Ast {
+    fn to_ast(self, capture_index: &mut u32) -> Result<regex_syntax::ast::Ast> {
         use regex_syntax::ast::*;
         // XXX: implement span?
         let span = Span::splat(Position::new(0, 0, 0));
@@ -1379,7 +1379,7 @@ impl Expr {
             index
         };
 
-        match self {
+        Ok(match self {
             Expr::Empty => Ast::Empty(Box::new(span)),
             Expr::Any { newline } => with_flag(
                 newline.then_some(Flag::DotMatchesNewLine),
@@ -1425,22 +1425,24 @@ impl Expr {
             ),
             Expr::Concat(children) => Ast::Concat(Box::new(Concat {
                 span,
-                asts: children
-                    .into_iter()
-                    .map(|child| child.to_ast(capture_index))
-                    .collect(),
+                asts: try_collect(
+                    children
+                        .into_iter()
+                        .map(|child| child.to_ast(capture_index)),
+                )?,
             })),
             Expr::Alt(children) => Ast::Alternation(Box::new(Alternation {
                 span,
-                asts: children
-                    .into_iter()
-                    .map(|child| child.to_ast(capture_index))
-                    .collect(),
+                asts: try_collect(
+                    children
+                        .into_iter()
+                        .map(|child| child.to_ast(capture_index)),
+                )?,
             })),
             Expr::Group(child) => Ast::Group(Box::new(Group {
                 span,
                 kind: GroupKind::CaptureIndex(fetch_add_capture_index()),
-                ast: Box::new(child.to_ast(capture_index)),
+                ast: Box::new(child.to_ast(capture_index)?),
             })),
             Expr::Repeat {
                 child,
@@ -1468,24 +1470,32 @@ impl Expr {
                     },
                 },
                 greedy,
-                ast: Box::new(child.to_ast(capture_index)),
+                ast: Box::new(child.to_ast(capture_index)?),
             })),
             Expr::Delegate { inner, casei, .. } => with_flag(
                 casei.then_some(Flag::CaseInsensitive),
-                parse_ast(&inner, capture_index),
+                parse_ast(&inner, capture_index)?,
             ),
-            _ => panic!("attempting to format hard expr"),
-        }
+            _ => panic!("attempting to convert hard expr"),
+        })
     }
 
     /// Convert expression to a [`regex_syntax::hir::Hir`].
-    pub fn to_hir(self) -> regex_syntax::hir::Hir {
+    pub fn to_hir(self) -> Result<regex_syntax::hir::Hir> {
         let mut capture_index = 1;
-        let ast = self.to_ast(&mut capture_index);
+        let ast = self.to_ast(&mut capture_index)?;
         let mut translator = regex_syntax::hir::translate::Translator::new();
-        // using empty pattern does not matter
-        // as it cannot error
-        translator.translate("", &ast).unwrap()
+        // XXX: using empty pattern; this will make error info useless
+        translator.translate("", &ast).map_err(|e| {
+            Error::CompileError(CompileError::InnerSyntaxError(
+                regex_syntax::Error::Translate(e),
+            ))
+        })
+    }
+
+    /// Convert expression to a string
+    pub fn to_str(self) -> Result<String> {
+        Ok(format!("{}", self.to_hir()?))
     }
 }
 
@@ -1517,19 +1527,25 @@ fn offset_capture_index(ast: &mut regex_syntax::ast::Ast, capture_index: u32) ->
     .unwrap_or(capture_index)
 }
 
-fn parse_ast(pattern: &str, capture_index: &mut u32) -> regex_syntax::ast::Ast {
+fn parse_ast(pattern: &str, capture_index: &mut u32) -> Result<regex_syntax::ast::Ast> {
     let mut ast = regex_syntax::ast::parse::Parser::new()
         .parse(pattern)
-        .unwrap();
+        .map_err(|e| {
+            Error::CompileError(CompileError::InnerSyntaxError(regex_syntax::Error::Parse(
+                e,
+            )))
+        })?;
     *capture_index = offset_capture_index(&mut ast, *capture_index);
-    ast
+    Ok(ast)
 }
 
-impl fmt::Display for Expr {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        // XXX: clone
-        write!(f, "{}", self.clone().to_hir())
+fn try_collect<T>(iter: impl IntoIterator<Item = Result<T>>) -> Result<Vec<T>> {
+    let iter = iter.into_iter();
+    let mut vec = Vec::with_capacity(iter.size_hint().0);
+    for item in iter {
+        vec.push(item?);
     }
+    Ok(vec)
 }
 
 // precondition: ix > 0
@@ -1607,16 +1623,16 @@ pub mod internal {
 
 #[cfg(test)]
 mod tests {
-    use crate::RegexBuilder;
     use crate::parse::make_literal;
     use crate::Expr;
     use crate::Regex;
+    use crate::RegexBuilder;
     //use detect_possible_backref;
 
     // tests for to_str
 
     fn to_str(e: Expr) -> String {
-        format!("{}", e)
+        e.to_str().unwrap()
     }
 
     #[test]
@@ -1705,7 +1721,9 @@ mod tests {
     #[test]
     fn expr_roundtrip() {
         let tree = Expr::parse_tree("(?m)^yes$").unwrap();
-        let regex = RegexBuilder::new().build_from_expr_tree(tree.clone()).unwrap();
+        let regex = RegexBuilder::new()
+            .build_from_expr_tree(tree.clone())
+            .unwrap();
         assert_eq!(regex.as_expr_tree(), &tree);
     }
 

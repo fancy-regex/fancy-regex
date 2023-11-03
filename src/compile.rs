@@ -513,7 +513,7 @@ pub(crate) fn compile_inner(
     let re = RaBuilder::new()
         .configure(config)
         .build_from_hir(hir)
-        .map_err(CompileError::InnerError)
+        .map_err(CompileError::InnerBuildError)
         .map_err(Error::CompileError)?;
 
     #[cfg(test)]
@@ -581,7 +581,7 @@ impl DelegateBuilder {
         let end_group = self.end_group;
 
         let expr = Expr::Concat(self.exprs);
-        let hir = expr.to_hir();
+        let hir = expr.to_hir()?;
 
         let compiled = compile_inner(&hir, options)?;
         if self.const_size && start_group == end_group {

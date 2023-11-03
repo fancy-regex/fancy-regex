@@ -1,4 +1,5 @@
 use regex_automata::meta::BuildError as RaBuildError;
+use regex_syntax::Error as RsParseError;
 use std::fmt;
 
 /// Result type for this crate with specific error enum.
@@ -8,6 +9,7 @@ pub type ParseErrorPosition = usize;
 
 /// An error as the result of parsing, compiling or running a regex.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Error {
     /// An error as a result of parsing a regex pattern, with the position where the error occurred
     ParseError(ParseErrorPosition, ParseError),
@@ -15,15 +17,11 @@ pub enum Error {
     CompileError(CompileError),
     /// An error as a result of running a regex
     RuntimeError(RuntimeError),
-
-    /// This enum may grow additional variants, so this makes sure clients don't count on exhaustive
-    /// matching. Otherwise, adding a new variant could break existing code.
-    #[doc(hidden)]
-    __Nonexhaustive,
 }
 
 /// An error for the result of parsing a regex pattern.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ParseError {
     /// General parsing error
     GeneralParseError(String),
@@ -57,18 +55,16 @@ pub enum ParseError {
     InvalidGroupName,
     /// Invalid group id in escape sequence
     InvalidGroupNameBackref(String),
-
-    /// This enum may grow additional variants, so this makes sure clients don't count on exhaustive
-    /// matching. Otherwise, adding a new variant could break existing code.
-    #[doc(hidden)]
-    __Nonexhaustive,
 }
 
 /// An error as the result of compiling a regex.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum CompileError {
-    /// Regex crate error
-    InnerError(RaBuildError),
+    /// regex-syntax crate error
+    InnerSyntaxError(RsParseError),
+    /// regex-automata crate error
+    InnerBuildError(RaBuildError),
     /// Look-behind assertion without constant size
     LookBehindNotConst,
     /// Couldn't parse group name
@@ -79,15 +75,11 @@ pub enum CompileError {
     InvalidBackref,
     /// Once named groups are used you cannot refer to groups by number
     NamedBackrefOnly,
-
-    /// This enum may grow additional variants, so this makes sure clients don't count on exhaustive
-    /// matching. Otherwise, adding a new variant could break existing code.
-    #[doc(hidden)]
-    __Nonexhaustive,
 }
 
 /// An error as the result of executing a regex.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum RuntimeError {
     /// Max stack size exceeded for backtracking while executing regex.
     StackOverflow,
@@ -95,11 +87,6 @@ pub enum RuntimeError {
     /// Configure using
     /// [`RegexBuilder::backtrack_limit`](struct.RegexBuilder.html#method.backtrack_limit).
     BacktrackLimitExceeded,
-
-    /// This enum may grow additional variants, so this makes sure clients don't count on exhaustive
-    /// matching. Otherwise, adding a new variant could break existing code.
-    #[doc(hidden)]
-    __Nonexhaustive,
 }
 
 impl ::std::error::Error for Error {}
@@ -129,8 +116,6 @@ impl fmt::Display for ParseError {
                 write!(f, "Invalid group name in back reference: {}", s)
             }
             ParseError::TargetNotRepeatable => write!(f, "Target of repeat operator is invalid"),
-
-            ParseError::__Nonexhaustive => unreachable!(),
         }
     }
 }
@@ -138,7 +123,8 @@ impl fmt::Display for ParseError {
 impl fmt::Display for CompileError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            CompileError::InnerError(e) => write!(f, "Regex error: {}", e),
+            CompileError::InnerSyntaxError(e) => write!(f, "Regex error: {}", e),
+            CompileError::InnerBuildError(e) => write!(f, "Regex error: {}", e),
             CompileError::LookBehindNotConst => {
                 write!(f, "Look-behind assertion without constant size")
             },
@@ -146,8 +132,6 @@ impl fmt::Display for CompileError {
             CompileError::InvalidGroupNameBackref(s) => write!(f, "Invalid group name in back reference: {}", s),
             CompileError::InvalidBackref => write!(f, "Invalid back reference"),
             CompileError::NamedBackrefOnly => write!(f, "Numbered backref/call not allowed because named group was used, use a named backref instead"),
-
-            CompileError::__Nonexhaustive => unreachable!(),
         }
     }
 }
@@ -159,8 +143,6 @@ impl fmt::Display for RuntimeError {
             RuntimeError::BacktrackLimitExceeded => {
                 write!(f, "Max limit for backtracking count exceeded")
             }
-
-            RuntimeError::__Nonexhaustive => unreachable!(),
         }
     }
 }
@@ -177,8 +159,6 @@ impl fmt::Display for Error {
             Error::RuntimeError(runtime_error) => {
                 write!(f, "Error executing regex: {}", runtime_error)
             }
-
-            Error::__Nonexhaustive => unreachable!(),
         }
     }
 }
