@@ -26,6 +26,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::str::FromStr;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 
 use crate::codepoint_len;
 use crate::CompileError;
@@ -51,7 +53,16 @@ pub(crate) type NamedGroups = HashMap<String, usize>;
 pub struct ExprTree {
     /// The expr
     pub expr: Expr,
-    pub(crate) named_groups: NamedGroups,
+    /// A mapping from group name to group index
+    pub named_groups: NamedGroups,
+}
+
+impl ExprTree {
+    /// Parse the regex and return an expression (AST) and a bit set with the indexes of groups
+    /// that are referenced by backrefs.
+    pub fn parse(re: &str) -> Result<ExprTree> {
+        Parser::parse(re)
+    }
 }
 
 #[derive(Debug)]
@@ -75,6 +86,7 @@ impl<'a> Parser<'a> {
                 ParseError::GeneralParseError("end of string not reached".to_string()),
             ));
         }
+        let expr = p.optimize(expr);
         Ok(ExprTree {
             expr,
             named_groups: p.named_groups,
@@ -835,6 +847,176 @@ impl<'a> Parser<'a> {
             }
         }
     }
+
+    fn optimize(&self, mut expr: Expr) -> Expr {
+        let mut num = 0;
+        loop {
+            let (new_expr, changed) = self.optimize_expr_pass(expr);
+            expr = new_expr;
+            num += 1;
+            if !changed {
+                eprintln!("optimize_iter: {}", num);
+                break expr;
+            }
+        }
+    }
+
+    fn optimize_expr_pass(&self, expr: Expr) -> (Expr, bool) {
+        let changed = AtomicBool::new(false); // fuck Rust
+        macro_rules! mark_change {
+            ($expr:expr) => {{
+                changed.fetch_or(true, Ordering::Relaxed);
+                $expr
+            }};
+        }
+        let recur = |expr| {
+            let (expr, subchanged) = self.optimize_expr_pass(expr);
+            changed.fetch_or(subchanged, Ordering::Relaxed);
+            expr
+        };
+        (
+            match expr {
+                Expr::Concat(mut children) => {
+                    children = children
+                        .into_iter()
+                        .map(recur)
+                        .flat_map(|child| match child {
+                            // flatten concat in concat
+                            Expr::Concat(descents) => mark_change!(descents),
+                            // eliminate empty literal
+                            Expr::Literal { val, .. } if val.is_empty() => mark_change!(vec![]),
+                            // no change
+                            e => vec![e],
+                        })
+                        .fold(vec![], |mut children, item| {
+                            let item = match (children.last_mut(), item) {
+                                // merge literals
+                                (
+                                    Some(Expr::Literal {
+                                        val: lval,
+                                        casei: lcase,
+                                    }),
+                                    Expr::Literal {
+                                        val: rval,
+                                        casei: ref rcase,
+                                    },
+                                ) if lcase == rcase => mark_change! {{
+                                    lval.push_str(&rval);
+                                    None
+                                }},
+                                // merge delegate
+                                (
+                                    Some(Expr::Delegate {
+                                        inner: linner,
+                                        size: lsize,
+                                        casei: lcase,
+                                    }),
+                                    Expr::Delegate {
+                                        inner: rinner,
+                                        size: rsize,
+                                        casei: ref rcase,
+                                    },
+                                ) if lcase == rcase => mark_change! {{
+                                    linner.push_str(&rinner);
+                                    *lsize += rsize;
+                                    None
+                                }},
+                                // merge assertions
+                                (
+                                    Some(l @ Expr::StartLine),
+                                    r @ Expr::StartLine | r @ Expr::StartText,
+                                ) => mark_change! {{
+                                    *l = r;
+                                    None
+                                }},
+                                (Some(Expr::StartText), Expr::StartLine | Expr::StartText) => {
+                                    mark_change!(None)
+                                }
+                                (
+                                    Some(l @ Expr::EndLine),
+                                    r @ Expr::EndLine | r @ Expr::EndText,
+                                ) => mark_change! {{
+                                    *l = r;
+                                    None
+                                }},
+                                (Some(Expr::EndText), Expr::EndLine | Expr::EndText) => {
+                                    mark_change!(None)
+                                }
+                                // no change
+                                (_, item) => Some(item),
+                            };
+                            children.extend(item.into_iter());
+                            children
+                        });
+                    if children.len() == 1 {
+                        children.into_iter().next().unwrap()
+                    } else {
+                        Expr::Concat(children)
+                    }
+                }
+                Expr::Alt(mut children) => {
+                    children = children
+                        .into_iter()
+                        .map(recur)
+                        .flat_map(|child| match child {
+                            // flatten alt in alt
+                            Expr::Alt(descents) if !descents.is_empty() => mark_change!(descents),
+                            // eliminate empty literal
+                            Expr::Literal { val, .. } if val.is_empty() => {
+                                mark_change!(vec![Expr::Empty])
+                            }
+                            // no change
+                            e => vec![e],
+                        })
+                        .collect();
+                    if children.len() == 1 {
+                        children.into_iter().next().unwrap()
+                    } else {
+                        Expr::Alt(children)
+                    }
+                }
+                Expr::Repeat {
+                    child,
+                    lo,
+                    hi,
+                    greedy,
+                } => {
+                    match recur(*child) {
+                        // fold repeated literal
+                        Expr::Literal { val, casei } if lo == hi && hi != usize::MAX => {
+                            mark_change!(Expr::Literal {
+                                val: val.repeat(lo),
+                                casei
+                            })
+                        }
+                        // no change
+                        child => Expr::Repeat {
+                            child: Box::new(child),
+                            lo,
+                            hi,
+                            greedy,
+                        },
+                    }
+                }
+                Expr::Group(child) => Expr::Group(Box::new(recur(*child))),
+                Expr::LookAround(child, lookahead) => {
+                    Expr::LookAround(Box::new(recur(*child)), lookahead)
+                }
+                Expr::AtomicGroup(child) => Expr::AtomicGroup(Box::new(recur(*child))),
+                Expr::Conditional {
+                    condition,
+                    true_branch,
+                    false_branch,
+                } => Expr::Conditional {
+                    condition: Box::new(recur(*condition)),
+                    true_branch: Box::new(recur(*true_branch)),
+                    false_branch: Box::new(recur(*false_branch)),
+                },
+                e => e,
+            },
+            changed.load(Ordering::Relaxed),
+        )
+    }
 }
 
 // return (ix, value)
@@ -891,6 +1073,7 @@ pub(crate) fn make_literal(s: &str) -> Expr {
     }
 }
 
+#[cfg(not(test))]
 #[cfg(test)]
 mod tests {
     use crate::parse::{make_literal, parse_id};
@@ -1753,13 +1936,11 @@ mod tests {
     }
 
     // found by cargo fuzz, then minimized
-    #[ignore]
     #[test]
     fn fuzz_1() {
         p(r"\ä");
     }
 
-    #[ignore]
     #[test]
     fn fuzz_2() {
         p(r"\pä");

@@ -181,7 +181,7 @@ mod vm;
 use crate::analyze::analyze;
 use crate::compile::compile_with_options;
 pub use crate::parse::ExprTree;
-use crate::parse::{NamedGroups, Parser};
+use crate::parse::NamedGroups;
 use crate::vm::{Prog, OPTION_SKIPPED_EMPTY_MATCH};
 
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
@@ -1347,7 +1347,7 @@ impl Expr {
     /// Parse the regex and return an expression (AST) and a bit set with the indexes of groups
     /// that are referenced by backrefs.
     pub fn parse_tree(re: &str) -> Result<ExprTree> {
-        Parser::parse(re)
+        ExprTree::parse(re)
     }
 
     fn to_ast(self, capture_index: &mut u32) -> regex_syntax::ast::Ast {
