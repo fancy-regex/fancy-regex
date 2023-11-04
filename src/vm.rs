@@ -106,7 +106,12 @@ pub enum Insn {
     /// Match any character (not including newline)
     AnyNoNL,
     /// Match the literal string at the current index
-    Lit(String), // should be cow?
+    Lit {
+        /// The Literal string
+        val: String,
+        /// Case insensitive
+        casei: bool,
+    }, // should be cow?
     /// Split execution into two threads. The two fields are positions of instructions. Execution
     /// first tries the first thread. If that fails, the second position is tried.
     Split(usize, usize),
@@ -500,11 +505,28 @@ pub(crate) fn run_to(
                         break 'fail;
                     }
                 }
-                Insn::Lit(ref val) => {
+                Insn::Lit { ref val, casei } => {
                     let end = ix.saturating_add(val.len()).min(range.end);
                     let sb = &s.as_bytes()[ix..end];
-                    if sb != val.as_bytes() {
-                        break 'fail;
+                    if !casei {
+                        if sb != val.as_bytes() {
+                            break 'fail;
+                        }
+                    } else {
+                        if !eq_test_exact_size(sb.iter().copied(), val.bytes(), |a, b| {
+                            // Do we need a == b shortcut? Is to_ascii_lowercase() fast?
+                            a == b || a.to_ascii_lowercase() == b.to_ascii_lowercase()
+                        }) {
+                            if !s.get(ix..end).map_or(false, |s| {
+                                eq_test(
+                                    s.chars().flat_map(char::to_lowercase),
+                                    val.chars().flat_map(char::to_lowercase),
+                                    |a, b| a == b,
+                                )
+                            }) {
+                                break 'fail;
+                            }
+                        }
                     }
                     ix = end;
                 }
@@ -719,6 +741,33 @@ pub(crate) fn run_to(
         pc = newpc;
         ix = newix;
     }
+}
+
+#[inline]
+fn eq_test<T: Copy, F: Fn(T, T) -> bool>(
+    mut a: impl Iterator<Item = T>,
+    mut b: impl Iterator<Item = T>,
+    pred: F,
+) -> bool {
+    loop {
+        match (a.next(), b.next()) {
+            (Some(a), Some(b)) if pred(a, b) => (),
+            (None, None) => break true,
+            _ => break false,
+        }
+    }
+}
+
+#[inline]
+fn eq_test_exact_size<T: Copy, F: Fn(T, T) -> bool>(
+    a: impl ExactSizeIterator<Item = T>,
+    b: impl ExactSizeIterator<Item = T>,
+    pred: F,
+) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.zip(b).all(|(a, b)| pred(a, b))
 }
 
 #[cfg(test)]

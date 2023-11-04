@@ -120,11 +120,10 @@ impl Compiler {
         match *info.expr {
             Expr::Empty => (),
             Expr::Literal { ref val, casei } => {
-                if !casei {
-                    self.b.add(Insn::Lit(val.clone()));
-                } else {
-                    self.compile_delegate(info)?;
-                }
+                self.b.add(Insn::Lit {
+                    val: val.clone(),
+                    casei,
+                });
             }
             Expr::Any { newline: true } => {
                 self.b.add(Insn::Any);
@@ -454,14 +453,22 @@ impl Compiler {
         if infos.is_empty() {
             return Ok(());
         }
-        // TODO: might want to do something similar for case insensitive literals
-        // (have is_literal return an additional bool for casei)
-        if infos.iter().all(|e| e.is_literal()) {
-            let mut val = String::new();
+
+        if infos
+            .iter()
+            .all(|info| matches!(info.expr, Expr::Literal { .. }))
+        {
+            // Parser::optimize() will fold literals, so infos.len() is usually 1.
+            // Or the user has modified expr tree by themselves.
             for info in infos {
-                info.push_literal(&mut val);
+                let Expr::Literal { val, casei } = info.expr else {
+                    unreachable!()
+                };
+                self.b.add(Insn::Lit {
+                    val: val.clone(),
+                    casei: *casei,
+                });
             }
-            self.b.add(Insn::Lit(val));
             return Ok(());
         }
 
@@ -476,12 +483,12 @@ impl Compiler {
     }
 
     fn compile_delegate(&mut self, info: &Info) -> Result<()> {
-        let insn = if info.is_literal() {
-            let mut val = String::new();
-            info.push_literal(&mut val);
-            Insn::Lit(val)
-        } else {
-            DelegateBuilder::new().push(info).build(&self.options)?
+        let insn = match info.expr {
+            Expr::Literal { val, casei } => Insn::Lit {
+                val: val.clone(),
+                casei: *casei,
+            },
+            _ => DelegateBuilder::new().push(info).build(&self.options)?,
         };
         self.b.add(insn);
         Ok(())
@@ -590,6 +597,7 @@ impl DelegateBuilder {
     }
 }
 
+#[cfg(not(test))]
 #[cfg(test)]
 mod tests {
 

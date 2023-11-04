@@ -39,29 +39,6 @@ pub struct Info<'a> {
     pub(crate) children: Vec<Info<'a>>,
 }
 
-impl<'a> Info<'a> {
-    pub(crate) fn is_literal(&self) -> bool {
-        match *self.expr {
-            Expr::Literal { casei, .. } => !casei,
-            Expr::Concat(_) => self.children.iter().all(|child| child.is_literal()),
-            _ => false,
-        }
-    }
-
-    pub(crate) fn push_literal(&self, buf: &mut String) {
-        match *self.expr {
-            // could be more paranoid about checking casei
-            Expr::Literal { ref val, .. } => buf.push_str(val),
-            Expr::Concat(_) => {
-                for child in &self.children {
-                    child.push_literal(buf);
-                }
-            }
-            _ => panic!("push_literal called on non-literal"),
-        }
-    }
-}
-
 struct Analyzer {
     group_ix: usize,
 }
@@ -83,7 +60,11 @@ impl Analyzer {
             }
             Expr::Literal { ref val, casei } => {
                 min_size = val.chars().count();
-                const_size = literal_const_size(val, casei);
+                // very heuristic
+                const_size = !casei
+                    || val
+                        .chars()
+                        .all(|c| c.to_lowercase().count() == 1 && c.to_uppercase().count() == 1);
             }
             Expr::StartText | Expr::StartLine => {
                 const_size = true;
@@ -209,13 +190,6 @@ impl Analyzer {
     }
 }
 
-fn literal_const_size(_: &str, _: bool) -> bool {
-    // Right now, regex doesn't do sophisticated case folding,
-    // test below will fail when that changes, then we need to
-    // do something fancier here.
-    true
-}
-
 /// Analyze the parsed expression to determine whether it requires fancy features.
 pub fn analyze<'a>(tree: &'a ExprTree) -> Result<Info<'a>> {
     let mut analyzer = Analyzer { group_ix: 0 };
@@ -256,19 +230,5 @@ mod tests {
     #[test]
     fn invalid_backref_3() {
         assert!(analyze(&Expr::parse_tree("\\1(.)").unwrap()).is_err());
-    }
-
-    #[test]
-    fn is_literal() {
-        let tree = Expr::parse_tree("abc").unwrap();
-        let info = analyze(&tree).unwrap();
-        assert_eq!(info.is_literal(), true);
-    }
-
-    #[test]
-    fn is_literal_with_repeat() {
-        let tree = Expr::parse_tree("abc*").unwrap();
-        let info = analyze(&tree).unwrap();
-        assert_eq!(info.is_literal(), false);
     }
 }
