@@ -70,9 +70,9 @@
 //! 6. Both `Lit("a")` and `Lit("c")` match and we reach `End` -> successful match (index 0 to 2)
 
 use regex_automata::meta::Regex;
+use regex_automata::util::primitives::NonMaxUsize;
 use regex_automata::Anchored;
 use regex_automata::Input;
-use regex_automata::util::primitives::NonMaxUsize;
 use std::collections::BTreeSet;
 use std::usize;
 

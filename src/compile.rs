@@ -464,7 +464,7 @@ impl Compiler {
 
         let mut delegate_builder = DelegateBuilder::new();
         for info in infos {
-            delegate_builder.push(info);
+            delegate_builder = delegate_builder.push(info);
         }
         let delegate = delegate_builder.build(&self.options)?;
 
@@ -488,7 +488,10 @@ impl Compiler {
 #[cfg(test)]
 static PATTERN_MAPPING: RwLock<BTreeMap<String, String>> = RwLock::new(BTreeMap::new());
 
-pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<RaRegex> {
+pub(crate) fn compile_inner(
+    hir: &regex_syntax::hir::Hir,
+    options: &RegexOptions,
+) -> Result<RaRegex> {
     let mut config = RaConfig::new();
     if let Some(size_limit) = options.delegate_size_limit {
         config = config.nfa_size_limit(Some(size_limit));
@@ -499,7 +502,7 @@ pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<Ra
 
     let re = RaBuilder::new()
         .configure(config)
-        .build(inner_re)
+        .build_from_hir(hir)
         .map_err(CompileError::InnerError)
         .map_err(Error::CompileError)?;
 
@@ -507,7 +510,7 @@ pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<Ra
     PATTERN_MAPPING
         .write()
         .unwrap()
-        .insert(format!("{:?}", re), inner_re.to_owned());
+        .insert(format!("{:?}", re), format!("{}", hir));
 
     Ok(re)
 }
@@ -521,7 +524,7 @@ pub fn compile(info: &Info<'_>) -> Result<Prog> {
 }
 
 struct DelegateBuilder {
-    re: String,
+    exprs: Vec<Expr>,
     min_size: usize,
     const_size: bool,
     start_group: Option<usize>,
@@ -531,7 +534,7 @@ struct DelegateBuilder {
 impl DelegateBuilder {
     fn new() -> Self {
         Self {
-            re: String::new(),
+            exprs: Vec::new(),
             min_size: 0,
             const_size: true,
             start_group: None,
@@ -539,7 +542,7 @@ impl DelegateBuilder {
         }
     }
 
-    fn push(&mut self, info: &Info<'_>) -> &mut DelegateBuilder {
+    fn push(mut self, info: &Info<'_>) -> DelegateBuilder {
         // TODO: might want to detect case of a group with no captures
         //  inside, so we can run find() instead of captures()
 
@@ -550,25 +553,20 @@ impl DelegateBuilder {
         }
         self.end_group = info.end_group;
 
-        // Add expression. The precedence argument has to be 1 here to
-        // ensure correct grouping in these cases:
-        //
-        // If we have multiple expressions, we are building a concat.
-        // Without grouping, we'd turn ["a", "b|c"] into "^ab|c". But we
-        // want "^a(?:b|c)".
-        //
-        // Even with a single expression, because we add `^` at the
-        // beginning, we need a group. Otherwise `["a|b"]` would be turned
-        // into `"^a|b"` instead of `"^(?:a|b)"`.
-        info.expr.to_str(&mut self.re, 1);
+        // TODO: avoid clone
+        self.exprs.push(info.expr.clone());
+
         self
     }
 
-    fn build(&self, options: &RegexOptions) -> Result<Insn> {
+    fn build(self, options: &RegexOptions) -> Result<Insn> {
         let start_group = self.start_group.expect("Expected at least one expression");
         let end_group = self.end_group;
 
-        let compiled = compile_inner(&self.re, options)?;
+        let expr = Expr::Concat(self.exprs);
+        let hir = expr.to_hir();
+
+        let compiled = compile_inner(&hir, options)?;
         if self.const_size && start_group == end_group {
             let size = self.min_size;
             Ok(Insn::DelegateSized(compiled, size))
@@ -638,7 +636,7 @@ mod tests {
 
         assert_eq!(prog.len(), 5, "prog: {:?}", prog);
         assert_matches!(prog[0], Save(0));
-        assert_delegate(&prog[1], "ab*");
+        assert_delegate(&prog[1], "(?:ab*)");
         assert_matches!(prog[2], Restore(0));
         assert_matches!(prog[3], Lit(ref l) if l == "c");
         assert_matches!(prog[4], End);
@@ -652,7 +650,7 @@ mod tests {
         assert_matches!(prog[0], Split(1, 3));
         assert_matches!(prog[1], Lit(ref l) if l == "x");
         assert_matches!(prog[2], FailNegativeLookAround);
-        assert_delegate(&prog[3], "(?:a|ab)x*");
+        assert_delegate(&prog[3], "(?:(?:a|(?:ab))x*)");
         assert_matches!(prog[4], End);
     }
 
@@ -664,7 +662,7 @@ mod tests {
         assert_matches!(prog[0], Split(1, 3));
         assert_matches!(prog[1], Lit(ref l) if l == "x");
         assert_matches!(prog[2], FailNegativeLookAround);
-        assert_delegate_sized(&prog[3], "(?:a|b)c");
+        assert_delegate_sized(&prog[3], "(?:[ab]c)");
         assert_delegate(&prog[4], "x*");
         assert_matches!(prog[5], End);
     }

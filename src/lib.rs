@@ -160,11 +160,9 @@ Conditionals - if/then/else:
 #![deny(missing_docs)]
 #![deny(missing_debug_implementations)]
 
-use regex_automata::meta::Regex as RaRegex;
-use regex_automata::util::captures::Captures as RaCaptures;
-use regex_automata::Input as RaInput;
 use spin::mutex::{SpinMutex, SpinMutexGuard};
 use std::borrow::Cow;
+use std::convert::TryInto;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::ops::{Deref, DerefMut, Index, Range};
@@ -205,12 +203,6 @@ pub struct Regex {
 
 // Separate enum because we don't want to expose any of this
 enum RegexImpl {
-    // Do we want to box this? It's pretty big...
-    Wrap {
-        inner: RaRegex,
-        options: RegexOptions,
-        locations: SpinMutex<RaCaptures>,
-    },
     Fancy {
         prog: Prog,
         n_groups: usize,
@@ -222,16 +214,6 @@ enum RegexImpl {
 impl Clone for RegexImpl {
     fn clone(&self) -> Self {
         match self {
-            RegexImpl::Wrap { inner, options, .. } => {
-                let inner = inner.clone();
-                let options = options.clone();
-                let locations = SpinMutex::new(inner.create_captures());
-                RegexImpl::Wrap {
-                    inner,
-                    options,
-                    locations,
-                }
-            }
             RegexImpl::Fancy {
                 prog,
                 n_groups,
@@ -402,10 +384,6 @@ pub struct Captures<'r, 't> {
 
 #[derive(Debug)]
 enum CapturesImpl<'r, 't> {
-    Wrap {
-        text: &'t str,
-        locations: CowSpin<'r, RaCaptures>,
-    },
     Fancy {
         text: &'t str,
         saves: CowSpin<'r, Vec<usize>>,
@@ -579,33 +557,7 @@ impl Regex {
         };
 
         let info = analyze(&tree)?;
-
-        let inner_info = &info.children[1].children[0]; // references inner expr
-        if !inner_info.hard {
-            // easy case, wrap regex
-
-            // we do our own to_str because escapes are different
-            let mut re_cooked = String::new();
-            // same as raw_tree.expr above, but it was moved, so traverse to find it
-            let raw_e = match tree.expr {
-                Expr::Concat(ref v) => match v[1] {
-                    Expr::Group(ref child) => child,
-                    _ => unreachable!(),
-                },
-                _ => unreachable!(),
-            };
-            raw_e.to_str(&mut re_cooked, 0);
-            let inner = compile::compile_inner(&re_cooked, &options)?;
-            let locations = SpinMutex::new(inner.create_captures());
-            return Ok(Regex {
-                inner: RegexImpl::Wrap {
-                    inner,
-                    options,
-                    locations,
-                },
-                named_groups: tree.named_groups,
-            });
-        }
+        debug_assert_eq!(info.hard, info.children[1].children[0].hard);
 
         let prog = compile(&info)?;
         Ok(Regex {
@@ -622,7 +574,6 @@ impl Regex {
     /// Returns the original string of this regex.
     pub fn as_str(&self) -> &str {
         match &self.inner {
-            RegexImpl::Wrap { options, .. } => &options.pattern,
             RegexImpl::Fancy { options, .. } => &options.pattern,
         }
     }
@@ -641,7 +592,6 @@ impl Regex {
     /// ```
     pub fn is_match(&self, text: &str) -> Result<bool> {
         match &self.inner {
-            RegexImpl::Wrap { ref inner, .. } => Ok(inner.is_match(text)),
             RegexImpl::Fancy {
                 ref prog, options, ..
             } => {
@@ -727,9 +677,6 @@ impl Regex {
         option_flags: u32,
     ) -> Result<Option<Match<'t>>> {
         match &self.inner {
-            RegexImpl::Wrap { inner, .. } => Ok(inner
-                .search(&RaInput::new(text).span(pos..text.len()))
-                .map(|m| Match::new(text, m.start(), m.end()))),
             RegexImpl::Fancy { prog, options, .. } => {
                 let result = vm::run(prog, text, pos, option_flags, options, Some(1))?;
                 Ok(result.map(|saves| Match::new(text, saves[0], saves[1])))
@@ -831,19 +778,6 @@ impl Regex {
     ) -> Result<Option<Captures<'r, 't>>> {
         let named_groups = &self.named_groups;
         match &self.inner {
-            RegexImpl::Wrap {
-                inner, locations, ..
-            } => {
-                let mut locations = locations.try_lock().map_or_else(
-                    || CowSpin::Owned(inner.create_captures()),
-                    CowSpin::Borrowed,
-                );
-                inner.captures(RaInput::new(text).span(pos..text.len()), &mut locations);
-                Ok(locations.is_match().then(|| Captures {
-                    inner: CapturesImpl::Wrap { text, locations },
-                    named_groups,
-                }))
-            }
             RegexImpl::Fancy {
                 prog,
                 n_groups,
@@ -866,7 +800,6 @@ impl Regex {
     /// Returns the number of captures, including the implicit capture of the entire expression.
     pub fn captures_len(&self) -> usize {
         match &self.inner {
-            RegexImpl::Wrap { inner, .. } => inner.captures_len(),
             RegexImpl::Fancy { n_groups, .. } => *n_groups,
         }
     }
@@ -885,7 +818,6 @@ impl Regex {
     #[doc(hidden)]
     pub fn debug_print(&self) {
         match &self.inner {
-            RegexImpl::Wrap { inner, .. } => println!("wrapped {:?}", inner),
             RegexImpl::Fancy { prog, .. } => prog.debug_print(),
         }
     }
@@ -1114,11 +1046,6 @@ impl<'r, 't> Captures<'r, 't> {
     /// returned. The index 0 returns the whole match.
     pub fn get(&self, i: usize) -> Option<Match<'t>> {
         match &self.inner {
-            CapturesImpl::Wrap { text, locations } => locations.get_group(i).map(|span| Match {
-                text,
-                start: span.start,
-                end: span.end,
-            }),
             CapturesImpl::Fancy { text, ref saves } => {
                 let slot = i * 2;
                 if slot >= saves.len() {
@@ -1178,7 +1105,6 @@ impl<'r, 't> Captures<'r, 't> {
     /// match.
     pub fn len(&self) -> usize {
         match &self.inner {
-            CapturesImpl::Wrap { locations, .. } => locations.group_len(),
             CapturesImpl::Fancy { saves, .. } => saves.len() / 2,
         }
     }
@@ -1244,7 +1170,7 @@ impl<'c, 't> Iterator for SubCaptureMatches<'c, 't> {
 // TODO: might be nice to implement ExactSizeIterator etc for SubCaptures
 
 /// Regular expression AST. This is public for now but may change.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expr {
     /// An empty expression, e.g. the last branch in `(a|b|)`
     Empty,
@@ -1358,49 +1284,6 @@ impl<'r> Iterator for CaptureNames<'r> {
     }
 }
 
-// silly to write my own, but this is super-fast for the common 1-digit
-// case.
-fn push_usize(s: &mut String, x: usize) {
-    if x >= 10 {
-        push_usize(s, x / 10);
-        s.push((b'0' + (x % 10) as u8) as char);
-    } else {
-        s.push((b'0' + (x as u8)) as char);
-    }
-}
-
-fn is_special(c: char) -> bool {
-    match c {
-        '\\' | '.' | '+' | '*' | '?' | '(' | ')' | '|' | '[' | ']' | '{' | '}' | '^' | '$'
-        | '#' => true,
-        _ => false,
-    }
-}
-
-fn push_quoted(buf: &mut String, s: &str) {
-    for c in s.chars() {
-        if is_special(c) {
-            buf.push('\\');
-        }
-        buf.push(c);
-    }
-}
-
-/// Escapes special characters in `text` with '\\'.  Returns a string which, when interpreted
-/// as a regex, matches exactly `text`.
-pub fn escape(text: &str) -> Cow<str> {
-    // Using bytes() is OK because all special characters are single bytes.
-    match text.bytes().filter(|&b| is_special(b as char)).count() {
-        0 => Cow::Borrowed(text),
-        n => {
-            // The capacity calculation is exact because '\\' is a single byte.
-            let mut buf = String::with_capacity(text.len() + n);
-            push_quoted(&mut buf, text);
-            Cow::Owned(buf)
-        }
-    }
-}
-
 impl Expr {
     /// Parse the regex and return an expression (AST) and a bit set with the indexes of groups
     /// that are referenced by backrefs.
@@ -1408,105 +1291,185 @@ impl Expr {
         Parser::parse(re)
     }
 
-    /// Convert expression to a regex string in the regex crate's syntax.
-    ///
-    /// # Panics
-    ///
-    /// Panics for expressions that are hard, i.e. can not be handled by the regex crate.
-    pub fn to_str(&self, buf: &mut String, precedence: u8) {
-        match *self {
-            Expr::Empty => (),
-            Expr::Any { newline } => buf.push_str(if newline { "(?s:.)" } else { "." }),
-            Expr::Literal { ref val, casei } => {
-                if casei {
-                    buf.push_str("(?i:");
-                }
-                push_quoted(buf, val);
-                if casei {
-                    buf.push_str(")");
-                }
+    fn to_ast(self, capture_index: &mut u32) -> regex_syntax::ast::Ast {
+        use regex_syntax::ast::*;
+        // XXX: implement span?
+        let span = Span::splat(Position::new(0, 0, 0));
+
+        let with_flag = |flag, ast| {
+            if let Some(flag) = flag {
+                Ast::Group(Box::new(Group {
+                    span,
+                    kind: GroupKind::NonCapturing(Flags {
+                        span,
+                        items: vec![FlagsItem {
+                            span,
+                            kind: FlagsItemKind::Flag(flag),
+                        }],
+                    }),
+                    ast: Box::new(ast),
+                }))
+            } else {
+                ast
             }
-            Expr::StartText => buf.push('^'),
-            Expr::EndText => buf.push('$'),
-            Expr::StartLine => buf.push_str("(?m:^)"),
-            Expr::EndLine => buf.push_str("(?m:$)"),
-            Expr::Concat(ref children) => {
-                if precedence > 1 {
-                    buf.push_str("(?:");
-                }
-                for child in children {
-                    child.to_str(buf, 2);
-                }
-                if precedence > 1 {
-                    buf.push(')')
-                }
-            }
-            Expr::Alt(ref children) => {
-                if precedence > 0 {
-                    buf.push_str("(?:");
-                }
-                for (i, child) in children.iter().enumerate() {
-                    if i != 0 {
-                        buf.push('|');
-                    }
-                    child.to_str(buf, 1);
-                }
-                if precedence > 0 {
-                    buf.push(')');
-                }
-            }
-            Expr::Group(ref child) => {
-                buf.push('(');
-                child.to_str(buf, 0);
-                buf.push(')');
-            }
+        };
+
+        let mut fetch_add_capture_index = || {
+            let index = *capture_index;
+            *capture_index += 1;
+            index
+        };
+
+        match self {
+            Expr::Empty => Ast::Empty(Box::new(span)),
+            Expr::Any { newline } => with_flag(
+                newline.then_some(Flag::DotMatchesNewLine),
+                Ast::Dot(Box::new(span)),
+            ),
+            Expr::Literal { val, casei } => with_flag(
+                casei.then_some(Flag::CaseInsensitive),
+                Ast::Concat(Box::new(Concat {
+                    span,
+                    asts: val
+                        .chars()
+                        .map(|c| {
+                            Ast::Literal(Box::new(Literal {
+                                span,
+                                kind: LiteralKind::Verbatim, // does not matter
+                                c,
+                            }))
+                        })
+                        .collect(),
+                })),
+            ),
+            Expr::StartText => Ast::Assertion(Box::new(Assertion {
+                span,
+                kind: AssertionKind::StartText,
+            })),
+            Expr::StartLine => with_flag(
+                Some(Flag::MultiLine),
+                Ast::Assertion(Box::new(Assertion {
+                    span,
+                    kind: AssertionKind::StartLine,
+                })),
+            ),
+            Expr::EndText => Ast::Assertion(Box::new(Assertion {
+                span,
+                kind: AssertionKind::EndText,
+            })),
+            Expr::EndLine => with_flag(
+                Some(Flag::MultiLine),
+                Ast::Assertion(Box::new(Assertion {
+                    span,
+                    kind: AssertionKind::EndLine,
+                })),
+            ),
+            Expr::Concat(children) => Ast::Concat(Box::new(Concat {
+                span,
+                asts: children
+                    .into_iter()
+                    .map(|child| child.to_ast(capture_index))
+                    .collect(),
+            })),
+            Expr::Alt(children) => Ast::Alternation(Box::new(Alternation {
+                span,
+                asts: children
+                    .into_iter()
+                    .map(|child| child.to_ast(capture_index))
+                    .collect(),
+            })),
+            Expr::Group(child) => Ast::Group(Box::new(Group {
+                span,
+                kind: GroupKind::CaptureIndex(fetch_add_capture_index()),
+                ast: Box::new(child.to_ast(capture_index)),
+            })),
             Expr::Repeat {
-                ref child,
+                child,
                 lo,
                 hi,
                 greedy,
-            } => {
-                if precedence > 2 {
-                    buf.push_str("(?:");
-                }
-                child.to_str(buf, 3);
-                match (lo, hi) {
-                    (0, 1) => buf.push('?'),
-                    (0, usize::MAX) => buf.push('*'),
-                    (1, usize::MAX) => buf.push('+'),
-                    (lo, hi) => {
-                        buf.push('{');
-                        push_usize(buf, lo);
-                        if lo != hi {
-                            buf.push(',');
-                            if hi != usize::MAX {
-                                push_usize(buf, hi);
-                            }
+            } => Ast::Repetition(Box::new(Repetition {
+                span,
+                op: RepetitionOp {
+                    span,
+                    kind: match (lo, hi) {
+                        (0, 1) => RepetitionKind::ZeroOrOne,
+                        (0, usize::MAX) => RepetitionKind::ZeroOrMore,
+                        (1, usize::MAX) => RepetitionKind::OneOrMore,
+                        (lo, hi) if lo == hi => {
+                            RepetitionKind::Range(RepetitionRange::Exactly(lo.try_into().unwrap()))
                         }
-                        buf.push('}');
-                    }
-                }
-                if !greedy {
-                    buf.push('?');
-                }
-                if precedence > 2 {
-                    buf.push(')');
-                }
-            }
-            Expr::Delegate {
-                ref inner, casei, ..
-            } => {
-                // at the moment, delegate nodes are just atoms
-                if casei {
-                    buf.push_str("(?i:");
-                }
-                buf.push_str(inner);
-                if casei {
-                    buf.push_str(")");
-                }
-            }
+                        (lo, usize::MAX) => {
+                            RepetitionKind::Range(RepetitionRange::AtLeast(lo.try_into().unwrap()))
+                        }
+                        (lo, hi) => RepetitionKind::Range(RepetitionRange::Bounded(
+                            lo.try_into().unwrap(),
+                            hi.try_into().unwrap(),
+                        )),
+                    },
+                },
+                greedy,
+                ast: Box::new(child.to_ast(capture_index)),
+            })),
+            Expr::Delegate { inner, casei, .. } => with_flag(
+                casei.then_some(Flag::CaseInsensitive),
+                parse_ast(&inner, capture_index),
+            ),
             _ => panic!("attempting to format hard expr"),
         }
+    }
+
+    /// Convert expression to a [`regex_syntax::hir::Hir`].
+    pub fn to_hir(self) -> regex_syntax::hir::Hir {
+        let mut capture_index = 1;
+        let ast = self.to_ast(&mut capture_index);
+        let mut translator = regex_syntax::hir::translate::Translator::new();
+        // using empty pattern does not matter
+        // as it cannot error
+        translator.translate("", &ast).unwrap()
+    }
+}
+
+fn offset_capture_index(ast: &mut regex_syntax::ast::Ast, capture_index: u32) -> u32 {
+    use regex_syntax::ast::*;
+
+    let recur = |ast| offset_capture_index(ast, capture_index);
+
+    match ast {
+        Ast::Alternation(children) => children.asts.iter_mut().map(recur).max(),
+        Ast::Concat(children) => children.asts.iter_mut().map(recur).max(),
+        Ast::Repetition(child) => Some(recur(&mut child.ast)),
+        Ast::Group(child) => match &mut child.kind {
+            GroupKind::CaptureIndex(index) => {
+                *index += capture_index;
+                Some(*index + 1)
+            }
+            _ => None,
+        },
+        Ast::Assertion(_)
+        | Ast::ClassBracketed(_)
+        | Ast::ClassPerl(_)
+        | Ast::ClassUnicode(_)
+        | Ast::Dot(_)
+        | Ast::Empty(_)
+        | Ast::Flags(_)
+        | Ast::Literal(_) => None,
+    }
+    .unwrap_or(capture_index)
+}
+
+fn parse_ast(pattern: &str, capture_index: &mut u32) -> regex_syntax::ast::Ast {
+    let mut ast = regex_syntax::ast::parse::Parser::new()
+        .parse(pattern)
+        .unwrap();
+    *capture_index = offset_capture_index(&mut ast, *capture_index);
+    ast
+}
+
+impl fmt::Display for Expr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        // XXX: clone
+        write!(f, "{}", self.clone().to_hir())
     }
 }
 
@@ -1588,16 +1551,13 @@ mod tests {
     use crate::parse::make_literal;
     use crate::Expr;
     use crate::Regex;
-    use std::borrow::Cow;
     use std::usize;
     //use detect_possible_backref;
 
     // tests for to_str
 
     fn to_str(e: Expr) -> String {
-        let mut s = String::new();
-        e.to_str(&mut s, 0);
-        s
+        format!("{}", e)
     }
 
     #[test]
@@ -1606,7 +1566,7 @@ mod tests {
             Expr::Alt(vec![make_literal("a"), make_literal("b")]),
             make_literal("c"),
         ]);
-        assert_eq!(to_str(e), "(?:a|b)c");
+        assert_eq!(to_str(e), "(?:[ab]c)");
     }
 
     #[test]
@@ -1626,7 +1586,7 @@ mod tests {
             make_literal("a"),
             make_literal("b"),
         ])));
-        assert_eq!(to_str(e), "(a|b)");
+        assert_eq!(to_str(e), "([ab])");
     }
 
     #[test]
@@ -1663,7 +1623,7 @@ mod tests {
         }
 
         assert_eq!(to_str(repeat(2, 2, true)), "a{2}");
-        assert_eq!(to_str(repeat(2, 2, false)), "a{2}?");
+        assert_eq!(to_str(repeat(2, 2, false)), "a{2}");
         assert_eq!(to_str(repeat(2, 3, true)), "a{2,3}");
         assert_eq!(to_str(repeat(2, 3, false)), "a{2,3}?");
         assert_eq!(to_str(repeat(2, usize::MAX, true)), "a{2,}");
@@ -1677,19 +1637,10 @@ mod tests {
     }
 
     #[test]
-    fn escape() {
-        // Check that strings that need no quoting are borrowed, and that non-special punctuation
-        // is not quoted.
-        match crate::escape("@foo") {
-            Cow::Borrowed(s) => assert_eq!(s, "@foo"),
-            _ => panic!("Value should be borrowed."),
-        }
-
-        // Check typical usage.
-        assert_eq!(crate::escape("fo*o").into_owned(), "fo\\*o");
-
-        // Check that multibyte characters are handled correctly.
-        assert_eq!(crate::escape("fø*ø").into_owned(), "fø\\*ø");
+    fn to_str_multiline() {
+        let tree = Expr::parse_tree("(?m)^yes$").unwrap();
+        let expr = tree.expr;
+        assert_eq!(to_str(expr), "(?:(?m:^)(?:yes)(?m:$))");
     }
 
     /*
