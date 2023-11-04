@@ -230,7 +230,11 @@ fn find_iter_continue_from_previous_match_end() {
         match i {
             0 => assert_eq!((mat.start(), mat.end()), (0, 2)),
             1 => assert_eq!((mat.start(), mat.end()), (2, 4)),
-            i => panic!("Expected 2 results, got {}", i + 1),
+            i => panic!(
+                "Expected 2 results, got {} with {:?}",
+                i + 1,
+                (mat.start(), mat.end())
+            ),
         }
     }
 }

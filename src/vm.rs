@@ -74,6 +74,7 @@ use regex_automata::util::primitives::NonMaxUsize;
 use regex_automata::Anchored;
 use regex_automata::Input;
 use std::collections::BTreeSet;
+use std::ops::Range;
 
 use crate::codepoint_len;
 use crate::error::RuntimeError;
@@ -395,28 +396,30 @@ fn codepoint_len_at(s: &str, ix: usize) -> usize {
     codepoint_len(s.as_bytes()[ix])
 }
 
-#[inline]
-fn matches_literal(s: &str, ix: usize, end: usize, literal: &str) -> bool {
-    // Compare as bytes because the literal might be a single byte char whereas ix
-    // points to a multibyte char. Comparing with str would result in an error like
-    // "byte index N is not a char boundary".
-    end <= s.len() && &s.as_bytes()[ix..end] == literal.as_bytes()
-}
-
 /// Run the program with trace printing for debugging.
-pub fn run_trace(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
-    run(prog, s, pos, OPTION_TRACE, DEFAULT_BACKTRACK_LIMIT, None)
+pub fn run_trace(prog: &Prog, s: &str, range: Range<usize>) -> Result<Option<Vec<usize>>> {
+    run(prog, s, range, OPTION_TRACE, DEFAULT_BACKTRACK_LIMIT, None)
 }
 
 /// Run the program with default options.
-pub fn run_default(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
-    run(prog, s, pos, 0, DEFAULT_BACKTRACK_LIMIT, None)
+pub fn run_default(prog: &Prog, s: &str, range: Range<usize>) -> Result<Option<Vec<usize>>> {
+    run(prog, s, range, 0, DEFAULT_BACKTRACK_LIMIT, None)
+}
+
+/// Run the program with trace printing for debugging.
+pub fn run_trace_from_pos(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
+    run_trace(prog, s, pos..s.len())
+}
+
+/// Run the program with default options.
+pub fn run_default_from_pos(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
+    run_default(prog, s, pos..s.len())
 }
 
 pub(crate) fn run(
     prog: &Prog,
     s: &str,
-    pos: usize,
+    range: Range<usize>,
     option_flags: u32,
     backtrack_limit: usize,
     n_groups: Option<usize>,
@@ -426,7 +429,7 @@ pub(crate) fn run(
         &mut locations,
         prog,
         s,
-        pos,
+        range,
         option_flags,
         backtrack_limit,
         n_groups,
@@ -440,7 +443,7 @@ pub(crate) fn run_to(
     locations: &mut Vec<usize>,
     prog: &Prog,
     s: &str,
-    pos: usize,
+    range: Range<usize>,
     option_flags: u32,
     backtrack_limit: usize,
     n_groups: Option<usize>,
@@ -452,7 +455,8 @@ pub(crate) fn run_to(
     }
     let mut backtrack_count = 0;
     let mut pc = 0;
-    let mut ix = pos;
+    let mut ix = range.start;
+    assert!(range.end <= s.len(), "range out of bound");
     loop {
         // break from this loop to fail, causes stack to pop
         'fail: loop {
@@ -483,25 +487,26 @@ pub(crate) fn run_to(
                     return Ok(true);
                 }
                 Insn::Any => {
-                    if ix < s.len() {
+                    if ix < range.end {
                         ix += codepoint_len_at(s, ix);
                     } else {
                         break 'fail;
                     }
                 }
                 Insn::AnyNoNL => {
-                    if ix < s.len() && s.as_bytes()[ix] != b'\n' {
+                    if ix < range.end && s.as_bytes()[ix] != b'\n' {
                         ix += codepoint_len_at(s, ix);
                     } else {
                         break 'fail;
                     }
                 }
                 Insn::Lit(ref val) => {
-                    let ix_end = ix + val.len();
-                    if !matches_literal(s, ix, ix_end, val) {
+                    let end = ix.saturating_add(val.len()).min(range.end);
+                    let sb = &s.as_bytes()[ix..end];
+                    if sb != val.as_bytes() {
                         break 'fail;
                     }
-                    ix = ix_end;
+                    ix = end;
                 }
                 Insn::Split(x, y) => {
                     state.push(y, ix)?;
@@ -623,11 +628,12 @@ pub(crate) fn run_to(
                         break 'fail;
                     }
                     let ref_text = &s[lo..hi];
-                    let ix_end = ix + ref_text.len();
-                    if !matches_literal(s, ix, ix_end, ref_text) {
+                    let end = ix.saturating_add(ref_text.len()).min(range.end);
+                    let sb = &s.as_bytes()[ix..end];
+                    if sb != ref_text.as_bytes() {
                         break 'fail;
                     }
-                    ix = ix_end;
+                    ix = end;
                 }
                 Insn::BackrefExistsCondition(group) => {
                     let lo = state.get(group * 2);
@@ -645,7 +651,7 @@ pub(crate) fn run_to(
                     state.backtrack_cut(count);
                 }
                 Insn::DelegateSized(ref inner, size) => {
-                    let input = Input::new(s).span(ix..s.len()).anchored(Anchored::Yes);
+                    let input = Input::new(s).span(ix..range.end).anchored(Anchored::Yes);
                     if inner.is_match(input) {
                         // We could analyze for ascii-only, and ix += size in
                         // that case. Unlikely to be speed-limiting though.
@@ -661,7 +667,7 @@ pub(crate) fn run_to(
                     start_group,
                     end_group,
                 } => {
-                    let input = Input::new(s).span(ix..s.len()).anchored(Anchored::Yes);
+                    let input = Input::new(s).span(ix..range.end).anchored(Anchored::Yes);
                     if start_group == end_group {
                         // No groups, so we can use `find` which is faster than `captures_read`
                         match inner.find(input) {
@@ -689,7 +695,7 @@ pub(crate) fn run_to(
                     }
                 }
                 Insn::ContinueFromPreviousMatchEnd => {
-                    if ix > pos || option_flags & OPTION_SKIPPED_EMPTY_MATCH != 0 {
+                    if ix > range.start || option_flags & OPTION_SKIPPED_EMPTY_MATCH != 0 {
                         break 'fail;
                     }
                 }

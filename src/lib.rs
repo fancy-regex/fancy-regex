@@ -633,7 +633,14 @@ impl Regex {
         let Regex {
             ref prog, options, ..
         } = self;
-        let result = vm::run(prog, text, 0, 0, options.backtrack_limit, Some(0))?;
+        let result = vm::run(
+            prog,
+            text,
+            0..text.len(),
+            0,
+            options.backtrack_limit,
+            Some(0),
+        )?;
         Ok(result.is_some())
     }
 
@@ -716,7 +723,7 @@ impl Regex {
         let result = vm::run(
             prog,
             text,
-            pos,
+            pos..text.len(),
             option_flags,
             options.backtrack_limit,
             Some(1),
@@ -816,6 +823,16 @@ impl Regex {
         text: &'t str,
         pos: usize,
     ) -> Result<Option<Captures<'r, 't>>> {
+        self.captures_within_range(text, pos..text.len())
+    }
+
+    /// Returns the capture groups for the first match in `text`
+    /// within the specified byte range `range`.
+    pub fn captures_within_range<'r, 't>(
+        &'r self,
+        text: &'t str,
+        range: Range<usize>,
+    ) -> Result<Option<Captures<'r, 't>>> {
         let named_groups = &self.tree.named_groups;
         let Regex {
             prog,
@@ -832,7 +849,7 @@ impl Regex {
             &mut saves,
             prog,
             text,
-            pos,
+            range,
             0,
             options.backtrack_limit,
             Some(*n_groups),
@@ -1585,7 +1602,7 @@ pub fn detect_possible_backref(re: &str) -> bool {
 pub mod internal {
     pub use crate::analyze::analyze;
     pub use crate::compile::compile;
-    pub use crate::vm::{run_default, run_trace, Insn, Prog};
+    pub use crate::vm::{run_default_from_pos, run_trace_from_pos, Insn, Prog};
 }
 
 #[cfg(test)]

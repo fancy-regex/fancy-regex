@@ -24,7 +24,7 @@ extern crate criterion;
 use criterion::Criterion;
 use std::time::Duration;
 
-use fancy_regex::internal::{analyze, compile, run_default};
+use fancy_regex::internal::{analyze, compile, run_default_from_pos};
 use fancy_regex::Expr;
 use fancy_regex::Regex;
 
@@ -64,7 +64,7 @@ fn run_backtrack(c: &mut Criterion) {
     let p = compile(&a).unwrap();
     c.bench_function("run_backtrack", |b| {
         b.iter(|| {
-            let result = run_default(&p, "babab", 0).unwrap();
+            let result = run_default_from_pos(&p, "babab", 0).unwrap();
             assert_eq!(result, Some(vec![0, 5, 0, 2]));
             return result;
         })
@@ -82,7 +82,9 @@ fn run_tricky(c: &mut Criterion) {
         s.push_str("ab");
     }
     s.push_str("ac");
-    c.bench_function("run_tricky", |b| b.iter(|| run_default(&p, &s, 0).unwrap()));
+    c.bench_function("run_tricky", |b| {
+        b.iter(|| run_default_from_pos(&p, &s, 0).unwrap())
+    });
 }
 
 fn run_backtrack_limit(c: &mut Criterion) {
@@ -91,7 +93,7 @@ fn run_backtrack_limit(c: &mut Criterion) {
     let p = compile(&a).unwrap();
     let s = "abababababababababababababababababababababababababababab";
     c.bench_function("run_backtrack_limit", |b| {
-        b.iter(|| run_default(&p, &s, 0).unwrap_err())
+        b.iter(|| run_default_from_pos(&p, &s, 0).unwrap_err())
     });
 }
 

@@ -20,7 +20,7 @@
 
 //! A simple test app for exercising and debugging the regex engine.
 
-use fancy_regex::internal::{analyze, compile, run_trace, Insn, Prog};
+use fancy_regex::internal::{analyze, compile, run_trace_from_pos, Insn, Prog};
 use fancy_regex::*;
 use std::env;
 use std::str::FromStr;
@@ -73,7 +73,7 @@ fn main() {
             if let Some(re) = args.next() {
                 let prog = prog(&re);
                 if let Some(s) = args.next() {
-                    run_trace(&prog, &s, 0).unwrap();
+                    run_trace_from_pos(&prog, &s, 0).unwrap();
                 }
             }
         } else if cmd == "trace-inner" {
@@ -82,7 +82,7 @@ fn main() {
                 let a = analyze(&tree).unwrap();
                 let p = compile(&a).unwrap();
                 if let Some(s) = args.next() {
-                    run_trace(&p, &s, 0).unwrap();
+                    run_trace_from_pos(&p, &s, 0).unwrap();
                 }
             }
         } else if cmd == "graph" {
