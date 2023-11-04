@@ -74,13 +74,13 @@ use regex_automata::util::primitives::NonMaxUsize;
 use regex_automata::Anchored;
 use regex_automata::Input;
 use std::collections::BTreeSet;
-use std::usize;
 
+use crate::codepoint_len;
 use crate::error::RuntimeError;
 use crate::prev_codepoint_ix;
 use crate::Error;
 use crate::Result;
-use crate::{codepoint_len, RegexOptions};
+use crate::DEFAULT_BACKTRACK_LIMIT;
 
 /// Enable tracing of VM execution. Only for debugging/investigating.
 const OPTION_TRACE: u32 = 1 << 0;
@@ -405,12 +405,12 @@ fn matches_literal(s: &str, ix: usize, end: usize, literal: &str) -> bool {
 
 /// Run the program with trace printing for debugging.
 pub fn run_trace(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
-    run(prog, s, pos, OPTION_TRACE, &RegexOptions::default(), None)
+    run(prog, s, pos, OPTION_TRACE, DEFAULT_BACKTRACK_LIMIT, None)
 }
 
 /// Run the program with default options.
 pub fn run_default(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
-    run(prog, s, pos, 0, &RegexOptions::default(), None)
+    run(prog, s, pos, 0, DEFAULT_BACKTRACK_LIMIT, None)
 }
 
 pub(crate) fn run(
@@ -418,7 +418,7 @@ pub(crate) fn run(
     s: &str,
     pos: usize,
     option_flags: u32,
-    options: &RegexOptions,
+    backtrack_limit: usize,
     n_groups: Option<usize>,
 ) -> Result<Option<Vec<usize>>> {
     let mut locations = Vec::new();
@@ -428,7 +428,7 @@ pub(crate) fn run(
         s,
         pos,
         option_flags,
-        options,
+        backtrack_limit,
         n_groups,
     )?
     .then_some(locations))
@@ -442,7 +442,7 @@ pub(crate) fn run_to(
     s: &str,
     pos: usize,
     option_flags: u32,
-    options: &RegexOptions,
+    backtrack_limit: usize,
     n_groups: Option<usize>,
 ) -> Result<bool> {
     let mut state = State::new(prog.n_saves, MAX_STACK, option_flags);
@@ -705,7 +705,7 @@ pub(crate) fn run_to(
         }
 
         backtrack_count += 1;
-        if backtrack_count > options.backtrack_limit {
+        if backtrack_count > backtrack_limit {
             return Err(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded));
         }
 

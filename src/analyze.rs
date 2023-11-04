@@ -20,9 +20,7 @@
 
 //! Analysis of regex expressions.
 
-use bit_set::BitSet;
 use std::cmp::min;
-use std::usize;
 
 use crate::parse::ExprTree;
 use crate::CompileError;
@@ -64,13 +62,12 @@ impl<'a> Info<'a> {
     }
 }
 
-struct Analyzer<'a> {
-    backrefs: &'a BitSet,
+struct Analyzer {
     group_ix: usize,
 }
 
-impl<'a> Analyzer<'a> {
-    fn visit(&mut self, expr: &'a Expr) -> Result<Info<'a>> {
+impl Analyzer {
+    fn visit<'a>(&mut self, expr: &'a Expr) -> Result<Info<'a>> {
         let start_group = self.group_ix;
         let mut children = Vec::new();
         let mut min_size = 0;
@@ -117,7 +114,6 @@ impl<'a> Analyzer<'a> {
                 }
             }
             Expr::Group(ref child) => {
-                let group = self.group_ix;
                 self.group_ix += 1;
                 let child_info = self.visit(child)?;
                 min_size = child_info.min_size;
@@ -125,7 +121,7 @@ impl<'a> Analyzer<'a> {
                 // If there's a backref to this group, we potentially have to backtrack within the
                 // group. E.g. with `(x|xy)\1` and input `xyxy`, `x` matches but then the backref
                 // doesn't, so we have to backtrack and try `xy`.
-                hard = child_info.hard | self.backrefs.contains(group);
+                hard = child_info.hard;
                 children.push(child_info);
             }
             Expr::LookAround(ref child, _) => {
@@ -223,10 +219,7 @@ fn literal_const_size(_: &str, _: bool) -> bool {
 
 /// Analyze the parsed expression to determine whether it requires fancy features.
 pub fn analyze<'a>(tree: &'a ExprTree) -> Result<Info<'a>> {
-    let mut analyzer = Analyzer {
-        backrefs: &tree.backrefs,
-        group_ix: 0,
-    };
+    let mut analyzer = Analyzer { group_ix: 0 };
 
     analyzer.visit(&tree.expr)
 }

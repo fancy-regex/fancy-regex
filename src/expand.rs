@@ -70,7 +70,7 @@ impl Expander {
         let on_group_num = |num| {
             if num == 0 {
                 Ok(())
-            } else if !regex.named_groups.is_empty() {
+            } else if !regex.tree.named_groups.is_empty() {
                 Err(Error::CompileError(CompileError::NamedBackrefOnly))
             } else if num < regex.captures_len() {
                 Ok(())
@@ -81,7 +81,7 @@ impl Expander {
         self.exec(template, |step| match step {
             Step::Char(_) => Ok(()),
             Step::GroupName(name) => {
-                if regex.named_groups.contains_key(name) {
+                if regex.tree.named_groups.contains_key(name) {
                     Ok(())
                 } else if let Ok(num) = name.parse() {
                     on_group_num(num)

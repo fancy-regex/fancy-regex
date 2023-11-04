@@ -92,9 +92,9 @@ fn atomic_group() {
 
 #[test]
 fn backtrack_limit() {
-    let re = RegexBuilder::new("(?i)(a|b|ab)*(?=c)")
+    let re = RegexBuilder::new()
         .backtrack_limit(100_000)
-        .build()
+        .build("(?i)(a|b|ab)*(?=c)")
         .unwrap();
     let s = "abababababababababababababababababababababababababababab";
     let result = re.is_match(s);

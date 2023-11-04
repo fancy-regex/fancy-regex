@@ -20,12 +20,12 @@
 
 //! A regex parser yielding an AST.
 
-use bit_set::BitSet;
 use regex_syntax::escape;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::str::FromStr;
-use std::usize;
 
 use crate::codepoint_len;
 use crate::CompileError;
@@ -45,17 +45,18 @@ const FLAG_UNICODE: u32 = 1 << 5;
 
 pub(crate) type NamedGroups = HashMap<String, usize>;
 
-#[derive(Debug)]
+/// Regular expression AST Tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct ExprTree {
+    /// The expr
     pub expr: Expr,
-    pub backrefs: BitSet,
-    pub named_groups: NamedGroups,
+    pub(crate) named_groups: NamedGroups,
 }
 
 #[derive(Debug)]
 pub(crate) struct Parser<'a> {
     re: &'a str, // source
-    backrefs: BitSet,
     flags: u32,
     named_groups: NamedGroups,
     numeric_backrefs: bool,
@@ -76,7 +77,6 @@ impl<'a> Parser<'a> {
         }
         Ok(ExprTree {
             expr,
-            backrefs: Default::default(),
             named_groups: p.named_groups,
         })
     }
@@ -84,7 +84,6 @@ impl<'a> Parser<'a> {
     fn new(re: &str) -> Parser<'_> {
         Parser {
             re,
-            backrefs: Default::default(),
             named_groups: Default::default(),
             numeric_backrefs: false,
             flags: FLAG_UNICODE,
@@ -265,9 +264,6 @@ impl<'a> Parser<'a> {
             b'(' => self.parse_group(ix, depth),
             b'\\' => {
                 let (next, expr) = self.parse_escape(ix)?;
-                if let Expr::Backref(group) = expr {
-                    self.backrefs.insert(group);
-                }
                 Ok((next, expr))
             }
             b'+' | b'*' | b'?' | b'|' | b')' => Ok((ix, Expr::Empty)),
@@ -900,7 +896,6 @@ mod tests {
     use crate::parse::{make_literal, parse_id};
     use crate::Expr;
     use crate::LookAround::*;
-    use std::usize;
 
     fn p(s: &str) -> Expr {
         Expr::parse_tree(s).unwrap().expr

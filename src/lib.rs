@@ -160,6 +160,8 @@ Conditionals - if/then/else:
 #![deny(missing_docs)]
 #![deny(missing_debug_implementations)]
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use spin::mutex::{SpinMutex, SpinMutexGuard};
 use std::borrow::Cow;
 use std::convert::TryInto;
@@ -167,7 +169,6 @@ use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::ops::{Deref, DerefMut, Index, Range};
 use std::str::FromStr;
-use std::usize;
 
 mod analyze;
 mod compile;
@@ -178,8 +179,9 @@ mod replacer;
 mod vm;
 
 use crate::analyze::analyze;
-use crate::compile::compile;
-use crate::parse::{ExprTree, NamedGroups, Parser};
+use crate::compile::compile_with_options;
+pub use crate::parse::ExprTree;
+use crate::parse::{NamedGroups, Parser};
 use crate::vm::{Prog, OPTION_SKIPPED_EMPTY_MATCH};
 
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
@@ -191,47 +193,57 @@ const MAX_RECURSION: usize = 64;
 // the public API
 
 /// A builder for a `Regex` to allow configuring options.
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct RegexBuilder(RegexOptions);
 
 /// A compiled regular expression.
 #[derive(Clone)]
 pub struct Regex {
-    inner: RegexImpl,
-    named_groups: NamedGroups,
+    pattern: Option<String>,
+    tree: ExprTree,
+    prog: Prog,
+    n_groups: usize,
+    options: RegexOptions,
+    saves: SpinCache<Vec<usize>>,
 }
 
-// Separate enum because we don't want to expose any of this
-enum RegexImpl {
-    Fancy {
-        prog: Prog,
-        n_groups: usize,
-        options: RegexOptions,
-        saves: SpinMutex<Vec<usize>>,
-    },
-}
+#[derive(Debug)]
+struct SpinCache<T>(SpinMutex<T>);
 
-impl Clone for RegexImpl {
+impl<T: Default> Clone for SpinCache<T> {
     fn clone(&self) -> Self {
-        match self {
-            RegexImpl::Fancy {
-                prog,
-                n_groups,
-                options,
-                ..
-            } => {
-                let prog = prog.clone();
-                let n_groups = n_groups.clone();
-                let options = options.clone();
-                let locations = SpinMutex::new(Vec::new());
-                RegexImpl::Fancy {
-                    prog,
-                    n_groups,
-                    options,
-                    saves: locations,
-                }
-            }
-        }
+        SpinCache(SpinMutex::new(T::default()))
+    }
+}
+
+impl<T> AsRef<SpinMutex<T>> for SpinCache<T> {
+    fn as_ref(&self) -> &SpinMutex<T> {
+        self
+    }
+}
+
+impl<T> AsMut<SpinMutex<T>> for SpinCache<T> {
+    fn as_mut(&mut self) -> &mut SpinMutex<T> {
+        self
+    }
+}
+
+impl<T> Deref for SpinCache<T> {
+    type Target = SpinMutex<T>;
+    fn deref(&self) -> &SpinMutex<T> {
+        &self.0
+    }
+}
+
+impl<T> DerefMut for SpinCache<T> {
+    fn deref_mut(&mut self) -> &mut SpinMutex<T> {
+        &mut self.0
+    }
+}
+
+impl<T: Default> Default for SpinCache<T> {
+    fn default() -> Self {
+        SpinCache(SpinMutex::new(T::default()))
     }
 }
 
@@ -378,16 +390,9 @@ impl<'r, 't> Iterator for CaptureMatches<'r, 't> {
 /// A set of capture groups found for a regex.
 #[derive(Debug)]
 pub struct Captures<'r, 't> {
-    inner: CapturesImpl<'r, 't>,
+    text: &'t str,
+    saves: CowSpin<'r, Vec<usize>>,
     named_groups: &'r NamedGroups,
-}
-
-#[derive(Debug)]
-enum CapturesImpl<'r, 't> {
-    Fancy {
-        text: &'t str,
-        saves: CowSpin<'r, Vec<usize>>,
-    },
 }
 
 #[derive(Debug)]
@@ -435,8 +440,13 @@ pub struct SubCaptureMatches<'r, 't> {
 }
 
 #[derive(Clone, Debug)]
+enum RegexSource {
+    Pattern(String),
+    ExprTree(ExprTree),
+}
+
+#[derive(Copy, Clone, Debug)]
 struct RegexOptions {
-    pattern: String,
     backtrack_limit: usize,
     delegate_size_limit: Option<usize>,
     delegate_dfa_size_limit: Option<usize>,
@@ -445,29 +455,34 @@ struct RegexOptions {
 impl Default for RegexOptions {
     fn default() -> Self {
         RegexOptions {
-            pattern: String::new(),
-            backtrack_limit: 1_000_000,
+            backtrack_limit: DEFAULT_BACKTRACK_LIMIT,
             delegate_size_limit: None,
             delegate_dfa_size_limit: None,
         }
     }
 }
 
+const DEFAULT_BACKTRACK_LIMIT: usize = 1_000_000;
+
 impl RegexBuilder {
     /// Create a new regex builder with a regex pattern.
     ///
     /// If the pattern is invalid, the call to `build` will fail later.
-    pub fn new(pattern: &str) -> Self {
-        let mut builder = RegexBuilder(RegexOptions::default());
-        builder.0.pattern = pattern.to_string();
+    pub fn new() -> Self {
+        let builder = RegexBuilder(RegexOptions::default());
         builder
     }
 
     /// Build the `Regex`.
     ///
     /// Returns an [`Error`](enum.Error.html) if the pattern could not be parsed.
-    pub fn build(&self) -> Result<Regex> {
-        Regex::new_options(self.0.clone())
+    pub fn build(&self, pattern: impl Into<String>) -> Result<Regex> {
+        Regex::new_with_source_and_options(RegexSource::Pattern(pattern.into()), self.0)
+    }
+
+    /// Build the `Regex` from `Expr`
+    pub fn build_from_expr_tree(&self, expr_tree: impl Into<ExprTree>) -> Result<Regex> {
+        Regex::new_with_source_and_options(RegexSource::ExprTree(expr_tree.into()), self.0)
     }
 
     /// Limit for how many times backtracking should be attempted for fancy regexes (where
@@ -530,16 +545,15 @@ impl Regex {
     /// Parse and compile a regex with default options, see `RegexBuilder`.
     ///
     /// Returns an [`Error`](enum.Error.html) if the pattern could not be parsed.
-    pub fn new(re: &str) -> Result<Regex> {
-        let options = RegexOptions {
-            pattern: re.to_string(),
-            ..RegexOptions::default()
-        };
-        Self::new_options(options)
+    pub fn new(re: impl Into<String>) -> Result<Regex> {
+        RegexBuilder::new().build(re)
     }
 
-    fn new_options(options: RegexOptions) -> Result<Regex> {
-        let raw_tree = Expr::parse_tree(&options.pattern)?;
+    fn new_with_source_and_options(source: RegexSource, options: RegexOptions) -> Result<Regex> {
+        let (raw_tree, pattern) = match source {
+            RegexSource::Pattern(pattern) => (Expr::parse_tree(pattern.as_str())?, Some(pattern)),
+            RegexSource::ExprTree(tree) => (tree, None),
+        };
 
         // wrapper to search for re at arbitrary start position,
         // and to capture the match bounds
@@ -559,23 +573,48 @@ impl Regex {
         let info = analyze(&tree)?;
         debug_assert_eq!(info.hard, info.children[1].children[0].hard);
 
-        let prog = compile(&info)?;
-        Ok(Regex {
-            inner: RegexImpl::Fancy {
-                prog,
-                n_groups: info.end_group,
-                options,
-                saves: SpinMutex::new(Vec::new()),
+        let prog = compile_with_options(
+            &info,
+            RegexOptions {
+                backtrack_limit: options.backtrack_limit,
+                delegate_dfa_size_limit: options.delegate_dfa_size_limit,
+                delegate_size_limit: options.delegate_size_limit,
             },
-            named_groups: tree.named_groups,
+        )?;
+        let n_groups = info.end_group;
+
+        let raw_tree = ExprTree {
+            expr: match tree.expr {
+                Expr::Concat(children) => match children.into_iter().last() {
+                    Some(Expr::Group(raw_expr)) => *raw_expr,
+                    _ => unreachable!(),
+                },
+                _ => unreachable!(),
+            },
+            ..tree
+        };
+
+        Ok(Regex {
+            n_groups,
+            pattern,
+            tree: raw_tree,
+            prog,
+            options,
+            saves: SpinCache::default(),
         })
     }
 
     /// Returns the original string of this regex.
     pub fn as_str(&self) -> &str {
-        match &self.inner {
-            RegexImpl::Fancy { options, .. } => &options.pattern,
-        }
+        self.pattern
+            .as_ref()
+            .expect("cannot get pattern as this regex is built from expr tree")
+            .as_str()
+    }
+
+    /// Returns the expr tree of this regex.
+    pub fn as_expr_tree(&self) -> &ExprTree {
+        &self.tree
     }
 
     /// Check if the regex matches the input text.
@@ -591,14 +630,11 @@ impl Regex {
     /// assert!(re.is_match("mirror mirror on the wall").unwrap());
     /// ```
     pub fn is_match(&self, text: &str) -> Result<bool> {
-        match &self.inner {
-            RegexImpl::Fancy {
-                ref prog, options, ..
-            } => {
-                let result = vm::run(prog, text, 0, 0, options, Some(0))?;
-                Ok(result.is_some())
-            }
-        }
+        let Regex {
+            ref prog, options, ..
+        } = self;
+        let result = vm::run(prog, text, 0, 0, options.backtrack_limit, Some(0))?;
+        Ok(result.is_some())
     }
 
     /// Returns an iterator for each successive non-overlapping match in `text`.
@@ -676,12 +712,16 @@ impl Regex {
         pos: usize,
         option_flags: u32,
     ) -> Result<Option<Match<'t>>> {
-        match &self.inner {
-            RegexImpl::Fancy { prog, options, .. } => {
-                let result = vm::run(prog, text, pos, option_flags, options, Some(1))?;
-                Ok(result.map(|saves| Match::new(text, saves[0], saves[1])))
-            }
-        }
+        let Regex { prog, options, .. } = self;
+        let result = vm::run(
+            prog,
+            text,
+            pos,
+            option_flags,
+            options.backtrack_limit,
+            Some(1),
+        )?;
+        Ok(result.map(|saves| Match::new(text, saves[0], saves[1])))
     }
 
     /// Returns an iterator over all the non-overlapping capture groups matched in `text`.
@@ -776,39 +816,44 @@ impl Regex {
         text: &'t str,
         pos: usize,
     ) -> Result<Option<Captures<'r, 't>>> {
-        let named_groups = &self.named_groups;
-        match &self.inner {
-            RegexImpl::Fancy {
-                prog,
-                n_groups,
-                options,
-                saves: locations,
-            } => {
-                let mut saves = locations
-                    .try_lock()
-                    .map_or_else(|| CowSpin::Owned(Vec::new()), CowSpin::Borrowed);
-                saves.clear();
-                let result = vm::run_to(&mut saves, prog, text, pos, 0, options, Some(*n_groups))?;
-                Ok(result.then(|| Captures {
-                    inner: CapturesImpl::Fancy { text, saves },
-                    named_groups,
-                }))
-            }
-        }
+        let named_groups = &self.tree.named_groups;
+        let Regex {
+            prog,
+            n_groups,
+            options,
+            saves: locations,
+            ..
+        } = self;
+        let mut saves = locations
+            .try_lock()
+            .map_or_else(|| CowSpin::Owned(Vec::new()), CowSpin::Borrowed);
+        saves.clear();
+        let result = vm::run_to(
+            &mut saves,
+            prog,
+            text,
+            pos,
+            0,
+            options.backtrack_limit,
+            Some(*n_groups),
+        )?;
+        Ok(result.then(|| Captures {
+            text,
+            saves,
+            named_groups,
+        }))
     }
 
     /// Returns the number of captures, including the implicit capture of the entire expression.
     pub fn captures_len(&self) -> usize {
-        match &self.inner {
-            RegexImpl::Fancy { n_groups, .. } => *n_groups,
-        }
+        self.n_groups
     }
 
     /// Returns an iterator over the capture names.
     pub fn capture_names(&self) -> CaptureNames {
         let mut names = Vec::new();
         names.resize(self.captures_len(), None);
-        for (name, &i) in self.named_groups.iter() {
+        for (name, &i) in self.tree.named_groups.iter() {
             names[i] = Some(name.as_str());
         }
         CaptureNames(names.into_iter())
@@ -817,9 +862,7 @@ impl Regex {
     // for debugging only
     #[doc(hidden)]
     pub fn debug_print(&self) {
-        match &self.inner {
-            RegexImpl::Fancy { prog, .. } => prog.debug_print(),
-        }
+        self.prog.debug_print()
     }
 
     /// Replaces the leftmost-first match with the replacement provided.
@@ -1045,24 +1088,23 @@ impl<'r, 't> Captures<'r, 't> {
     /// If there is no match for that group or the index does not correspond to a group, `None` is
     /// returned. The index 0 returns the whole match.
     pub fn get(&self, i: usize) -> Option<Match<'t>> {
-        match &self.inner {
-            CapturesImpl::Fancy { text, ref saves } => {
-                let slot = i * 2;
-                if slot >= saves.len() {
-                    return None;
-                }
-                let lo = saves[slot];
-                if lo == std::usize::MAX {
-                    return None;
-                }
-                let hi = saves[slot + 1];
-                Some(Match {
-                    text,
-                    start: lo,
-                    end: hi,
-                })
-            }
+        let Captures {
+            text, ref saves, ..
+        } = self;
+        let slot = i * 2;
+        if slot >= saves.len() {
+            return None;
         }
+        let lo = saves[slot];
+        if lo == std::usize::MAX {
+            return None;
+        }
+        let hi = saves[slot + 1];
+        Some(Match {
+            text,
+            start: lo,
+            end: hi,
+        })
     }
 
     /// Returns the match for a named capture group.  Returns `None` the capture
@@ -1104,9 +1146,7 @@ impl<'r, 't> Captures<'r, 't> {
     /// How many groups were captured. This is always at least 1 because group 0 returns the whole
     /// match.
     pub fn len(&self) -> usize {
-        match &self.inner {
-            CapturesImpl::Fancy { saves, .. } => saves.len() / 2,
-        }
+        self.saves.len() / 2
     }
 }
 
@@ -1171,6 +1211,7 @@ impl<'c, 't> Iterator for SubCaptureMatches<'c, 't> {
 
 /// Regular expression AST. This is public for now but may change.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Expr {
     /// An empty expression, e.g. the last branch in `(a|b|)`
     Empty,
@@ -1253,6 +1294,7 @@ pub enum Expr {
 
 /// Type of look-around assertion as used for a look-around expression.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum LookAround {
     /// Look-ahead assertion, e.g. `(?=a)`
     LookAhead,
@@ -1548,10 +1590,10 @@ pub mod internal {
 
 #[cfg(test)]
 mod tests {
+    use crate::RegexBuilder;
     use crate::parse::make_literal;
     use crate::Expr;
     use crate::Regex;
-    use std::usize;
     //use detect_possible_backref;
 
     // tests for to_str
@@ -1641,6 +1683,13 @@ mod tests {
         let tree = Expr::parse_tree("(?m)^yes$").unwrap();
         let expr = tree.expr;
         assert_eq!(to_str(expr), "(?:(?m:^)(?:yes)(?m:$))");
+    }
+
+    #[test]
+    fn expr_roundtrip() {
+        let tree = Expr::parse_tree("(?m)^yes$").unwrap();
+        let regex = RegexBuilder::new().build_from_expr_tree(tree.clone()).unwrap();
+        assert_eq!(regex.as_expr_tree(), &tree);
     }
 
     /*

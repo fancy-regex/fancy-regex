@@ -151,7 +151,7 @@ fn run_test(test: &Test) -> Option<String> {
         ..
     } = test;
 
-    let compile_result = FancyRegex::new(&pattern);
+    let compile_result = FancyRegex::new(pattern);
     if compile_result.is_err() {
         let error = format!("{:?}", compile_result.unwrap_err());
         return Some(format!("Compile failed: {}", error));
@@ -162,7 +162,7 @@ fn run_test(test: &Test) -> Option<String> {
             let result = panic::catch_unwind(|| {
                 // compile regex again instead of using above, otherwise:
                 // "may not be safely transferrable across a catch_unwind boundary"
-                let regex = Box::leak(Box::new(FancyRegex::new(&pattern).unwrap()));
+                let regex = Box::leak(Box::new(FancyRegex::new(pattern).unwrap()));
                 regex.captures(&text).unwrap()
             });
 
@@ -188,7 +188,7 @@ fn run_test(test: &Test) -> Option<String> {
             }
         }
         Assertion::NoMatch => {
-            let regex = FancyRegex::new(&pattern).unwrap();
+            let regex = FancyRegex::new(pattern).unwrap();
             let result = regex.find(&text).unwrap();
             if result.is_some() {
                 Some("Match found".to_string())
