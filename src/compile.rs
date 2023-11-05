@@ -163,13 +163,12 @@ impl Compiler {
                 self.visit(&info.children[0], false)?;
                 self.b.add(Insn::EndAtomic);
             }
-            Expr::Delegate { .. }
-            | Expr::StartText
-            | Expr::EndText
-            | Expr::StartLine
-            | Expr::EndLine => {
+            Expr::Delegate { .. } => {
                 // TODO: might want to have more specialized impls
                 self.compile_delegate(info)?;
+            }
+            Expr::Assertion(assertion) => {
+                self.b.add(Insn::Assertion(assertion));
             }
             Expr::KeepOut => {
                 self.b.add(Insn::Save(0));

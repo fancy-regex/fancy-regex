@@ -51,7 +51,11 @@ impl Analyzer {
         let mut const_size = false;
         let mut hard = false;
         match *expr {
-            Expr::Empty | Expr::EndText | Expr::EndLine => {
+            Expr::Assertion(assertion) if assertion.is_hard() => {
+                const_size = true;
+                hard = true;
+            }
+            Expr::Empty | Expr::Assertion(_) => {
                 const_size = true;
             }
             Expr::Any { .. } => {
@@ -65,9 +69,6 @@ impl Analyzer {
                     || val
                         .chars()
                         .all(|c| c.to_lowercase().count() == 1 && c.to_uppercase().count() == 1);
-            }
-            Expr::StartText | Expr::StartLine => {
-                const_size = true;
             }
             Expr::Concat(ref v) => {
                 const_size = true;

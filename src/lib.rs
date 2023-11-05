@@ -178,7 +178,7 @@ mod vm;
 use crate::analyze::analyze;
 use crate::compile::compile_with_options;
 use crate::parse::NamedGroups;
-pub use crate::parse::{Expr, ExprTree, LookAround};
+pub use crate::parse::{Assertion, Expr, ExprTree, LookAround};
 use crate::vm::{Prog, OPTION_SKIPPED_EMPTY_MATCH};
 
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};

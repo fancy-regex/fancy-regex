@@ -54,14 +54,8 @@ pub enum Expr {
         /// Whether it also matches newlines or not
         newline: bool,
     },
-    /// Start of input text
-    StartText,
-    /// End of input text
-    EndText,
-    /// Start of a line
-    StartLine,
-    /// End of a line
-    EndLine,
+    /// An assertion
+    Assertion(Assertion),
     /// The string as a literal, e.g. `a`
     Literal {
         /// The string to match
@@ -140,6 +134,45 @@ pub enum LookAround {
     LookBehindNeg,
 }
 
+/// Type of assertions
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum Assertion {
+    /// Start of input text
+    StartText,
+    /// End of input text
+    EndText,
+    /// Start of a line
+    StartLine {
+        /// CRLF mode
+        crlf: bool,
+    },
+    /// End of a line
+    EndLine {
+        /// CRLF mode
+        crlf: bool,
+    },
+    /// Left word boundary
+    LeftWordBoundary,
+    /// Right word boundary
+    RightWordBoundary,
+    /// Both word boundaries
+    WordBoundary,
+    /// Not word boundary
+    NotWordBoundary,
+}
+
+impl Assertion {
+    pub(crate) fn is_hard(&self) -> bool {
+        use Assertion::*;
+        matches!(
+            self,
+            // these will make regex-automata use PikeVM
+            LeftWordBoundary | RightWordBoundary | WordBoundary | NotWordBoundary
+        )
+    }
+}
+
 impl Expr {
     /// Parse the regex and return an expression (AST) and a bit set with the indexes of groups
     /// that are referenced by backrefs.
@@ -198,28 +231,37 @@ impl Expr {
                         .collect(),
                 })),
             ),
-            Expr::StartText => Ast::Assertion(Box::new(Assertion {
-                span,
-                kind: AssertionKind::StartText,
-            })),
-            Expr::StartLine => with_flag(
-                Some(Flag::MultiLine),
-                Ast::Assertion(Box::new(Assertion {
+            Expr::Assertion(assertion) => match assertion {
+                self::Assertion::StartText => Ast::Assertion(Box::new(Assertion {
                     span,
-                    kind: AssertionKind::StartLine,
+                    kind: AssertionKind::StartText,
                 })),
-            ),
-            Expr::EndText => Ast::Assertion(Box::new(Assertion {
-                span,
-                kind: AssertionKind::EndText,
-            })),
-            Expr::EndLine => with_flag(
-                Some(Flag::MultiLine),
-                Ast::Assertion(Box::new(Assertion {
+                self::Assertion::EndText => Ast::Assertion(Box::new(Assertion {
                     span,
-                    kind: AssertionKind::EndLine,
+                    kind: AssertionKind::EndText,
                 })),
-            ),
+                self::Assertion::StartLine { crlf } => with_flag(
+                    Some(Flag::MultiLine),
+                    with_flag(
+                        crlf.then_some(Flag::CRLF),
+                        Ast::Assertion(Box::new(Assertion {
+                            span,
+                            kind: AssertionKind::StartLine,
+                        })),
+                    ),
+                ),
+                self::Assertion::EndLine { crlf } => with_flag(
+                    Some(Flag::MultiLine),
+                    with_flag(
+                        crlf.then_some(Flag::CRLF),
+                        Ast::Assertion(Box::new(Assertion {
+                            span,
+                            kind: AssertionKind::EndLine,
+                        })),
+                    ),
+                ),
+                _ => panic!("word boundaries are considered hard"),
+            },
             Expr::Concat(children) => Ast::Concat(Box::new(Concat {
                 span,
                 asts: try_collect(
@@ -496,10 +538,7 @@ impl<'a> Parser<'a> {
         match child {
             Expr::LookAround(_, _) => false,
             Expr::Empty => false,
-            Expr::StartText => false,
-            Expr::EndText => false,
-            Expr::StartLine => false,
-            Expr::EndLine => false,
+            Expr::Assertion(_) => false,
             _ => true,
         }
     }
@@ -560,17 +599,19 @@ impl<'a> Parser<'a> {
             b'^' => Ok((
                 ix + 1,
                 if self.flag(FLAG_MULTI) {
-                    Expr::StartLine
+                    // TODO: support crlf flag
+                    Expr::Assertion(Assertion::StartLine { crlf: false })
                 } else {
-                    Expr::StartText
+                    Expr::Assertion(Assertion::StartText)
                 },
             )),
             b'$' => Ok((
                 ix + 1,
                 if self.flag(FLAG_MULTI) {
-                    Expr::EndLine
+                    // TODO: support crlf flag
+                    Expr::Assertion(Assertion::EndLine { crlf: false })
                 } else {
-                    Expr::EndText
+                    Expr::Assertion(Assertion::EndText)
                 },
             )),
             b'(' => self.parse_group(ix, depth),
@@ -642,76 +683,87 @@ impl<'a> Parser<'a> {
         let bytes = self.re.as_bytes();
         let b = bytes[ix + 1];
         let mut end = ix + 1 + codepoint_len(b);
-        let mut size = 1;
-        if is_digit(b) {
+        Ok(if is_digit(b) {
             return self.parse_numbered_backref(ix + 1);
         } else if matches!(b, b'k' | b'g') {
             // Named backref: \k<name>
             return self.parse_named_backref(ix + 2, "<", ">");
-        } else if matches!(b, b'A' | b'z' | b'b' | b'B' | b'<' | b'>') {
-            size = 0;
+        } else if b == b'A' {
+            (end, Expr::Assertion(Assertion::StartText))
+        } else if b == b'z' {
+            (end, Expr::Assertion(Assertion::EndText))
+        } else if b == b'b' && bytes.get(end).copied() != Some(b'{') {
+            (end, Expr::Assertion(Assertion::WordBoundary))
+        } else if b == b'B' && bytes.get(end).copied() != Some(b'{') {
+            (end, Expr::Assertion(Assertion::NotWordBoundary))
+        } else if b == b'<' {
+            (end, Expr::Assertion(Assertion::LeftWordBoundary))
+        } else if b == b'>' {
+            (end, Expr::Assertion(Assertion::RightWordBoundary))
         } else if matches!(b | 32, b'd' | b's' | b'w')
             || matches!(b, b'a' | b'f' | b'n' | b'r' | b't' | b'v')
         {
-            // size = 1
-        } else if b == b'e' {
-            let inner = String::from(r"\x1B");
-            return Ok((
+            (
                 end,
                 Expr::Delegate {
-                    inner,
-                    size,
+                    inner: String::from(&self.re[ix..end]),
+                    size: 1,
+                    casei: self.flag(FLAG_CASEI),
+                },
+            )
+        } else if b == b'e' {
+            (
+                end,
+                Expr::Literal {
+                    val: String::from("\x1B"),
                     casei: false,
                 },
-            ));
+            )
         } else if (b | 32) == b'h' {
             let s = if b == b'h' {
                 "[0-9A-Fa-f]"
             } else {
                 "[^0-9A-Fa-f]"
             };
-            let inner = String::from(s);
-            return Ok((
+            (
                 end,
                 Expr::Delegate {
-                    inner,
-                    size,
+                    inner: String::from(s),
+                    size: 1,
                     casei: false,
                 },
-            ));
+            )
         } else if b == b'x' {
             return self.parse_hex(end, 2);
         } else if b == b'u' {
             return self.parse_hex(end, 4);
         } else if b == b'U' {
             return self.parse_hex(end, 8);
-        } else if (b | 32) == b'p' {
-            // allow whitespace?
-            if end == self.re.len() {
-                return Err(Error::ParseError(
-                    ix,
-                    ParseError::InvalidEscape("\\p must be followed by a unicode name".to_string()),
-                ));
-            }
-            let b = bytes[end];
+        } else if (b | 32) == b'p' && bytes.get(end).copied() == Some(b'{') {
             end += codepoint_len(b);
-            if b == b'{' {
-                loop {
-                    if end == self.re.len() {
-                        return Err(Error::ParseError(ix, ParseError::UnclosedUnicodeName));
-                    }
-                    let b = bytes[end];
-                    if b == b'}' {
-                        end += 1;
-                        break;
-                    }
-                    end += codepoint_len(b);
+            loop {
+                if end == self.re.len() {
+                    return Err(Error::ParseError(ix, ParseError::UnclosedUnicodeName));
                 }
+                let b = bytes[end];
+                if b == b'}' {
+                    end += 1;
+                    break;
+                }
+                end += codepoint_len(b);
             }
+            (
+                end,
+                Expr::Delegate {
+                    inner: String::from(&self.re[ix..end]),
+                    size: 1,
+                    casei: self.flag(FLAG_CASEI),
+                },
+            )
         } else if b == b'K' {
-            return Ok((end, Expr::KeepOut));
+            (end, Expr::KeepOut)
         } else if b == b'G' {
-            return Ok((end, Expr::ContinueFromPreviousMatchEnd));
+            (end, Expr::ContinueFromPreviousMatchEnd)
         } else if b'a' <= (b | 32) && (b | 32) <= b'z' {
             return Err(Error::ParseError(
                 ix,
@@ -719,7 +771,7 @@ impl<'a> Parser<'a> {
             ));
         } else if b.is_ascii_graphic() && !b.is_ascii_alphanumeric() || b == b' ' {
             // printable ASCII (including space, see issue #29)
-            return Ok((end, make_literal(&self.re[ix + 1..end])));
+            (end, make_literal(&self.re[ix + 1..end]))
         } else {
             // what to do with characters outside printable ASCII?
             // can we consider they are error like this?
@@ -727,16 +779,7 @@ impl<'a> Parser<'a> {
                 ix,
                 ParseError::InvalidEscape(format!("\\{}", &self.re[ix + 1..end])),
             ));
-        }
-        let inner = String::from(&self.re[ix..end]);
-        Ok((
-            end,
-            Expr::Delegate {
-                inner,
-                size,
-                casei: self.flag(FLAG_CASEI),
-            },
-        ))
+        })
     }
 
     // ix points after '\x', eg to 'A0' or '{12345}', or after `\u` or `\U`
@@ -824,16 +867,14 @@ impl<'a> Parser<'a> {
                     let (end, expr) = self.parse_escape(ix)?;
                     match expr {
                         Expr::Literal { val, .. } => {
+                            debug_assert_eq!(val.chars().count(), 1);
                             class.push_str(&escape(&val));
                         }
-                        Expr::Delegate { inner, size, .. } => {
-                            if size != 0 {
-                                class.push_str(&inner);
-                            } else if nest == 1 {
-                                branches.push(inner);
-                            } else {
-                                return Err(Error::ParseError(ix, ParseError::InvalidClass));
-                            }
+                        Expr::Delegate { inner, .. } => {
+                            class.push_str(&inner);
+                        }
+                        e @ Expr::Assertion(_) => {
+                            branches.push(e);
                         }
                         _ => {
                             return Err(Error::ParseError(ix, ParseError::InvalidClass));
@@ -869,14 +910,6 @@ impl<'a> Parser<'a> {
             size: 1,
             casei: self.flag(FLAG_CASEI),
         };
-        let mut branches: Vec<_> = branches
-            .into_iter()
-            .map(|inner| Expr::Delegate {
-                inner,
-                size: 0,
-                casei: self.flag(FLAG_CASEI),
-            })
-            .collect();
         let ix = ix + 1; // skip closing ']'
         Ok((
             ix,
@@ -888,13 +921,11 @@ impl<'a> Parser<'a> {
                 }
                 Expr::Alt(branches)
             } else {
-                branches
-                    .into_iter()
-                    .fold(class, |child, cur| Expr::Conditional {
-                        condition: Box::new(cur),
-                        true_branch: Box::new(Expr::Empty),
-                        false_branch: Box::new(child),
-                    })
+                Expr::Conditional {
+                    condition: Box::new(Expr::Alt(branches)),
+                    true_branch: Box::new(Expr::Empty),
+                    false_branch: Box::new(class),
+                }
             },
         ))
     }
@@ -1220,27 +1251,6 @@ impl<'a> Parser<'a> {
                                     *lsize += rsize;
                                     None
                                 }},
-                                // merge assertions
-                                (
-                                    Some(l @ Expr::StartLine),
-                                    r @ Expr::StartLine | r @ Expr::StartText,
-                                ) => mark_change! {{
-                                    *l = r;
-                                    None
-                                }},
-                                (Some(Expr::StartText), Expr::StartLine | Expr::StartText) => {
-                                    mark_change!(None)
-                                }
-                                (
-                                    Some(l @ Expr::EndLine),
-                                    r @ Expr::EndLine | r @ Expr::EndText,
-                                ) => mark_change! {{
-                                    *l = r;
-                                    None
-                                }},
-                                (Some(Expr::EndText), Expr::EndLine | Expr::EndText) => {
-                                    mark_change!(None)
-                                }
                                 // no change
                                 (_, item) => Some(item),
                             };
