@@ -1194,14 +1194,8 @@ pub enum Expr {
         /// Whether it also matches newlines or not
         newline: bool,
     },
-    /// Start of input text
-    StartText,
-    /// End of input text
-    EndText,
-    /// Start of a line
-    StartLine,
-    /// End of a line
-    EndLine,
+    /// An assertion
+    Assertion(Assertion),
     /// The string as a literal, e.g. `a`
     Literal {
         /// The string to match
@@ -1342,6 +1336,44 @@ pub fn escape(text: &str) -> Cow<str> {
     }
 }
 
+/// Type of assertions
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum Assertion {
+    /// Start of input text
+    StartText,
+    /// End of input text
+    EndText,
+    /// Start of a line
+    StartLine {
+        /// CRLF mode
+        crlf: bool,
+    },
+    /// End of a line
+    EndLine {
+        /// CRLF mode
+        crlf: bool,
+    },
+    /// Left word boundary
+    LeftWordBoundary,
+    /// Right word boundary
+    RightWordBoundary,
+    /// Both word boundaries
+    WordBoundary,
+    /// Not word boundary
+    NotWordBoundary,
+}
+
+impl Assertion {
+    pub(crate) fn is_hard(&self) -> bool {
+        use Assertion::*;
+        matches!(
+            self,
+            // these will make regex-automata use PikeVM
+            LeftWordBoundary | RightWordBoundary | WordBoundary | NotWordBoundary
+        )
+    }
+}
+
 impl Expr {
     /// Parse the regex and return an expression (AST) and a bit set with the indexes of groups
     /// that are referenced by backrefs.
@@ -1367,10 +1399,12 @@ impl Expr {
                     buf.push_str(")");
                 }
             }
-            Expr::StartText => buf.push('^'),
-            Expr::EndText => buf.push('$'),
-            Expr::StartLine => buf.push_str("(?m:^)"),
-            Expr::EndLine => buf.push_str("(?m:$)"),
+            Expr::Assertion(Assertion::StartText) => buf.push('^'),
+            Expr::Assertion(Assertion::EndText) => buf.push('$'),
+            Expr::Assertion(Assertion::StartLine { crlf: false }) => buf.push_str("(?m:^)"),
+            Expr::Assertion(Assertion::EndLine { crlf: false }) => buf.push_str("(?m:$)"),
+            Expr::Assertion(Assertion::StartLine { crlf: true }) => buf.push_str("(?Rm:^)"),
+            Expr::Assertion(Assertion::EndLine { crlf: true }) => buf.push_str("(?Rm:$)"),
             Expr::Concat(ref children) => {
                 if precedence > 1 {
                     buf.push_str("(?:");

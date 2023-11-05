@@ -76,7 +76,11 @@ impl<'a> Analyzer<'a> {
         let mut const_size = false;
         let mut hard = false;
         match *expr {
-            Expr::Empty | Expr::EndText | Expr::EndLine => {
+            Expr::Assertion(assertion) if assertion.is_hard() => {
+                const_size = true;
+                hard = true;
+            }
+            Expr::Empty | Expr::Assertion(_) => {
                 const_size = true;
             }
             Expr::Any { .. } => {
@@ -87,9 +91,6 @@ impl<'a> Analyzer<'a> {
                 // right now each character in a literal gets its own node, that might change
                 min_size = 1;
                 const_size = literal_const_size(val, casei);
-            }
-            Expr::StartText | Expr::StartLine => {
-                const_size = true;
             }
             Expr::Concat(ref v) => {
                 const_size = true;

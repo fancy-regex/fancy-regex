@@ -30,8 +30,8 @@ use core::convert::TryInto;
 use core::usize;
 use regex_syntax::escape;
 
-use crate::LookAround::*;
 use crate::{codepoint_len, CompileError, Error, Expr, ParseError, Result, MAX_RECURSION};
+use crate::{Assertion, LookAround::*};
 
 const FLAG_CASEI: u32 = 1;
 const FLAG_MULTI: u32 = 1 << 1;
@@ -185,10 +185,7 @@ impl<'a> Parser<'a> {
         match child {
             Expr::LookAround(_, _) => false,
             Expr::Empty => false,
-            Expr::StartText => false,
-            Expr::EndText => false,
-            Expr::StartLine => false,
-            Expr::EndLine => false,
+            Expr::Assertion(_) => false,
             _ => true,
         }
     }
@@ -249,17 +246,19 @@ impl<'a> Parser<'a> {
             b'^' => Ok((
                 ix + 1,
                 if self.flag(FLAG_MULTI) {
-                    Expr::StartLine
+                    // TODO: support crlf flag
+                    Expr::Assertion(Assertion::StartLine { crlf: false })
                 } else {
-                    Expr::StartText
+                    Expr::Assertion(Assertion::StartText)
                 },
             )),
             b'$' => Ok((
                 ix + 1,
                 if self.flag(FLAG_MULTI) {
-                    Expr::EndLine
+                    // TODO: support crlf flag
+                    Expr::Assertion(Assertion::EndLine { crlf: false })
                 } else {
-                    Expr::EndText
+                    Expr::Assertion(Assertion::EndText)
                 },
             )),
             b'(' => self.parse_group(ix, depth),
@@ -334,76 +333,87 @@ impl<'a> Parser<'a> {
         let bytes = self.re.as_bytes();
         let b = bytes[ix + 1];
         let mut end = ix + 1 + codepoint_len(b);
-        let mut size = 1;
-        if is_digit(b) {
+        Ok(if is_digit(b) {
             return self.parse_numbered_backref(ix + 1);
         } else if matches!(b, b'k' | b'g') {
             // Named backref: \k<name>
             return self.parse_named_backref(ix + 2, "<", ">");
-        } else if matches!(b, b'A' | b'z' | b'b' | b'B' | b'<' | b'>') {
-            size = 0;
+        } else if b == b'A' {
+            (end, Expr::Assertion(Assertion::StartText))
+        } else if b == b'z' {
+            (end, Expr::Assertion(Assertion::EndText))
+        } else if b == b'b' && bytes.get(end).copied() != Some(b'{') {
+            (end, Expr::Assertion(Assertion::WordBoundary))
+        } else if b == b'B' && bytes.get(end).copied() != Some(b'{') {
+            (end, Expr::Assertion(Assertion::NotWordBoundary))
+        } else if b == b'<' {
+            (end, Expr::Assertion(Assertion::LeftWordBoundary))
+        } else if b == b'>' {
+            (end, Expr::Assertion(Assertion::RightWordBoundary))
         } else if matches!(b | 32, b'd' | b's' | b'w')
             || matches!(b, b'a' | b'f' | b'n' | b'r' | b't' | b'v')
         {
-            // size = 1
-        } else if b == b'e' {
-            let inner = String::from(r"\x1B");
-            return Ok((
+            (
                 end,
                 Expr::Delegate {
-                    inner,
-                    size,
+                    inner: String::from(&self.re[ix..end]),
+                    size: 1,
+                    casei: self.flag(FLAG_CASEI),
+                },
+            )
+        } else if b == b'e' {
+            (
+                end,
+                Expr::Literal {
+                    val: String::from("\x1B"),
                     casei: false,
                 },
-            ));
+            )
         } else if (b | 32) == b'h' {
             let s = if b == b'h' {
                 "[0-9A-Fa-f]"
             } else {
                 "[^0-9A-Fa-f]"
             };
-            let inner = String::from(s);
-            return Ok((
+            (
                 end,
                 Expr::Delegate {
-                    inner,
-                    size,
+                    inner: String::from(s),
+                    size: 1,
                     casei: false,
                 },
-            ));
+            )
         } else if b == b'x' {
             return self.parse_hex(end, 2);
         } else if b == b'u' {
             return self.parse_hex(end, 4);
         } else if b == b'U' {
             return self.parse_hex(end, 8);
-        } else if (b | 32) == b'p' {
-            // allow whitespace?
-            if end == self.re.len() {
-                return Err(Error::ParseError(
-                    ix,
-                    ParseError::InvalidEscape("\\p must be followed by a unicode name".to_string()),
-                ));
-            }
-            let b = bytes[end];
+        } else if (b | 32) == b'p' && bytes.get(end).copied() == Some(b'{') {
             end += codepoint_len(b);
-            if b == b'{' {
-                loop {
-                    if end == self.re.len() {
-                        return Err(Error::ParseError(ix, ParseError::UnclosedUnicodeName));
-                    }
-                    let b = bytes[end];
-                    if b == b'}' {
-                        end += 1;
-                        break;
-                    }
-                    end += codepoint_len(b);
+            loop {
+                if end == self.re.len() {
+                    return Err(Error::ParseError(ix, ParseError::UnclosedUnicodeName));
                 }
+                let b = bytes[end];
+                if b == b'}' {
+                    end += 1;
+                    break;
+                }
+                end += codepoint_len(b);
             }
+            (
+                end,
+                Expr::Delegate {
+                    inner: String::from(&self.re[ix..end]),
+                    size: 1,
+                    casei: self.flag(FLAG_CASEI),
+                },
+            )
         } else if b == b'K' {
-            return Ok((end, Expr::KeepOut));
+            (end, Expr::KeepOut)
         } else if b == b'G' {
-            return Ok((end, Expr::ContinueFromPreviousMatchEnd));
+            (end, Expr::ContinueFromPreviousMatchEnd)
         } else if b'a' <= (b | 32) && (b | 32) <= b'z' {
             return Err(Error::ParseError(
                 ix,
@@ -411,7 +421,7 @@ impl<'a> Parser<'a> {
             ));
         } else if b.is_ascii_graphic() && !b.is_ascii_alphanumeric() || b == b' ' {
             // printable ASCII (including space, see issue #29)
-            return Ok((end, make_literal(&self.re[ix + 1..end])));
+            (end, make_literal(&self.re[ix + 1..end]))
         } else {
             // what to do with characters outside printable ASCII?
             // can we consider they are error like this?
@@ -419,16 +429,7 @@ impl<'a> Parser<'a> {
                 ix,
                 ParseError::InvalidEscape(format!("\\{}", &self.re[ix + 1..end])),
             ));
-        }
-        let inner = String::from(&self.re[ix..end]);
-        Ok((
-            end,
-            Expr::Delegate {
-                inner,
-                size,
-                casei: self.flag(FLAG_CASEI),
-            },
-        ))
+        })
     }
 
     // ix points after '\x', eg to 'A0' or '{12345}', or after `\u` or `\U`
@@ -516,16 +517,14 @@ impl<'a> Parser<'a> {
                     let (end, expr) = self.parse_escape(ix)?;
                     match expr {
                         Expr::Literal { val, .. } => {
+                            debug_assert_eq!(val.chars().count(), 1);
                             class.push_str(&escape(&val));
                         }
-                        Expr::Delegate { inner, size, .. } => {
-                            if size != 0 {
-                                class.push_str(&inner);
-                            } else if nest == 1 {
-                                branches.push(inner);
-                            } else {
-                                return Err(Error::ParseError(ix, ParseError::InvalidClass));
-                            }
+                        Expr::Delegate { inner, .. } => {
+                            class.push_str(&inner);
+                        }
+                        e @ Expr::Assertion(_) => {
+                            branches.push(e);
                         }
                         _ => {
                             return Err(Error::ParseError(ix, ParseError::InvalidClass));
@@ -561,14 +560,6 @@ impl<'a> Parser<'a> {
             size: 1,
             casei: self.flag(FLAG_CASEI),
         };
-        let mut branches: Vec<_> = branches
-            .into_iter()
-            .map(|inner| Expr::Delegate {
-                inner,
-                size: 0,
-                casei: self.flag(FLAG_CASEI),
-            })
-            .collect();
         let ix = ix + 1; // skip closing ']'
         Ok((
             ix,
@@ -580,13 +571,11 @@ impl<'a> Parser<'a> {
                 }
                 Expr::Alt(branches)
             } else {
-                branches
-                    .into_iter()
-                    .fold(class, |child, cur| Expr::Conditional {
-                        condition: Box::new(cur),
-                        true_branch: Box::new(Expr::Empty),
-                        false_branch: Box::new(child),
-                    })
+                Expr::Conditional {
+                    condition: Box::new(Expr::Alt(branches)),
+                    true_branch: Box::new(Expr::Empty),
+                    false_branch: Box::new(class),
+                }
             },
         ))
     }
@@ -904,8 +893,8 @@ mod tests {
     use alloc::{format, vec};
 
     use crate::parse::{make_literal, parse_id};
-    use crate::Expr;
     use crate::LookAround::*;
+    use crate::{Assertion, Expr};
 
     fn p(s: &str) -> Expr {
         Expr::parse_tree(s).unwrap().expr
@@ -936,12 +925,12 @@ mod tests {
 
     #[test]
     fn start_text() {
-        assert_eq!(p("^"), Expr::StartText);
+        assert_eq!(p("^"), Expr::Assertion(Assertion::StartText));
     }
 
     #[test]
     fn end_text() {
-        assert_eq!(p("$"), Expr::EndText);
+        assert_eq!(p("$"), Expr::Assertion(Assertion::EndText));
     }
 
     #[test]
@@ -1326,10 +1315,16 @@ mod tests {
 
     #[test]
     fn flag_multiline() {
-        assert_eq!(p("^"), Expr::StartText);
-        assert_eq!(p("(?m:^)"), Expr::StartLine);
-        assert_eq!(p("$"), Expr::EndText);
-        assert_eq!(p("(?m:$)"), Expr::EndLine);
+        assert_eq!(p("^"), Expr::Assertion(Assertion::StartText));
+        assert_eq!(
+            p("(?m:^)"),
+            Expr::Assertion(Assertion::StartLine { crlf: false })
+        );
+        assert_eq!(p("$"), Expr::Assertion(Assertion::EndText));
+        assert_eq!(
+            p("(?m:$)"),
+            Expr::Assertion(Assertion::EndLine { crlf: false })
+        );
     }
 
     #[test]
@@ -1704,7 +1699,7 @@ mod tests {
         assert_eq!(
             p(r"^(?(\d)abc|\d!)$"),
             Expr::Concat(vec![
-                Expr::StartText,
+                Expr::Assertion(Assertion::StartText),
                 Expr::Conditional {
                     condition: Box::new(Expr::Delegate {
                         inner: "\\d".to_string(),
@@ -1725,7 +1720,7 @@ mod tests {
                         make_literal("!"),
                     ])),
                 },
-                Expr::EndText,
+                Expr::Assertion(Assertion::EndText),
             ])
         );
 
