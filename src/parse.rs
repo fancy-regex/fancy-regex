@@ -32,8 +32,6 @@ use std::sync::atomic::Ordering;
 use crate::codepoint_len;
 use crate::CompileError;
 use crate::Error;
-use crate::Expr;
-use crate::LookAround::*;
 use crate::ParseError;
 use crate::Result;
 use crate::MAX_RECURSION;
@@ -44,6 +42,308 @@ const FLAG_DOTNL: u32 = 1 << 2;
 const FLAG_SWAP_GREED: u32 = 1 << 3;
 const FLAG_IGNORE_SPACE: u32 = 1 << 4;
 const FLAG_UNICODE: u32 = 1 << 5;
+
+/// Regular expression AST. This is public for now but may change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum Expr {
+    /// An empty expression, e.g. the last branch in `(a|b|)`
+    Empty,
+    /// Any character, regex `.`
+    Any {
+        /// Whether it also matches newlines or not
+        newline: bool,
+    },
+    /// Start of input text
+    StartText,
+    /// End of input text
+    EndText,
+    /// Start of a line
+    StartLine,
+    /// End of a line
+    EndLine,
+    /// The string as a literal, e.g. `a`
+    Literal {
+        /// The string to match
+        val: String,
+        /// Whether match is case-insensitive or not
+        casei: bool,
+    },
+    /// Concatenation of multiple expressions, must match in order, e.g. `a.` is a concatenation of
+    /// the literal `a` and `.` for any character
+    Concat(Vec<Expr>),
+    /// Alternative of multiple expressions, one of them must match, e.g. `a|b` is an alternative
+    /// where either the literal `a` or `b` must match
+    Alt(Vec<Expr>),
+    /// Capturing group of expression, e.g. `(a.)` matches `a` and any character and "captures"
+    /// (remembers) the match
+    Group(Box<Expr>),
+    /// Look-around (e.g. positive/negative look-ahead or look-behind) with an expression, e.g.
+    /// `(?=a)` means the next character must be `a` (but the match is not consumed)
+    LookAround(Box<Expr>, LookAround),
+    /// Repeat of an expression, e.g. `a*` or `a+` or `a{1,3}`
+    Repeat {
+        /// The expression that is being repeated
+        child: Box<Expr>,
+        /// The minimum number of repetitions
+        lo: usize,
+        /// The maximum number of repetitions (or `usize::MAX`)
+        hi: usize,
+        /// Greedy means as much as possible is matched, e.g. `.*b` would match all of `abab`.
+        /// Non-greedy means as little as possible, e.g. `.*?b` would match only `ab` in `abab`.
+        greedy: bool,
+    },
+    /// Delegate a regex to the regex crate. This is used as a simplification so that we don't have
+    /// to represent all the expressions in the AST, e.g. character classes.
+    Delegate {
+        /// The regex
+        inner: String,
+        /// How many characters the regex matches
+        size: usize, // TODO: move into analysis result
+        /// Whether the matching is case-insensitive or not
+        casei: bool,
+    },
+    /// Back reference to a capture group, e.g. `\1` in `(abc|def)\1` references the captured group
+    /// and the whole regex matches either `abcabc` or `defdef`.
+    Backref(usize),
+    /// Atomic non-capturing group, e.g. `(?>ab|a)` in text that contains `ab` will match `ab` and
+    /// never backtrack and try `a`, even if matching fails after the atomic group.
+    AtomicGroup(Box<Expr>),
+    /// Keep matched text so far out of overall match
+    KeepOut,
+    /// Anchor to match at the position where the previous match ended
+    ContinueFromPreviousMatchEnd,
+    /// Conditional expression based on whether the numbered capture group matched or not
+    BackrefExistsCondition(usize),
+    /// If/Then/Else Condition. If there is no Then/Else, these will just be empty expressions.
+    Conditional {
+        /// The conditional expression to evaluate
+        condition: Box<Expr>,
+        /// What to execute if the condition is true
+        true_branch: Box<Expr>,
+        /// What to execute if the condition is false
+        false_branch: Box<Expr>,
+    },
+}
+
+/// Type of look-around assertion as used for a look-around expression.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum LookAround {
+    /// Look-ahead assertion, e.g. `(?=a)`
+    LookAhead,
+    /// Negative look-ahead assertion, e.g. `(?!a)`
+    LookAheadNeg,
+    /// Look-behind assertion, e.g. `(?<=a)`
+    LookBehind,
+    /// Negative look-behind assertion, e.g. `(?<!a)`
+    LookBehindNeg,
+}
+
+impl Expr {
+    /// Parse the regex and return an expression (AST) and a bit set with the indexes of groups
+    /// that are referenced by backrefs.
+    pub fn parse_tree(re: &str) -> Result<ExprTree> {
+        ExprTree::parse(re)
+    }
+
+    fn to_ast(self, capture_index: &mut u32) -> Result<regex_syntax::ast::Ast> {
+        use regex_syntax::ast::*;
+        // XXX: implement span?
+        let span = Span::splat(Position::new(0, 0, 0));
+
+        let with_flag = |flag, ast| {
+            if let Some(flag) = flag {
+                Ast::Group(Box::new(Group {
+                    span,
+                    kind: GroupKind::NonCapturing(Flags {
+                        span,
+                        items: vec![FlagsItem {
+                            span,
+                            kind: FlagsItemKind::Flag(flag),
+                        }],
+                    }),
+                    ast: Box::new(ast),
+                }))
+            } else {
+                ast
+            }
+        };
+
+        let mut fetch_add_capture_index = || {
+            let index = *capture_index;
+            *capture_index += 1;
+            index
+        };
+
+        Ok(match self {
+            Expr::Empty => Ast::Empty(Box::new(span)),
+            Expr::Any { newline } => with_flag(
+                newline.then_some(Flag::DotMatchesNewLine),
+                Ast::Dot(Box::new(span)),
+            ),
+            Expr::Literal { val, casei } => with_flag(
+                casei.then_some(Flag::CaseInsensitive),
+                Ast::Concat(Box::new(Concat {
+                    span,
+                    asts: val
+                        .chars()
+                        .map(|c| {
+                            Ast::Literal(Box::new(Literal {
+                                span,
+                                kind: LiteralKind::Verbatim, // does not matter
+                                c,
+                            }))
+                        })
+                        .collect(),
+                })),
+            ),
+            Expr::StartText => Ast::Assertion(Box::new(Assertion {
+                span,
+                kind: AssertionKind::StartText,
+            })),
+            Expr::StartLine => with_flag(
+                Some(Flag::MultiLine),
+                Ast::Assertion(Box::new(Assertion {
+                    span,
+                    kind: AssertionKind::StartLine,
+                })),
+            ),
+            Expr::EndText => Ast::Assertion(Box::new(Assertion {
+                span,
+                kind: AssertionKind::EndText,
+            })),
+            Expr::EndLine => with_flag(
+                Some(Flag::MultiLine),
+                Ast::Assertion(Box::new(Assertion {
+                    span,
+                    kind: AssertionKind::EndLine,
+                })),
+            ),
+            Expr::Concat(children) => Ast::Concat(Box::new(Concat {
+                span,
+                asts: try_collect(
+                    children
+                        .into_iter()
+                        .map(|child| child.to_ast(capture_index)),
+                )?,
+            })),
+            Expr::Alt(children) => Ast::Alternation(Box::new(Alternation {
+                span,
+                asts: try_collect(
+                    children
+                        .into_iter()
+                        .map(|child| child.to_ast(capture_index)),
+                )?,
+            })),
+            Expr::Group(child) => Ast::Group(Box::new(Group {
+                span,
+                kind: GroupKind::CaptureIndex(fetch_add_capture_index()),
+                ast: Box::new(child.to_ast(capture_index)?),
+            })),
+            Expr::Repeat {
+                child,
+                lo,
+                hi,
+                greedy,
+            } => Ast::Repetition(Box::new(Repetition {
+                span,
+                op: RepetitionOp {
+                    span,
+                    kind: match (lo, hi) {
+                        (0, 1) => RepetitionKind::ZeroOrOne,
+                        (0, usize::MAX) => RepetitionKind::ZeroOrMore,
+                        (1, usize::MAX) => RepetitionKind::OneOrMore,
+                        (lo, hi) if lo == hi => {
+                            RepetitionKind::Range(RepetitionRange::Exactly(lo.try_into().unwrap()))
+                        }
+                        (lo, usize::MAX) => {
+                            RepetitionKind::Range(RepetitionRange::AtLeast(lo.try_into().unwrap()))
+                        }
+                        (lo, hi) => RepetitionKind::Range(RepetitionRange::Bounded(
+                            lo.try_into().unwrap(),
+                            hi.try_into().unwrap(),
+                        )),
+                    },
+                },
+                greedy,
+                ast: Box::new(child.to_ast(capture_index)?),
+            })),
+            Expr::Delegate { inner, casei, .. } => with_flag(
+                casei.then_some(Flag::CaseInsensitive),
+                parse_ast(&inner, capture_index)?,
+            ),
+            _ => panic!("attempting to convert hard expr"),
+        })
+    }
+
+    /// Convert expression to a [`regex_syntax::hir::Hir`].
+    pub fn to_hir(self) -> Result<regex_syntax::hir::Hir> {
+        let mut capture_index = 1;
+        let ast = self.to_ast(&mut capture_index)?;
+        let mut translator = regex_syntax::hir::translate::Translator::new();
+        // XXX: using empty pattern; this will make error info useless
+        translator.translate("", &ast).map_err(|e| {
+            Error::CompileError(CompileError::InnerSyntaxError(
+                regex_syntax::Error::Translate(e),
+            ))
+        })
+    }
+
+    /// Convert expression to a string
+    pub fn to_str(self) -> Result<String> {
+        Ok(format!("{}", self.to_hir()?))
+    }
+}
+
+fn offset_capture_index(ast: &mut regex_syntax::ast::Ast, capture_index: u32) -> u32 {
+    use regex_syntax::ast::*;
+
+    let recur = |ast| offset_capture_index(ast, capture_index);
+
+    match ast {
+        Ast::Alternation(children) => children.asts.iter_mut().map(recur).max(),
+        Ast::Concat(children) => children.asts.iter_mut().map(recur).max(),
+        Ast::Repetition(child) => Some(recur(&mut child.ast)),
+        Ast::Group(child) => match &mut child.kind {
+            GroupKind::CaptureIndex(index) => {
+                *index += capture_index;
+                Some(*index + 1)
+            }
+            _ => None,
+        },
+        Ast::Assertion(_)
+        | Ast::ClassBracketed(_)
+        | Ast::ClassPerl(_)
+        | Ast::ClassUnicode(_)
+        | Ast::Dot(_)
+        | Ast::Empty(_)
+        | Ast::Flags(_)
+        | Ast::Literal(_) => None,
+    }
+    .unwrap_or(capture_index)
+}
+
+fn parse_ast(pattern: &str, capture_index: &mut u32) -> Result<regex_syntax::ast::Ast> {
+    let mut ast = regex_syntax::ast::parse::Parser::new()
+        .parse(pattern)
+        .map_err(|e| {
+            Error::CompileError(CompileError::InnerSyntaxError(regex_syntax::Error::Parse(
+                e,
+            )))
+        })?;
+    *capture_index = offset_capture_index(&mut ast, *capture_index);
+    Ok(ast)
+}
+
+fn try_collect<T>(iter: impl IntoIterator<Item = Result<T>>) -> Result<Vec<T>> {
+    let iter = iter.into_iter();
+    let mut vec = Vec::with_capacity(iter.size_hint().0);
+    for item in iter {
+        vec.push(item?);
+    }
+    Ok(vec)
+}
 
 pub(crate) type NamedGroups = HashMap<String, usize>;
 
@@ -600,6 +900,8 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_group(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
+        use LookAround::*;
+
         let depth = depth + 1;
         if depth >= MAX_RECURSION {
             return Err(Error::ParseError(ix, ParseError::RecursionExceeded));
