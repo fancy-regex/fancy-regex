@@ -76,6 +76,7 @@ use regex_automata::Anchored;
 use regex_automata::Input;
 use std::collections::BTreeSet;
 use std::ops::Range;
+use std::sync::Arc;
 
 use crate::codepoint_len;
 use crate::error::RuntimeError;
@@ -83,7 +84,6 @@ use crate::prev_codepoint_ix;
 use crate::Assertion;
 use crate::Error;
 use crate::Result;
-use crate::DEFAULT_BACKTRACK_LIMIT;
 
 /// Enable tracing of VM execution. Only for debugging/investigating.
 const OPTION_TRACE: u32 = 1 << 0;
@@ -95,11 +95,11 @@ const OPTION_TRACE: u32 = 1 << 0;
 /// this option is for communicating that to the VM. Phew.
 pub(crate) const OPTION_SKIPPED_EMPTY_MATCH: u32 = 1 << 1;
 
-// TODO: make configurable
-const MAX_STACK: usize = 1_000_000;
+pub(crate) const DEFAULT_MAX_STACK: usize = 1_000_000;
+pub(crate) const DEFAULT_BACKTRACK_LIMIT: usize = 1_000_000;
 
 /// Instruction of the VM.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Insn {
     /// Successful end of program
     End,
@@ -197,7 +197,7 @@ pub enum Insn {
 }
 
 /// Sequence of instructions for the VM to execute.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Prog {
     /// Instructions of the program
     pub body: Vec<Insn>,
@@ -209,6 +209,7 @@ impl Prog {
         Prog { body, n_saves }
     }
 
+    #[cfg(debug_assertions)]
     #[doc(hidden)]
     pub(crate) fn debug_print(&self) {
         for (i, insn) in self.body.iter().enumerate() {
@@ -217,20 +218,21 @@ impl Prog {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 struct Branch {
     pc: usize,
     ix: usize,
     nsave: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 struct Save {
     slot: usize,
     value: usize,
 }
 
-struct State {
+#[derive(Debug)]
+pub(crate) struct State {
     /// Saved values indexed by slot. Mostly indices to s, but can be repeat values etc.
     /// Always contains the saves of the current state.
     saves: Vec<usize>,
@@ -240,11 +242,25 @@ struct State {
     oldsave: Vec<Save>,
     /// Number of saves at the end of `oldsave` that need to be restored to `saves` on pop
     nsave: usize,
-    explicit_sp: usize,
-    /// Maximum size of the stack. If the size would be exceeded during execution, a `StackOverflow`
-    /// error is raised.
-    max_stack: usize,
-    options: u32,
+    /// Search slots for regex-automata
+    inner_slots: Vec<Option<NonMaxUsize>>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct Machine {
+    pub prog: Arc<Prog>,
+    pub options: u32,
+    pub max_stack: usize,
+    pub backtrack_limit: usize,
+}
+
+#[derive(Debug)]
+pub(crate) struct Session {
+    pub prog: Arc<Prog>,
+    pub options: u32,
+    pub max_stack: usize,
+    pub backtrack_limit: usize,
+    state: State,
 }
 
 // Each element in the stack conceptually represents the entire state
@@ -256,24 +272,73 @@ struct State {
 // current machine state to the top of stack.
 
 impl State {
-    fn new(n_saves: usize, max_stack: usize, options: u32) -> State {
+    fn new(n_saves: usize) -> State {
         State {
             saves: vec![usize::MAX; n_saves],
             stack: Vec::new(),
             oldsave: Vec::new(),
             nsave: 0,
-            explicit_sp: n_saves,
-            max_stack,
-            options,
+            inner_slots: Vec::new(),
         }
+    }
+
+    fn reset(&mut self, n_saves: usize) {
+        self.saves.clear();
+        self.saves.resize(n_saves, usize::MAX);
+        self.stack.clear();
+        self.oldsave.clear();
+        self.nsave = 0;
+        self.inner_slots.clear();
+    }
+}
+
+impl Machine {
+    pub(crate) fn new(
+        prog: Arc<Prog>,
+        max_stack: usize,
+        backtrack_limit: usize,
+        options: u32,
+    ) -> Machine {
+        Machine {
+            prog,
+            options,
+            max_stack,
+            backtrack_limit,
+        }
+    }
+
+    pub(crate) fn create_state(prog: &Prog) -> State {
+        State::new(prog.n_saves)
+    }
+
+    pub(crate) fn create_session(self, state: State) -> Session {
+        Session {
+            prog: self.prog,
+            options: self.options,
+            max_stack: self.max_stack,
+            backtrack_limit: self.backtrack_limit,
+            state,
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    #[doc(hidden)]
+    pub(crate) fn debug_print(&self) {
+        self.prog.debug_print()
+    }
+}
+
+impl Session {
+    fn explicit_sp(&self) -> usize {
+        self.prog.n_saves
     }
 
     // push a backtrack branch
     fn push(&mut self, pc: usize, ix: usize) -> Result<()> {
-        if self.stack.len() < self.max_stack {
-            let nsave = self.nsave;
-            self.stack.push(Branch { pc, ix, nsave });
-            self.nsave = 0;
+        if self.state.stack.len() < self.max_stack {
+            let nsave = self.state.nsave;
+            self.state.stack.push(Branch { pc, ix, nsave });
+            self.state.nsave = 0;
             self.trace_stack("push");
             Ok(())
         } else {
@@ -283,51 +348,51 @@ impl State {
 
     // pop a backtrack branch
     fn pop(&mut self) -> (usize, usize) {
-        for _ in 0..self.nsave {
-            let Save { slot, value } = self.oldsave.pop().unwrap();
-            self.saves[slot] = value;
+        for _ in 0..self.state.nsave {
+            let Save { slot, value } = self.state.oldsave.pop().unwrap();
+            self.state.saves[slot] = value;
         }
-        let Branch { pc, ix, nsave } = self.stack.pop().unwrap();
-        self.nsave = nsave;
+        let Branch { pc, ix, nsave } = self.state.stack.pop().unwrap();
+        self.state.nsave = nsave;
         self.trace_stack("pop");
         (pc, ix)
     }
 
     fn save(&mut self, slot: usize, val: usize) {
-        for i in 0..self.nsave {
+        for i in 0..self.state.nsave {
             // could avoid this iteration with some overhead; worth it?
-            if self.oldsave[self.oldsave.len() - i - 1].slot == slot {
+            if self.state.oldsave[self.state.oldsave.len() - i - 1].slot == slot {
                 // already saved, just update
-                self.saves[slot] = val;
+                self.state.saves[slot] = val;
                 return;
             }
         }
-        self.oldsave.push(Save {
+        self.state.oldsave.push(Save {
             slot,
-            value: self.saves[slot],
+            value: self.state.saves[slot],
         });
-        self.nsave += 1;
-        self.saves[slot] = val;
+        self.state.nsave += 1;
+        self.state.saves[slot] = val;
 
         if self.options & OPTION_TRACE != 0 {
-            println!("saves: {:?}", self.saves);
+            println!("saves: {:?}", self.state.saves);
         }
     }
 
     fn get(&self, slot: usize) -> usize {
-        self.saves[slot]
+        self.state.saves[slot]
     }
 
     // push a value onto the explicit stack; note: the entire contents of
     // the explicit stack is saved and restored on backtrack.
     fn stack_push(&mut self, val: usize) {
-        if self.saves.len() == self.explicit_sp {
-            self.saves.push(self.explicit_sp + 1);
+        if self.state.saves.len() == self.explicit_sp() {
+            self.state.saves.push(self.explicit_sp() + 1);
         }
-        let explicit_sp = self.explicit_sp;
+        let explicit_sp = self.explicit_sp();
         let sp = self.get(explicit_sp);
-        if self.saves.len() == sp {
-            self.saves.push(val);
+        if self.state.saves.len() == sp {
+            self.state.saves.push(val);
         } else {
             self.save(sp, val);
         }
@@ -336,7 +401,7 @@ impl State {
 
     // pop a value from the explicit stack
     fn stack_pop(&mut self) -> usize {
-        let explicit_sp = self.explicit_sp;
+        let explicit_sp = self.explicit_sp();
         let sp = self.get(explicit_sp) - 1;
         let result = self.get(sp);
         self.save(explicit_sp, sp);
@@ -345,7 +410,7 @@ impl State {
 
     /// Get the current number of backtrack branches
     fn backtrack_count(&self) -> usize {
-        self.stack.len()
+        self.state.stack.len()
     }
 
     /// Discard backtrack branches that were pushed since the call to `backtrack_count`.
@@ -356,45 +421,397 @@ impl State {
     /// * Keep the first `oldsave` for each slot, discard the rest (multiple pushes might have
     ///   happened with saves to the same slot)
     fn backtrack_cut(&mut self, count: usize) {
-        if self.stack.len() == count {
+        if self.state.stack.len() == count {
             // no backtrack branches to discard, all good
             return;
         }
         // start and end indexes of old saves for the branch we're cutting to
         let (oldsave_start, oldsave_end) = {
-            let mut end = self.oldsave.len() - self.nsave;
-            for &Branch { nsave, .. } in &self.stack[count + 1..] {
+            let mut end = self.state.oldsave.len() - self.state.nsave;
+            for &Branch { nsave, .. } in &self.state.stack[count + 1..] {
                 end -= nsave;
             }
-            let start = end - self.stack[count].nsave;
+            let start = end - self.state.stack[count].nsave;
             (start, end)
         };
         let mut saved = BTreeSet::new();
         // keep all the old saves of our branch (they're all for different slots)
-        for &Save { slot, .. } in &self.oldsave[oldsave_start..oldsave_end] {
+        for &Save { slot, .. } in &self.state.oldsave[oldsave_start..oldsave_end] {
             saved.insert(slot);
         }
         let mut oldsave_ix = oldsave_end;
         // for other old saves, keep them only if they're for a slot that we haven't saved yet
-        for ix in oldsave_end..self.oldsave.len() {
-            let Save { slot, .. } = self.oldsave[ix];
+        for ix in oldsave_end..self.state.oldsave.len() {
+            let Save { slot, .. } = self.state.oldsave[ix];
             let new_slot = saved.insert(slot);
             if new_slot {
                 // put the save we want to keep (ix) after the ones we already have (oldsave_ix)
                 // note that it's fine if the indexes are the same (then swapping is a no-op)
-                self.oldsave.swap(oldsave_ix, ix);
+                self.state.oldsave.swap(oldsave_ix, ix);
                 oldsave_ix += 1;
             }
         }
-        self.stack.truncate(count);
-        self.oldsave.truncate(oldsave_ix);
-        self.nsave = oldsave_ix - oldsave_start;
+        self.state.stack.truncate(count);
+        self.state.oldsave.truncate(oldsave_ix);
+        self.state.nsave = oldsave_ix - oldsave_start;
     }
 
     #[inline]
     fn trace_stack(&self, operation: &str) {
         if self.options & OPTION_TRACE != 0 {
-            println!("stack after {}: {:?}", operation, self.stack);
+            println!("stack after {}: {:?}", operation, self.state.stack);
+        }
+    }
+
+    pub(crate) fn run(
+        &mut self,
+        s: &str,
+        range: Range<usize>,
+        n_groups: Option<usize>,
+    ) -> Result<Option<Vec<usize>>> {
+        let mut locations = Vec::new();
+        Ok(self
+            .run_to(&mut locations, s, range, n_groups)?
+            .then_some(locations))
+    }
+
+    pub(crate) fn run_with_options(
+        &mut self,
+        s: &str,
+        range: Range<usize>,
+        n_groups: Option<usize>,
+        options: u32,
+    ) -> Result<Option<Vec<usize>>> {
+        let old_options = self.options;
+        self.options = options;
+        let mut locations = Vec::new();
+        let r = self.run_to(&mut locations, s, range, n_groups);
+        self.options = old_options;
+        Ok(r?.then_some(locations))
+    }
+
+    /// Run the program with options.
+    #[allow(clippy::cognitive_complexity)]
+    pub(crate) fn run_to(
+        &mut self,
+        locations: &mut Vec<usize>,
+        s: &str,
+        range: Range<usize>,
+        n_groups: Option<usize>,
+    ) -> Result<bool> {
+        if self.options & OPTION_TRACE != 0 {
+            println!("pos\tinstruction");
+        }
+        self.state.reset(self.explicit_sp());
+        let look_matcher = LookMatcher::new();
+        let mut backtrack_count = 0;
+        let mut pc = 0;
+        let mut ix = range.start;
+        assert!(range.end <= s.len(), "range out of bound");
+        loop {
+            // break from this loop to fail, causes stack to pop
+            'fail: loop {
+                if self.options & OPTION_TRACE != 0 {
+                    println!("{}\t{} {:?}", ix, pc, self.prog.body[pc]);
+                }
+                match self.prog.body[pc] {
+                    Insn::End => {
+                        // save of end position into slot 1 is now done
+                        // with an explicit group; we might want to
+                        // optimize that.
+                        //state.saves[1] = ix;
+                        if self.options & OPTION_TRACE != 0 {
+                            println!("saves: {:?}", self.state.saves);
+                        }
+                        if let Some(&slot1) = self.state.saves.get(1) {
+                            // With some features like keep out (\K), the match start can be after
+                            // the match end. Cap the start to <= end.
+                            if self.get(0) > slot1 {
+                                self.save(0, slot1);
+                            }
+                        }
+                        if let Some(n_groups) = n_groups {
+                            locations.extend(self.state.saves.iter().take(n_groups * 2));
+                        } else {
+                            locations.extend(self.state.saves.iter());
+                        };
+                        return Ok(true);
+                    }
+                    Insn::Any => {
+                        if ix < range.end {
+                            ix += codepoint_len_at(s, ix);
+                        } else {
+                            break 'fail;
+                        }
+                    }
+                    Insn::AnyNoNL => {
+                        if ix < range.end && s.as_bytes()[ix] != b'\n' {
+                            ix += codepoint_len_at(s, ix);
+                        } else {
+                            break 'fail;
+                        }
+                    }
+                    Insn::Assertion(assertion) => {
+                        if !match assertion {
+                            Assertion::StartText => look_matcher.is_start(s.as_bytes(), ix),
+                            Assertion::EndText => look_matcher.is_end(s.as_bytes(), ix),
+                            Assertion::StartLine { crlf: false } => {
+                                look_matcher.is_start_lf(s.as_bytes(), ix)
+                            }
+                            Assertion::StartLine { crlf: true } => {
+                                look_matcher.is_start_crlf(s.as_bytes(), ix)
+                            }
+                            Assertion::EndLine { crlf: false } => {
+                                look_matcher.is_end_lf(s.as_bytes(), ix)
+                            }
+                            Assertion::EndLine { crlf: true } => {
+                                look_matcher.is_end_crlf(s.as_bytes(), ix)
+                            }
+                            Assertion::LeftWordBoundary => look_matcher
+                                .is_word_start_unicode(s.as_bytes(), ix)
+                                .unwrap(),
+                            Assertion::RightWordBoundary => {
+                                look_matcher.is_word_end_unicode(s.as_bytes(), ix).unwrap()
+                            }
+                            Assertion::WordBoundary => {
+                                look_matcher.is_word_unicode(s.as_bytes(), ix).unwrap()
+                            }
+                            Assertion::NotWordBoundary => look_matcher
+                                .is_word_unicode_negate(s.as_bytes(), ix)
+                                .unwrap(),
+                        } {
+                            break 'fail;
+                        }
+                    }
+                    Insn::Lit { ref val, casei } => {
+                        let end = ix.saturating_add(val.len()).min(range.end);
+                        let sb = &s.as_bytes()[ix..end];
+                        if !casei {
+                            if sb != val.as_bytes() {
+                                break 'fail;
+                            }
+                        } else {
+                            if !eq_test_exact_size(sb.iter().copied(), val.bytes(), |a, b| {
+                                // Do we need a == b shortcut? Is to_ascii_lowercase() fast?
+                                a == b || a.to_ascii_lowercase() == b.to_ascii_lowercase()
+                            }) {
+                                if !s.get(ix..end).map_or(false, |s| {
+                                    eq_test(
+                                        s.chars().flat_map(char::to_lowercase),
+                                        val.chars().flat_map(char::to_lowercase),
+                                        |a, b| a == b,
+                                    )
+                                }) {
+                                    break 'fail;
+                                }
+                            }
+                        }
+                        ix = end;
+                    }
+                    Insn::Split(x, y) => {
+                        self.push(y, ix)?;
+                        pc = x;
+                        continue;
+                    }
+                    Insn::Jmp(target) => {
+                        pc = target;
+                        continue;
+                    }
+                    Insn::Save(slot) => self.save(slot, ix),
+                    Insn::Save0(slot) => self.save(slot, 0),
+                    Insn::Restore(slot) => ix = self.get(slot),
+                    Insn::RepeatGr {
+                        lo,
+                        hi,
+                        next,
+                        repeat,
+                    } => {
+                        let repcount = self.get(repeat);
+                        if repcount == hi {
+                            pc = next;
+                            continue;
+                        }
+                        self.save(repeat, repcount + 1);
+                        if repcount >= lo {
+                            self.push(next, ix)?;
+                        }
+                    }
+                    Insn::RepeatNg {
+                        lo,
+                        hi,
+                        next,
+                        repeat,
+                    } => {
+                        let repcount = self.get(repeat);
+                        if repcount == hi {
+                            pc = next;
+                            continue;
+                        }
+                        self.save(repeat, repcount + 1);
+                        if repcount >= lo {
+                            self.push(pc + 1, ix)?;
+                            pc = next;
+                            continue;
+                        }
+                    }
+                    Insn::RepeatEpsilonGr {
+                        lo,
+                        next,
+                        repeat,
+                        check,
+                    } => {
+                        let repcount = self.get(repeat);
+                        if repcount > lo && self.get(check) == ix {
+                            // prevent zero-length match on repeat
+                            break 'fail;
+                        }
+                        self.save(repeat, repcount + 1);
+                        if repcount >= lo {
+                            self.save(check, ix);
+                            self.push(next, ix)?;
+                        }
+                    }
+                    Insn::RepeatEpsilonNg {
+                        lo,
+                        next,
+                        repeat,
+                        check,
+                    } => {
+                        let repcount = self.get(repeat);
+                        if repcount > lo && self.get(check) == ix {
+                            // prevent zero-length match on repeat
+                            break 'fail;
+                        }
+                        self.save(repeat, repcount + 1);
+                        if repcount >= lo {
+                            self.save(check, ix);
+                            self.push(pc + 1, ix)?;
+                            pc = next;
+                            continue;
+                        }
+                    }
+                    Insn::GoBack(count) => {
+                        for _ in 0..count {
+                            if ix == 0 {
+                                break 'fail;
+                            }
+                            ix = prev_codepoint_ix(s, ix);
+                        }
+                    }
+                    Insn::FailNegativeLookAround => {
+                        // Reaching this instruction means that the body of the
+                        // look-around matched. Because it's a *negative* look-around,
+                        // that means the look-around itself should fail (not match).
+                        // But before, we need to discard all the states that have
+                        // been pushed with the look-around, because we don't want to
+                        // explore them.
+                        loop {
+                            let (popped_pc, _) = self.pop();
+                            if popped_pc == pc + 1 {
+                                // We've reached the state that would jump us to
+                                // after the look-around (in case the look-around
+                                // succeeded). That means we popped enough states.
+                                break;
+                            }
+                        }
+                        break 'fail;
+                    }
+                    Insn::Backref(slot) => {
+                        let lo = self.get(slot);
+                        if lo == usize::MAX {
+                            // Referenced group hasn't matched, so the backref doesn't match either
+                            break 'fail;
+                        }
+                        let hi = self.get(slot + 1);
+                        if hi == usize::MAX {
+                            // Referenced group hasn't matched, so the backref doesn't match either
+                            break 'fail;
+                        }
+                        let ref_text = &s[lo..hi];
+                        let end = ix.saturating_add(ref_text.len()).min(range.end);
+                        let sb = &s.as_bytes()[ix..end];
+                        if sb != ref_text.as_bytes() {
+                            break 'fail;
+                        }
+                        ix = end;
+                    }
+                    Insn::BackrefExistsCondition(group) => {
+                        let lo = self.get(group * 2);
+                        if lo == usize::MAX {
+                            // Referenced group hasn't matched, so the backref doesn't match either
+                            break 'fail;
+                        }
+                    }
+                    Insn::BeginAtomic => {
+                        let count = self.backtrack_count();
+                        self.stack_push(count);
+                    }
+                    Insn::EndAtomic => {
+                        let count = self.stack_pop();
+                        self.backtrack_cut(count);
+                    }
+                    Insn::Delegate {
+                        ref inner,
+                        start_group,
+                        end_group,
+                    } => {
+                        debug_assert!(start_group <= end_group);
+                        let input = Input::new(s).span(ix..range.end).anchored(Anchored::Yes);
+                        if start_group == end_group {
+                            // No groups, so we can use faster methods
+                            match inner.search_half(&input) {
+                                Some(m) => ix = m.offset(),
+                                _ => break 'fail,
+                            }
+                        } else {
+                            self.state
+                                .inner_slots
+                                .resize((end_group - start_group + 1) * 2, None);
+                            if inner
+                                .search_slots(&input, &mut self.state.inner_slots)
+                                .is_some()
+                            {
+                                for i in 0..(end_group - start_group) {
+                                    let slot = (start_group + i) * 2;
+                                    if let Some(start) = self.state.inner_slots[(i + 1) * 2] {
+                                        let end = self.state.inner_slots[(i + 1) * 2 + 1].unwrap();
+                                        self.save(slot, start.get());
+                                        self.save(slot + 1, end.get());
+                                    } else {
+                                        self.save(slot, usize::MAX);
+                                        self.save(slot + 1, usize::MAX);
+                                    }
+                                }
+                                ix = self.state.inner_slots[1].unwrap().get();
+                            } else {
+                                break 'fail;
+                            }
+                        }
+                    }
+                    Insn::ContinueFromPreviousMatchEnd => {
+                        if ix > range.start || self.options & OPTION_SKIPPED_EMPTY_MATCH != 0 {
+                            break 'fail;
+                        }
+                    }
+                }
+                pc += 1;
+            }
+            if self.options & OPTION_TRACE != 0 {
+                println!("fail");
+            }
+            // "break 'fail" goes here
+            if self.state.stack.is_empty() {
+                return Ok(false);
+            }
+
+            backtrack_count += 1;
+            if backtrack_count > self.backtrack_limit {
+                return Err(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded));
+            }
+
+            let (newpc, newix) = self.pop();
+            pc = newpc;
+            ix = newix;
         }
     }
 }
@@ -403,368 +820,42 @@ fn codepoint_len_at(s: &str, ix: usize) -> usize {
     codepoint_len(s.as_bytes()[ix])
 }
 
+fn create_session(prog: Arc<Prog>) -> Session {
+    let state = Machine::create_state(&prog);
+    let machine = Machine::new(
+        prog,
+        DEFAULT_MAX_STACK,
+        DEFAULT_BACKTRACK_LIMIT,
+        OPTION_TRACE,
+    );
+    let session = machine.create_session(state);
+    session
+}
+
 /// Run the program with trace printing for debugging.
-pub fn run_trace(prog: &Prog, s: &str, range: Range<usize>) -> Result<Option<Vec<usize>>> {
-    run(prog, s, range, OPTION_TRACE, DEFAULT_BACKTRACK_LIMIT, None)
+#[doc(hidden)]
+pub fn run_trace(prog: Arc<Prog>, s: &str, range: Range<usize>) -> Result<Option<Vec<usize>>> {
+    let mut session = create_session(prog);
+    session.run_with_options(s, range, None, OPTION_TRACE)
 }
 
 /// Run the program with default options.
-pub fn run_default(prog: &Prog, s: &str, range: Range<usize>) -> Result<Option<Vec<usize>>> {
-    run(prog, s, range, 0, DEFAULT_BACKTRACK_LIMIT, None)
+#[doc(hidden)]
+pub fn run_default(prog: Arc<Prog>, s: &str, range: Range<usize>) -> Result<Option<Vec<usize>>> {
+    let mut session = create_session(prog);
+    session.run(s, range, None)
 }
 
 /// Run the program with trace printing for debugging.
-pub fn run_trace_from_pos(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
+#[doc(hidden)]
+pub fn run_trace_from_pos(prog: Arc<Prog>, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
     run_trace(prog, s, pos..s.len())
 }
 
 /// Run the program with default options.
-pub fn run_default_from_pos(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
+#[doc(hidden)]
+pub fn run_default_from_pos(prog: Arc<Prog>, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
     run_default(prog, s, pos..s.len())
-}
-
-pub(crate) fn run(
-    prog: &Prog,
-    s: &str,
-    range: Range<usize>,
-    option_flags: u32,
-    backtrack_limit: usize,
-    n_groups: Option<usize>,
-) -> Result<Option<Vec<usize>>> {
-    let mut locations = Vec::new();
-    Ok(run_to(
-        &mut locations,
-        prog,
-        s,
-        range,
-        option_flags,
-        backtrack_limit,
-        n_groups,
-    )?
-    .then_some(locations))
-}
-
-/// Run the program with options.
-#[allow(clippy::cognitive_complexity)]
-pub(crate) fn run_to(
-    locations: &mut Vec<usize>,
-    prog: &Prog,
-    s: &str,
-    range: Range<usize>,
-    option_flags: u32,
-    backtrack_limit: usize,
-    n_groups: Option<usize>,
-) -> Result<bool> {
-    let mut state = State::new(prog.n_saves, MAX_STACK, option_flags);
-    let mut inner_slots: Vec<Option<NonMaxUsize>> = Vec::new();
-    let look_matcher = LookMatcher::new();
-    if option_flags & OPTION_TRACE != 0 {
-        println!("pos\tinstruction");
-    }
-    let mut backtrack_count = 0;
-    let mut pc = 0;
-    let mut ix = range.start;
-    assert!(range.end <= s.len(), "range out of bound");
-    loop {
-        // break from this loop to fail, causes stack to pop
-        'fail: loop {
-            if option_flags & OPTION_TRACE != 0 {
-                println!("{}\t{} {:?}", ix, pc, prog.body[pc]);
-            }
-            match prog.body[pc] {
-                Insn::End => {
-                    // save of end position into slot 1 is now done
-                    // with an explicit group; we might want to
-                    // optimize that.
-                    //state.saves[1] = ix;
-                    if option_flags & OPTION_TRACE != 0 {
-                        println!("saves: {:?}", state.saves);
-                    }
-                    if let Some(&slot1) = state.saves.get(1) {
-                        // With some features like keep out (\K), the match start can be after
-                        // the match end. Cap the start to <= end.
-                        if state.get(0) > slot1 {
-                            state.save(0, slot1);
-                        }
-                    }
-                    if let Some(n_groups) = n_groups {
-                        locations.extend(state.saves.into_iter().take(n_groups * 2));
-                    } else {
-                        locations.extend(state.saves.into_iter());
-                    };
-                    return Ok(true);
-                }
-                Insn::Any => {
-                    if ix < range.end {
-                        ix += codepoint_len_at(s, ix);
-                    } else {
-                        break 'fail;
-                    }
-                }
-                Insn::AnyNoNL => {
-                    if ix < range.end && s.as_bytes()[ix] != b'\n' {
-                        ix += codepoint_len_at(s, ix);
-                    } else {
-                        break 'fail;
-                    }
-                }
-                Insn::Assertion(assertion) => {
-                    if !match assertion {
-                        Assertion::StartText => look_matcher.is_start(s.as_bytes(), ix),
-                        Assertion::EndText => look_matcher.is_end(s.as_bytes(), ix),
-                        Assertion::StartLine { crlf: false } => {
-                            look_matcher.is_start_lf(s.as_bytes(), ix)
-                        }
-                        Assertion::StartLine { crlf: true } => {
-                            look_matcher.is_start_crlf(s.as_bytes(), ix)
-                        }
-                        Assertion::EndLine { crlf: false } => {
-                            look_matcher.is_end_lf(s.as_bytes(), ix)
-                        }
-                        Assertion::EndLine { crlf: true } => {
-                            look_matcher.is_end_crlf(s.as_bytes(), ix)
-                        }
-                        Assertion::LeftWordBoundary => look_matcher
-                            .is_word_start_unicode(s.as_bytes(), ix)
-                            .unwrap(),
-                        Assertion::RightWordBoundary => {
-                            look_matcher.is_word_end_unicode(s.as_bytes(), ix).unwrap()
-                        }
-                        Assertion::WordBoundary => {
-                            look_matcher.is_word_unicode(s.as_bytes(), ix).unwrap()
-                        }
-                        Assertion::NotWordBoundary => look_matcher
-                            .is_word_unicode_negate(s.as_bytes(), ix)
-                            .unwrap(),
-                    } {
-                        break 'fail;
-                    }
-                }
-                Insn::Lit { ref val, casei } => {
-                    let end = ix.saturating_add(val.len()).min(range.end);
-                    let sb = &s.as_bytes()[ix..end];
-                    if !casei {
-                        if sb != val.as_bytes() {
-                            break 'fail;
-                        }
-                    } else {
-                        if !eq_test_exact_size(sb.iter().copied(), val.bytes(), |a, b| {
-                            // Do we need a == b shortcut? Is to_ascii_lowercase() fast?
-                            a == b || a.to_ascii_lowercase() == b.to_ascii_lowercase()
-                        }) {
-                            if !s.get(ix..end).map_or(false, |s| {
-                                eq_test(
-                                    s.chars().flat_map(char::to_lowercase),
-                                    val.chars().flat_map(char::to_lowercase),
-                                    |a, b| a == b,
-                                )
-                            }) {
-                                break 'fail;
-                            }
-                        }
-                    }
-                    ix = end;
-                }
-                Insn::Split(x, y) => {
-                    state.push(y, ix)?;
-                    pc = x;
-                    continue;
-                }
-                Insn::Jmp(target) => {
-                    pc = target;
-                    continue;
-                }
-                Insn::Save(slot) => state.save(slot, ix),
-                Insn::Save0(slot) => state.save(slot, 0),
-                Insn::Restore(slot) => ix = state.get(slot),
-                Insn::RepeatGr {
-                    lo,
-                    hi,
-                    next,
-                    repeat,
-                } => {
-                    let repcount = state.get(repeat);
-                    if repcount == hi {
-                        pc = next;
-                        continue;
-                    }
-                    state.save(repeat, repcount + 1);
-                    if repcount >= lo {
-                        state.push(next, ix)?;
-                    }
-                }
-                Insn::RepeatNg {
-                    lo,
-                    hi,
-                    next,
-                    repeat,
-                } => {
-                    let repcount = state.get(repeat);
-                    if repcount == hi {
-                        pc = next;
-                        continue;
-                    }
-                    state.save(repeat, repcount + 1);
-                    if repcount >= lo {
-                        state.push(pc + 1, ix)?;
-                        pc = next;
-                        continue;
-                    }
-                }
-                Insn::RepeatEpsilonGr {
-                    lo,
-                    next,
-                    repeat,
-                    check,
-                } => {
-                    let repcount = state.get(repeat);
-                    if repcount > lo && state.get(check) == ix {
-                        // prevent zero-length match on repeat
-                        break 'fail;
-                    }
-                    state.save(repeat, repcount + 1);
-                    if repcount >= lo {
-                        state.save(check, ix);
-                        state.push(next, ix)?;
-                    }
-                }
-                Insn::RepeatEpsilonNg {
-                    lo,
-                    next,
-                    repeat,
-                    check,
-                } => {
-                    let repcount = state.get(repeat);
-                    if repcount > lo && state.get(check) == ix {
-                        // prevent zero-length match on repeat
-                        break 'fail;
-                    }
-                    state.save(repeat, repcount + 1);
-                    if repcount >= lo {
-                        state.save(check, ix);
-                        state.push(pc + 1, ix)?;
-                        pc = next;
-                        continue;
-                    }
-                }
-                Insn::GoBack(count) => {
-                    for _ in 0..count {
-                        if ix == 0 {
-                            break 'fail;
-                        }
-                        ix = prev_codepoint_ix(s, ix);
-                    }
-                }
-                Insn::FailNegativeLookAround => {
-                    // Reaching this instruction means that the body of the
-                    // look-around matched. Because it's a *negative* look-around,
-                    // that means the look-around itself should fail (not match).
-                    // But before, we need to discard all the states that have
-                    // been pushed with the look-around, because we don't want to
-                    // explore them.
-                    loop {
-                        let (popped_pc, _) = state.pop();
-                        if popped_pc == pc + 1 {
-                            // We've reached the state that would jump us to
-                            // after the look-around (in case the look-around
-                            // succeeded). That means we popped enough states.
-                            break;
-                        }
-                    }
-                    break 'fail;
-                }
-                Insn::Backref(slot) => {
-                    let lo = state.get(slot);
-                    if lo == usize::MAX {
-                        // Referenced group hasn't matched, so the backref doesn't match either
-                        break 'fail;
-                    }
-                    let hi = state.get(slot + 1);
-                    if hi == usize::MAX {
-                        // Referenced group hasn't matched, so the backref doesn't match either
-                        break 'fail;
-                    }
-                    let ref_text = &s[lo..hi];
-                    let end = ix.saturating_add(ref_text.len()).min(range.end);
-                    let sb = &s.as_bytes()[ix..end];
-                    if sb != ref_text.as_bytes() {
-                        break 'fail;
-                    }
-                    ix = end;
-                }
-                Insn::BackrefExistsCondition(group) => {
-                    let lo = state.get(group * 2);
-                    if lo == usize::MAX {
-                        // Referenced group hasn't matched, so the backref doesn't match either
-                        break 'fail;
-                    }
-                }
-                Insn::BeginAtomic => {
-                    let count = state.backtrack_count();
-                    state.stack_push(count);
-                }
-                Insn::EndAtomic => {
-                    let count = state.stack_pop();
-                    state.backtrack_cut(count);
-                }
-                Insn::Delegate {
-                    ref inner,
-                    start_group,
-                    end_group,
-                } => {
-                    debug_assert!(start_group <= end_group);
-                    let input = Input::new(s).span(ix..range.end).anchored(Anchored::Yes);
-                    if start_group == end_group {
-                        // No groups, so we can use faster methods
-                        match inner.search_half(&input) {
-                            Some(m) => ix = m.offset(),
-                            _ => break 'fail,
-                        }
-                    } else {
-                        inner_slots.resize((end_group - start_group + 1) * 2, None);
-                        if inner.search_slots(&input, &mut inner_slots).is_some() {
-                            for i in 0..(end_group - start_group) {
-                                let slot = (start_group + i) * 2;
-                                if let Some(start) = inner_slots[(i + 1) * 2] {
-                                    let end = inner_slots[(i + 1) * 2 + 1].unwrap();
-                                    state.save(slot, start.get());
-                                    state.save(slot + 1, end.get());
-                                } else {
-                                    state.save(slot, usize::MAX);
-                                    state.save(slot + 1, usize::MAX);
-                                }
-                            }
-                            ix = inner_slots[1].unwrap().get();
-                        } else {
-                            break 'fail;
-                        }
-                    }
-                }
-                Insn::ContinueFromPreviousMatchEnd => {
-                    if ix > range.start || option_flags & OPTION_SKIPPED_EMPTY_MATCH != 0 {
-                        break 'fail;
-                    }
-                }
-            }
-            pc += 1;
-        }
-        if option_flags & OPTION_TRACE != 0 {
-            println!("fail");
-        }
-        // "break 'fail" goes here
-        if state.stack.is_empty() {
-            return Ok(false);
-        }
-
-        backtrack_count += 1;
-        if backtrack_count > backtrack_limit {
-            return Err(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded));
-        }
-
-        let (newpc, newix) = state.pop();
-        pc = newpc;
-        ix = newix;
-    }
 }
 
 #[inline]
@@ -794,6 +885,7 @@ fn eq_test_exact_size<T: Copy, F: Fn(T, T) -> bool>(
     a.zip(b).all(|(a, b)| pred(a, b))
 }
 
+#[cfg(not(test))]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -801,7 +893,10 @@ mod tests {
 
     #[test]
     fn state_push_pop() {
-        let mut state = State::new(1, MAX_STACK, 0);
+        let mut vm = create_session(Arc::new(Prog {
+            body: Vec::new(),
+            n_saves: 1,
+        }));
 
         state.push(0, 0).unwrap();
         state.push(1, 1).unwrap();
@@ -816,22 +911,28 @@ mod tests {
 
     #[test]
     fn state_save_override() {
-        let mut state = State::new(1, MAX_STACK, 0);
-        state.save(0, 10);
-        state.push(0, 0).unwrap();
-        state.save(0, 20);
-        assert_eq!(state.pop(), (0, 0));
-        assert_eq!(state.get(0), 10);
+        let mut vm = create_session(Arc::new(Prog {
+            body: Vec::new(),
+            n_saves: 1,
+        }));
+        vm.save(0, 10);
+        vm.push(0, 0).unwrap();
+        vm.save(0, 20);
+        assert_eq!(vm.pop(), (0, 0));
+        assert_eq!(vm.get(0), 10);
     }
 
     #[test]
     fn state_save_override_twice() {
-        let mut state = State::new(1, MAX_STACK, 0);
-        state.save(0, 10);
-        state.push(0, 0).unwrap();
-        state.save(0, 20);
-        state.push(1, 1).unwrap();
-        state.save(0, 30);
+        let mut vm = create_session(Arc::new(Prog {
+            body: Vec::new(),
+            n_saves: 1,
+        }));
+        vm.save(0, 10);
+        vm.push(0, 0).unwrap();
+        vm.save(0, 20);
+        vm.push(1, 1).unwrap();
+        vm.save(0, 30);
 
         assert_eq!(state.get(0), 30);
         assert_eq!(state.pop(), (1, 1));
@@ -842,14 +943,17 @@ mod tests {
 
     #[test]
     fn state_explicit_stack() {
-        let mut state = State::new(1, MAX_STACK, 0);
-        state.stack_push(11);
-        state.stack_push(12);
+        let mut vm = create_session(Arc::new(Prog {
+            body: Vec::new(),
+            n_saves: 1,
+        }));
+        vm.stack_push(11);
+        vm.stack_push(12);
 
         state.push(100, 101).unwrap();
-        state.stack_push(13);
+        state.stack_push(13).unwrap();
         assert_eq!(state.stack_pop(), 13);
-        state.stack_push(14);
+        state.stack_push(14).unwrap();
         assert_eq!(state.pop(), (100, 101));
 
         // Note: 14 is not there because it was pushed as part of the backtrack branch
@@ -859,14 +963,17 @@ mod tests {
 
     #[test]
     fn state_backtrack_cut_simple() {
-        let mut state = State::new(2, MAX_STACK, 0);
-        state.save(0, 1);
-        state.save(1, 2);
+        let mut vm = create_session(Arc::new(Prog {
+            body: Vec::new(),
+            n_saves: 2,
+        }));
+        vm.save(0, 1);
+        vm.save(1, 2);
 
         let count = state.backtrack_count();
 
         state.push(0, 0).unwrap();
-        state.save(0, 3);
+        state.save(0, 3).unwrap();
         assert_eq!(state.backtrack_count(), 1);
 
         state.backtrack_cut(count);
@@ -877,19 +984,22 @@ mod tests {
 
     #[test]
     fn state_backtrack_cut_complex() {
-        let mut state = State::new(2, MAX_STACK, 0);
-        state.save(0, 1);
-        state.save(1, 2);
+        let mut vm = create_session(Arc::new(Prog {
+            body: Vec::new(),
+            n_saves: 2,
+        }));
+        vm.save(0, 1);
+        vm.save(1, 2);
 
         state.push(0, 0).unwrap();
-        state.save(0, 3);
+        state.save(0, 3).unwrap();
 
         let count = state.backtrack_count();
 
         state.push(1, 1).unwrap();
-        state.save(0, 4);
+        state.save(0, 4).unwrap();
         state.push(2, 2).unwrap();
-        state.save(1, 5);
+        state.save(1, 5).unwrap();
         assert_eq!(state.backtrack_count(), 3);
 
         state.backtrack_cut(count);
@@ -942,7 +1052,10 @@ mod tests {
         let mut stack = Vec::new();
         let mut saves = vec![usize::MAX; slots];
 
-        let mut state = State::new(slots, MAX_STACK, 0);
+        let mut vm = create_session(Arc::new(Prog {
+            body: Vec::new(),
+            n_saves: slots,
+        }));
 
         let mut expected = Vec::new();
         let mut actual = Vec::new();
@@ -966,7 +1079,7 @@ mod tests {
                 }
                 Operation::Save(slot, value) => {
                     saves[slot] = value;
-                    state.save(slot, value);
+                    state.save(slot, value).unwrap();
                 }
             }
 

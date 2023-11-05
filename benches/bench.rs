@@ -22,6 +22,7 @@
 extern crate criterion;
 
 use criterion::Criterion;
+use std::sync::Arc;
 use std::time::Duration;
 
 use fancy_regex::internal::{analyze, compile, run_default_from_pos};
@@ -61,10 +62,10 @@ fn analyze_literal_re(c: &mut Criterion) {
 fn run_backtrack(c: &mut Criterion) {
     let tree = Expr::parse_tree("^.*?(([ab]+)\\1b)").unwrap();
     let a = analyze(&tree).unwrap();
-    let p = compile(&a).unwrap();
+    let p = Arc::new(compile(&a).unwrap());
     c.bench_function("run_backtrack", |b| {
         b.iter(|| {
-            let result = run_default_from_pos(&p, "babab", 0).unwrap();
+            let result = run_default_from_pos(p.clone(), "babab", 0).unwrap();
             assert_eq!(result, Some(vec![0, 5, 0, 2]));
             return result;
         })
@@ -76,24 +77,24 @@ fn run_backtrack(c: &mut Criterion) {
 fn run_tricky(c: &mut Criterion) {
     let tree = Expr::parse_tree("(a|b|ab)*bc").unwrap();
     let a = analyze(&tree).unwrap();
-    let p = compile(&a).unwrap();
+    let p = Arc::new(compile(&a).unwrap());
     let mut s = String::new();
     for _ in 0..28 {
         s.push_str("ab");
     }
     s.push_str("ac");
     c.bench_function("run_tricky", |b| {
-        b.iter(|| run_default_from_pos(&p, &s, 0).unwrap())
+        b.iter(|| run_default_from_pos(p.clone(), &s, 0).unwrap())
     });
 }
 
 fn run_backtrack_limit(c: &mut Criterion) {
     let tree = Expr::parse_tree("(?i)(a|b|ab)*(?=c)").unwrap();
     let a = analyze(&tree).unwrap();
-    let p = compile(&a).unwrap();
+    let p = Arc::new(compile(&a).unwrap());
     let s = "abababababababababababababababababababababababababababab";
     c.bench_function("run_backtrack_limit", |b| {
-        b.iter(|| run_default_from_pos(&p, &s, 0).unwrap_err())
+        b.iter(|| run_default_from_pos(p.clone(), &s, 0).unwrap_err())
     });
 }
 
