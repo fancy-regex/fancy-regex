@@ -539,15 +539,15 @@ pub(crate) fn compile_with_options(info: &Info<'_>, options: RegexOptions) -> Re
     Ok(c.b.build())
 }
 
-struct DelegateBuilder {
-    exprs: Vec<Expr>,
+struct DelegateBuilder<'a> {
+    exprs: Vec<&'a Expr>,
     min_size: usize,
     const_size: bool,
     start_group: Option<usize>,
     end_group: usize,
 }
 
-impl DelegateBuilder {
+impl<'a> DelegateBuilder<'a> {
     fn new() -> Self {
         Self {
             exprs: Vec::new(),
@@ -558,7 +558,7 @@ impl DelegateBuilder {
         }
     }
 
-    fn push(mut self, info: &Info<'_>) -> DelegateBuilder {
+    fn push(mut self, info: &Info<'a>) -> Self {
         // TODO: might want to detect case of a group with no captures
         //  inside, so we can run find() instead of captures()
 
@@ -569,8 +569,7 @@ impl DelegateBuilder {
         }
         self.end_group = info.end_group;
 
-        // TODO: avoid clone
-        self.exprs.push(info.expr.clone());
+        self.exprs.push(&info.expr);
 
         self
     }
@@ -579,8 +578,7 @@ impl DelegateBuilder {
         let start_group = self.start_group.expect("Expected at least one expression");
         let end_group = self.end_group;
 
-        let expr = Expr::Concat(self.exprs);
-        let hir = expr.to_hir()?;
+        let hir = Expr::to_hir(self.exprs)?;
 
         let compiled = compile_inner(&hir, options)?;
         if self.const_size && start_group == end_group {

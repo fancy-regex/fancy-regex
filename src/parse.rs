@@ -23,6 +23,7 @@
 use regex_syntax::escape;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::str::FromStr;
@@ -180,7 +181,7 @@ impl Expr {
         ExprTree::parse(re)
     }
 
-    fn to_ast(self, capture_index: &mut u32) -> Result<regex_syntax::ast::Ast> {
+    fn to_ast(&self, capture_index: &mut u32) -> Result<regex_syntax::ast::Ast> {
         use regex_syntax::ast::*;
         // XXX: implement span?
         let span = Span::splat(Position::new(0, 0, 0));
@@ -292,7 +293,7 @@ impl Expr {
                 span,
                 op: RepetitionOp {
                     span,
-                    kind: match (lo, hi) {
+                    kind: match (*lo, *hi) {
                         (0, 1) => RepetitionKind::ZeroOrOne,
                         (0, usize::MAX) => RepetitionKind::ZeroOrMore,
                         (1, usize::MAX) => RepetitionKind::OneOrMore,
@@ -308,7 +309,7 @@ impl Expr {
                         )),
                     },
                 },
-                greedy,
+                greedy: *greedy,
                 ast: Box::new(child.to_ast(capture_index)?),
             })),
             Expr::Delegate { inner, casei, .. } => with_flag(
@@ -320,21 +321,29 @@ impl Expr {
     }
 
     /// Convert expression to a [`regex_syntax::hir::Hir`].
-    pub fn to_hir(self) -> Result<regex_syntax::hir::Hir> {
+    pub fn to_hir<E: Borrow<Expr>, I: IntoIterator<Item = E>>(
+        exprs: I,
+    ) -> Result<regex_syntax::hir::Hir> {
         let mut capture_index = 1;
-        let ast = self.to_ast(&mut capture_index)?;
         let mut translator = regex_syntax::hir::translate::Translator::new();
-        // XXX: using empty pattern; this will make error info useless
-        translator.translate("", &ast).map_err(|e| {
-            Error::CompileError(CompileError::InnerSyntaxError(
-                regex_syntax::Error::Translate(e),
-            ))
-        })
+        Ok(regex_syntax::hir::Hir::concat(try_collect(
+            exprs
+                .into_iter()
+                .map(|expr| expr.borrow().to_ast(&mut capture_index))
+                .map(|ast| {
+                    // XXX: using empty pattern; this will make error info useless
+                    translator.translate("", &ast?).map_err(|e| {
+                        Error::CompileError(CompileError::InnerSyntaxError(
+                            regex_syntax::Error::Translate(e),
+                        ))
+                    })
+                }),
+        )?))
     }
 
     /// Convert expression to a string
-    pub fn to_str(self) -> Result<String> {
-        Ok(format!("{}", self.to_hir()?))
+    pub fn to_str(&self) -> Result<String> {
+        Ok(format!("{}", Expr::to_hir([self])?))
     }
 }
 
