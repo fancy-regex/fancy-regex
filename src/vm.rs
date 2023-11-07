@@ -181,8 +181,6 @@ pub enum Insn {
     BeginAtomic,
     /// End of atomic group
     EndAtomic,
-    /// Delegate matching to the regex crate for a fixed size
-    DelegateSized(Regex, usize),
     /// Delegate matching to the regex crate
     Delegate {
         /// The regex
@@ -709,28 +707,17 @@ pub(crate) fn run_to(
                     let count = state.stack_pop();
                     state.backtrack_cut(count);
                 }
-                Insn::DelegateSized(ref inner, size) => {
-                    let input = Input::new(s).span(ix..range.end).anchored(Anchored::Yes);
-                    if inner.is_match(input) {
-                        // We could analyze for ascii-only, and ix += size in
-                        // that case. Unlikely to be speed-limiting though.
-                        for _ in 0..size {
-                            ix += codepoint_len_at(s, ix);
-                        }
-                    } else {
-                        break 'fail;
-                    }
-                }
                 Insn::Delegate {
                     ref inner,
                     start_group,
                     end_group,
                 } => {
+                    debug_assert!(start_group <= end_group);
                     let input = Input::new(s).span(ix..range.end).anchored(Anchored::Yes);
                     if start_group == end_group {
-                        // No groups, so we can use `find` which is faster than `captures_read`
-                        match inner.find(input) {
-                            Some(m) => ix = m.end(),
+                        // No groups, so we can use faster methods
+                        match inner.search_half(&input) {
+                            Some(m) => ix = m.offset(),
                             _ => break 'fail,
                         }
                     } else {

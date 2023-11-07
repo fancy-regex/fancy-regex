@@ -579,18 +579,13 @@ impl<'a> DelegateBuilder<'a> {
         let end_group = self.end_group;
 
         let hir = Expr::to_hir(self.exprs)?;
-
         let compiled = compile_inner(&hir, options)?;
-        if self.const_size && start_group == end_group {
-            let size = self.min_size;
-            Ok(Insn::DelegateSized(compiled, size))
-        } else {
-            Ok(Insn::Delegate {
-                inner: compiled,
-                start_group,
-                end_group,
-            })
-        }
+
+        Ok(Insn::Delegate {
+            inner: compiled,
+            start_group,
+            end_group,
+        })
     }
 }
 
