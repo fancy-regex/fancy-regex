@@ -20,7 +20,7 @@
 
 //! A regex parser yielding an AST.
 
-use regex_syntax::escape;
+use regex_syntax::escape_into;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
@@ -625,7 +625,7 @@ impl<'a> Parser<'a> {
             )),
             b'(' => self.parse_group(ix, depth),
             b'\\' => {
-                let (next, expr) = self.parse_escape(ix)?;
+                let (next, expr) = self.parse_escape(ix, false)?;
                 Ok((next, expr))
             }
             b'+' | b'*' | b'?' | b'|' | b')' => Ok((ix, Expr::Empty)),
@@ -685,47 +685,50 @@ impl<'a> Parser<'a> {
     }
 
     // ix points to \ character
-    fn parse_escape(&mut self, ix: usize) -> Result<(usize, Expr)> {
-        if ix + 1 == self.re.len() {
-            return Err(Error::ParseError(ix, ParseError::TrailingBackslash));
-        }
+    fn parse_escape(&mut self, ix: usize, in_class: bool) -> Result<(usize, Expr)> {
         let bytes = self.re.as_bytes();
-        let b = bytes[ix + 1];
-        let mut end = ix + 1 + codepoint_len(b);
+        let Some(b) = bytes.get(ix + 1).copied() else {
+            return Err(Error::ParseError(ix, ParseError::TrailingBackslash));
+        };
+        let end = ix + 1 + codepoint_len(b);
         Ok(if is_digit(b) {
             return self.parse_numbered_backref(ix + 1);
         } else if matches!(b, b'k' | b'g') {
             // Named backref: \k<name>
             return self.parse_named_backref(ix + 2, "<", ">");
-        } else if b == b'A' {
+        } else if b == b'A' && !in_class {
             (end, Expr::Assertion(Assertion::StartText))
-        } else if b == b'z' {
+        } else if b == b'z' && !in_class {
             (end, Expr::Assertion(Assertion::EndText))
-        } else if b == b'b' && bytes.get(end).copied() != Some(b'{') {
+        } else if b == b'b' && !in_class {
+            if bytes.get(end).copied() == Some(b'{') {
+                // Support for \b{...} is not implemented yet
+                return Err(Error::ParseError(
+                    ix,
+                    ParseError::InvalidEscape(format!("\\{}", &self.re[ix + 1..end])),
+                ));
+            }
             (end, Expr::Assertion(Assertion::WordBoundary))
-        } else if b == b'B' && bytes.get(end).copied() != Some(b'{') {
+        } else if b == b'B' && !in_class {
+            if bytes.get(end).copied() == Some(b'{') {
+                // Support for \b{...} is not implemented yet
+                return Err(Error::ParseError(
+                    ix,
+                    ParseError::InvalidEscape(format!("\\{}", &self.re[ix + 1..end])),
+                ));
+            }
             (end, Expr::Assertion(Assertion::NotWordBoundary))
-        } else if b == b'<' {
+        } else if b == b'<' && !in_class {
             (end, Expr::Assertion(Assertion::LeftWordBoundary))
-        } else if b == b'>' {
+        } else if b == b'>' && !in_class {
             (end, Expr::Assertion(Assertion::RightWordBoundary))
-        } else if matches!(b | 32, b'd' | b's' | b'w')
-            || matches!(b, b'a' | b'f' | b'n' | b'r' | b't' | b'v')
-        {
+        } else if matches!(b | 32, b'd' | b's' | b'w') {
             (
                 end,
                 Expr::Delegate {
                     inner: String::from(&self.re[ix..end]),
                     size: 1,
                     casei: self.flag(FLAG_CASEI),
-                },
-            )
-        } else if b == b'e' {
-            (
-                end,
-                Expr::Literal {
-                    val: String::from("\x1B"),
-                    casei: false,
                 },
             )
         } else if (b | 32) == b'h' {
@@ -749,6 +752,7 @@ impl<'a> Parser<'a> {
         } else if b == b'U' {
             return self.parse_hex(end, 8);
         } else if (b | 32) == b'p' && bytes.get(end).copied() == Some(b'{') {
+            let mut end = end;
             end += codepoint_len(b);
             loop {
                 if end == self.re.len() {
@@ -773,21 +777,34 @@ impl<'a> Parser<'a> {
             (end, Expr::KeepOut)
         } else if b == b'G' {
             (end, Expr::ContinueFromPreviousMatchEnd)
-        } else if b'a' <= (b | 32) && (b | 32) <= b'z' {
-            return Err(Error::ParseError(
-                ix,
-                ParseError::InvalidEscape(format!("\\{}", &self.re[ix + 1..end])),
-            ));
-        } else if b.is_ascii_graphic() && !b.is_ascii_alphanumeric() || b == b' ' {
-            // printable ASCII (including space, see issue #29)
-            (end, make_literal(&self.re[ix + 1..end]))
         } else {
-            // what to do with characters outside printable ASCII?
-            // can we consider they are error like this?
-            return Err(Error::ParseError(
-                ix,
-                ParseError::InvalidEscape(format!("\\{}", &self.re[ix + 1..end])),
-            ));
+            // printable ASCII (including space, see issue #29)
+            (
+                end,
+                make_literal(match b {
+                    b'a' => "\x07", // BEL
+                    b'b' => "\x08", // BS
+                    b'f' => "\x0c", // FF
+                    b'n' => "\n",   // LF
+                    b'r' => "\r",   // CR
+                    b't' => "\t",   // TAB
+                    b'v' => "\x0b", // VT
+                    b'e' => "\x1b", // ESC
+                    b' ' => " ",
+                    b => {
+                        let s = &self.re[ix + 1..end];
+                        // we shall be permissive in production
+                        if cfg!(debug_assertions) && b.is_ascii_alphanumeric() {
+                            return Err(Error::ParseError(
+                                ix,
+                                ParseError::InvalidEscape(format!("\\{}", s)),
+                            ));
+                        } else {
+                            s
+                        }
+                    }
+                }),
+            )
         })
     }
 
@@ -845,19 +862,17 @@ impl<'a> Parser<'a> {
         let bytes = self.re.as_bytes();
         let mut ix = ix + 1; // skip opening '['
         let mut class = String::new();
-        let mut branches = Vec::new();
         let mut nest = 1;
         class.push('[');
 
         // Negated character class
-        let negated = ix < self.re.len() && bytes[ix] == b'^';
-        if negated {
+        if bytes.get(ix).copied() == Some(b'^') {
             class.push('^');
             ix += 1;
         }
 
         // `]` does not have to be escaped after opening `[` or `[^`
-        if ix < self.re.len() && bytes[ix] == b']' {
+        if bytes.get(ix).copied() == Some(b']') {
             class.push(']');
             ix += 1;
         }
@@ -868,22 +883,15 @@ impl<'a> Parser<'a> {
             }
             let end = match bytes[ix] {
                 b'\\' => {
-                    if ix + 1 == self.re.len() {
-                        return Err(Error::ParseError(ix, ParseError::InvalidClass));
-                    }
-
                     // We support more escapes than regex, so parse it ourselves before delegating.
-                    let (end, expr) = self.parse_escape(ix)?;
+                    let (end, expr) = self.parse_escape(ix, true)?;
                     match expr {
                         Expr::Literal { val, .. } => {
                             debug_assert_eq!(val.chars().count(), 1);
-                            class.push_str(&escape(&val));
+                            escape_into(&val, &mut class);
                         }
                         Expr::Delegate { inner, .. } => {
                             class.push_str(&inner);
-                        }
-                        e @ Expr::Assertion(_) => {
-                            branches.push(e);
                         }
                         _ => {
                             return Err(Error::ParseError(ix, ParseError::InvalidClass));
@@ -898,10 +906,10 @@ impl<'a> Parser<'a> {
                 }
                 b']' => {
                     nest -= 1;
+                    class.push(']');
                     if nest == 0 {
                         break;
                     }
-                    class.push(']');
                     ix + 1
                 }
                 b => {
@@ -912,31 +920,13 @@ impl<'a> Parser<'a> {
             };
             ix = end;
         }
-        class.push(']');
-        let empty_class = class == "[]";
         let class = Expr::Delegate {
             inner: class,
             size: 1,
             casei: self.flag(FLAG_CASEI),
         };
         let ix = ix + 1; // skip closing ']'
-        Ok((
-            ix,
-            if branches.is_empty() {
-                class
-            } else if !negated {
-                if !empty_class {
-                    branches.insert(0, class);
-                }
-                Expr::Alt(branches)
-            } else {
-                Expr::Conditional {
-                    condition: Box::new(Expr::Alt(branches)),
-                    true_branch: Box::new(Expr::Empty),
-                    false_branch: Box::new(class),
-                }
-            },
-        ))
+        Ok((ix, class))
     }
 
     fn parse_group(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
