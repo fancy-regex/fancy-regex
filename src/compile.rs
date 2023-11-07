@@ -590,7 +590,6 @@ mod tests {
     use crate::vm::Insn::*;
     use alloc::vec;
     use bit_set::BitSet;
-    use matches::assert_matches;
 
     #[test]
     fn jumps_for_alternation() {
