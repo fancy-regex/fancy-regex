@@ -152,39 +152,32 @@ fn run_test(test: &Test) -> Option<String> {
     } = test;
 
     let compile_result = FancyRegex::new(pattern);
-    if compile_result.as_ref().is_err() {
+    let Ok(regex) = compile_result else {
         let error = format!("{:?}", compile_result.unwrap_err());
         return Some(format!("Compile failed: {}", error));
-    }
+    };
 
     match *assertion {
         Assertion::Match { group, start, end } => {
-            let result = panic::catch_unwind(|| {
-                // compile regex again instead of using above, otherwise:
-                // "may not be safely transferrable across a catch_unwind boundary"
-                let regex = Box::leak(Box::new(FancyRegex::new(pattern).unwrap()));
-                regex.captures(&text).unwrap()
-            });
+            let captures_result = regex.captures(&text).unwrap();
 
-            if let Ok(captures_result) = result {
-                if let Some(captures) = captures_result {
-                    let m = captures.get(group).expect("Expected group to exist");
-                    if m.start() != start || m.end() != end {
-                        Some(format!(
-                            "Match found at start {} and end {} (expected {} and {})",
-                            m.start(),
-                            m.end(),
-                            start,
-                            end
-                        ))
-                    } else {
-                        None
-                    }
+            if let Some(captures) = captures_result {
+                let Some(m) = captures.get(group) else {
+                    return Some("Expected group to exist".to_owned());
+                };
+                if m.start() != start || m.end() != end {
+                    Some(format!(
+                        "Match found at start {} and end {} (expected {} and {})",
+                        m.start(),
+                        m.end(),
+                        start,
+                        end
+                    ))
                 } else {
-                    Some("No match found".to_string())
+                    None
                 }
             } else {
-                Some("Panic while matching".to_string())
+                Some("No match found".to_string())
             }
         }
         Assertion::NoMatch => {
@@ -216,18 +209,14 @@ fn oniguruma() {
     for test in tests {
         let result = run_test(&test);
 
-        if let Some(_) = ignore.get(&test) {
-            // assert!(result.is_some(),
-            //         "Expected ignored test to fail, but it succeeded. Remove it from the ignore file: {}", &test.source);
-            // let failure = result.unwrap();
-            // // rustc before version 1.53 unnecessarily escapes slashes in debug format strings
-            // // meaning when run on our MSRV, we get different failure text than on the latest stable Rust
-            // // so here we try removing the backslash when comparing. After our MSRV is bumped up to
-            // // 1.53 or higher, we can remove this part again.
-            // assert!(failure.starts_with(expected_failure) || failure.replace("\\", "").starts_with(expected_failure),
-            //     "Expected failure differed for test, change it in the ignore file: {}\nExpected: {}\nActual  : {}\n",
-            //     &test.source, &expected_failure, &failure
-            // );
+        if let Some(expected_failure) = ignore.get(&test) {
+            assert!(result.is_some(),
+                    "Expected ignored test to fail, but it succeeded. Remove it from the ignore file: {}", &test.source);
+            let failure = result.unwrap();
+            assert!(failure.starts_with(expected_failure),
+                "Expected failure differed for test, change it in the ignore file: {}\nExpected: {}\nActual  : {}\n",
+                &test.source, &expected_failure, &failure
+            );
             ignored += 1;
         } else {
             if let Some(failure) = result {
@@ -236,7 +225,7 @@ fn oniguruma() {
                 // content for the ignore file. To do that, disable the assert and enable the print:
 
                 // println!("  // {}\n  {}\n", failure, test.source);
-                assert!(false, "Test {} failed: {}\n", &test.source, failure);
+                assert!(false, "Test {} failed: {}", &test.source, failure);
             } else {
                 // println!("Success: {}", test.source);
                 success += 1;

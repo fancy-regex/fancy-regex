@@ -34,14 +34,7 @@
   // Compile failed: ParseError(2, InvalidBackref)
   x2("[\\044-\\047]", "\046", 0, 1);
 
-  // Compile failed: CompileError(InnerError(Syntax(
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // regex parse error:
-  //     [a-&&-a]
-  //      ^^^
-  // error: invalid character class range, the start must be <= the end
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // ))
+  // Compile failed: CompileError(InnerSyntaxError(Parse(Error { kind: ClassRangeInvalid, pattern: "[a-&&-a]", span: Span(Position(o: 1, l: 1, c: 2), Position(o: 4, l: 1, c: 5)) })))
   x2("[a-&&-a]", "-", 0, 1);
 
   // Compile failed: ParseError(2, InvalidEscape("\\Z"))
@@ -125,34 +118,25 @@
   // Compile failed: ParseError(4, InvalidEscape("\\Z"))
   x2(".(a*\\Z)\\1", "ba", 1, 2);
 
-  // Compile failed: ParseError(3, InvalidEscape("\\g"))
-  x2("(a)\\g<1>", "aa", 0, 2);
-
-  // Compile failed: ParseError(13, InvalidEscape("\\g"))
-  x2("(?<name_2>ab)\\g<name_2>", "abab", 0, 4);
-
-  // Compile failed: ParseError(4, InvalidEscape("\\g"))
+  // Compile failed: ParseError(6, InvalidGroupNameBackref("ab"))
   x2("(?<=\\g<ab>)|-\\zEND (?<ab>XyZ)", "XyZ", 3, 3);
 
-  // Compile failed: ParseError(7, InvalidEscape("\\g"))
-  x2("(?<n>|a\\g<n>)+", "", 0, 0);
-
-  // Compile failed: ParseError(8, InvalidEscape("\\g"))
+  // Match found at start 6 and end 6 (expected 0 and 6)
   x2("(?<n>|\\(\\g<n>\\))+$", "()(())", 0, 6);
 
-  // Compile failed: ParseError(0, InvalidEscape("\\g"))
+  // Compile failed: ParseError(2, InvalidGroupNameBackref("n"))
   x3("\\g<n>(?<n>.){0}", "X", 0, 1, 1);
 
-  // Compile failed: ParseError(0, InvalidEscape("\\g"))
+  // Compile failed: ParseError(2, InvalidGroupNameBackref("n"))
   x2("\\g<n>(abc|df(?<n>.YZ){2,8}){0}", "XYZ", 0, 3);
 
-  // Compile failed: ParseError(9, InvalidEscape("\\g"))
+  // No match found
   x2("\\A(?<n>(a\\g<n>)|)\\z", "aaaa", 0, 4);
 
-  // Compile failed: ParseError(6, InvalidEscape("\\g"))
+  // Compile failed: ParseError(8, InvalidGroupNameBackref("m"))
   x2("(?<n>|\\g<m>\\g<n>)\\z|\\zEND (?<m>a|(b)\\g<m>)", "bbbbabba", 0, 8);
 
-  // Compile failed: ParseError(15, InvalidEscape("\\g"))
+  // Match found at start 0 and end 1 (expected 2 and 3)
   x3("(z)()()(?<_9>a)\\g<_9>", "zaa", 2, 3, 1);
 
   // No match found
@@ -161,37 +145,31 @@
   // No match found
   x2("(?:(?<n1>.)|(?<n1>..)|(?<n1>...)|(?<n1>....)|(?<n1>.....)|(?<n1>......)|(?<n1>.......)|(?<n1>........)|(?<n1>.........)|(?<n1>..........)|(?<n1>...........)|(?<n1>............)|(?<n1>.............)|(?<n1>..............))\\k<n1>$", "a-pyumpyum", 2, 10);
 
-  // Compile failed: ParseError(11, InvalidEscape("\\g"))
-  x2("(?<foo>a|\\(\\g<foo>\\))", "a", 0, 1);
-
-  // Compile failed: ParseError(11, InvalidEscape("\\g"))
+  // Match found at start 6 and end 7 (expected 0 and 13)
   x2("(?<foo>a|\\(\\g<foo>\\))", "((((((a))))))", 0, 13);
 
-  // Compile failed: ParseError(11, InvalidEscape("\\g"))
+  // Match found at start 8 and end 9 (expected 0 and 17)
   x3("(?<foo>a|\\(\\g<foo>\\))", "((((((((a))))))))", 0, 17, 1);
 
-  // Compile failed: ParseError(0, InvalidEscape("\\g"))
+  // Compile failed: ParseError(2, InvalidGroupNameBackref("bar"))
   x2("\\g<bar>|\\zEND(?<bar>.*abc$)", "abcxxxabc", 0, 9);
 
-  // Compile failed: ParseError(0, InvalidEscape("\\g"))
+  // Compile failed: CompileError(InvalidBackref)
   x2("\\g<1>|\\zEND(.a.)", "bac", 0, 3);
 
-  // Compile failed: ParseError(0, InvalidEscape("\\g"))
+  // Compile failed: ParseError(2, InvalidGroupNameBackref("_A"))
   x3("\\g<_A>\\g<_A>|\\zEND(.a.)(?<_A>.b.)", "xbxyby", 3, 6, 1);
 
-  // Compile failed: ParseError(5, InvalidEscape("\\g"))
+  // Compile failed: ParseError(7, InvalidGroupNameBackref("pon"))
   x2("\\A(?:\\g<pon>|\\g<pan>|\\zEND  (?<pan>a|c\\g<pon>c)(?<pon>b|d\\g<pan>d))$", "cdcbcdc", 0, 7);
 
-  // Compile failed: ParseError(9, InvalidEscape("\\g"))
+  // Compile failed: ParseError(11, InvalidGroupNameBackref("m"))
   x2("\\A(?<n>|a\\g<m>)\\z|\\zEND (?<m>\\g<n>)", "aaaa", 0, 4);
 
-  // Compile failed: ParseError(9, InvalidEscape("\\g"))
-  x2("(?<n>(a|b\\g<n>c){3,5})", "baaaaca", 1, 5);
-
-  // Compile failed: ParseError(9, InvalidEscape("\\g"))
+  // Match found at start 1 and end 5 (expected 0 and 10)
   x2("(?<n>(a|b\\g<n>c){3,5})", "baaaacaaaaa", 0, 10);
 
-  // Compile failed: ParseError(21, InvalidEscape("\\g"))
+  // Match found at start 1 and end 4 (expected 0 and 5)
   x2("(?<pare>\\(([^\\(\\)]++|\\g<pare>)*+\\))", "((a))", 0, 5);
 
   // No match found
@@ -212,16 +190,13 @@
   // No match found
   x2("(?:()|()|()|(x)|()|())*\\2b\\5", "b", 0, 1);
 
-  // Compile failed: ParseError(12, InvalidEscape("\\g"))
-  x3("(\\(((?:[^(]|\\g<1>)*)\\))", "(abc)(abc)", 1, 4, 2);
-
   // Compile failed: ParseError(0, InvalidEscape("\\o"))
   x2("\\o{101}", "A", 0, 1);
 
-  // Compile failed: ParseError(6, InvalidEscape("\\g"))
+  // Compile failed: ParseError(15, InvalidGroupName)
   x2("\\A(a|b\\g<1>c)\\k<1+3>\\z", "bbacca", 0, 6);
 
-  // Compile failed: ParseError(10, InvalidEscape("\\g"))
+  // Compile failed: ParseError(19, InvalidGroupName)
   x2("(?i)\\A(a|b\\g<1>c)\\k<1+2>\\z", "bBACcbac", 0, 8);
 
   // No match found
@@ -230,13 +205,13 @@
   // Compile failed: ParseError(5, InvalidGroupName)
   x2("(?:\\k'+1'B|(A)C)*", "ACAB", 0, 4);
 
-  // Compile failed: ParseError(0, InvalidEscape("\\g"))
+  // Compile failed: ParseError(2, InvalidGroupName)
   x2("\\g<+2>(abc)(ABC){0}", "ABCabc", 0, 6);
 
-  // Compile failed: ParseError(1, InvalidEscape("\\g"))
+  // Compile failed: ParseError(3, InvalidBackref)
   x2("A\\g'0'|B()", "AAAAB", 0, 5);
 
-  // Compile failed: ParseError(2, InvalidEscape("\\g"))
+  // Compile failed: ParseError(4, InvalidBackref)
   x3("(A\\g'0')|B", "AAAAB", 0, 5, 1);
 
   // Compile failed: ParseError(10, GeneralParseError("expected conditional to be a backreference or at least an expression for when the condition is true"))
@@ -290,19 +265,16 @@
   // No match found
   x2("(?:()|()|())*\\3\\1", "abc", 0, 0);
 
-  // Compile failed: ParseError(9, InvalidEscape("\\g"))
-  x2("(|(?:a(?:\\g'1')*))b|", "abc", 0, 2);
-
-  // Compile failed: ParseError(14, InvalidEscape("\\g"))
+  // No match found
   x2("((?<x>abc){0}a\\g<x>d)+", "aabcd", 0, 5);
 
   // Match found at start 0 and end 3 (expected 0 and 6)
   x2("(?<x>a)(?<x>b)(\\k<x>)+", "abbaab", 0, 6);
 
-  // Compile failed: ParseError(8, InvalidEscape("\\g"))
+  // Match found at start 3 and end 3 (expected 0 and 3)
   x2("(?<x>$|b\\g<x>)", "bbb", 0, 3);
 
-  // Compile failed: ParseError(16, InvalidEscape("\\g"))
+  // Match found at start 3 and end 4 (expected 0 and 4)
   x2("(?<x>(?(a)a|b)|c\\g<x>)", "cccb", 0, 4);
 
   // Compile failed: ParseError(1, InvalidEscape("\\o"))
@@ -494,160 +466,55 @@
   // Compile failed: ParseError(6, InvalidEscape("\\Z"))
   x2(".(あ*\\Z)\\1", "いあ", 3, 6);
 
-  // Compile failed: ParseError(16, InvalidEscape("\\g"))
+  // Match found at start 6 and end 9 (expected 0 and 15)
   x2("(?<愚か>変|\\(\\g<愚か>\\))", "((((((変))))))", 0, 15);
 
-  // Compile failed: ParseError(5, InvalidEscape("\\g"))
+  // Compile failed: ParseError(7, InvalidGroupNameBackref("阿_1"))
   x2("\\A(?:\\g<阿_1>|\\g<云_2>|\\z終了  (?<阿_1>観|自\\g<云_2>自)(?<云_2>在|菩薩\\g<阿_1>菩薩))$", "菩薩自菩薩自在自菩薩自菩薩", 0, 39);
 
-  // Compile failed: CompileError(InnerError(Syntax(
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // regex parse error:
-  //     [あ-&&-あ]
-  //      ^^^
-  // error: invalid character class range, the start must be <= the end
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // )))
+  // Compile failed: CompileError(InnerSyntaxError(Parse(Error { kind: ClassRangeInvalid, pattern: "[あ-&&-あ]", span: Span(Position(o: 1, l: 1, c: 2), Position(o: 6, l: 1, c: 5)) })))
   x2("[あ-&&-あ]", "-", 0, 1);
 
-  // Compile failed: CompileError(InnerError(Syntax(
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // regex parse error:
-  //     \p{^Emoji}
-  //     ^^^^^^^^^^
-  // error: Unicode property not found
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // )))
+  // Compile failed: CompileError(InnerSyntaxError(Translate(Error { kind: UnicodePropertyNotFound, pattern: "", span: Span(Position(o: 0, l: 1, c: 1), Position(o: 10, l: 1, c: 11)) })))
   x2("\\p{^Emoji}", "\xEF\xBC\x93", 0, 3);
 
-  // Compile failed: CompileError(InnerError(Syntax(
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // regex parse error:
-  //     \p{Word}
-  //     ^^^^^^^^
-  // error: Unicode property not found
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // )))
+  // Compile failed: CompileError(InnerSyntaxError(Translate(Error { kind: UnicodePropertyNotFound, pattern: "", span: Span(Position(o: 0, l: 1, c: 1), Position(o: 8, l: 1, c: 9)) })))
   x2("\\p{Word}", "こ", 0, 3);
 
-  // Compile failed: CompileError(InnerError(Syntax(
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // regex parse error:
-  //     [\p{Word}]
-  //      ^^^^^^^^
-  // error: Unicode property not found
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // )))
+  // Compile failed: CompileError(InnerSyntaxError(Translate(Error { kind: UnicodePropertyNotFound, pattern: "", span: Span(Position(o: 1, l: 1, c: 2), Position(o: 9, l: 1, c: 10)) })))
   x2("[\\p{Word}]", "こ", 0, 3);
 
-  // Compile failed: CompileError(InnerError(Syntax(
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // regex parse error:
-  //     [^\p{^Word}]
-  //       ^^^^^^^^^
-  // error: Unicode property not found
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // )))
+  // Compile failed: CompileError(InnerSyntaxError(Translate(Error { kind: UnicodePropertyNotFound, pattern: "", span: Span(Position(o: 2, l: 1, c: 3), Position(o: 11, l: 1, c: 12)) })))
   x2("[^\\p{^Word}]", "こ", 0, 3);
 
-  // Compile failed: CompileError(InnerError(Syntax(
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // regex parse error:
-  //     [^\p{^Word}&&\p{ASCII}]
-  //       ^^^^^^^^^
-  // error: Unicode property not found
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // )))
+  // Compile failed: CompileError(InnerSyntaxError(Translate(Error { kind: UnicodePropertyNotFound, pattern: "", span: Span(Position(o: 2, l: 1, c: 3), Position(o: 11, l: 1, c: 12)) })))
   x2("[^\\p{^Word}&&\\p{ASCII}]", "こ", 0, 3);
 
-  // Compile failed: CompileError(InnerError(Syntax(
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // regex parse error:
-  //     [^\p{^Word}&&\p{ASCII}]
-  //       ^^^^^^^^^
-  // error: Unicode property not found
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // )))
+  // Compile failed: CompileError(InnerSyntaxError(Translate(Error { kind: UnicodePropertyNotFound, pattern: "", span: Span(Position(o: 2, l: 1, c: 3), Position(o: 11, l: 1, c: 12)) })))
   x2("[^\\p{^Word}&&\\p{ASCII}]", "a", 0, 1);
 
-  // Compile failed: CompileError(InnerError(Syntax(
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // regex parse error:
-  //     [^[\p{^Word}]&&[\p{ASCII}]]
-  //        ^^^^^^^^^
-  // error: Unicode property not found
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // )))
+  // Compile failed: CompileError(InnerSyntaxError(Translate(Error { kind: UnicodePropertyNotFound, pattern: "", span: Span(Position(o: 3, l: 1, c: 4), Position(o: 12, l: 1, c: 13)) })))
   x2("[^[\\p{^Word}]&&[\\p{ASCII}]]", "こ", 0, 3);
 
-  // Compile failed: CompileError(InnerError(Syntax(
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // regex parse error:
-  //     [^[\p{ASCII}]&&[^\p{Word}]]
-  //                      ^^^^^^^^
-  // error: Unicode property not found
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // )))
+  // Compile failed: CompileError(InnerSyntaxError(Translate(Error { kind: UnicodePropertyNotFound, pattern: "", span: Span(Position(o: 17, l: 1, c: 18), Position(o: 25, l: 1, c: 26)) })))
   x2("[^[\\p{ASCII}]&&[^\\p{Word}]]", "こ", 0, 3);
 
-  // Compile failed: CompileError(InnerError(Syntax(
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // regex parse error:
-  //     [^[\p{^Word}]&&[^\p{ASCII}]]
-  //        ^^^^^^^^^
-  // error: Unicode property not found
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // )))
+  // Compile failed: CompileError(InnerSyntaxError(Translate(Error { kind: UnicodePropertyNotFound, pattern: "", span: Span(Position(o: 3, l: 1, c: 4), Position(o: 12, l: 1, c: 13)) })))
   x2("[^[\\p{^Word}]&&[^\\p{ASCII}]]", "こ", 0, 3);
 
-  // Compile failed: CompileError(InnerError(Syntax(
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // regex parse error:
-  //     [^\p{^Word}&&[^၊]]
-  //       ^^^^^^^^^
-  // error: Unicode property not found
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // )))
+  // Compile failed: CompileError(InnerSyntaxError(Translate(Error { kind: UnicodePropertyNotFound, pattern: "", span: Span(Position(o: 2, l: 1, c: 3), Position(o: 11, l: 1, c: 12)) })))
   x2("[^\\p{^Word}&&[^\\x{104a}]]", "こ", 0, 3);
 
-  // Compile failed: CompileError(InnerError(Syntax(
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // regex parse error:
-  //     [^[\p{^Word}]&&[^၊]]
-  //        ^^^^^^^^^
-  // error: Unicode property not found
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // )))
+  // Compile failed: CompileError(InnerSyntaxError(Translate(Error { kind: UnicodePropertyNotFound, pattern: "", span: Span(Position(o: 3, l: 1, c: 4), Position(o: 12, l: 1, c: 13)) })))
   x2("[^[\\p{^Word}]&&[^\\x{104a}]]", "こ", 0, 3);
 
-  // Compile failed: CompileError(InnerError(Syntax(
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // regex parse error:
-  //     \p{^Cntrl}
-  //     ^^^^^^^^^^
-  // error: Unicode property not found
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // )))
+  // Compile failed: CompileError(InnerSyntaxError(Translate(Error { kind: UnicodePropertyNotFound, pattern: "", span: Span(Position(o: 0, l: 1, c: 1), Position(o: 10, l: 1, c: 11)) })))
   x2("\\p{^Cntrl}", "こ", 0, 3);
 
-  // Compile failed: CompileError(InnerError(Syntax(
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // regex parse error:
-  //     [\p{^Cntrl}]
-  //      ^^^^^^^^^^
-  // error: Unicode property not found
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // )))
+  // Compile failed: CompileError(InnerSyntaxError(Translate(Error { kind: UnicodePropertyNotFound, pattern: "", span: Span(Position(o: 1, l: 1, c: 2), Position(o: 11, l: 1, c: 12)) })))
   x2("[\\p{^Cntrl}]", "こ", 0, 3);
 
-  // Compile failed: CompileError(InnerError(Syntax(
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // regex parse error:
-  //     [^[\p{^Cntrl}]&&[\p{ASCII}]]
-  //        ^^^^^^^^^^
-  // error: Unicode property not found
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // )))
+  // Compile failed: CompileError(InnerSyntaxError(Translate(Error { kind: UnicodePropertyNotFound, pattern: "", span: Span(Position(o: 3, l: 1, c: 4), Position(o: 13, l: 1, c: 14)) })))
   x2("[^[\\p{^Cntrl}]&&[\\p{ASCII}]]", "こ", 0, 3);
 
   // Compile failed: ParseError(2, UnknownFlag("(?-W"))
@@ -704,14 +571,7 @@
   // Compile failed: ParseError(2, UnknownFlag("(?P"))
   x2("(?P:\\B)", "こ", 0, 0);
 
-  // Compile failed: CompileError(InnerError(Syntax(
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // regex parse error:
-  //     \p{InBasicLatin}
-  //     ^^^^^^^^^^^^^^^^
-  // error: Unicode property not found
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // )))
+  // Compile failed: CompileError(InnerSyntaxError(Translate(Error { kind: UnicodePropertyNotFound, pattern: "", span: Span(Position(o: 0, l: 1, c: 1), Position(o: 16, l: 1, c: 17)) })))
   x2("\\p{InBasicLatin}", "\x41", 0, 1);
 
   // Compile failed: ParseError(1, InvalidEscape("\\Y"))
@@ -853,67 +713,26 @@
   // Compile failed: ParseError(3, TargetNotRepeatable)
   x2("(?(*FAIL)123|456)", "456", 0, 3);
 
-  // Compile failed: ParseError(0, InvalidEscape("\\g"))
+  // Compile failed: ParseError(2, InvalidBackref)
   x2("\\g'0'++{,0}",   "abcdefgh", 0, 0);
 
-  // Compile failed: ParseError(0, InvalidEscape("\\g"))
+  // Compile failed: ParseError(2, InvalidBackref)
   x2("\\g'0'++{,0}?",  "abcdefgh", 0, 0);
 
-  // Compile failed: ParseError(0, InvalidEscape("\\g"))
+  // Compile failed: ParseError(2, InvalidBackref)
   x2("\\g'0'++{,0}b",  "abcdefgh", 1, 2);
 
-  // Compile failed: ParseError(0, InvalidEscape("\\g"))
+  // Compile failed: ParseError(2, InvalidBackref)
   x2("\\g'0'++{,0}?def", "abcdefgh", 3, 6);
 
-  // Compile failed: CompileError(InnerError(Syntax(
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // regex parse error:
-  //     a{3,2}b
-  //      ^^^^^
-  // error: invalid repetition count range, the start must be <= the end
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // )))
-  x2("a{3,2}b", "aaab", 0, 4);
-
-  // Compile failed: CompileError(InnerError(Syntax(
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // regex parse error:
-  //     a{3,2}b
-  //      ^^^^^
-  // error: invalid repetition count range, the start must be <= the end
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // )))
-  x2("a{3,2}b", "aaaab", 1, 5);
-
-  // Compile failed: CompileError(InnerError(Syntax(
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // regex parse error:
-  //     a{3,2}b
-  //      ^^^^^
-  // error: invalid repetition count range, the start must be <= the end
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // )))
+  // No match found
   x2("a{3,2}b", "aab", 0, 3);
 
-  // Compile failed: CompileError(InnerError(Syntax(
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // regex parse error:
-  //     a{3,2}?
-  //      ^^^^^^
-  // error: invalid repetition count range, the start must be <= the end
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // )))
+  // No match found
   x2("a{3,2}?", "", 0, 0);
 
   // No match found
   x2("a{2,3}+a", "aaa", 0, 3);
 
-  // Compile failed: CompileError(InnerError(Syntax(
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // regex parse error:
-  //     \p{In_Enclosed_CJK_Letters_and_Months}
-  //     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  // error: Unicode property not found
-  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // )))
+  // Compile failed: CompileError(InnerSyntaxError(Translate(Error { kind: UnicodePropertyNotFound, pattern: "", span: Span(Position(o: 0, l: 1, c: 1), Position(o: 38, l: 1, c: 39)) })))
   x2("\\p{In_Enclosed_CJK_Letters_and_Months}", "\xe3\x8b\xbf", 0, 3);

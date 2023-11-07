@@ -200,23 +200,20 @@ pub fn analyze<'a>(tree: &'a ExprTree) -> Result<Info<'a>> {
 
 #[cfg(test)]
 mod tests {
+    use regex_automata::meta::Regex;
+
     use super::analyze;
-    // use super::literal_const_size;
     use crate::Expr;
 
-    // #[test]
-    // fn case_folding_safe() {
-    //     let re = regex::Regex::new("(?i:ß)").unwrap();
-    //     if re.is_match("SS") {
-    //         assert!(!literal_const_size("ß", true));
-    //     }
+    #[test]
+    fn case_folding_safe() {
+        let re = Regex::new("(?i:ß)").unwrap();
+        assert!(!re.is_match("SS"));
 
-    //     // Another tricky example, Armenian ECH YIWN
-    //     let re = regex::Regex::new("(?i:\\x{0587})").unwrap();
-    //     if re.is_match("\u{0565}\u{0582}") {
-    //         assert!(!literal_const_size("\u{0587}", true));
-    //     }
-    // }
+        // Another tricky example, Armenian ECH YIWN
+        let re = Regex::new("(?i:\\x{0587})").unwrap();
+        assert!(!re.is_match("\u{0565}\u{0582}"));
+    }
 
     #[test]
     fn invalid_backref_1() {
