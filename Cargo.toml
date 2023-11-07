@@ -10,6 +10,7 @@ repository = "https://github.com/fancy-regex/fancy-regex"
 documentation = "https://docs.rs/fancy-regex"
 categories = ["text-processing"]
 exclude = ["/.github/*", "/Cargo.lock.msrv"]
+rust-version = "1.66"
 
 [features]
 default = ["unicode", "perf"]

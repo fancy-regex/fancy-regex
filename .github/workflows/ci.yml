@@ -38,11 +38,11 @@ jobs:
     strategy:
       matrix:
         rust:
-          - 1.42.0 # MSRV (minimum supported Rust version)
+          - 1.66.1 # MSRV (minimum supported Rust version)
           - stable
           - beta
         include:
-          - rust: 1.42.0
+          - rust: 1.66.1
             msrv: true
     steps:
       - name: Checkout sources
@@ -54,13 +54,6 @@ jobs:
           toolchain: ${{ matrix.rust }}
           profile: minimal
           override: true
-
-      # See https://github.com/matklad/once_cell/issues/201
-      # To test locally, enable the lock file and then run:
-      # $ docker run --rm --user "$(id -u)":"$(id -g)" -v "$PWD":/usr/src/myapp -w /usr/src/myapp rust:1.42.0 cargo test
-      - name: Use Cargo.lock for MSRV
-        if: ${{ matrix.msrv }}
-        run: cp Cargo.lock.msrv Cargo.lock
 
       - name: Run cargo test
         uses: actions-rs/cargo@v1
