@@ -336,7 +336,11 @@ impl<'a> Parser<'a> {
             return self.parse_numbered_backref(ix + 1);
         } else if matches!(b, b'k' | b'g') {
             // Named backref: \k<name>
-            return self.parse_named_backref(ix + 2, "<", ">");
+            if bytes.get(end).copied() == Some(b'\'') {
+                return self.parse_named_backref(end, "'", "'");
+            } else {
+                return self.parse_named_backref(end, "<", ">");
+            }
         } else if b == b'A' && !in_class {
             (end, Expr::Assertion(Assertion::StartText))
         } else if b == b'z' && !in_class {
