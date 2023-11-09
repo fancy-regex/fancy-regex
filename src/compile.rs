@@ -512,6 +512,7 @@ pub(crate) fn compile_inner(
     let re = RaBuilder::new()
         .configure(config)
         .build_from_hir(hir)
+        .map_err(Box::new)
         .map_err(CompileError::InnerBuildError)
         .map_err(Error::CompileError)?;
 

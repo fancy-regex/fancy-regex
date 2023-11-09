@@ -333,9 +333,9 @@ impl Expr {
                 .map(|ast| {
                     // XXX: using empty pattern; this will make error info useless
                     translator.translate("", &ast?).map_err(|e| {
-                        Error::CompileError(CompileError::InnerSyntaxError(
+                        Error::CompileError(CompileError::InnerSyntaxError(Box::new(
                             regex_syntax::Error::Translate(e),
-                        ))
+                        )))
                     })
                 }),
         )?))
@@ -379,8 +379,8 @@ fn parse_ast(pattern: &str, capture_index: &mut u32) -> Result<regex_syntax::ast
     let mut ast = regex_syntax::ast::parse::Parser::new()
         .parse(pattern)
         .map_err(|e| {
-            Error::CompileError(CompileError::InnerSyntaxError(regex_syntax::Error::Parse(
-                e,
+            Error::CompileError(CompileError::InnerSyntaxError(Box::new(
+                regex_syntax::Error::Parse(e),
             )))
         })?;
     *capture_index = offset_capture_index(&mut ast, *capture_index);
