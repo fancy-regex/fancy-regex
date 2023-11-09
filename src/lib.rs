@@ -263,7 +263,7 @@ impl<'r, 't> Iterator for Matches<'r, 't> {
         let mat =
             match self
                 .re
-                .find_from_pos_with_option_flags(self.text, self.last_end, option_flags)
+                .find_within_range_with_option_flags(self.text, self.last_end..self.text.len(), option_flags)
             {
                 Err(error) => return Some(Err(error)),
                 Ok(None) => return None,
@@ -606,19 +606,50 @@ impl Regex {
     /// Note that in some cases this is not the same as using the `find`
     /// method and passing a slice of the string, see [Regex::captures_from_pos()] for details.
     pub fn find_from_pos<'t>(&self, text: &'t str, pos: usize) -> Result<Option<Match<'t>>> {
-        self.find_from_pos_with_option_flags(text, pos, 0)
+        self.find_within_range(text, pos..text.len())
     }
 
-    fn find_from_pos_with_option_flags<'t>(
+    /// Returns the first match in `text` within the specified `range`.
+    /// The `start` and `end` of `range` are treated as byte positions in `text`.
+    ///
+    /// # Examples
+    ///
+    /// Finding match starting at a position:
+    ///
+    /// ```
+    /// # use fancy_regex::Regex;
+    /// let re = Regex::new(r"(\d+)(?m:$)").unwrap();
+    /// let text = "1 test 123\n2 foo";
+    /// let mat = re.find_within_range(text, 7..10).unwrap().unwrap();
+    ///
+    /// assert_eq!(mat.start(), 7);
+    /// assert_eq!(mat.end(), 10);
+    /// ```
+    ///
+    /// Note that in some cases this is not the same as using the `find`
+    /// method and passing a slice of the string, see [`Regex::captures_within_range()`] for details.
+    ///
+    /// # Errors
+    /// Returns an [`Error::RuntimeError`] for any runtime error occurred.
+    #[inline]
+    pub fn find_within_range<'t>(
         &self,
         text: &'t str,
-        pos: usize,
+        range: impl Into<Range<usize>>,
+    ) -> Result<Option<Match<'t>>> {
+        self.find_within_range_with_option_flags(text, range, 0)
+    }
+
+    fn find_within_range_with_option_flags<'t>(
+        &self,
+        text: &'t str,
+        range: impl Into<Range<usize>>,
         option_flags: u32,
     ) -> Result<Option<Match<'t>>> {
         let result =
             self.session
                 .get()
-                .run_with_options(text, pos..text.len(), Some(1), option_flags)?;
+                .run_with_options(text, range.into(), Some(1), option_flags)?;
         Ok(result.map(|saves| Match::new(text, saves[0], saves[1])))
     }
 
