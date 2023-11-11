@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
+## [0.12.0] - 2023-11-11
+### Added
+- Support for `no_std` (the `std` feature is enabled by default but can be
+  disabled if desired) (#111)
+- `TryFrom` `&str` and `String` impl for `Regex` (#115)
+### Changed
+- `Error` and its components are now `Clone` (#116)
+
 ## [0.11.0] - 2023-01-12
 ### Added
 - Support for [conditionals](https://www.regular-expressions.info/conditional.html): using a regex like
@@ -152,6 +160,7 @@ with the exception that 0.x versions can break between minor versions.
 - Initial release
 
 
+[0.12.0]: https://github.com/fancy-regex/fancy-regex/compare/0.11.0...0.12.0
 [0.11.0]: https://github.com/fancy-regex/fancy-regex/compare/0.10.0...0.11.0
 [0.10.0]: https://github.com/fancy-regex/fancy-regex/compare/0.9.0...0.10.0
 [0.9.0]: https://github.com/fancy-regex/fancy-regex/compare/0.8.0...0.9.0
