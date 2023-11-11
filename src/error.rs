@@ -8,6 +8,7 @@ pub type ParseErrorPosition = usize;
 
 /// An error as the result of parsing, compiling or running a regex.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum Error {
     /// An error as a result of parsing a regex pattern, with the position where the error occurred
     ParseError(ParseErrorPosition, ParseError),
@@ -15,15 +16,11 @@ pub enum Error {
     CompileError(CompileError),
     /// An error as a result of running a regex
     RuntimeError(RuntimeError),
-
-    /// This enum may grow additional variants, so this makes sure clients don't count on exhaustive
-    /// matching. Otherwise, adding a new variant could break existing code.
-    #[doc(hidden)]
-    __Nonexhaustive,
 }
 
 /// An error for the result of parsing a regex pattern.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum ParseError {
     /// General parsing error
     GeneralParseError(String),
@@ -57,15 +54,11 @@ pub enum ParseError {
     InvalidGroupName,
     /// Invalid group id in escape sequence
     InvalidGroupNameBackref(String),
-
-    /// This enum may grow additional variants, so this makes sure clients don't count on exhaustive
-    /// matching. Otherwise, adding a new variant could break existing code.
-    #[doc(hidden)]
-    __Nonexhaustive,
 }
 
 /// An error as the result of compiling a regex.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum CompileError {
     /// Regex crate error
     InnerError(regex::Error),
@@ -79,15 +72,11 @@ pub enum CompileError {
     InvalidBackref,
     /// Once named groups are used you cannot refer to groups by number
     NamedBackrefOnly,
-
-    /// This enum may grow additional variants, so this makes sure clients don't count on exhaustive
-    /// matching. Otherwise, adding a new variant could break existing code.
-    #[doc(hidden)]
-    __Nonexhaustive,
 }
 
 /// An error as the result of executing a regex.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum RuntimeError {
     /// Max stack size exceeded for backtracking while executing regex.
     StackOverflow,
@@ -95,11 +84,6 @@ pub enum RuntimeError {
     /// Configure using
     /// [`RegexBuilder::backtrack_limit`](struct.RegexBuilder.html#method.backtrack_limit).
     BacktrackLimitExceeded,
-
-    /// This enum may grow additional variants, so this makes sure clients don't count on exhaustive
-    /// matching. Otherwise, adding a new variant could break existing code.
-    #[doc(hidden)]
-    __Nonexhaustive,
 }
 
 #[cfg(feature = "std")]
@@ -130,8 +114,6 @@ impl fmt::Display for ParseError {
                 write!(f, "Invalid group name in back reference: {}", s)
             }
             ParseError::TargetNotRepeatable => write!(f, "Target of repeat operator is invalid"),
-
-            ParseError::__Nonexhaustive => unreachable!(),
         }
     }
 }
@@ -147,8 +129,6 @@ impl fmt::Display for CompileError {
             CompileError::InvalidGroupNameBackref(s) => write!(f, "Invalid group name in back reference: {}", s),
             CompileError::InvalidBackref => write!(f, "Invalid back reference"),
             CompileError::NamedBackrefOnly => write!(f, "Numbered backref/call not allowed because named group was used, use a named backref instead"),
-
-            CompileError::__Nonexhaustive => unreachable!(),
         }
     }
 }
@@ -160,8 +140,6 @@ impl fmt::Display for RuntimeError {
             RuntimeError::BacktrackLimitExceeded => {
                 write!(f, "Max limit for backtracking count exceeded")
             }
-
-            RuntimeError::__Nonexhaustive => unreachable!(),
         }
     }
 }
@@ -178,8 +156,6 @@ impl fmt::Display for Error {
             Error::RuntimeError(runtime_error) => {
                 write!(f, "Error executing regex: {}", runtime_error)
             }
-
-            Error::__Nonexhaustive => unreachable!(),
         }
     }
 }
