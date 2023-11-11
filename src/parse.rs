@@ -20,20 +20,16 @@
 
 //! A regex parser yielding an AST.
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::{format, vec};
+
 use bit_set::BitSet;
 use regex::escape;
-use std::collections::HashMap;
-use std::str::FromStr;
-use std::usize;
 
-use crate::codepoint_len;
-use crate::CompileError;
-use crate::Error;
-use crate::Expr;
 use crate::LookAround::*;
-use crate::ParseError;
-use crate::Result;
-use crate::MAX_RECURSION;
+use crate::{codepoint_len, CompileError, Error, Expr, ParseError, Result, MAX_RECURSION};
 
 const FLAG_CASEI: u32 = 1;
 const FLAG_MULTI: u32 = 1 << 1;
@@ -42,7 +38,10 @@ const FLAG_SWAP_GREED: u32 = 1 << 3;
 const FLAG_IGNORE_SPACE: u32 = 1 << 4;
 const FLAG_UNICODE: u32 = 1 << 5;
 
-pub(crate) type NamedGroups = HashMap<String, usize>;
+#[cfg(not(feature = "std"))]
+pub(crate) type NamedGroups = alloc::collections::BTreeMap<String, usize>;
+#[cfg(feature = "std")]
+pub(crate) type NamedGroups = std::collections::HashMap<String, usize>;
 
 #[derive(Debug)]
 pub struct ExprTree {
@@ -460,7 +459,7 @@ impl<'a> Parser<'a> {
             return Err(Error::ParseError(ix, ParseError::InvalidHex));
         };
         let codepoint = u32::from_str_radix(s, 16).unwrap();
-        if let Some(c) = ::std::char::from_u32(codepoint) {
+        if let Some(c) = char::from_u32(codepoint) {
             let mut inner = String::with_capacity(4);
             inner.push(c);
             Ok((
@@ -808,7 +807,9 @@ pub(crate) fn parse_decimal(s: &str, ix: usize) -> Option<(usize, usize)> {
     while end < s.len() && is_digit(s.as_bytes()[end]) {
         end += 1;
     }
-    usize::from_str(&s[ix..end]).ok().map(|val| (end, val))
+    usize::from_str_radix(&s[ix..end], 10)
+        .ok()
+        .map(|val| (end, val))
 }
 
 /// Attempts to parse an identifier between the specified opening and closing
@@ -858,10 +859,13 @@ pub(crate) fn make_literal(s: &str) -> Expr {
 
 #[cfg(test)]
 mod tests {
+    use alloc::boxed::Box;
+    use alloc::string::{String, ToString};
+    use alloc::{format, vec};
+
     use crate::parse::{make_literal, parse_id};
     use crate::Expr;
     use crate::LookAround::*;
-    use std::usize;
 
     fn p(s: &str) -> Expr {
         Expr::parse_tree(s).unwrap().expr

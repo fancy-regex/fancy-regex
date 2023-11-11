@@ -1,8 +1,9 @@
+use alloc::borrow::Cow;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
 use crate::parse::{parse_decimal, parse_id};
 use crate::{Captures, CompileError, Error, ParseError, Regex};
-use std::borrow::Cow;
-use std::io;
-use std::mem;
 
 /// A set of options for expanding a template string using the contents
 /// of capture groups.
@@ -128,31 +129,38 @@ impl Expander {
     /// Expands the template string `template` using the syntax defined
     /// by this expander and the values of capture groups from `captures`.
     pub fn expansion(&self, template: &str, captures: &Captures<'_>) -> String {
-        let mut cursor = io::Cursor::new(Vec::with_capacity(template.len()));
+        let mut cursor = Vec::with_capacity(template.len());
+        #[cfg(feature = "std")]
         self.write_expansion(&mut cursor, template, captures)
             .expect("expansion succeeded");
-        String::from_utf8(cursor.into_inner()).expect("expansion is UTF-8")
+        #[cfg(not(feature = "std"))]
+        self.write_expansion_vec(&mut cursor, template, captures)
+            .expect("expansion succeeded");
+        String::from_utf8(cursor).expect("expansion is UTF-8")
     }
 
     /// Appends the expansion produced by `expansion` to `dst`.  Potentially more efficient
     /// than calling `expansion` directly and appending to an existing string.
     pub fn append_expansion(&self, dst: &mut String, template: &str, captures: &Captures<'_>) {
-        let pos = dst.len();
-        let mut cursor = io::Cursor::new(mem::replace(dst, String::new()).into_bytes());
-        cursor.set_position(pos as u64);
+        let mut cursor = core::mem::take(dst).into_bytes();
+        #[cfg(feature = "std")]
         self.write_expansion(&mut cursor, template, captures)
             .expect("expansion succeeded");
-        *dst = String::from_utf8(cursor.into_inner()).expect("expansion is UTF-8");
+        #[cfg(not(feature = "std"))]
+        self.write_expansion_vec(&mut cursor, template, captures)
+            .expect("expansion succeeded");
+        *dst = String::from_utf8(cursor).expect("expansion is UTF-8");
     }
 
     /// Writes the expansion produced by `expansion` to `dst`.  Potentially more efficient
     /// than calling `expansion` directly and writing the result.
+    #[cfg(feature = "std")]
     pub fn write_expansion(
         &self,
-        mut dst: impl io::Write,
+        mut dst: impl std::io::Write,
         template: &str,
         captures: &Captures<'_>,
-    ) -> io::Result<()> {
+    ) -> std::io::Result<()> {
         self.exec(template, |step| match step {
             Step::Char(c) => write!(dst, "{}", c),
             Step::GroupName(name) => {
@@ -167,6 +175,36 @@ impl Expander {
             Step::GroupNum(num) => {
                 if let Some(m) = captures.get(num) {
                     write!(dst, "{}", m.as_str())
+                } else {
+                    Ok(())
+                }
+            }
+            Step::Error => Ok(()),
+        })
+    }
+
+    /// Writes the expansion produced by `expansion` to `dst`.  Potentially more efficient
+    /// than calling `expansion` directly and writing the result.
+    pub fn write_expansion_vec(
+        &self,
+        dst: &mut Vec<u8>,
+        template: &str,
+        captures: &Captures<'_>,
+    ) -> core::fmt::Result {
+        self.exec(template, |step| match step {
+            Step::Char(c) => Ok(dst.extend(c.to_string().as_bytes())),
+            Step::GroupName(name) => {
+                if let Some(m) = captures.name(name) {
+                    Ok(dst.extend(m.as_str().as_bytes()))
+                } else if let Some(m) = name.parse().ok().and_then(|num| captures.get(num)) {
+                    Ok(dst.extend(m.as_str().as_bytes()))
+                } else {
+                    Ok(())
+                }
+            }
+            Step::GroupNum(num) => {
+                if let Some(m) = captures.get(num) {
+                    Ok(dst.extend(m.as_str().as_bytes()))
                 } else {
                     Ok(())
                 }

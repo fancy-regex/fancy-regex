@@ -12,25 +12,11 @@ jobs:
   check:
     name: check
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        rust:
-          - stable
     steps:
-      - name: Checkout sources
-        uses: actions/checkout@v2
-
-      - name: Install toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: ${{ matrix.rust }}
-          profile: minimal
-          override: true
-
-      - name: Run cargo check
-        uses: actions-rs/cargo@v1
-        with:
-          command: check
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo check
+      - run: cargo check --no-default-features
 
   test:
     name: test
@@ -38,90 +24,59 @@ jobs:
     strategy:
       matrix:
         rust:
-          - 1.42.0 # MSRV (minimum supported Rust version)
+          - 1.61.0 # MSRV (minimum supported Rust version)
           - stable
           - beta
         include:
-          - rust: 1.42.0
+          - rust: 1.61.0
             msrv: true
     steps:
-      - name: Checkout sources
-        uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
       - name: Install toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
-          profile: minimal
-          override: true
 
       # See https://github.com/matklad/once_cell/issues/201
       # To test locally, enable the lock file and then run:
-      # $ docker run --rm --user "$(id -u)":"$(id -g)" -v "$PWD":/usr/src/myapp -w /usr/src/myapp rust:1.42.0 cargo test
+      # $ docker run --rm --user "$(id -u)":"$(id -g)" -v "$PWD":/usr/src/myapp -w /usr/src/myapp rust:1.61.0 cargo test
+      # To update, use `cargo +nightly update -Z minimal-versions` and then `cargo update -p bit-vec -p serde`
       - name: Use Cargo.lock for MSRV
         if: ${{ matrix.msrv }}
         run: cp Cargo.lock.msrv Cargo.lock
 
-      - name: Run cargo test
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
+      - run: cargo test
 
   example:
     name: example
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        rust:
-          - stable
     steps:
-      - name: Checkout sources
-        uses: actions/checkout@v2
-
-      - name: Install toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: ${{ matrix.rust }}
-          profile: minimal
-          override: true
-
-      - name: Run cargo run --example
-        uses: actions-rs/cargo@v1
-        with:
-          command: run
-          args: --example toy trace '\d*' '1122 33'
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo run --example toy trace '\d*' '1122 33'
 
   fmt:
     name: rustfmt
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout sources
-        uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
-      - name: Install toolchain
-        uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          profile: minimal
-          override: true
           components: rustfmt
 
-      - name: Run cargo fmt
-        uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
+      - run: cargo fmt --all -- --check
 
   coverage:
     if: ${{ github.event_name != 'schedule' }}
     name: coverage
     runs-on: ubuntu-latest
     container:
-      image: xd009642/tarpaulin:0.22.0
+      image: xd009642/tarpaulin:0.27.1
       options: --security-opt seccomp=unconfined
     steps:
-      - name: Checkout sources
-        uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
       - name: Generate code coverage
         run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out Xml

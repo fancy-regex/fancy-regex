@@ -159,14 +159,22 @@ Conditionals - if/then/else:
 #![doc(html_root_url = "https://docs.rs/fancy-regex/0.11.0")]
 #![deny(missing_docs)]
 #![deny(missing_debug_implementations)]
+#![cfg_attr(not(feature = "std"), no_std)]
 
-use std::convert::TryFrom;
-use std::fmt;
-use std::fmt::{Debug, Formatter};
-use std::ops::{Index, Range};
-use std::str::FromStr;
-use std::sync::Arc;
-use std::usize;
+extern crate alloc;
+
+use alloc::borrow::Cow;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::sync::Arc;
+use alloc::vec;
+use alloc::vec::Vec;
+
+use core::convert::TryFrom;
+use core::fmt::{Debug, Formatter};
+use core::ops::{Index, Range};
+use core::str::FromStr;
+use core::{fmt, usize};
 
 mod analyze;
 mod compile;
@@ -184,7 +192,6 @@ use crate::vm::{Prog, OPTION_SKIPPED_EMPTY_MATCH};
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
 pub use crate::expand::Expander;
 pub use crate::replacer::{NoExpand, Replacer, ReplacerRef};
-use std::borrow::Cow;
 
 const MAX_RECURSION: usize = 64;
 
@@ -795,7 +802,10 @@ impl Regex {
     #[doc(hidden)]
     pub fn debug_print(&self) {
         match &self.inner {
+            #[cfg(feature = "std")]
             RegexImpl::Wrap { inner, .. } => println!("wrapped {:?}", inner),
+            #[cfg(not(feature = "std"))]
+            RegexImpl::Wrap { .. } => {}
             RegexImpl::Fancy { prog, .. } => prog.debug_print(),
         }
     }
@@ -1053,7 +1063,7 @@ impl<'t> Captures<'t> {
                     return None;
                 }
                 let lo = saves[slot];
-                if lo == std::usize::MAX {
+                if lo == usize::MAX {
                     return None;
                 }
                 let hi = saves[slot + 1];
@@ -1274,10 +1284,10 @@ pub enum LookAround {
 /// returns the name of each group, or [None] if the group has
 /// no name.  Because capture group 0 cannot have a name, the
 /// first item returned is always [None].
-pub struct CaptureNames<'r>(std::vec::IntoIter<Option<&'r str>>);
+pub struct CaptureNames<'r>(vec::IntoIter<Option<&'r str>>);
 
 impl Debug for CaptureNames<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.write_str("<CaptureNames>")
     }
 }
@@ -1517,11 +1527,14 @@ pub mod internal {
 
 #[cfg(test)]
 mod tests {
+    use alloc::borrow::Cow;
+    use alloc::boxed::Box;
+    use alloc::string::String;
+    use alloc::{format, vec};
+
     use crate::parse::make_literal;
-    use crate::Expr;
-    use crate::Regex;
-    use std::borrow::Cow;
-    use std::usize;
+    use crate::{Expr, Regex};
+
     //use detect_possible_backref;
 
     // tests for to_str

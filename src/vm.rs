@@ -69,15 +69,16 @@
 //! 5. We continue with the previously saved thread at PC 4 and IX 0 (backtracking)
 //! 6. Both `Lit("a")` and `Lit("c")` match and we reach `End` -> successful match (index 0 to 2)
 
+use alloc::boxed::Box;
+use alloc::collections::BTreeSet;
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
+
 use regex::Regex;
-use std::collections::BTreeSet;
-use std::usize;
 
 use crate::error::RuntimeError;
-use crate::prev_codepoint_ix;
-use crate::Error;
-use crate::Result;
-use crate::{codepoint_len, RegexOptions};
+use crate::{codepoint_len, prev_codepoint_ix, Error, RegexOptions, Result};
 
 /// Enable tracing of VM execution. Only for debugging/investigating.
 const OPTION_TRACE: u32 = 1 << 0;
@@ -211,6 +212,7 @@ impl Prog {
 
     #[doc(hidden)]
     pub(crate) fn debug_print(&self) {
+        #[cfg(feature = "std")]
         for (i, insn) in self.body.iter().enumerate() {
             println!("{:3}: {:?}", i, insn);
         }
@@ -244,6 +246,7 @@ struct State {
     /// Maximum size of the stack. If the size would be exceeded during execution, a `StackOverflow`
     /// error is raised.
     max_stack: usize,
+    #[allow(dead_code)]
     options: u32,
 }
 
@@ -309,6 +312,7 @@ impl State {
         self.nsave += 1;
         self.saves[slot] = val;
 
+        #[cfg(feature = "std")]
         if self.options & OPTION_TRACE != 0 {
             println!("saves: {:?}", self.saves);
         }
@@ -392,7 +396,9 @@ impl State {
     }
 
     #[inline]
+    #[allow(unused_variables)]
     fn trace_stack(&self, operation: &str) {
+        #[cfg(feature = "std")]
         if self.options & OPTION_TRACE != 0 {
             println!("stack after {}: {:?}", operation, self.stack);
         }
@@ -431,6 +437,7 @@ pub(crate) fn run(
     options: &RegexOptions,
 ) -> Result<Option<Vec<usize>>> {
     let mut state = State::new(prog.n_saves, MAX_STACK, option_flags);
+    #[cfg(feature = "std")]
     if option_flags & OPTION_TRACE != 0 {
         println!("pos\tinstruction");
     }
@@ -440,6 +447,7 @@ pub(crate) fn run(
     loop {
         // break from this loop to fail, causes stack to pop
         'fail: loop {
+            #[cfg(feature = "std")]
             if option_flags & OPTION_TRACE != 0 {
                 println!("{}\t{} {:?}", ix, pc, prog.body[pc]);
             }
@@ -449,6 +457,7 @@ pub(crate) fn run(
                     // with an explicit group; we might want to
                     // optimize that.
                     //state.saves[1] = ix;
+                    #[cfg(feature = "std")]
                     if option_flags & OPTION_TRACE != 0 {
                         println!("saves: {:?}", state.saves);
                     }
@@ -685,6 +694,7 @@ pub(crate) fn run(
             }
             pc += 1;
         }
+        #[cfg(feature = "std")]
         if option_flags & OPTION_TRACE != 0 {
             println!("fail");
         }
