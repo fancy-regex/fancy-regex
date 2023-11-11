@@ -34,7 +34,7 @@ version = "1.9.1"
 default-features = false
 
 [dependencies.bit-set]
-version = "0.5"
+version = "0.5.3"
 default-features = false
 
 [dev-dependencies]
