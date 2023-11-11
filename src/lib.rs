@@ -170,6 +170,7 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use core::convert::TryFrom;
 use core::fmt::{Debug, Formatter};
 use core::ops::{Index, Range};
 use core::str::FromStr;
@@ -979,6 +980,24 @@ impl Regex {
         }
         new.push_str(&text[last_match..]);
         Cow::Owned(new)
+    }
+}
+
+impl TryFrom<&str> for Regex {
+    type Error = Error;
+
+    /// Attempts to parse a string into a regular expression
+    fn try_from(s: &str) -> Result<Self> {
+        Self::new(s)
+    }
+}
+
+impl TryFrom<String> for Regex {
+    type Error = Error;
+
+    /// Attempts to parse a string into a regular expression
+    fn try_from(s: String) -> Result<Self> {
+        Self::new(&s)
     }
 }
 
