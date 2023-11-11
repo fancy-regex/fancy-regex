@@ -260,15 +260,15 @@ impl<'r, 't> Iterator for Matches<'r, 't> {
         } else {
             0
         };
-        let mat =
-            match self
-                .re
-                .find_within_range_with_option_flags(self.text, self.last_end..self.text.len(), option_flags)
-            {
-                Err(error) => return Some(Err(error)),
-                Ok(None) => return None,
-                Ok(Some(mat)) => mat,
-            };
+        let mat = match self.re.find_within_range_with_option_flags(
+            self.text,
+            self.last_end..self.text.len(),
+            option_flags,
+        ) {
+            Err(error) => return Some(Err(error)),
+            Ok(None) => return None,
+            Ok(Some(mat)) => mat,
+        };
 
         if mat.start == mat.end {
             // This is an empty match. To ensure we make progress, start
