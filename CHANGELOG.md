@@ -13,6 +13,7 @@ with the exception that 0.x versions can break between minor versions.
 - `TryFrom` `&str` and `String` impl for `Regex` (#115)
 ### Changed
 - `Error` and its components are now `Clone` (#116)
+- MSRV (minimum supported Rust version) is now 1.61.0 (from 1.42.0)
 
 ## [0.11.0] - 2023-01-12
 ### Added
