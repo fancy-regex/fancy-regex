@@ -64,6 +64,7 @@ jobs:
       # See https://github.com/matklad/once_cell/issues/201
       # To test locally, enable the lock file and then run:
       # $ docker run --rm --user "$(id -u)":"$(id -g)" -v "$PWD":/usr/src/myapp -w /usr/src/myapp rust:1.61.0 cargo test
+      # To update, use `cargo +nightly update -Z minimal-versions` and then `cargo update -p bit-vec -p serde`
       - name: Use Cargo.lock for MSRV
         if: ${{ matrix.msrv }}
         run: cp Cargo.lock.msrv Cargo.lock
@@ -123,7 +124,7 @@ jobs:
     name: coverage
     runs-on: ubuntu-latest
     container:
-      image: xd009642/tarpaulin:0.22.0
+      image: xd009642/tarpaulin:0.27.1
       options: --security-opt seccomp=unconfined
     steps:
       - name: Checkout sources
