@@ -1175,22 +1175,8 @@ mod tests {
 
     #[test]
     fn delegate_zero() {
-        assert_eq!(
-            p("\\b"),
-            Expr::Delegate {
-                inner: String::from("\\b"),
-                size: 0,
-                casei: false
-            }
-        );
-        assert_eq!(
-            p("\\B"),
-            Expr::Delegate {
-                inner: String::from("\\B"),
-                size: 0,
-                casei: false
-            }
-        );
+        assert_eq!(p("\\b"), Expr::Assertion(Assertion::WordBoundary),);
+        assert_eq!(p("\\B"), Expr::Assertion(Assertion::NotWordBoundary),);
     }
 
     #[test]
@@ -1361,11 +1347,7 @@ mod tests {
                     greedy: true
                 },
                 Expr::LookAround(Box::new(make_literal("'")), LookAheadNeg),
-                Expr::Delegate {
-                    inner: String::from("\\b"),
-                    size: 0,
-                    casei: false
-                }
+                Expr::Assertion(Assertion::WordBoundary),
             ])
         );
     }
@@ -1755,13 +1737,11 @@ mod tests {
     }
 
     // found by cargo fuzz, then minimized
-    #[ignore]
     #[test]
     fn fuzz_1() {
         p(r"\ä");
     }
 
-    #[ignore]
     #[test]
     fn fuzz_2() {
         p(r"\pä");
