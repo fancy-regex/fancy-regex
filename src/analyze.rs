@@ -20,15 +20,14 @@
 
 //! Analysis of regex expressions.
 
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::cmp::min;
+
 use bit_set::BitSet;
-use std::cmp::min;
-use std::usize;
 
 use crate::parse::ExprTree;
-use crate::CompileError;
-use crate::Error;
-use crate::Expr;
-use crate::Result;
+use crate::{CompileError, Error, Expr, Result};
 
 #[derive(Debug)]
 pub struct Info<'a> {
@@ -254,8 +253,7 @@ pub fn analyze<'a>(tree: &'a ExprTree) -> Result<Info<'a>> {
 
 #[cfg(test)]
 mod tests {
-    use super::analyze;
-    use super::literal_const_size;
+    use super::{analyze, literal_const_size};
     use crate::Expr;
     use regex;
 

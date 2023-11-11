@@ -20,17 +20,14 @@
 
 //! Compilation of regexes to VM.
 
-use std::usize;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 use crate::analyze::Info;
 use crate::vm::{Insn, Prog};
-use crate::CompileError;
-use crate::Error;
-use crate::Expr;
-use crate::LookAround;
 use crate::LookAround::*;
-use crate::RegexOptions;
-use crate::Result;
+use crate::{CompileError, Error, Expr, LookAround, RegexOptions, Result};
 
 // I'm thinking it probably doesn't make a lot of sense having this split
 // out from Compiler.
@@ -587,6 +584,7 @@ mod tests {
     use crate::analyze::analyze;
     use crate::parse::ExprTree;
     use crate::vm::Insn::*;
+    use alloc::vec;
     use bit_set::BitSet;
     use matches::assert_matches;
 
