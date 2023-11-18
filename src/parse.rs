@@ -336,7 +336,7 @@ impl<'a> Parser<'a> {
             return self.parse_numbered_backref(ix + 1);
         } else if matches!(b, b'k' | b'g') {
             // Named backref: \k<name>
-            if bytes.get(end).copied() == Some(b'\'') {
+            if bytes.get(end) == Some(&b'\'') {
                 return self.parse_named_backref(end, "'", "'");
             } else {
                 return self.parse_named_backref(end, "<", ">");
@@ -346,7 +346,7 @@ impl<'a> Parser<'a> {
         } else if b == b'z' && !in_class {
             (end, Expr::Assertion(Assertion::EndText))
         } else if b == b'b' && !in_class {
-            if bytes.get(end).copied() == Some(b'{') {
+            if bytes.get(end) == Some(&b'{') {
                 // Support for \b{...} is not implemented yet
                 return Err(Error::ParseError(
                     ix,
@@ -355,7 +355,7 @@ impl<'a> Parser<'a> {
             }
             (end, Expr::Assertion(Assertion::WordBoundary))
         } else if b == b'B' && !in_class {
-            if bytes.get(end).copied() == Some(b'{') {
+            if bytes.get(end) == Some(&b'{') {
                 // Support for \b{...} is not implemented yet
                 return Err(Error::ParseError(
                     ix,
@@ -514,13 +514,13 @@ impl<'a> Parser<'a> {
         class.push('[');
 
         // Negated character class
-        if bytes.get(ix).copied() == Some(b'^') {
+        if bytes.get(ix) == Some(&b'^') {
             class.push('^');
             ix += 1;
         }
 
         // `]` does not have to be escaped after opening `[` or `[^`
-        if bytes.get(ix).copied() == Some(b']') {
+        if bytes.get(ix) == Some(&b']') {
             class.push(']');
             ix += 1;
         }
