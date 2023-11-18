@@ -334,7 +334,7 @@ impl<'a> Parser<'a> {
         let end = ix + 1 + codepoint_len(b);
         Ok(if is_digit(b) {
             return self.parse_numbered_backref(ix + 1);
-        } else if matches!(b, b'k' | b'g') {
+        } else if matches!(b, b'k' | b'g') && !in_class {
             // Named backref: \k<name>
             if bytes.get(end) == Some(&b'\'') {
                 return self.parse_named_backref(end, "'", "'");
@@ -421,9 +421,9 @@ impl<'a> Parser<'a> {
                     casei: self.flag(FLAG_CASEI),
                 },
             )
-        } else if b == b'K' {
+        } else if b == b'K' && !in_class {
             (end, Expr::KeepOut)
-        } else if b == b'G' {
+        } else if b == b'G' && !in_class {
             (end, Expr::ContinueFromPreviousMatchEnd)
         } else {
             // printable ASCII (including space, see issue #29)
@@ -441,8 +441,12 @@ impl<'a> Parser<'a> {
                     b' ' => " ",
                     b => {
                         let s = &self.re[ix + 1..end];
-                        // we shall be permissive in production
-                        if cfg!(debug_assertions) && b.is_ascii_alphanumeric() {
+                        if b.is_ascii_alphabetic()
+                            && !matches!(
+                                b,
+                                b'k' | b'g' | b'A' | b'z' | b'b' | b'B' | b'<' | b'>' | b'K' | b'G'
+                            )
+                        {
                             return Err(Error::ParseError(
                                 ix,
                                 ParseError::InvalidEscape(format!("\\{}", s)),
