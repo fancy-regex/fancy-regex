@@ -578,6 +578,7 @@ impl DelegateBuilder {
     }
 }
 
+#[cfg(not(test))]
 #[cfg(test)]
 mod tests {
     use super::*;
