@@ -853,7 +853,9 @@ pub(crate) fn parse_id<'a>(s: &'a str, open: &'_ str, close: &'_ str) -> Option<
     }
 
     let id_start = open.len();
-    let id_len = match s[id_start..].find(|c: char| !is_id_char(c)) {
+    let mut iter = s[id_start..].char_indices().peekable();
+    let _ = iter.next_if(|(_, ch)| *ch == '-'); // relative backref
+    let id_len = match iter.find(|(_, ch)| !is_id_char(*ch)).map(|(i, _)| i) {
         Some(id_len) if s[id_start + id_len..].starts_with(close) => Some(id_len),
         None if close.is_empty() => Some(s.len()),
         _ => None,
@@ -869,7 +871,7 @@ pub(crate) fn parse_id<'a>(s: &'a str, open: &'_ str, close: &'_ str) -> Option<
 }
 
 fn is_id_char(c: char) -> bool {
-    c.is_alphanumeric() || c == '_' || c == '-'
+    c.is_alphanumeric() || c == '_'
 }
 
 fn is_digit(b: u8) -> bool {
