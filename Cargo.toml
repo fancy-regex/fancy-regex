@@ -36,7 +36,7 @@ default-features = false
 
 [dev-dependencies]
 criterion = "0.5"
-matches = "0.1"
+matches = "0.1.10"
 quickcheck = "1.0"
 regex = "1.10"
 
