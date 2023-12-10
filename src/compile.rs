@@ -578,7 +578,6 @@ impl DelegateBuilder {
     }
 }
 
-#[cfg(not(test))]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -587,6 +586,7 @@ mod tests {
     use crate::vm::Insn::*;
     use alloc::vec;
     use bit_set::BitSet;
+    use matches::assert_matches;
 
     #[test]
     fn jumps_for_alternation() {
@@ -663,7 +663,7 @@ mod tests {
         assert_matches!(prog[0], Split(1, 3));
         assert_matches!(prog[1], Lit(ref l) if l == "x");
         assert_matches!(prog[2], FailNegativeLookAround);
-        assert_delegate_sized(&prog[3], "(?:a|b)c");
+        assert_delegate(&prog[3], "(?:a|b)c");
         assert_delegate(&prog[4], "x*");
         assert_matches!(prog[5], End);
     }
@@ -730,25 +730,4 @@ mod tests {
     #[cfg(not(feature = "std"))]
     fn assert_delegate(_: &Insn, _: &str) {}
 
-    #[cfg(feature = "std")]
-    fn assert_delegate_sized(insn: &Insn, re: &str) {
-        match insn {
-            Insn::DelegateSized(inner, ..) => {
-                assert_eq!(
-                    PATTERN_MAPPING
-                        .read()
-                        .unwrap()
-                        .get(&alloc::format!("{:?}", inner))
-                        .unwrap(),
-                    re
-                );
-            }
-            _ => {
-                panic!("Expected Insn::DelegateSized but was {:#?}", insn);
-            }
-        }
-    }
-
-    #[cfg(not(feature = "std"))]
-    fn assert_delegate_sized(_: &Insn, _: &str) {}
 }
