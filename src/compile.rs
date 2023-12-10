@@ -729,5 +729,4 @@ mod tests {
 
     #[cfg(not(feature = "std"))]
     fn assert_delegate(_: &Insn, _: &str) {}
-
 }

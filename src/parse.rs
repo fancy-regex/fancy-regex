@@ -285,7 +285,13 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_named_backref(&self, ix: usize, open: &str, close: &str, allow_relative: bool) -> Result<(usize, Expr)> {
+    fn parse_named_backref(
+        &self,
+        ix: usize,
+        open: &str,
+        close: &str,
+        allow_relative: bool,
+    ) -> Result<(usize, Expr)> {
         if let Some((id, skip)) = parse_id(&self.re[ix..], open, close, allow_relative) {
             let group = if let Some(group) = self.named_groups.get(id) {
                 Some(*group)
@@ -845,7 +851,12 @@ pub(crate) fn parse_decimal(s: &str, ix: usize) -> Option<(usize, usize)> {
 /// Attempts to parse an identifier between the specified opening and closing
 /// delimiters.  On success, returns `Some((id, skip))`, where `skip` is how much
 /// of the string was used.
-pub(crate) fn parse_id<'a>(s: &'a str, open: &'_ str, close: &'_ str, allow_relative: bool) -> Option<(&'a str, usize)> {
+pub(crate) fn parse_id<'a>(
+    s: &'a str,
+    open: &'_ str,
+    close: &'_ str,
+    allow_relative: bool,
+) -> Option<(&'a str, usize)> {
     debug_assert!(!close.starts_with(is_id_char));
 
     if !s.starts_with(open) {
@@ -909,7 +920,11 @@ mod tests {
 
     #[cfg_attr(feature = "track_caller", track_caller)]
     fn fail(s: &str) {
-        assert!(Expr::parse_tree(s).is_err(), "Expected parse error, but was: {:?}", Expr::parse_tree(s));
+        assert!(
+            Expr::parse_tree(s).is_err(),
+            "Expected parse error, but was: {:?}",
+            Expr::parse_tree(s)
+        );
     }
 
     #[cfg_attr(feature = "track_caller", track_caller)]
