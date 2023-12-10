@@ -285,8 +285,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_named_backref(&self, ix: usize, open: &str, close: &str) -> Result<(usize, Expr)> {
-        if let Some((id, skip)) = parse_id(&self.re[ix..], open, close) {
+    fn parse_named_backref(&self, ix: usize, open: &str, close: &str, allow_relative: bool) -> Result<(usize, Expr)> {
+        if let Some((id, skip)) = parse_id(&self.re[ix..], open, close, allow_relative) {
             let group = if let Some(group) = self.named_groups.get(id) {
                 Some(*group)
             } else if let Ok(group) = id.parse::<isize>() {
@@ -337,9 +337,9 @@ impl<'a> Parser<'a> {
         } else if matches!(b, b'k' | b'g') && !in_class {
             // Named backref: \k<name>
             if bytes.get(end) == Some(&b'\'') {
-                return self.parse_named_backref(end, "'", "'");
+                return self.parse_named_backref(end, "'", "'", true);
             } else {
-                return self.parse_named_backref(end, "<", ">");
+                return self.parse_named_backref(end, "<", ">", true);
             }
         } else if b == b'A' && !in_class {
             (end, Expr::Assertion(Assertion::StartText))
@@ -598,7 +598,7 @@ impl<'a> Parser<'a> {
         } else if self.re[ix..].starts_with("?<") {
             // Named capture group using Oniguruma syntax: (?<name>...)
             self.curr_group += 1;
-            if let Some((id, skip)) = parse_id(&self.re[ix + 1..], "<", ">") {
+            if let Some((id, skip)) = parse_id(&self.re[ix + 1..], "<", ">", false) {
                 self.named_groups.insert(id.to_string(), self.curr_group);
                 (None, skip + 1)
             } else {
@@ -607,7 +607,7 @@ impl<'a> Parser<'a> {
         } else if self.re[ix..].starts_with("?P<") {
             // Named capture group using Python syntax: (?P<name>...)
             self.curr_group += 1; // this is a capture group
-            if let Some((id, skip)) = parse_id(&self.re[ix + 2..], "<", ">") {
+            if let Some((id, skip)) = parse_id(&self.re[ix + 2..], "<", ">", false) {
                 self.named_groups.insert(id.to_string(), self.curr_group);
                 (None, skip + 2)
             } else {
@@ -615,7 +615,7 @@ impl<'a> Parser<'a> {
             }
         } else if self.re[ix..].starts_with("?P=") {
             // Backref using Python syntax: (?P=name)
-            return self.parse_named_backref(ix + 3, "", ")");
+            return self.parse_named_backref(ix + 3, "", ")", false);
         } else if self.re[ix..].starts_with("?>") {
             (None, 2)
         } else if self.re[ix..].starts_with("?(") {
@@ -726,9 +726,9 @@ impl<'a> Parser<'a> {
         let (mut next, condition) = if is_digit(b) {
             self.parse_numbered_backref(ix)?
         } else if b == b'\'' {
-            self.parse_named_backref(ix, "'", "'")?
+            self.parse_named_backref(ix, "'", "'", true)?
         } else if b == b'<' {
-            self.parse_named_backref(ix, "<", ">")?
+            self.parse_named_backref(ix, "<", ">", true)?
         } else {
             self.parse_re(ix, depth)?
         };
@@ -845,7 +845,7 @@ pub(crate) fn parse_decimal(s: &str, ix: usize) -> Option<(usize, usize)> {
 /// Attempts to parse an identifier between the specified opening and closing
 /// delimiters.  On success, returns `Some((id, skip))`, where `skip` is how much
 /// of the string was used.
-pub(crate) fn parse_id<'a>(s: &'a str, open: &'_ str, close: &'_ str) -> Option<(&'a str, usize)> {
+pub(crate) fn parse_id<'a>(s: &'a str, open: &'_ str, close: &'_ str, allow_relative: bool) -> Option<(&'a str, usize)> {
     debug_assert!(!close.starts_with(is_id_char));
 
     if !s.starts_with(open) {
@@ -854,8 +854,12 @@ pub(crate) fn parse_id<'a>(s: &'a str, open: &'_ str, close: &'_ str) -> Option<
 
     let id_start = open.len();
     let mut iter = s[id_start..].char_indices().peekable();
-    let _ = iter.next_if(|(_, ch)| *ch == '-'); // relative backref
-    let id_len = match iter.find(|(_, ch)| !is_id_char(*ch)).map(|(i, _)| i) {
+    let after_id = if allow_relative && iter.next_if(|(_, ch)| *ch == '-').is_some() {
+        iter.find(|(_, ch)| !ch.is_ascii_digit())
+    } else {
+        iter.find(|(_, ch)| !is_id_char(*ch))
+    };
+    let id_len = match after_id.map(|(i, _)| i) {
         Some(id_len) if s[id_start + id_len..].starts_with(close) => Some(id_len),
         None if close.is_empty() => Some(s.len()),
         _ => None,
@@ -905,7 +909,7 @@ mod tests {
 
     #[cfg_attr(feature = "track_caller", track_caller)]
     fn fail(s: &str) {
-        assert!(Expr::parse_tree(s).is_err());
+        assert!(Expr::parse_tree(s).is_err(), "Expected parse error, but was: {:?}", Expr::parse_tree(s));
     }
 
     #[cfg_attr(feature = "track_caller", track_caller)]
@@ -949,12 +953,15 @@ mod tests {
 
     #[test]
     fn parse_id_test() {
-        assert_eq!(parse_id("foo.", "", ""), Some(("foo", 3)));
-        assert_eq!(parse_id("{foo}", "{", "}"), Some(("foo", 5)));
-        assert_eq!(parse_id("{foo.", "{", "}"), None);
-        assert_eq!(parse_id("{foo", "{", "}"), None);
-        assert_eq!(parse_id("{}", "{", "}"), None);
-        assert_eq!(parse_id("", "", ""), None);
+        assert_eq!(parse_id("foo.", "", "", true), Some(("foo", 3)));
+        assert_eq!(parse_id("{foo}", "{", "}", true), Some(("foo", 5)));
+        assert_eq!(parse_id("{foo.", "{", "}", true), None);
+        assert_eq!(parse_id("{foo", "{", "}", true), None);
+        assert_eq!(parse_id("{}", "{", "}", true), None);
+        assert_eq!(parse_id("", "", "", true), None);
+        assert_eq!(parse_id("{-1}", "{", "}", true), Some(("-1", 4)));
+        assert_eq!(parse_id("{-1}", "{", "}", false), None);
+        assert_eq!(parse_id("{-a}", "{", "}", true), None);
     }
 
     #[test]
@@ -1252,6 +1259,20 @@ mod tests {
     }
 
     #[test]
+    fn relative_backref() {
+        assert_eq!(
+            p("(a)(.)\\k<-1>"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(make_literal("a"))),
+                Expr::Group(Box::new(Expr::Any { newline: false })),
+                Expr::Backref(2)
+            ])
+        );
+        fail("(?P<->.)");
+        fail("(.)(?P=-)")
+    }
+
+    #[test]
     fn lookaround() {
         assert_eq!(
             p("(?=a)"),
@@ -1469,6 +1490,15 @@ mod tests {
         );
         assert_error(
             "\\kxxx<id>",
+            "Parsing error at position 2: Could not parse group name",
+        );
+        // "-" can only be at the start for a relative backref
+        assert_error(
+            "\\k<id-2>",
+            "Parsing error at position 2: Could not parse group name",
+        );
+        assert_error(
+            "\\k<-id>",
             "Parsing error at position 2: Could not parse group name",
         );
     }
