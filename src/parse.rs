@@ -26,10 +26,12 @@ use alloc::vec::Vec;
 use alloc::{format, vec};
 
 use bit_set::BitSet;
-use regex::escape;
+use core::convert::TryInto;
+use core::usize;
+use regex_syntax::escape_into;
 
-use crate::LookAround::*;
 use crate::{codepoint_len, CompileError, Error, Expr, ParseError, Result, MAX_RECURSION};
+use crate::{Assertion, LookAround::*};
 
 const FLAG_CASEI: u32 = 1;
 const FLAG_MULTI: u32 = 1 << 1;
@@ -183,10 +185,7 @@ impl<'a> Parser<'a> {
         match child {
             Expr::LookAround(_, _) => false,
             Expr::Empty => false,
-            Expr::StartText => false,
-            Expr::EndText => false,
-            Expr::StartLine => false,
-            Expr::EndLine => false,
+            Expr::Assertion(_) => false,
             _ => true,
         }
     }
@@ -247,22 +246,24 @@ impl<'a> Parser<'a> {
             b'^' => Ok((
                 ix + 1,
                 if self.flag(FLAG_MULTI) {
-                    Expr::StartLine
+                    // TODO: support crlf flag
+                    Expr::Assertion(Assertion::StartLine { crlf: false })
                 } else {
-                    Expr::StartText
+                    Expr::Assertion(Assertion::StartText)
                 },
             )),
             b'$' => Ok((
                 ix + 1,
                 if self.flag(FLAG_MULTI) {
-                    Expr::EndLine
+                    // TODO: support crlf flag
+                    Expr::Assertion(Assertion::EndLine { crlf: false })
                 } else {
-                    Expr::EndText
+                    Expr::Assertion(Assertion::EndText)
                 },
             )),
             b'(' => self.parse_group(ix, depth),
             b'\\' => {
-                let (next, expr) = self.parse_escape(ix)?;
+                let (next, expr) = self.parse_escape(ix, false)?;
                 if let Expr::Backref(group) = expr {
                     self.backrefs.insert(group);
                 }
@@ -284,12 +285,24 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_named_backref(&self, ix: usize, open: &str, close: &str) -> Result<(usize, Expr)> {
-        if let Some((id, skip)) = parse_id(&self.re[ix..], open, close) {
+    fn parse_named_backref(
+        &self,
+        ix: usize,
+        open: &str,
+        close: &str,
+        allow_relative: bool,
+    ) -> Result<(usize, Expr)> {
+        if let Some((id, skip)) = parse_id(&self.re[ix..], open, close, allow_relative) {
             let group = if let Some(group) = self.named_groups.get(id) {
                 Some(*group)
-            } else if let Ok(group) = id.parse() {
-                Some(group)
+            } else if let Ok(group) = id.parse::<isize>() {
+                group.try_into().map_or_else(
+                    |_| {
+                        // relative backref
+                        self.curr_group.checked_add_signed(group + 1)
+                    },
+                    |group| Some(group),
+                )
             } else {
                 None
             };
@@ -319,71 +332,78 @@ impl<'a> Parser<'a> {
     }
 
     // ix points to \ character
-    fn parse_escape(&mut self, ix: usize) -> Result<(usize, Expr)> {
-        if ix + 1 == self.re.len() {
-            return Err(Error::ParseError(ix, ParseError::TrailingBackslash));
-        }
+    fn parse_escape(&mut self, ix: usize, in_class: bool) -> Result<(usize, Expr)> {
         let bytes = self.re.as_bytes();
-        let b = bytes[ix + 1];
-        let mut end = ix + 1 + codepoint_len(b);
-        let mut size = 1;
-        if is_digit(b) {
+        let Some(b) = bytes.get(ix + 1).copied() else {
+            return Err(Error::ParseError(ix, ParseError::TrailingBackslash));
+        };
+        let end = ix + 1 + codepoint_len(b);
+        Ok(if is_digit(b) {
             return self.parse_numbered_backref(ix + 1);
-        } else if b == b'k' {
+        } else if matches!(b, b'k' | b'g') && !in_class {
             // Named backref: \k<name>
-            return self.parse_named_backref(ix + 2, "<", ">");
-        } else if b == b'A' || b == b'z' || b == b'b' || b == b'B' {
-            size = 0;
-        } else if (b | 32) == b'd'
-            || (b | 32) == b's'
-            || (b | 32) == b'w'
-            || b == b'a'
-            || b == b'f'
-            || b == b'n'
-            || b == b'r'
-            || b == b't'
-            || b == b'v'
-        {
-            // size = 1
-        } else if b == b'e' {
-            let inner = String::from(r"\x1B");
-            return Ok((
+            if bytes.get(end) == Some(&b'\'') {
+                return self.parse_named_backref(end, "'", "'", true);
+            } else {
+                return self.parse_named_backref(end, "<", ">", true);
+            }
+        } else if b == b'A' && !in_class {
+            (end, Expr::Assertion(Assertion::StartText))
+        } else if b == b'z' && !in_class {
+            (end, Expr::Assertion(Assertion::EndText))
+        } else if b == b'b' && !in_class {
+            if bytes.get(end) == Some(&b'{') {
+                // Support for \b{...} is not implemented yet
+                return Err(Error::ParseError(
+                    ix,
+                    ParseError::InvalidEscape(format!("\\{}", &self.re[ix + 1..end])),
+                ));
+            }
+            (end, Expr::Assertion(Assertion::WordBoundary))
+        } else if b == b'B' && !in_class {
+            if bytes.get(end) == Some(&b'{') {
+                // Support for \b{...} is not implemented yet
+                return Err(Error::ParseError(
+                    ix,
+                    ParseError::InvalidEscape(format!("\\{}", &self.re[ix + 1..end])),
+                ));
+            }
+            (end, Expr::Assertion(Assertion::NotWordBoundary))
+        } else if b == b'<' && !in_class {
+            (end, Expr::Assertion(Assertion::LeftWordBoundary))
+        } else if b == b'>' && !in_class {
+            (end, Expr::Assertion(Assertion::RightWordBoundary))
+        } else if matches!(b | 32, b'd' | b's' | b'w') {
+            (
                 end,
                 Expr::Delegate {
-                    inner,
-                    size,
-                    casei: false,
+                    inner: String::from(&self.re[ix..end]),
+                    size: 1,
+                    casei: self.flag(FLAG_CASEI),
                 },
-            ));
+            )
         } else if (b | 32) == b'h' {
             let s = if b == b'h' {
                 "[0-9A-Fa-f]"
             } else {
                 "[^0-9A-Fa-f]"
             };
-            let inner = String::from(s);
-            return Ok((
+            (
                 end,
                 Expr::Delegate {
-                    inner,
-                    size,
+                    inner: String::from(s),
+                    size: 1,
                     casei: false,
                 },
-            ));
+            )
         } else if b == b'x' {
             return self.parse_hex(end, 2);
         } else if b == b'u' {
             return self.parse_hex(end, 4);
         } else if b == b'U' {
             return self.parse_hex(end, 8);
-        } else if (b | 32) == b'p' {
-            // allow whitespace?
-            if end == self.re.len() {
-                return Err(Error::ParseError(
-                    ix,
-                    ParseError::InvalidEscape("\\p must be followed by a unicode name".to_string()),
-                ));
-            }
+        } else if (b | 32) == b'p' && end != bytes.len() {
+            let mut end = end;
             let b = bytes[end];
             end += codepoint_len(b);
             if b == b'{' {
@@ -399,29 +419,51 @@ impl<'a> Parser<'a> {
                     end += codepoint_len(b);
                 }
             }
-        } else if b == b'K' {
-            return Ok((end, Expr::KeepOut));
-        } else if b == b'G' {
-            return Ok((end, Expr::ContinueFromPreviousMatchEnd));
-        } else if b'a' <= (b | 32) && (b | 32) <= b'z' {
-            return Err(Error::ParseError(
-                ix,
-                ParseError::InvalidEscape(format!("\\{}", &self.re[ix + 1..end])),
-            ));
-        } else if 0x20 <= b && b <= 0x7f {
+            (
+                end,
+                Expr::Delegate {
+                    inner: String::from(&self.re[ix..end]),
+                    size: 1,
+                    casei: self.flag(FLAG_CASEI),
+                },
+            )
+        } else if b == b'K' && !in_class {
+            (end, Expr::KeepOut)
+        } else if b == b'G' && !in_class {
+            (end, Expr::ContinueFromPreviousMatchEnd)
+        } else {
             // printable ASCII (including space, see issue #29)
-            return Ok((end, make_literal(&self.re[ix + 1..end])));
-        }
-        // what to do with characters outside printable ASCII?
-        let inner = String::from(&self.re[ix..end]);
-        Ok((
-            end,
-            Expr::Delegate {
-                inner,
-                size,
-                casei: self.flag(FLAG_CASEI),
-            },
-        ))
+            (
+                end,
+                make_literal(match b {
+                    b'a' => "\x07", // BEL
+                    b'b' => "\x08", // BS
+                    b'f' => "\x0c", // FF
+                    b'n' => "\n",   // LF
+                    b'r' => "\r",   // CR
+                    b't' => "\t",   // TAB
+                    b'v' => "\x0b", // VT
+                    b'e' => "\x1b", // ESC
+                    b' ' => " ",
+                    b => {
+                        let s = &self.re[ix + 1..end];
+                        if b.is_ascii_alphabetic()
+                            && !matches!(
+                                b,
+                                b'k' | b'g' | b'A' | b'z' | b'b' | b'B' | b'<' | b'>' | b'K' | b'G'
+                            )
+                        {
+                            return Err(Error::ParseError(
+                                ix,
+                                ParseError::InvalidEscape(format!("\\{}", s)),
+                            ));
+                        } else {
+                            s
+                        }
+                    }
+                }),
+            )
+        })
     }
 
     // ix points after '\x', eg to 'A0' or '{12345}', or after `\u` or `\U`
@@ -482,13 +524,13 @@ impl<'a> Parser<'a> {
         class.push('[');
 
         // Negated character class
-        if ix < self.re.len() && bytes[ix] == b'^' {
+        if bytes.get(ix) == Some(&b'^') {
             class.push('^');
             ix += 1;
         }
 
         // `]` does not have to be escaped after opening `[` or `[^`
-        if ix < self.re.len() && bytes[ix] == b']' {
+        if bytes.get(ix) == Some(&b']') {
             class.push(']');
             ix += 1;
         }
@@ -499,15 +541,12 @@ impl<'a> Parser<'a> {
             }
             let end = match bytes[ix] {
                 b'\\' => {
-                    if ix + 1 == self.re.len() {
-                        return Err(Error::ParseError(ix, ParseError::InvalidClass));
-                    }
-
                     // We support more escapes than regex, so parse it ourselves before delegating.
-                    let (end, expr) = self.parse_escape(ix)?;
+                    let (end, expr) = self.parse_escape(ix, true)?;
                     match expr {
                         Expr::Literal { val, .. } => {
-                            class.push_str(&escape(&val));
+                            debug_assert_eq!(val.chars().count(), 1);
+                            escape_into(&val, &mut class);
                         }
                         Expr::Delegate { inner, .. } => {
                             class.push_str(&inner);
@@ -525,10 +564,10 @@ impl<'a> Parser<'a> {
                 }
                 b']' => {
                     nest -= 1;
+                    class.push(']');
                     if nest == 0 {
                         break;
                     }
-                    class.push(']');
                     ix + 1
                 }
                 b => {
@@ -539,16 +578,13 @@ impl<'a> Parser<'a> {
             };
             ix = end;
         }
-        class.push(']');
+        let class = Expr::Delegate {
+            inner: class,
+            size: 1,
+            casei: self.flag(FLAG_CASEI),
+        };
         let ix = ix + 1; // skip closing ']'
-        Ok((
-            ix,
-            Expr::Delegate {
-                inner: class,
-                size: 1,
-                casei: self.flag(FLAG_CASEI),
-            },
-        ))
+        Ok((ix, class))
     }
 
     fn parse_group(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
@@ -568,7 +604,7 @@ impl<'a> Parser<'a> {
         } else if self.re[ix..].starts_with("?<") {
             // Named capture group using Oniguruma syntax: (?<name>...)
             self.curr_group += 1;
-            if let Some((id, skip)) = parse_id(&self.re[ix + 1..], "<", ">") {
+            if let Some((id, skip)) = parse_id(&self.re[ix + 1..], "<", ">", false) {
                 self.named_groups.insert(id.to_string(), self.curr_group);
                 (None, skip + 1)
             } else {
@@ -577,7 +613,7 @@ impl<'a> Parser<'a> {
         } else if self.re[ix..].starts_with("?P<") {
             // Named capture group using Python syntax: (?P<name>...)
             self.curr_group += 1; // this is a capture group
-            if let Some((id, skip)) = parse_id(&self.re[ix + 2..], "<", ">") {
+            if let Some((id, skip)) = parse_id(&self.re[ix + 2..], "<", ">", false) {
                 self.named_groups.insert(id.to_string(), self.curr_group);
                 (None, skip + 2)
             } else {
@@ -585,7 +621,7 @@ impl<'a> Parser<'a> {
             }
         } else if self.re[ix..].starts_with("?P=") {
             // Backref using Python syntax: (?P=name)
-            return self.parse_named_backref(ix + 3, "", ")");
+            return self.parse_named_backref(ix + 3, "", ")", false);
         } else if self.re[ix..].starts_with("?>") {
             (None, 2)
         } else if self.re[ix..].starts_with("?(") {
@@ -696,9 +732,9 @@ impl<'a> Parser<'a> {
         let (mut next, condition) = if is_digit(b) {
             self.parse_numbered_backref(ix)?
         } else if b == b'\'' {
-            self.parse_named_backref(ix, "'", "'")?
+            self.parse_named_backref(ix, "'", "'", true)?
         } else if b == b'<' {
-            self.parse_named_backref(ix, "<", ">")?
+            self.parse_named_backref(ix, "<", ">", true)?
         } else {
             self.parse_re(ix, depth)?
         };
@@ -815,7 +851,12 @@ pub(crate) fn parse_decimal(s: &str, ix: usize) -> Option<(usize, usize)> {
 /// Attempts to parse an identifier between the specified opening and closing
 /// delimiters.  On success, returns `Some((id, skip))`, where `skip` is how much
 /// of the string was used.
-pub(crate) fn parse_id<'a>(s: &'a str, open: &'_ str, close: &'_ str) -> Option<(&'a str, usize)> {
+pub(crate) fn parse_id<'a>(
+    s: &'a str,
+    open: &'_ str,
+    close: &'_ str,
+    allow_relative: bool,
+) -> Option<(&'a str, usize)> {
     debug_assert!(!close.starts_with(is_id_char));
 
     if !s.starts_with(open) {
@@ -823,7 +864,13 @@ pub(crate) fn parse_id<'a>(s: &'a str, open: &'_ str, close: &'_ str) -> Option<
     }
 
     let id_start = open.len();
-    let id_len = match s[id_start..].find(|c: char| !is_id_char(c)) {
+    let mut iter = s[id_start..].char_indices().peekable();
+    let after_id = if allow_relative && iter.next_if(|(_, ch)| *ch == '-').is_some() {
+        iter.find(|(_, ch)| !ch.is_ascii_digit())
+    } else {
+        iter.find(|(_, ch)| !is_id_char(*ch))
+    };
+    let id_len = match after_id.map(|(i, _)| i) {
         Some(id_len) if s[id_start + id_len..].starts_with(close) => Some(id_len),
         None if close.is_empty() => Some(s.len()),
         _ => None,
@@ -864,8 +911,8 @@ mod tests {
     use alloc::{format, vec};
 
     use crate::parse::{make_literal, parse_id};
-    use crate::Expr;
     use crate::LookAround::*;
+    use crate::{Assertion, Expr};
 
     fn p(s: &str) -> Expr {
         Expr::parse_tree(s).unwrap().expr
@@ -873,7 +920,11 @@ mod tests {
 
     #[cfg_attr(feature = "track_caller", track_caller)]
     fn fail(s: &str) {
-        assert!(Expr::parse_tree(s).is_err());
+        assert!(
+            Expr::parse_tree(s).is_err(),
+            "Expected parse error, but was: {:?}",
+            Expr::parse_tree(s)
+        );
     }
 
     #[cfg_attr(feature = "track_caller", track_caller)]
@@ -896,12 +947,12 @@ mod tests {
 
     #[test]
     fn start_text() {
-        assert_eq!(p("^"), Expr::StartText);
+        assert_eq!(p("^"), Expr::Assertion(Assertion::StartText));
     }
 
     #[test]
     fn end_text() {
-        assert_eq!(p("$"), Expr::EndText);
+        assert_eq!(p("$"), Expr::Assertion(Assertion::EndText));
     }
 
     #[test]
@@ -917,12 +968,15 @@ mod tests {
 
     #[test]
     fn parse_id_test() {
-        assert_eq!(parse_id("foo.", "", ""), Some(("foo", 3)));
-        assert_eq!(parse_id("{foo}", "{", "}"), Some(("foo", 5)));
-        assert_eq!(parse_id("{foo.", "{", "}"), None);
-        assert_eq!(parse_id("{foo", "{", "}"), None);
-        assert_eq!(parse_id("{}", "{", "}"), None);
-        assert_eq!(parse_id("", "", ""), None);
+        assert_eq!(parse_id("foo.", "", "", true), Some(("foo", 3)));
+        assert_eq!(parse_id("{foo}", "{", "}", true), Some(("foo", 5)));
+        assert_eq!(parse_id("{foo.", "{", "}", true), None);
+        assert_eq!(parse_id("{foo", "{", "}", true), None);
+        assert_eq!(parse_id("{}", "{", "}", true), None);
+        assert_eq!(parse_id("", "", "", true), None);
+        assert_eq!(parse_id("{-1}", "{", "}", true), Some(("-1", 4)));
+        assert_eq!(parse_id("{-1}", "{", "}", false), None);
+        assert_eq!(parse_id("{-a}", "{", "}", true), None);
     }
 
     #[test]
@@ -1149,22 +1203,8 @@ mod tests {
 
     #[test]
     fn delegate_zero() {
-        assert_eq!(
-            p("\\b"),
-            Expr::Delegate {
-                inner: String::from("\\b"),
-                size: 0,
-                casei: false
-            }
-        );
-        assert_eq!(
-            p("\\B"),
-            Expr::Delegate {
-                inner: String::from("\\B"),
-                size: 0,
-                casei: false
-            }
-        );
+        assert_eq!(p("\\b"), Expr::Assertion(Assertion::WordBoundary),);
+        assert_eq!(p("\\B"), Expr::Assertion(Assertion::NotWordBoundary),);
     }
 
     #[test]
@@ -1234,6 +1274,20 @@ mod tests {
     }
 
     #[test]
+    fn relative_backref() {
+        assert_eq!(
+            p("(a)(.)\\k<-1>"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(make_literal("a"))),
+                Expr::Group(Box::new(Expr::Any { newline: false })),
+                Expr::Backref(2)
+            ])
+        );
+        fail("(?P<->.)");
+        fail("(.)(?P=-)")
+    }
+
+    #[test]
     fn lookaround() {
         assert_eq!(
             p("(?=a)"),
@@ -1286,10 +1340,16 @@ mod tests {
 
     #[test]
     fn flag_multiline() {
-        assert_eq!(p("^"), Expr::StartText);
-        assert_eq!(p("(?m:^)"), Expr::StartLine);
-        assert_eq!(p("$"), Expr::EndText);
-        assert_eq!(p("(?m:$)"), Expr::EndLine);
+        assert_eq!(p("^"), Expr::Assertion(Assertion::StartText));
+        assert_eq!(
+            p("(?m:^)"),
+            Expr::Assertion(Assertion::StartLine { crlf: false })
+        );
+        assert_eq!(p("$"), Expr::Assertion(Assertion::EndText));
+        assert_eq!(
+            p("(?m:$)"),
+            Expr::Assertion(Assertion::EndLine { crlf: false })
+        );
     }
 
     #[test]
@@ -1329,11 +1389,7 @@ mod tests {
                     greedy: true
                 },
                 Expr::LookAround(Box::new(make_literal("'")), LookAheadNeg),
-                Expr::Delegate {
-                    inner: String::from("\\b"),
-                    size: 0,
-                    casei: false
-                }
+                Expr::Assertion(Assertion::WordBoundary),
             ])
         );
     }
@@ -1449,6 +1505,15 @@ mod tests {
         );
         assert_error(
             "\\kxxx<id>",
+            "Parsing error at position 2: Could not parse group name",
+        );
+        // "-" can only be at the start for a relative backref
+        assert_error(
+            "\\k<id-2>",
+            "Parsing error at position 2: Could not parse group name",
+        );
+        assert_error(
+            "\\k<-id>",
             "Parsing error at position 2: Could not parse group name",
         );
     }
@@ -1664,7 +1729,7 @@ mod tests {
         assert_eq!(
             p(r"^(?(\d)abc|\d!)$"),
             Expr::Concat(vec![
-                Expr::StartText,
+                Expr::Assertion(Assertion::StartText),
                 Expr::Conditional {
                     condition: Box::new(Expr::Delegate {
                         inner: "\\d".to_string(),
@@ -1685,7 +1750,7 @@ mod tests {
                         make_literal("!"),
                     ])),
                 },
-                Expr::EndText,
+                Expr::Assertion(Assertion::EndText),
             ])
         );
 

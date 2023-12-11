@@ -11,36 +11,34 @@ repository = "https://github.com/fancy-regex/fancy-regex"
 documentation = "https://docs.rs/fancy-regex"
 categories = ["text-processing"]
 exclude = ["/.github/*", "/Cargo.lock.msrv"]
+rust-version = "1.66"
 
 [features]
 default = ["unicode", "perf", "std"]
 # Enable #[track_caller] in unit tests.
 track_caller = []
+perf = ["regex-automata/perf"]
+unicode = ["regex-automata/unicode", "regex-syntax/unicode"]
+std = ["regex-automata/std", "regex-syntax/std", "bit-set/std"]
 
-std = ["regex/std"]
+[dependencies.regex-automata]
+version = "0.4"
+default-features = false
+features = ["alloc", "syntax", "meta", "nfa", "dfa", "hybrid"]
 
-perf = ["regex/perf"]
-perf-dfa = ["regex/perf-dfa"]
-perf-onepass = ["regex/perf-onepass"]
-perf-backtrack = ["regex/perf-backtrack"]
-perf-inline = ["regex/perf-inline"]
-perf-literal = ["regex/perf-literal"]
-perf-cache = ["regex/perf-cache"]
-
-unicode = ["regex/unicode"]
-
-[dependencies.regex]
-version = "1.9.1"
+[dependencies.regex-syntax]
+version = "0.8"
 default-features = false
 
 [dependencies.bit-set]
-version = "0.5.3"
+version = "0.5"
 default-features = false
 
 [dev-dependencies]
-criterion = "0.5.1"
+criterion = "0.5"
 matches = "0.1.10"
-quickcheck = "1.0.3"
+quickcheck = "1.0"
+regex = "1.10"
 
 [[bench]]
 name = "bench"

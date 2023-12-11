@@ -175,6 +175,9 @@ use core::fmt::{Debug, Formatter};
 use core::ops::{Index, Range};
 use core::str::FromStr;
 use core::{fmt, usize};
+use regex_automata::meta::Regex as RaRegex;
+use regex_automata::util::captures::Captures as RaCaptures;
+use regex_automata::Input as RaInput;
 
 mod analyze;
 mod compile;
@@ -213,7 +216,7 @@ pub struct Regex {
 enum RegexImpl {
     // Do we want to box this? It's pretty big...
     Wrap {
-        inner: regex::Regex,
+        inner: RaRegex,
         options: RegexOptions,
     },
     Fancy {
@@ -374,7 +377,7 @@ pub struct Captures<'t> {
 enum CapturesImpl<'t> {
     Wrap {
         text: &'t str,
-        locations: regex::CaptureLocations,
+        locations: RaCaptures,
     },
     Fancy {
         text: &'t str,
@@ -655,7 +658,7 @@ impl Regex {
     ) -> Result<Option<Match<'t>>> {
         match &self.inner {
             RegexImpl::Wrap { inner, .. } => Ok(inner
-                .find_at(text, pos)
+                .search(&RaInput::new(text).span(pos..text.len()))
                 .map(|m| Match::new(text, m.start(), m.end()))),
             RegexImpl::Fancy { prog, options, .. } => {
                 let result = vm::run(prog, text, pos, option_flags, options)?;
@@ -755,9 +758,9 @@ impl Regex {
         let named_groups = self.named_groups.clone();
         match &self.inner {
             RegexImpl::Wrap { inner, .. } => {
-                let mut locations = inner.capture_locations();
-                let result = inner.captures_read_at(&mut locations, text, pos);
-                Ok(result.map(|_| Captures {
+                let mut locations = inner.create_captures();
+                inner.captures(RaInput::new(text).span(pos..text.len()), &mut locations);
+                Ok(locations.is_match().then(|| Captures {
                     inner: CapturesImpl::Wrap { text, locations },
                     named_groups,
                 }))
@@ -1052,11 +1055,11 @@ impl<'t> Captures<'t> {
     /// returned. The index 0 returns the whole match.
     pub fn get(&self, i: usize) -> Option<Match<'t>> {
         match &self.inner {
-            CapturesImpl::Wrap { text, locations } => {
-                locations
-                    .get(i)
-                    .map(|(start, end)| Match { text, start, end })
-            }
+            CapturesImpl::Wrap { text, locations } => locations.get_group(i).map(|span| Match {
+                text,
+                start: span.start,
+                end: span.end,
+            }),
             CapturesImpl::Fancy { text, ref saves } => {
                 let slot = i * 2;
                 if slot >= saves.len() {
@@ -1116,14 +1119,12 @@ impl<'t> Captures<'t> {
     /// match.
     pub fn len(&self) -> usize {
         match &self.inner {
-            CapturesImpl::Wrap { locations, .. } => locations.len(),
+            CapturesImpl::Wrap { locations, .. } => locations.group_len(),
             CapturesImpl::Fancy { saves, .. } => saves.len() / 2,
         }
     }
 }
 
-/// Copied from [`regex::Captures`]...
-///
 /// Get a group by index.
 ///
 /// `'t` is the lifetime of the matched text.
@@ -1145,8 +1146,6 @@ impl<'t> Index<usize> for Captures<'t> {
     }
 }
 
-/// Copied from [`regex::Captures`]...
-///
 /// Get a group by name.
 ///
 /// `'t` is the lifetime of the matched text and `'i` is the lifetime
@@ -1195,14 +1194,8 @@ pub enum Expr {
         /// Whether it also matches newlines or not
         newline: bool,
     },
-    /// Start of input text
-    StartText,
-    /// End of input text
-    EndText,
-    /// Start of a line
-    StartLine,
-    /// End of a line
-    EndLine,
+    /// An assertion
+    Assertion(Assertion),
     /// The string as a literal, e.g. `a`
     Literal {
         /// The string to match
@@ -1343,6 +1336,44 @@ pub fn escape(text: &str) -> Cow<str> {
     }
 }
 
+/// Type of assertions
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum Assertion {
+    /// Start of input text
+    StartText,
+    /// End of input text
+    EndText,
+    /// Start of a line
+    StartLine {
+        /// CRLF mode
+        crlf: bool,
+    },
+    /// End of a line
+    EndLine {
+        /// CRLF mode
+        crlf: bool,
+    },
+    /// Left word boundary
+    LeftWordBoundary,
+    /// Right word boundary
+    RightWordBoundary,
+    /// Both word boundaries
+    WordBoundary,
+    /// Not word boundary
+    NotWordBoundary,
+}
+
+impl Assertion {
+    pub(crate) fn is_hard(&self) -> bool {
+        use Assertion::*;
+        matches!(
+            self,
+            // these will make regex-automata use PikeVM
+            LeftWordBoundary | RightWordBoundary | WordBoundary | NotWordBoundary
+        )
+    }
+}
+
 impl Expr {
     /// Parse the regex and return an expression (AST) and a bit set with the indexes of groups
     /// that are referenced by backrefs.
@@ -1368,10 +1399,12 @@ impl Expr {
                     buf.push_str(")");
                 }
             }
-            Expr::StartText => buf.push('^'),
-            Expr::EndText => buf.push('$'),
-            Expr::StartLine => buf.push_str("(?m:^)"),
-            Expr::EndLine => buf.push_str("(?m:$)"),
+            Expr::Assertion(Assertion::StartText) => buf.push('^'),
+            Expr::Assertion(Assertion::EndText) => buf.push('$'),
+            Expr::Assertion(Assertion::StartLine { crlf: false }) => buf.push_str("(?m:^)"),
+            Expr::Assertion(Assertion::EndLine { crlf: false }) => buf.push_str("(?m:$)"),
+            Expr::Assertion(Assertion::StartLine { crlf: true }) => buf.push_str("(?Rm:^)"),
+            Expr::Assertion(Assertion::EndLine { crlf: true }) => buf.push_str("(?Rm:$)"),
             Expr::Concat(ref children) => {
                 if precedence > 1 {
                     buf.push_str("(?:");

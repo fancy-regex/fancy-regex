@@ -24,11 +24,11 @@ jobs:
     strategy:
       matrix:
         rust:
-          - 1.61.0 # MSRV (minimum supported Rust version)
+          - 1.66.1 # MSRV (minimum supported Rust version)
           - stable
           - beta
         include:
-          - rust: 1.61.0
+          - rust: 1.66.1
             msrv: true
     steps:
       - uses: actions/checkout@v4
@@ -40,7 +40,7 @@ jobs:
 
       # See https://github.com/matklad/once_cell/issues/201
       # To test locally, enable the lock file and then run:
-      # $ docker run --rm --user "$(id -u)":"$(id -g)" -v "$PWD":/usr/src/myapp -w /usr/src/myapp rust:1.61.0 cargo test
+      # $ docker run --rm --user "$(id -u)":"$(id -g)" -v "$PWD":/usr/src/myapp -w /usr/src/myapp rust:1.66.1 cargo test
       # To update, use `cargo +nightly update -Z minimal-versions` and then `cargo update -p bit-vec -p serde`
       - name: Use Cargo.lock for MSRV
         if: ${{ matrix.msrv }}

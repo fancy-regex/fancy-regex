@@ -227,10 +227,10 @@ impl Expander {
                 let skip = if tail.starts_with(self.sub_char) {
                     f(Step::Char(self.sub_char))?;
                     1
-                } else if let Some((id, skip)) =
-                    parse_id(tail, self.open, self.close).or_else(|| {
+                } else if let Some((id, skip)) = parse_id(tail, self.open, self.close, false)
+                    .or_else(|| {
                         if self.allow_undelimited_name {
-                            parse_id(tail, "", "")
+                            parse_id(tail, "", "", false)
                         } else {
                             None
                         }

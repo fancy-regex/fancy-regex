@@ -20,9 +20,13 @@
 
 //! Compilation of regexes to VM.
 
-use alloc::boxed::Box;
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::vec::Vec;
+use core::usize;
+use regex_automata::meta::Regex as RaRegex;
+use regex_automata::meta::{Builder as RaBuilder, Config as RaConfig};
+#[cfg(all(test, feature = "std"))]
+use std::{collections::BTreeMap, sync::RwLock};
 
 use crate::analyze::Info;
 use crate::vm::{Insn, Prog};
@@ -154,13 +158,12 @@ impl Compiler {
                 self.visit(&info.children[0], false)?;
                 self.b.add(Insn::EndAtomic);
             }
-            Expr::Delegate { .. }
-            | Expr::StartText
-            | Expr::EndText
-            | Expr::StartLine
-            | Expr::EndLine => {
+            Expr::Delegate { .. } => {
                 // TODO: might want to have more specialized impls
                 self.compile_delegate(info)?;
+            }
+            Expr::Assertion(assertion) => {
+                self.b.add(Insn::Assertion(assertion));
             }
             Expr::KeepOut => {
                 self.b.add(Insn::Save(0));
@@ -478,19 +481,35 @@ impl Compiler {
     }
 }
 
-pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<regex::Regex> {
-    let mut builder = regex::RegexBuilder::new(inner_re);
+// Unlike Regex in `regex`, `regex-automata` does not store the pattern string,
+// and we cannot retrieve the pattern string using `as_str`.
+// Unfortunately we need to get the pattern string in our tests,
+// so we just store it in a global map.
+#[cfg(all(test, feature = "std"))]
+static PATTERN_MAPPING: RwLock<BTreeMap<String, String>> = RwLock::new(BTreeMap::new());
+
+pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<RaRegex> {
+    let mut config = RaConfig::new();
     if let Some(size_limit) = options.delegate_size_limit {
-        builder.size_limit(size_limit);
+        config = config.nfa_size_limit(Some(size_limit));
     }
     if let Some(dfa_size_limit) = options.delegate_dfa_size_limit {
-        builder.dfa_size_limit(dfa_size_limit);
+        config = config.dfa_size_limit(Some(dfa_size_limit));
     }
 
-    builder
-        .build()
+    let re = RaBuilder::new()
+        .configure(config)
+        .build(inner_re)
         .map_err(CompileError::InnerError)
-        .map_err(Error::CompileError)
+        .map_err(Error::CompileError)?;
+
+    #[cfg(all(test, feature = "std"))]
+    PATTERN_MAPPING
+        .write()
+        .unwrap()
+        .insert(format!("{:?}", re), inner_re.to_owned());
+
+    Ok(re)
 }
 
 /// Compile the analyzed expressions into a program.
@@ -505,7 +524,6 @@ struct DelegateBuilder {
     re: String,
     min_size: usize,
     const_size: bool,
-    looks_left: bool,
     start_group: Option<usize>,
     end_group: usize,
 }
@@ -513,10 +531,9 @@ struct DelegateBuilder {
 impl DelegateBuilder {
     fn new() -> Self {
         Self {
-            re: "^".to_string(),
+            re: String::new(),
             min_size: 0,
             const_size: true,
-            looks_left: false,
             start_group: None,
             end_group: 0,
         }
@@ -526,7 +543,6 @@ impl DelegateBuilder {
         // TODO: might want to detect case of a group with no captures
         //  inside, so we can run find() instead of captures()
 
-        self.looks_left |= info.looks_left && self.min_size == 0;
         self.min_size += info.min_size;
         self.const_size &= info.const_size;
         if self.start_group.is_none() {
@@ -553,33 +569,17 @@ impl DelegateBuilder {
         let end_group = self.end_group;
 
         let compiled = compile_inner(&self.re, options)?;
-        if self.looks_left {
-            // The "s" flag is for allowing `.` to match `\n`
-            let inner1 = ["^(?s:.)", &self.re[1..]].concat();
-            let compiled1 = compile_inner(&inner1, options)?;
-            Ok(Insn::Delegate {
-                inner: Box::new(compiled),
-                inner1: Some(Box::new(compiled1)),
-                start_group,
-                end_group,
-            })
-        } else if self.const_size && start_group == end_group {
-            let size = self.min_size;
-            Ok(Insn::DelegateSized(Box::new(compiled), size))
-        } else {
-            Ok(Insn::Delegate {
-                inner: Box::new(compiled),
-                inner1: None,
-                start_group,
-                end_group,
-            })
-        }
+
+        Ok(Insn::Delegate {
+            inner: compiled,
+            start_group,
+            end_group,
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
     use crate::analyze::analyze;
     use crate::parse::ExprTree;
@@ -628,18 +628,20 @@ mod tests {
         assert_matches!(prog[7], End);
     }
 
+    #[cfg_attr(not(feature = "std"), ignore = "this test need std")]
     #[test]
     fn look_around_pattern_can_be_delegated() {
         let prog = compile_prog("(?=ab*)c");
 
         assert_eq!(prog.len(), 5, "prog: {:?}", prog);
         assert_matches!(prog[0], Save(0));
-        assert_delegate(&prog[1], "^ab*");
+        assert_delegate(&prog[1], "ab*");
         assert_matches!(prog[2], Restore(0));
         assert_matches!(prog[3], Lit(ref l) if l == "c");
         assert_matches!(prog[4], End);
     }
 
+    #[cfg_attr(not(feature = "std"), ignore = "this test need std")]
     #[test]
     fn easy_concat_can_delegate_end() {
         let prog = compile_prog("(?!x)(?:a|ab)x*");
@@ -648,10 +650,11 @@ mod tests {
         assert_matches!(prog[0], Split(1, 3));
         assert_matches!(prog[1], Lit(ref l) if l == "x");
         assert_matches!(prog[2], FailNegativeLookAround);
-        assert_delegate(&prog[3], "^(?:a|ab)x*");
+        assert_delegate(&prog[3], "(?:a|ab)x*");
         assert_matches!(prog[4], End);
     }
 
+    #[cfg_attr(not(feature = "std"), ignore = "this test need std")]
     #[test]
     fn hard_concat_can_delegate_const_size_end() {
         let prog = compile_prog("(?:(?!x)(?:a|b)c)x*");
@@ -660,11 +663,12 @@ mod tests {
         assert_matches!(prog[0], Split(1, 3));
         assert_matches!(prog[1], Lit(ref l) if l == "x");
         assert_matches!(prog[2], FailNegativeLookAround);
-        assert_delegate_sized(&prog[3], "^(?:a|b)c");
-        assert_delegate(&prog[4], "^x*");
+        assert_delegate(&prog[3], "(?:a|b)c");
+        assert_delegate(&prog[4], "x*");
         assert_matches!(prog[5], End);
     }
 
+    #[cfg_attr(not(feature = "std"), ignore = "this test need std")]
     #[test]
     fn hard_concat_can_not_delegate_variable_end() {
         let prog = compile_prog("(?:(?!x)(?:a|ab))x*");
@@ -677,7 +681,7 @@ mod tests {
         assert_matches!(prog[4], Lit(ref l) if l == "a");
         assert_matches!(prog[5], Jmp(7));
         assert_matches!(prog[6], Lit(ref l) if l == "ab");
-        assert_delegate(&prog[7], "^x*");
+        assert_delegate(&prog[7], "x*");
         assert_matches!(prog[8], End);
     }
 
@@ -704,10 +708,18 @@ mod tests {
         prog.body
     }
 
+    #[cfg(feature = "std")]
     fn assert_delegate(insn: &Insn, re: &str) {
         match insn {
             Insn::Delegate { inner, .. } => {
-                assert_eq!(inner.as_str(), re);
+                assert_eq!(
+                    PATTERN_MAPPING
+                        .read()
+                        .unwrap()
+                        .get(&alloc::format!("{:?}", inner))
+                        .unwrap(),
+                    re
+                );
             }
             _ => {
                 panic!("Expected Insn::Delegate but was {:#?}", insn);
@@ -715,14 +727,6 @@ mod tests {
         }
     }
 
-    fn assert_delegate_sized(insn: &Insn, re: &str) {
-        match insn {
-            Insn::DelegateSized(inner, ..) => {
-                assert_eq!(inner.as_str(), re);
-            }
-            _ => {
-                panic!("Expected Insn::DelegateSized but was {:#?}", insn);
-            }
-        }
-    }
+    #[cfg(not(feature = "std"))]
+    fn assert_delegate(_: &Insn, _: &str) {}
 }
