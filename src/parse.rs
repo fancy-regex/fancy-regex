@@ -775,8 +775,9 @@ impl<'a> Parser<'a> {
             condition
         };
 
+        let after = self.check_for_close_paren(end)?;
         Ok((
-            end + 1,
+            after,
             if if_true == Expr::Empty && if_false == Expr::Empty {
                 inner_condition
             } else {
@@ -1796,5 +1797,11 @@ mod tests {
     #[test]
     fn fuzz_2() {
         p(r"\pä");
+    }
+
+    #[test]
+    fn fuzz_3() {
+        fail(r"(?()^");
+        fail(r#"!w(?()\"Kuz>"#);
     }
 }
