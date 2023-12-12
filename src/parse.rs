@@ -743,7 +743,8 @@ impl<'a> Parser<'a> {
         if end == next {
             // Backreference validity checker
             if let Expr::Backref(group) = condition {
-                return Ok((end + 1, Expr::BackrefExistsCondition(group)));
+                let after = self.check_for_close_paren(end)?;
+                return Ok((after, Expr::BackrefExistsCondition(group)));
             } else {
                 return Err(Error::ParseError(
                     end,
@@ -775,8 +776,9 @@ impl<'a> Parser<'a> {
             condition
         };
 
+        let after = self.check_for_close_paren(end)?;
         Ok((
-            end + 1,
+            after,
             if if_true == Expr::Empty && if_false == Expr::Empty {
                 inner_condition
             } else {
@@ -930,7 +932,11 @@ mod tests {
     #[cfg_attr(feature = "track_caller", track_caller)]
     fn assert_error(re: &str, expected_error: &str) {
         let result = Expr::parse_tree(re);
-        assert!(result.is_err());
+        assert!(
+            result.is_err(),
+            "Expected parse error, but was: {:?}",
+            result
+        );
         assert_eq!(&format!("{}", result.err().unwrap()), expected_error);
     }
 
@@ -1796,5 +1802,16 @@ mod tests {
     #[test]
     fn fuzz_2() {
         p(r"\pä");
+    }
+
+    #[test]
+    fn fuzz_3() {
+        fail(r"(?()^");
+        fail(r#"!w(?()\"Kuz>"#);
+    }
+
+    #[test]
+    fn fuzz_4() {
+        fail(r"\u{2}(?(2)");
     }
 }
