@@ -950,7 +950,12 @@ impl Regex {
             let mut new = String::with_capacity(text.len());
             let mut last_match = 0;
             for (i, m) in it {
-                let m = m.unwrap();
+                // let m = m.unwrap();
+                let m = match m {
+                    Ok(m) => m,
+                    Err(_) => continue,
+                };
+
                 if limit > 0 && i >= limit {
                     break;
                 }
@@ -971,7 +976,11 @@ impl Regex {
         let mut new = String::with_capacity(text.len());
         let mut last_match = 0;
         for (i, cap) in it {
-            let cap = cap.unwrap();
+            let cap = match cap {
+                Ok(cap) => cap,
+                Err(_) => continue,
+            };
+
             if limit > 0 && i >= limit {
                 break;
             }
