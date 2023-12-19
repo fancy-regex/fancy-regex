@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
+## [Unreleased]
+### Added
+- Support for relative backreferences using `\k<-1>` (-1 references the
+  previous group) (#121)
+### Changed
+- Switch from regex crate to regex-automata and regex-syntax (lower level APIs)
+  to simplify internals (#121)
+- MSRV (minimum supported Rust version) is now 1.66.1 (from 1.61.0)
+### Fixed
+- Fix index out of bounds panic when parsing unclosed `(?(` (#125)
+
 ## [0.12.0] - 2023-11-11
 ### Added
 - Support for `no_std` (the `std` feature is enabled by default but can be
@@ -161,6 +172,7 @@ with the exception that 0.x versions can break between minor versions.
 - Initial release
 
 
+[Unreleased]: https://github.com/fancy-regex/fancy-regex/compare/0.12.0...HEAD
 [0.12.0]: https://github.com/fancy-regex/fancy-regex/compare/0.11.0...0.12.0
 [0.11.0]: https://github.com/fancy-regex/fancy-regex/compare/0.10.0...0.11.0
 [0.10.0]: https://github.com/fancy-regex/fancy-regex/compare/0.9.0...0.10.0
