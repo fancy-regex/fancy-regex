@@ -10,6 +10,8 @@ with the exception that 0.x versions can break between minor versions.
 ### Added
 - Support for relative backreferences using `\k<-1>` (-1 references the
   previous group) (#121)
+- Add `try_replacen` to `Regex` which returns a `Result` instead of panicking
+  when matching errors (#130)
 ### Changed
 - Switch from regex crate to regex-automata and regex-syntax (lower level APIs)
   to simplify internals (#121)
