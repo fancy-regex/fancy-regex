@@ -925,14 +925,30 @@ impl Regex {
     /// replacement provided. If `limit` is 0, then all non-overlapping matches
     /// are replaced.
     ///
+    /// Will panic if any errors are encountered. Use `try_replacen`, which this
+    /// function unwraps, if you want to handle errors.
+    ///
     /// See the documentation for `replace` for details on how to access
     /// capturing group matches in the replacement string.
-    pub fn replacen<'t, R: Replacer>(
+    ///
+    pub fn replacen<'t, R: Replacer>(&self, text: &'t str, limit: usize, rep: R) -> Cow<'t, str> {
+        self.try_replacen(text, limit, rep).unwrap()
+    }
+
+    /// Replaces at most `limit` non-overlapping matches in `text` with the
+    /// replacement provided. If `limit` is 0, then all non-overlapping matches
+    /// are replaced.
+    ///
+    /// Propagates any errors encountered, such as `RuntimeError::BacktrackLimitExceeded`.
+    ///
+    /// See the documentation for `replace` for details on how to access
+    /// capturing group matches in the replacement string.
+    pub fn try_replacen<'t, R: Replacer>(
         &self,
         text: &'t str,
         limit: usize,
         mut rep: R,
-    ) -> Cow<'t, str> {
+    ) -> Result<Cow<'t, str>> {
         // If we know that the replacement doesn't have any capture expansions,
         // then we can fast path. The fast path can make a tremendous
         // difference:
@@ -945,12 +961,13 @@ impl Regex {
         if let Some(rep) = rep.no_expansion() {
             let mut it = self.find_iter(text).enumerate().peekable();
             if it.peek().is_none() {
-                return Cow::Borrowed(text);
+                return Ok(Cow::Borrowed(text));
             }
             let mut new = String::with_capacity(text.len());
             let mut last_match = 0;
             for (i, m) in it {
-                let m = m.unwrap();
+                let m = m?;
+
                 if limit > 0 && i >= limit {
                     break;
                 }
@@ -959,19 +976,20 @@ impl Regex {
                 last_match = m.end();
             }
             new.push_str(&text[last_match..]);
-            return Cow::Owned(new);
+            return Ok(Cow::Owned(new));
         }
 
         // The slower path, which we use if the replacement needs access to
         // capture groups.
         let mut it = self.captures_iter(text).enumerate().peekable();
         if it.peek().is_none() {
-            return Cow::Borrowed(text);
+            return Ok(Cow::Borrowed(text));
         }
         let mut new = String::with_capacity(text.len());
         let mut last_match = 0;
         for (i, cap) in it {
-            let cap = cap.unwrap();
+            let cap = cap?;
+
             if limit > 0 && i >= limit {
                 break;
             }
@@ -982,7 +1000,7 @@ impl Regex {
             last_match = m.end();
         }
         new.push_str(&text[last_match..]);
-        Cow::Owned(new)
+        Ok(Cow::Owned(new))
     }
 }
 
