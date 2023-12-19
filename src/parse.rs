@@ -340,7 +340,7 @@ impl<'a> Parser<'a> {
         let end = ix + 1 + codepoint_len(b);
         Ok(if is_digit(b) {
             return self.parse_numbered_backref(ix + 1);
-        } else if matches!(b, b'k' | b'g') && !in_class {
+        } else if matches!(b, b'k') && !in_class {
             // Named backref: \k<name>
             if bytes.get(end) == Some(&b'\'') {
                 return self.parse_named_backref(end, "'", "'", true);
@@ -450,7 +450,7 @@ impl<'a> Parser<'a> {
                         if b.is_ascii_alphabetic()
                             && !matches!(
                                 b,
-                                b'k' | b'g' | b'A' | b'z' | b'b' | b'B' | b'<' | b'>' | b'K' | b'G'
+                                b'k' | b'A' | b'z' | b'b' | b'B' | b'<' | b'>' | b'K' | b'G'
                             )
                         {
                             return Err(Error::ParseError(
