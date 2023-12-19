@@ -18,7 +18,7 @@ implementation has asymptotic running time linear in the length of the
 input, while in the general case a backtracking implementation has
 exponential blowup. An example given in [Static Analysis for Regular
 Expression Exponential Runtime via Substructural
-Logics](https://www.cs.bham.ac.uk/~hxt/research/redos_full.pdf) is:
+Logics](https://arxiv.org/pdf/1405.7058.pdf) is:
 
 ```python
 import re
