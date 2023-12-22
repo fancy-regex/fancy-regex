@@ -16,3 +16,24 @@ pass the tests and are formatted as expected.
 When adding support for new syntax (i.e. for better compatibility with
 oniguruma syntax), remember to update the "Syntax" section of the
 documentation comments in `lib.rs`.
+
+## Manual testing
+
+Sometimes it's useful to manually check how regexes are matched, e.g.
+to compare to other engines.
+
+### fancy-regex
+
+The toy example is useful for playing around with different regexes:
+
+    cargo run --example toy run '[a-z]' 'input text'
+
+### Oniguruma
+
+Set up rust-onig which is based on Oniguruma:
+
+    git clone --recurse-submodules https://github.com/rust-onig/rust-onig
+
+Then match some text:
+
+    echo 'input text' | cargo run --example capturedump -- '[a-z]'
