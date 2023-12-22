@@ -15,6 +15,8 @@ with the exception that 0.x versions can break between minor versions.
 ### Changed
 - Switch from regex crate to regex-automata and regex-syntax (lower level APIs)
   to simplify internals (#121)
+- Allow escaping some letters in character classes, e.g. `[\A]` used to error
+  but now matches the same as `[A]` (for compatibility with Oniguruma)
 - MSRV (minimum supported Rust version) is now 1.66.1 (from 1.61.0)
 ### Fixed
 - Fix index out of bounds panic when parsing unclosed `(?(` (#125)
