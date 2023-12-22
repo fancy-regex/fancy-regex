@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
-## [Unreleased]
+## [0.13.0] - 2023-12-22
 ### Added
 - Support for relative backreferences using `\k<-1>` (-1 references the
   previous group) (#121)
@@ -176,7 +176,7 @@ with the exception that 0.x versions can break between minor versions.
 - Initial release
 
 
-[Unreleased]: https://github.com/fancy-regex/fancy-regex/compare/0.12.0...HEAD
+[0.13.0]: https://github.com/fancy-regex/fancy-regex/compare/0.12.0...0.13.0
 [0.12.0]: https://github.com/fancy-regex/fancy-regex/compare/0.11.0...0.12.0
 [0.11.0]: https://github.com/fancy-regex/fancy-regex/compare/0.10.0...0.11.0
 [0.10.0]: https://github.com/fancy-regex/fancy-regex/compare/0.9.0...0.10.0
