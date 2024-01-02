@@ -1363,12 +1363,16 @@ pub enum Assertion {
     EndText,
     /// Start of a line
     StartLine {
-        /// CRLF mode
+        /// CRLF mode.
+        /// If true, this assertion matches at the starting position of the input text, or at the position immediately
+        /// following either a `\r` or `\n` character, but never after a `\r` when a `\n` follows.
         crlf: bool,
     },
     /// End of a line
     EndLine {
-        /// CRLF mode
+        /// CRLF mode.
+        /// If true, this assertion matches at the starting position of the input text, or at the position immediately
+        /// following either a `\r` or `\n` character, but never after a `\r` when a `\n` follows.
         crlf: bool,
     },
     /// Left word boundary
@@ -1626,6 +1630,28 @@ mod tests {
     }
 
     #[test]
+    fn to_str_assertion() {
+        assert_eq!(to_str(Expr::Assertion(crate::Assertion::StartText)), "^");
+        assert_eq!(to_str(Expr::Assertion(crate::Assertion::EndText)), "$");
+        assert_eq!(
+            to_str(Expr::Assertion(crate::Assertion::StartLine { crlf: false })),
+            "(?m:^)"
+        );
+        assert_eq!(
+            to_str(Expr::Assertion(crate::Assertion::EndLine { crlf: false })),
+            "(?m:$)"
+        );
+        assert_eq!(
+            to_str(Expr::Assertion(crate::Assertion::StartLine { crlf: true })),
+            "(?Rm:^)"
+        );
+        assert_eq!(
+            to_str(Expr::Assertion(crate::Assertion::EndLine { crlf: true })),
+            "(?Rm:$)"
+        );
+    }
+
+    #[test]
     fn as_str_debug() {
         let s = r"(a+)b\1";
         let regex = Regex::new(s).unwrap();
@@ -1642,9 +1668,16 @@ mod tests {
 
     #[test]
     fn from_str() {
-        let s = r"(a+)b\1";
-        let regex = s.parse::<Regex>().unwrap();
-        assert_eq!(regex.as_str(), s);
+        for &s in &[
+            r"(a+)b\1",
+            r"(?m:^)",
+            r"(?m:$)",
+            r"(?Rm:^)",
+            r"(?Rm:$)",
+        ] {
+            let regex = s.parse::<Regex>().unwrap();
+            assert_eq!(regex.as_str(), s);
+        }
     }
 
     #[test]

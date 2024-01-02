@@ -1,6 +1,6 @@
 use fancy_regex::{Captures, CompileError, Error, Expander, Match, Result};
 use std::borrow::Cow;
-use std::ops::Index;
+use std::ops::{Index, Range};
 
 mod common;
 
@@ -95,6 +95,115 @@ fn captures_with_conditional() {
     assert_match(captures.get(0), "abc", 0, 3);
     assert_match(captures.get(1), "ab", 0, 2);
     assert!(captures.get(2).is_none());
+}
+
+#[test]
+fn capture_with_crlf_flag() {
+    // The following test cases are adopted from the test cases of the `regex-automata` crate:
+    // https://github.com/rust-lang/regex/blob/c79c40a39ebc4ffdc9b886e34806b9085583b769/testdata/crlf.toml
+    assert_capture_with_crlf_flag(
+        r"(?mR)^[a-z]+$",
+        "abc\r\ndef\r\nxyz",
+        vec!["abc", "def", "xyz"],
+        vec![(0..3), (5..8), (10..13)]
+    );
+    assert_capture_with_crlf_flag(
+        r"(?mR)^$",
+        "abc\r\ndef\r\nxyz",
+        vec![],
+        vec![]
+    );
+    assert_capture_with_crlf_flag(
+        r"(?mR)^$",
+        "",
+        vec![""],
+        vec![(0..0)]
+    );
+    assert_capture_with_crlf_flag(
+        r"(?mR)^$",
+        "\r\n",
+        vec!["", ""],
+        vec![(0..0), (2..2)]
+    );
+    assert_capture_with_crlf_flag(
+        r"(?mR)^",
+        "abc\r\ndef\r\nxyz",
+        vec!["", "", ""],
+        vec![(0..0), (5..5), (10..10)]
+    );
+    assert_capture_with_crlf_flag(
+        r"(?mR)^",
+        "\r\n\r\n\r\n",
+        vec!["", "", "", ""],
+        vec![(0..0), (2..2), (4..4), (6..6)]
+    );
+    assert_capture_with_crlf_flag(
+        r"(?mR)^",
+        "\r\r\r",
+        vec!["", "", "", ""],
+        vec![(0..0), (1..1), (2..2), (3..3)]
+    );
+    assert_capture_with_crlf_flag(
+        r"(?mR)^",
+        "\n\n\n",
+        vec!["", "", "", ""],
+        vec![(0..0), (1..1), (2..2), (3..3)]
+    );
+    assert_capture_with_crlf_flag(
+        r"(?mR)$",
+        "abc\r\ndef\r\nxyz",
+        vec!["", "", ""],
+        vec![(3..3), (8..8), (13..13)]
+    );
+    assert_capture_with_crlf_flag(
+        r"(?mR)$",
+        "\r\n\r\n\r\n",
+        vec!["", "", "", ""],
+        vec![(0..0), (2..2), (4..4), (6..6)]
+    );
+    assert_capture_with_crlf_flag(
+        r"(?mR)$",
+        "\r\r\r",
+        vec!["", "", "", ""],
+        vec![(0..0), (1..1), (2..2), (3..3)]
+    );
+    assert_capture_with_crlf_flag(
+        r"(?mR)$",
+        "\n\n\n",
+        vec!["", "", "", ""],
+        vec![(0..0), (1..1), (2..2), (3..3)]
+    );
+    assert_capture_with_crlf_flag(
+        r"(?R).",
+        "\r\n\r\n\r\n",
+        vec![],
+        vec![]
+    );
+}
+
+fn assert_capture_with_crlf_flag(regex_src: &str, text: &str, expected_texts: Vec<&str>, expected_spans: Vec::<Range<usize>>) {
+    fn assert_capture_matches(regex_src: &str, text: &str, expected_texts: Vec<&str>, expected_spans: Vec::<Range<usize>>) {
+        let regex = common::regex(regex_src);
+        let capture_matches = regex.captures_iter(text);
+        assert_eq!(expected_texts.len(), expected_spans.len());
+        capture_matches.zip(expected_texts.iter().zip(expected_spans.iter())).for_each(|(captures, (&expected_text, expected_span))| {
+            let captures = captures.unwrap();
+            assert_match(captures.get(0),  expected_text, expected_span.start, expected_span.end);
+        });
+    }
+    
+    fn make_harder(regex_src: &str) -> String {
+        // Wrap the original regex source in an atomic group to make it `hard` so that the execution of the regex is
+        // handled by the backtracking VM engine implemented in `fancy-regex` rather than delegated to the engine of
+        // `regex-automata`.
+        format!(r"(?>{})", regex_src)
+    }
+
+    // Verify that the regex-automata's engine is able to handle the CRLF flag.
+    assert_capture_matches(regex_src, text, expected_texts.clone(), expected_spans.clone());
+
+    // Verify that the fancy-regex's backtracking VM engine is able to handle the CRLF flag.
+    assert_capture_matches(make_harder(regex_src).as_str(), text, expected_texts.clone(), expected_spans.clone());
 }
 
 #[test]

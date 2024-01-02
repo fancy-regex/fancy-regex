@@ -39,6 +39,7 @@ const FLAG_DOTNL: u32 = 1 << 2;
 const FLAG_SWAP_GREED: u32 = 1 << 3;
 const FLAG_IGNORE_SPACE: u32 = 1 << 4;
 const FLAG_UNICODE: u32 = 1 << 5;
+const FLAG_CRLF: u32 = 1 << 6;
 
 #[cfg(not(feature = "std"))]
 pub(crate) type NamedGroups = alloc::collections::BTreeMap<String, usize>;
@@ -246,8 +247,7 @@ impl<'a> Parser<'a> {
             b'^' => Ok((
                 ix + 1,
                 if self.flag(FLAG_MULTI) {
-                    // TODO: support crlf flag
-                    Expr::Assertion(Assertion::StartLine { crlf: false })
+                    Expr::Assertion(Assertion::StartLine { crlf: self.flag(FLAG_CRLF) })
                 } else {
                     Expr::Assertion(Assertion::StartText)
                 },
@@ -255,8 +255,7 @@ impl<'a> Parser<'a> {
             b'$' => Ok((
                 ix + 1,
                 if self.flag(FLAG_MULTI) {
-                    // TODO: support crlf flag
-                    Expr::Assertion(Assertion::EndLine { crlf: false })
+                    Expr::Assertion(Assertion::EndLine { crlf: self.flag(FLAG_CRLF) })
                 } else {
                     Expr::Assertion(Assertion::EndText)
                 },
@@ -686,6 +685,7 @@ impl<'a> Parser<'a> {
                         return Err(Error::ParseError(ix, ParseError::NonUnicodeUnsupported));
                     }
                 }
+                b'R' => self.update_flag(FLAG_CRLF, neg),
                 b'-' => {
                     if neg {
                         return Err(unknown_flag(self.re, start, ix));
@@ -1362,6 +1362,31 @@ mod tests {
     fn flag_swap_greed() {
         assert_eq!(p("a*"), p("(?U:a*?)"));
         assert_eq!(p("a*?"), p("(?U:a*)"));
+    }
+
+    #[test]
+    fn flag_crlf() {
+        assert_eq!(p("^"), Expr::Assertion(Assertion::StartText));
+        assert_eq!(p("(?R:^)"), Expr::Assertion(Assertion::StartText));
+        assert_eq!(
+            p("(?mR:^)"),
+            Expr::Assertion(Assertion::StartLine { crlf: true })
+        );
+
+        assert_eq!(p("$"), Expr::Assertion(Assertion::EndText));
+        assert_eq!(p("(?R:$)"), Expr::Assertion(Assertion::EndText));
+        assert_eq!(
+            p("(?mR:$)"),
+            Expr::Assertion(Assertion::EndLine { crlf: true })
+        );
+
+        assert_eq!(p("\\A"), Expr::Assertion(Assertion::StartText));
+        assert_eq!(p("(?R:\\A)"), Expr::Assertion(Assertion::StartText));
+        assert_eq!(p("(?mR:\\A)"), Expr::Assertion(Assertion::StartText));
+
+        assert_eq!(p("\\z"), Expr::Assertion(Assertion::EndText));
+        assert_eq!(p("(?R:\\z)"), Expr::Assertion(Assertion::EndText));
+        assert_eq!(p("(?mR:\\z)"), Expr::Assertion(Assertion::EndText) );
     }
 
     #[test]
