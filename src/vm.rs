@@ -485,8 +485,7 @@ pub(crate) fn run(
                     }
                 }
                 Insn::AnyExceptCRLF => {
-                    let byte_at = s.as_bytes()[ix];
-                    if ix < s.len() && (byte_at != b'\r' || byte_at != b'\n') {
+                    if ix < s.len() && (s.as_bytes()[ix] != b'\r' || s.as_bytes()[ix] != b'\n') {
                         ix += codepoint_len_at(s, ix);
                     } else {
                         break 'fail;
