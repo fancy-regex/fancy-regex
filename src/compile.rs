@@ -123,10 +123,16 @@ impl Compiler {
             Expr::Any { newline: true, .. } => {
                 self.b.add(Insn::Any);
             }
-            Expr::Any { newline: false, crlf: false } => {
+            Expr::Any {
+                newline: false,
+                crlf: false,
+            } => {
                 self.b.add(Insn::AnyExceptLF);
             }
-            Expr::Any { newline: false, crlf: true } => {
+            Expr::Any {
+                newline: false,
+                crlf: true,
+            } => {
                 self.b.add(Insn::AnyExceptCRLF);
             }
             Expr::Concat(_) => {

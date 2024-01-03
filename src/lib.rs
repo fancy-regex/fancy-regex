@@ -504,7 +504,10 @@ impl Regex {
         let tree = ExprTree {
             expr: Expr::Concat(vec![
                 Expr::Repeat {
-                    child: Box::new(Expr::Any { newline: true, crlf: true }),
+                    child: Box::new(Expr::Any {
+                        newline: true,
+                        crlf: true,
+                    }),
                     lo: 0,
                     hi: usize::MAX,
                     greedy: false,
@@ -1413,10 +1416,22 @@ impl Expr {
     pub fn to_str(&self, buf: &mut String, precedence: u8) {
         match *self {
             Expr::Empty => (),
-            Expr::Any { newline: true, crlf: true } => buf.push_str("(?sR:.)"),
-            Expr::Any { newline: true, crlf: false } => buf.push_str("(?s:.)"),
-            Expr::Any { newline: false, crlf: true } => buf.push_str("(?R:.)"),
-            Expr::Any { newline: false, crlf: false } => buf.push_str("."),
+            Expr::Any {
+                newline: true,
+                crlf: true,
+            } => buf.push_str("(?sR:.)"),
+            Expr::Any {
+                newline: true,
+                crlf: false,
+            } => buf.push_str("(?s:.)"),
+            Expr::Any {
+                newline: false,
+                crlf: true,
+            } => buf.push_str("(?R:.)"),
+            Expr::Any {
+                newline: false,
+                crlf: false,
+            } => buf.push_str("."),
             Expr::Literal { ref val, casei } => {
                 if casei {
                     buf.push_str("(?i:");
