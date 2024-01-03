@@ -120,11 +120,14 @@ impl Compiler {
                     self.compile_delegate(info)?;
                 }
             }
-            Expr::Any { newline: true } => {
+            Expr::Any { newline: true, .. } => {
                 self.b.add(Insn::Any);
             }
-            Expr::Any { newline: false } => {
-                self.b.add(Insn::AnyNoNL);
+            Expr::Any { newline: false, crlf: false } => {
+                self.b.add(Insn::AnyExceptLF);
+            }
+            Expr::Any { newline: false, crlf: true } => {
+                self.b.add(Insn::AnyExceptCRLF);
             }
             Expr::Concat(_) => {
                 self.compile_concat(info, hard)?;

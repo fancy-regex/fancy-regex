@@ -242,6 +242,7 @@ impl<'a> Parser<'a> {
                 ix + 1,
                 Expr::Any {
                     newline: self.flag(FLAG_DOTNL),
+                    crlf: self.flag(FLAG_CRLF),
                 },
             )),
             b'^' => Ok((
@@ -947,8 +948,10 @@ mod tests {
 
     #[test]
     fn any() {
-        assert_eq!(p("."), Expr::Any { newline: false });
-        assert_eq!(p("(?s:.)"), Expr::Any { newline: true });
+        assert_eq!(p("."), Expr::Any { newline: false, crlf: false });
+        assert_eq!(p("(?s:.)"), Expr::Any { newline: true, crlf: false });
+        assert_eq!(p("(?R:.)"), Expr::Any { newline: false, crlf: true });
+        assert_eq!(p("(?sR:.)"), Expr::Any { newline: true, crlf: true });
     }
 
     #[test]
@@ -1262,7 +1265,7 @@ mod tests {
         assert_eq!(
             p("(.)\\1"),
             Expr::Concat(vec![
-                Expr::Group(Box::new(Expr::Any { newline: false })),
+                Expr::Group(Box::new(Expr::Any { newline: false, crlf: false })),
                 Expr::Backref(1),
             ])
         );
@@ -1273,7 +1276,7 @@ mod tests {
         assert_eq!(
             p("(?<i>.)\\k<i>"),
             Expr::Concat(vec![
-                Expr::Group(Box::new(Expr::Any { newline: false })),
+                Expr::Group(Box::new(Expr::Any { newline: false, crlf: false })),
                 Expr::Backref(1),
             ])
         );
@@ -1285,7 +1288,7 @@ mod tests {
             p("(a)(.)\\k<-1>"),
             Expr::Concat(vec![
                 Expr::Group(Box::new(make_literal("a"))),
-                Expr::Group(Box::new(Expr::Any { newline: false })),
+                Expr::Group(Box::new(Expr::Any { newline: false, crlf: false })),
                 Expr::Backref(2)
             ])
         );
@@ -1326,20 +1329,20 @@ mod tests {
 
     #[test]
     fn flag_state() {
-        assert_eq!(p("(?s)."), Expr::Any { newline: true });
-        assert_eq!(p("(?s:(?-s:.))"), Expr::Any { newline: false });
+        assert_eq!(p("(?s)."), Expr::Any { newline: true, crlf: false });
+        assert_eq!(p("(?s:(?-s:.))"), Expr::Any { newline: false, crlf: false });
         assert_eq!(
             p("(?s:.)."),
             Expr::Concat(vec![
-                Expr::Any { newline: true },
-                Expr::Any { newline: false },
+                Expr::Any { newline: true, crlf: false },
+                Expr::Any { newline: false, crlf: false },
             ])
         );
         assert_eq!(
             p("(?:(?s).)."),
             Expr::Concat(vec![
-                Expr::Any { newline: true },
-                Expr::Any { newline: false },
+                Expr::Any { newline: true, crlf: false },
+                Expr::Any { newline: false, crlf: false },
             ])
         );
     }
@@ -1366,6 +1369,23 @@ mod tests {
 
     #[test]
     fn flag_crlf() {
+        assert_eq!(p("(?R)."), Expr::Any { newline: false, crlf: true });
+        assert_eq!(p("(?R:(?-R:.))"), Expr::Any { newline: false, crlf: false });
+        assert_eq!(
+            p("(?R:.)."),
+            Expr::Concat(vec![
+                Expr::Any { newline: false, crlf: true },
+                Expr::Any { newline: false, crlf: false },
+            ])
+        );
+        assert_eq!(
+            p("(?:(?R).)."),
+            Expr::Concat(vec![
+                Expr::Any { newline: false, crlf: true },
+                Expr::Any { newline: false, crlf: false },
+            ])
+        );
+
         assert_eq!(p("^"), Expr::Assertion(Assertion::StartText));
         assert_eq!(p("(?R:^)"), Expr::Assertion(Assertion::StartText));
         assert_eq!(
