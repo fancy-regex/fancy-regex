@@ -176,6 +176,7 @@ use core::ops::{Index, Range};
 use core::str::FromStr;
 use core::{fmt, usize};
 use regex_automata::meta::Regex as RaRegex;
+use regex_automata::util::syntax::Config as SyntaxConfig;
 use regex_automata::util::captures::Captures as RaCaptures;
 use regex_automata::Input as RaInput;
 
@@ -395,7 +396,7 @@ pub struct SubCaptureMatches<'c, 't> {
 #[derive(Clone, Debug)]
 struct RegexOptions {
     pattern: String,
-    case_insensitive: bool,
+    syntaxc: SyntaxConfig,
     backtrack_limit: usize,
     delegate_size_limit: Option<usize>,
     delegate_dfa_size_limit: Option<usize>,
@@ -405,7 +406,7 @@ impl Default for RegexOptions {
     fn default() -> Self {
         RegexOptions {
             pattern: String::new(),
-            case_insensitive: false,
+            syntaxc: SyntaxConfig::default(),
             backtrack_limit: 1_000_000,
             delegate_size_limit: None,
             delegate_dfa_size_limit: None,
@@ -436,7 +437,8 @@ impl RegexBuilder {
     /// 
     /// Default is false
     pub fn case_insensitive(&mut self, yes: bool) -> &mut Self {
-        self.0.case_insensitive = yes;
+        let syntaxc = self.0.syntaxc.to_owned();
+        self.0.syntaxc = syntaxc.case_insensitive(yes);
         self
     }
 
@@ -1710,14 +1712,15 @@ mod tests {
 
     #[test]
     fn check_override_casing_option() {
-        let builder = RegexBuilder::new(r"foo(?-i:bar)quux")
-            .case_insensitive(true)
+        let builder = RegexBuilder::new(r"FOO(?i:bar)quux")
+            .case_insensitive(false)
             .build();
 
         match builder {
             Ok(regex) => {
-                assert!(regex.is_match("FoObarQuUx").unwrap_or_default());
-                assert!(!regex.is_match("fooBARquux").unwrap_or_default())
+                assert!(!regex.is_match("FoObarQuUx").unwrap_or_default());
+                assert!(!regex.is_match("fooBARquux").unwrap_or_default());
+                assert!(regex.is_match("FOObarquux").unwrap_or_default());
             },
             _ => panic!("builder should be able to compile with options"),
         } 
