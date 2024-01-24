@@ -1709,6 +1709,21 @@ mod tests {
     }
 
     #[test]
+    fn check_override_casing_option() {
+        let builder = RegexBuilder::new(r"foo(?-i:bar)quux")
+            .case_insensitive(true)
+            .build();
+
+        match builder {
+            Ok(regex) => {
+                assert!(regex.is_match("FoObarQuUx").unwrap_or_default());
+                assert!(!regex.is_match("fooBARquux").unwrap_or_default())
+            },
+            _ => panic!("builder should be able to compile with options"),
+        } 
+    }
+
+    #[test]
     fn check_casing_insensitive_option() {
         let builder = RegexBuilder::new(r"TEST FOO")
             .case_insensitive(true)
