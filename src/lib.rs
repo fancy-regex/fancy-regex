@@ -1693,20 +1693,11 @@ mod tests {
             .build();
 
         match builder {
-            Ok(regex) => assert!(regex.is_match(r"TEST foo").unwrap_or_default()),
-            _ => panic!("builder should be able to compile with options"),
-        } 
-    }
-
-    #[test]
-    fn check_negative_casing_option() {
-        let builder = RegexBuilder::new(r"TEST FOO")
-            .case_insensitive(false)
-            .build();
-
-        match builder {
-            Ok(regex) => assert!(!regex.is_match(r"test foo").unwrap_or_default()),
-            _ => panic!("builder should be able to compile with options"),
+            Ok(regex) => {
+                assert!(regex.is_match(r"TEST foo").unwrap_or_default());
+                assert!(!regex.is_match(r"test foo").unwrap_or_default());
+            },
+            _ => panic!("builder should be able to compile with casing options"),
         } 
     }
 
@@ -1722,7 +1713,7 @@ mod tests {
                 assert!(!regex.is_match("fooBARquux").unwrap_or_default());
                 assert!(regex.is_match("FOObarquux").unwrap_or_default());
             },
-            _ => panic!("builder should be able to compile with options"),
+            _ => panic!("builder should be able to compile with casing options"),
         } 
     }
 
@@ -1734,7 +1725,7 @@ mod tests {
 
         match builder {
             Ok(regex) => assert!(regex.is_match(r"test foo").unwrap_or_default()),
-            _ => panic!("builder should be able to compile with options"),
+            _ => panic!("builder should be able to compile with casing options"),
         } 
     }
 
