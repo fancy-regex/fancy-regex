@@ -395,6 +395,7 @@ pub struct SubCaptureMatches<'c, 't> {
 #[derive(Clone, Debug)]
 struct RegexOptions {
     pattern: String,
+    case_insensitive: bool,
     backtrack_limit: usize,
     delegate_size_limit: Option<usize>,
     delegate_dfa_size_limit: Option<usize>,
@@ -404,6 +405,7 @@ impl Default for RegexOptions {
     fn default() -> Self {
         RegexOptions {
             pattern: String::new(),
+            case_insensitive: false,
             backtrack_limit: 1_000_000,
             delegate_size_limit: None,
             delegate_dfa_size_limit: None,
@@ -426,6 +428,16 @@ impl RegexBuilder {
     /// Returns an [`Error`](enum.Error.html) if the pattern could not be parsed.
     pub fn build(&self) -> Result<Regex> {
         Regex::new_options(self.0.clone())
+    }
+
+    /// Override default case insensitive
+    /// this is to enable/disable casing via builder instead of a flag within 
+    /// the raw string provided to the regex builder
+    /// 
+    /// Default is false
+    pub fn case_insensitive(&mut self, yes: bool) -> &mut Self {
+        self.0.case_insensitive = yes;
+        self
     }
 
     /// Limit for how many times backtracking should be attempted for fancy regexes (where
@@ -1584,7 +1596,7 @@ mod tests {
     use alloc::{format, vec};
 
     use crate::parse::make_literal;
-    use crate::{Expr, Regex};
+    use crate::{Expr, Regex, RegexBuilder};
 
     //use detect_possible_backref;
 
@@ -1670,6 +1682,42 @@ mod tests {
         assert_eq!(to_str(repeat(0, usize::MAX, false)), "a*?");
         assert_eq!(to_str(repeat(1, usize::MAX, true)), "a+");
         assert_eq!(to_str(repeat(1, usize::MAX, false)), "a+?");
+    }
+
+    #[test]
+    fn check_casing_option() {
+        let builder = RegexBuilder::new(r"TEST foo")
+            .case_insensitive(false)
+            .build();
+
+        match builder {
+            Ok(regex) => assert!(regex.is_match(r"TEST foo").unwrap_or_default()),
+            _ => panic!("builder should be able to compile with options"),
+        } 
+    }
+
+    #[test]
+    fn check_negative_casing_option() {
+        let builder = RegexBuilder::new(r"TEST FOO")
+            .case_insensitive(false)
+            .build();
+
+        match builder {
+            Ok(regex) => assert!(!regex.is_match(r"test foo").unwrap_or_default()),
+            _ => panic!("builder should be able to compile with options"),
+        } 
+    }
+
+    #[test]
+    fn check_casing_insensitive_option() {
+        let builder = RegexBuilder::new(r"TEST FOO")
+            .case_insensitive(true)
+            .build();
+
+        match builder {
+            Ok(regex) => assert!(regex.is_match(r"test foo").unwrap_or_default()),
+            _ => panic!("builder should be able to compile with options"),
+        } 
     }
 
     #[test]

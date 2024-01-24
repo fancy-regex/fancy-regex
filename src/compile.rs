@@ -24,6 +24,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::usize;
 use regex_automata::meta::Regex as RaRegex;
+use regex_automata::util::syntax::Config as RaUtilConfig;
 use regex_automata::meta::{Builder as RaBuilder, Config as RaConfig};
 #[cfg(all(test, feature = "std"))]
 use std::{collections::BTreeMap, sync::RwLock};
@@ -497,7 +498,11 @@ pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<Ra
         config = config.dfa_size_limit(Some(dfa_size_limit));
     }
 
+    let syntax_config = RaUtilConfig::default()
+        .case_insensitive(options.case_insensitive);
+
     let re = RaBuilder::new()
+        .syntax(syntax_config)
         .configure(config)
         .build(inner_re)
         .map_err(CompileError::InnerError)
