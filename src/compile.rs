@@ -499,6 +499,7 @@ pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<Ra
 
     let re = RaBuilder::new()
         .configure(config)
+        .syntax(options.syntaxc)
         .build(inner_re)
         .map_err(CompileError::InnerError)
         .map_err(Error::CompileError)?;
