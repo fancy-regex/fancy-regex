@@ -454,6 +454,8 @@ impl<'r, 'h> Iterator for Split<'r, 'h> {
     }
 }
 
+impl<'r, 'h> core::iter::FusedIterator for Split<'r, 'h> {}
+
 #[derive(Clone, Debug)]
 struct RegexOptions {
     pattern: String,
