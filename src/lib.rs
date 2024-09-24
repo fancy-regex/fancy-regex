@@ -86,6 +86,17 @@ let group = captures.get(1).expect("No group");
 assert_eq!(group.as_str(), "20");
 ```
 
+## Example: Splitting text
+
+```rust
+use fancy_regex::Regex;
+
+let re = Regex::new(r"[ \t]+").unwrap();
+let target = "a b \t  c\td    e";
+let fields: Vec<&str> = re.split(target).map(|x| x.unwrap()).collect();
+assert_eq!(fields, vec!["a", "b", "c", "d", "e"]);
+``` 
+
 # Syntax
 
 The regex syntax is based on the [regex] crate's, with some additional supported syntax.
@@ -390,6 +401,57 @@ enum CapturesImpl<'t> {
 pub struct SubCaptureMatches<'c, 't> {
     caps: &'c Captures<'t>,
     i: usize,
+}
+
+#[derive(Debug)]
+/// An iterator over all substrings delimited by a regex.
+///
+/// This iterator yields `Result<&'h str>`, where each item is a substring of the
+/// target string that is delimited by matches of the regular expression. It stops when there
+/// are no more substrings to yield.
+///
+/// `'r` is the lifetime of the compiled regular expression, and `'h` is the
+/// lifetime of the target string being split.
+///
+/// This iterator can be created via the [`Regex::split`] method.
+pub struct Split<'r, 'h> {
+    matches: Matches<'r, 'h>,
+    next_start: usize,
+    target: &'h str,
+}
+
+
+impl<'r, 'h> Iterator for Split<'r, 'h> {
+    type Item = Result<&'h str>;
+
+    /// Returns the next substring that results from splitting the target string by the regex.
+    ///
+    /// If no more matches are found, returns the remaining part of the string,
+    /// or `None` if all substrings have been yielded.
+    fn next(&mut self) -> Option<Result<&'h str>> {
+        match self.matches.next() {
+            None => {
+                let len = self.target.len();
+                if self.next_start > len {
+                    // No more substrings to return
+                    None
+                } else {
+                    // Return the last part of the target string
+                    // Next call will return None
+                    let part = &self.target[self.next_start..len];
+                    self.next_start = len + 1;
+                    Some(Ok(part)) 
+                }
+            }
+            // Return the next substring
+            Some(Ok(m)) => {
+                let part = &self.target[self.next_start..m.start()];
+                self.next_start = m.end();
+                Some(Ok(part))
+            }
+            Some(Err(e)) => Some(Err(e)),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1001,6 +1063,30 @@ impl Regex {
         }
         new.push_str(&text[last_match..]);
         Ok(Cow::Owned(new))
+    }
+
+    /// Splits the string by matches of the regex. 
+    /// 
+    /// Returns an iterator over the substrings of the target string
+    ///  that *aren't* matched by the regex. 
+    ///
+    /// # Example
+    /// 
+    /// To split a string delimited by arbitrary amounts of spaces or tabs:
+    /// 
+    /// ```rust
+    /// # use fancy_regex::Regex;
+    /// let re = Regex::new(r"[ \t]+").unwrap();
+    /// let target = "a b \t  c\td    e";
+    /// let fields: Vec<&str> = re.split(target).map(|x| x.unwrap()).collect();
+    /// assert_eq!(fields, vec!["a", "b", "c", "d", "e"]);
+    /// ```
+    pub fn split<'r, 'h>(&'r self, target: &'h str) -> Split<'r, 'h> {
+        Split {
+            matches: self.find_iter(target),
+            next_start: 0,
+            target,
+        }
     }
 }
 
