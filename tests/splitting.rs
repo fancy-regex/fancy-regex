@@ -1,6 +1,5 @@
 use fancy_regex::Regex;
 
-
 #[test]
 fn split_left_center_right() {
     let re = Regex::new("1").unwrap();
@@ -59,7 +58,7 @@ fn split_by_substring() {
     let re = Regex::new("234|678").unwrap();
     let target = "123456789";
     let fields: Vec<&str> = re.split(target).map(|x| x.unwrap()).collect();
-    assert_eq!(fields, vec!["1", "5", "9"]); 
+    assert_eq!(fields, vec!["1", "5", "9"]);
 }
 
 #[test]
@@ -97,9 +96,9 @@ fn split_with_look_around() {
     let target = "12112122";
     let fields: Vec<&str> = re.split(target).map(|x| x.unwrap()).collect();
     assert_eq!(fields, vec!["", "21", "2", "22"]);
-   
+
     let re = Regex::new(r"(?<=2)1(?=2)").unwrap();
     let target = "12112122";
     let fields: Vec<&str> = re.split(target).map(|x| x.unwrap()).collect();
-    assert_eq!(fields, vec!["12112", "22"]); 
+    assert_eq!(fields, vec!["12112", "22"]);
 }

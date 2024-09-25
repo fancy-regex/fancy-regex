@@ -95,7 +95,7 @@ let re = Regex::new(r"[ \t]+").unwrap();
 let target = "a b \t  c\td    e";
 let fields: Vec<&str> = re.split(target).map(|x| x.unwrap()).collect();
 assert_eq!(fields, vec!["a", "b", "c", "d", "e"]);
-``` 
+```
 
 # Syntax
 
@@ -420,7 +420,6 @@ pub struct Split<'r, 'h> {
     target: &'h str,
 }
 
-
 impl<'r, 'h> Iterator for Split<'r, 'h> {
     type Item = Result<&'h str>;
 
@@ -440,7 +439,7 @@ impl<'r, 'h> Iterator for Split<'r, 'h> {
                     // Next call will return None
                     let part = &self.target[self.next_start..len];
                     self.next_start = len + 1;
-                    Some(Ok(part)) 
+                    Some(Ok(part))
                 }
             }
             // Return the next substring
@@ -1067,15 +1066,15 @@ impl Regex {
         Ok(Cow::Owned(new))
     }
 
-    /// Splits the string by matches of the regex. 
-    /// 
+    /// Splits the string by matches of the regex.
+    ///
     /// Returns an iterator over the substrings of the target string
-    ///  that *aren't* matched by the regex. 
+    ///  that *aren't* matched by the regex.
     ///
     /// # Example
-    /// 
+    ///
     /// To split a string delimited by arbitrary amounts of spaces or tabs:
-    /// 
+    ///
     /// ```rust
     /// # use fancy_regex::Regex;
     /// let re = Regex::new(r"[ \t]+").unwrap();
