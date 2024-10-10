@@ -1,112 +1,93 @@
 use fancy_regex::Regex;
 
+fn split_to_vec<'a>(re_str: &'a str, target: &'a str) -> Vec<&'a str> {
+    let re = Regex::new(re_str).unwrap();
+    re.split(target).map(|x| x.unwrap()).collect()
+}
+
 #[test]
-fn split_left_center_right() {
-    let re = Regex::new("1").unwrap();
-    let target = "123";
-    let fields: Vec<&str> = re.split(target).map(|x| x.unwrap()).collect();
-    assert_eq!(fields, vec!["", "23"]);
+fn split_left() {
+    let result: Vec<&str> = split_to_vec("1", "123");
+    assert_eq!(result, vec!["", "23"]);
+}
 
-    let re = Regex::new("2").unwrap();
-    let fields: Vec<&str> = re.split(target).map(|x| x.unwrap()).collect();
-    assert_eq!(fields, vec!["1", "3"]);
+#[test]
+fn split_center() {
+    let result: Vec<&str> = split_to_vec("2", "123");
+    assert_eq!(result, vec!["1", "3"]);
+}
 
-    let re = Regex::new("3").unwrap();
-    let fields: Vec<&str> = re.split(target).map(|x| x.unwrap()).collect();
-    assert_eq!(fields, vec!["12", ""]);
+#[test]
+fn split_right() {
+    let result: Vec<&str> = split_to_vec("3", "123");
+    assert_eq!(result, vec!["12", ""]);
 }
 
 #[test]
 fn split_no_matches() {
-    let re = Regex::new("4").unwrap();
-    let target = "123";
-    let fields: Vec<&str> = re.split(target).map(|x| x.unwrap()).collect();
-    assert_eq!(fields, vec!["123"]);
+    let result: Vec<&str> = split_to_vec("4", "123");
+    assert_eq!(result, vec!["123"]);
 }
 
 #[test]
 fn split_empty() {
-    let re = Regex::new("1").unwrap();
-    let target = "";
-    let fields: Vec<&str> = re.split(target).map(|x| x.unwrap()).collect();
-    assert_eq!(fields, vec![""]);
+    let result: Vec<&str> = split_to_vec("1", "");
+    assert_eq!(result, vec![""]);
 }
 
 #[test]
 fn split_by_empty() {
-    let re = Regex::new("").unwrap();
-    let target = "123";
-    let fields: Vec<&str> = re.split(target).map(|x| x.unwrap()).collect();
-    assert_eq!(fields, vec!["", "1", "2", "3", ""]);
+    let result: Vec<&str> = split_to_vec("", "123");
+    assert_eq!(result, vec!["", "1", "2", "3", ""]);
 }
 
 #[test]
 fn split_by_own() {
-    let re = Regex::new("123").unwrap();
-    let target = "123";
-    let fields: Vec<&str> = re.split(target).map(|x| x.unwrap()).collect();
-    assert_eq!(fields, vec!["", ""]);
+    let result: Vec<&str> = split_to_vec("123", "123");
+    assert_eq!(result, vec!["", ""]);
 }
 
 #[test]
 fn split_consecutive_matches() {
-    let re = Regex::new("1").unwrap();
-    let target = "111";
-    let fields: Vec<&str> = re.split(target).map(|x| x.unwrap()).collect();
-    assert_eq!(fields, vec!["", "", "", ""]);
+    let result: Vec<&str> = split_to_vec("1", "111");
+    assert_eq!(result, vec!["", "", "", ""]);
 }
 
 #[test]
 fn split_by_substring() {
-    let re = Regex::new("123").unwrap();
-    let target = "123456";
-    let fields: Vec<&str> = re.split(target).map(|x| x.unwrap()).collect();
-    assert_eq!(fields, vec!["", "456"]);
+    let result: Vec<&str> = split_to_vec("123", "123456");
+    assert_eq!(result, vec!["", "456"]);
 
-    let re = Regex::new("234|678").unwrap();
-    let target = "123456789";
-    let fields: Vec<&str> = re.split(target).map(|x| x.unwrap()).collect();
-    assert_eq!(fields, vec!["1", "5", "9"]);
+    let result: Vec<&str> = split_to_vec("234|678", "123456789");
+    assert_eq!(result, vec!["1", "5", "9"]);
 }
 
 #[test]
 fn split_multiple_different_characters() {
-    let re = Regex::new("[1-3]").unwrap();
-    let target = "123456";
-    let fields: Vec<&str> = re.split(target).map(|x| x.unwrap()).collect();
-    assert_eq!(fields, vec!["", "", "", "456"]);
+    let result: Vec<&str> = split_to_vec("[1-3]", "123456");
+    assert_eq!(result, vec!["", "", "", "456"]);
 }
 
 #[test]
 fn split_mixed_characters() {
-    let re = Regex::new("[236]").unwrap();
-    let target = "123456";
-    let fields: Vec<&str> = re.split(target).map(|x| x.unwrap()).collect();
-    assert_eq!(fields, vec!["1", "", "45", ""]);
+    let result: Vec<&str> = split_to_vec("[236]", "123456");
+    assert_eq!(result, vec!["1", "", "45", ""]);
 }
 
 #[test]
 fn split_with_backreferences() {
-    let re = Regex::new(r"(1|2)\1").unwrap();
-    let target = "12112122";
-    let fields: Vec<&str> = re.split(target).map(|x| x.unwrap()).collect();
-    assert_eq!(fields, vec!["12", "21", ""]);
+    let result: Vec<&str> = split_to_vec(r"(1|2)\1", "12112122");
+    assert_eq!(result, vec!["12", "21", ""]);
 }
 
 #[test]
 fn split_with_look_around() {
-    let re = Regex::new(r"(?<=1)2").unwrap();
-    let target = "12112122";
-    let fields: Vec<&str> = re.split(target).map(|x| x.unwrap()).collect();
-    assert_eq!(fields, vec!["1", "11", "1", "2"]);
+    let result: Vec<&str> = split_to_vec(r"(?<=1)2", "12112122");
+    assert_eq!(result, vec!["1", "11", "1", "2"]);
 
-    let re = Regex::new(r"1(?=2)").unwrap();
-    let target = "12112122";
-    let fields: Vec<&str> = re.split(target).map(|x| x.unwrap()).collect();
-    assert_eq!(fields, vec!["", "21", "2", "22"]);
+    let result: Vec<&str> = split_to_vec(r"1(?=2)", "12112122");
+    assert_eq!(result, vec!["", "21", "2", "22"]);
 
-    let re = Regex::new(r"(?<=2)1(?=2)").unwrap();
-    let target = "12112122";
-    let fields: Vec<&str> = re.split(target).map(|x| x.unwrap()).collect();
-    assert_eq!(fields, vec!["12112", "22"]);
+    let result: Vec<&str> = split_to_vec(r"(?<=2)1(?=2)", "12112122");
+    assert_eq!(result, vec!["12112", "22"]);
 }
