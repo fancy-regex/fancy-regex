@@ -33,6 +33,14 @@ fn split_empty() {
 }
 
 #[test]
+fn split_by_empty() {
+    let re = Regex::new("").unwrap();
+    let target = "123";
+    let fields: Vec<&str> = re.split(target).map(|x| x.unwrap()).collect();
+    assert_eq!(fields, vec!["", "1", "2", "3", ""]);
+}
+
+#[test]
 fn split_by_own() {
     let re = Regex::new("123").unwrap();
     let target = "123";
