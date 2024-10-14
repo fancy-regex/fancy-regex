@@ -95,6 +95,9 @@ let re = Regex::new(r"[ \t]+").unwrap();
 let target = "a b \t  c\td    e";
 let fields: Vec<&str> = re.split(target).map(|x| x.unwrap()).collect();
 assert_eq!(fields, vec!["a", "b", "c", "d", "e"]);
+
+let fields: Vec<&str> = re.splitn(target, 3).map(|x| x.unwrap()).collect();
+assert_eq!(fields, vec!["a", "b", "c\td    e"]);
 ```
 
 # Syntax
