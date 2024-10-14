@@ -455,6 +455,64 @@ impl<'r, 'h> Iterator for Split<'r, 'h> {
 
 impl<'r, 'h> core::iter::FusedIterator for Split<'r, 'h> {}
 
+/// An iterator over at most `N` substrings delimited by a regex.
+///
+/// This iterator yields `Result<&'h str>`, where each item is a substring of the
+/// target that is delimited by matches of the regular expression. It stops either when
+/// there are no more substrings to yield, or after `N` substrings have been yielded.
+///
+/// The `N`th substring is the remaining part of the target.
+///
+/// `'r` is the lifetime of the compiled regular expression, and `'h` is the
+/// lifetime of the target string being split.
+///
+/// This iterator can be created by the [`Regex::splitn`] method.
+#[derive(Debug)]
+pub struct SplitN<'r, 'h> {
+    splits: Split<'r, 'h>,
+    limit: usize,
+}
+
+impl<'r, 'h> Iterator for SplitN<'r, 'h> {
+    type Item = Result<&'h str>;
+
+    /// Returns the next substring resulting from splitting the target by the regex,
+    /// limited to `N` splits.
+    ///
+    /// Returns `None` if no more matches are found or if the limit is reached after yielding
+    /// the remaining part of the target.
+    fn next(&mut self) -> Option<Result<&'h str>> {
+        if self.limit == 0 {
+            // Limit reached. No more substrings available.
+            return None;
+        }
+
+        // Decrement the limit for each split.
+        self.limit -= 1;
+        if self.limit > 0 {
+            return self.splits.next();
+        }
+
+        // Nth split
+        let len = self.splits.target.len();
+        if self.splits.next_start > len {
+            // No more substrings available.
+            return None;
+        } else {
+            // Return the remaining part of the target
+            let start = self.splits.next_start;
+            self.splits.next_start = len + 1;
+            return Some(Ok(&self.splits.target[start..len]));
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (0, Some(self.limit))
+    }
+}
+
+impl<'r, 'h> core::iter::FusedIterator for SplitN<'r, 'h> {}
+
 #[derive(Clone, Debug)]
 struct RegexOptions {
     pattern: String,
@@ -1087,6 +1145,32 @@ impl Regex {
             matches: self.find_iter(target),
             next_start: 0,
             target,
+        }
+    }
+
+    /// Splits the string by matches of the regex at most `limit` times.
+    ///
+    /// Returns an iterator over the substrings of the target string
+    /// that *aren't* matched by the regex.
+    ///
+    /// The `N`th substring is the remaining part of the target.
+    ///
+    /// # Example
+    ///
+    /// To split a string delimited by arbitrary amounts of spaces or tabs
+    /// 3 times:
+    ///
+    /// ```rust
+    /// # use fancy_regex::Regex;
+    /// let re = Regex::new(r"[ \t]+").unwrap();
+    /// let target = "a b \t  c\td    e";
+    /// let fields: Vec<&str> = re.splitn(target, 3).map(|x| x.unwrap()).collect();
+    /// assert_eq!(fields, vec!["a", "b", "c\td    e"]);
+    /// ```
+    pub fn splitn<'r, 'h>(&'r self, target: &'h str, limit: usize) -> SplitN<'r, 'h> {
+        SplitN {
+            splits: self.split(target),
+            limit: limit,
         }
     }
 }
