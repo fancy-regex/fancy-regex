@@ -403,7 +403,6 @@ pub struct SubCaptureMatches<'c, 't> {
     i: usize,
 }
 
-#[derive(Debug)]
 /// An iterator over all substrings delimited by a regex.
 ///
 /// This iterator yields `Result<&'h str>`, where each item is a substring of the
@@ -413,7 +412,8 @@ pub struct SubCaptureMatches<'c, 't> {
 /// `'r` is the lifetime of the compiled regular expression, and `'h` is the
 /// lifetime of the target string being split.
 ///
-/// This iterator can be created via the [`Regex::split`] method.
+/// This iterator can be created by the [`Regex::split`] method.
+#[derive(Debug)]
 pub struct Split<'r, 'h> {
     matches: Matches<'r, 'h>,
     next_start: usize,
