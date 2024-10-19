@@ -187,8 +187,8 @@ use core::ops::{Index, Range};
 use core::str::FromStr;
 use core::{fmt, usize};
 use regex_automata::meta::Regex as RaRegex;
-use regex_automata::util::syntax::Config as SyntaxConfig;
 use regex_automata::util::captures::Captures as RaCaptures;
+use regex_automata::util::syntax::Config as SyntaxConfig;
 use regex_automata::Input as RaInput;
 
 mod analyze;
@@ -495,9 +495,9 @@ impl RegexBuilder {
     }
 
     /// Override default case insensitive
-    /// this is to enable/disable casing via builder instead of a flag within 
+    /// this is to enable/disable casing via builder instead of a flag within
     /// the raw string provided to the regex builder
-    /// 
+    ///
     /// Default is false
     pub fn case_insensitive(&mut self, yes: bool) -> &mut Self {
         let syntaxc = self.0.syntaxc.to_owned();
@@ -1783,9 +1783,9 @@ mod tests {
             Ok(regex) => {
                 assert!(regex.is_match(r"TEST foo").unwrap_or_default());
                 assert!(!regex.is_match(r"test foo").unwrap_or_default());
-            },
+            }
             _ => panic!("builder should be able to compile with casing options"),
-        } 
+        }
     }
 
     #[test]
@@ -1799,9 +1799,9 @@ mod tests {
                 assert!(!regex.is_match("FoObarQuUx").unwrap_or_default());
                 assert!(!regex.is_match("fooBARquux").unwrap_or_default());
                 assert!(regex.is_match("FOObarquux").unwrap_or_default());
-            },
+            }
             _ => panic!("builder should be able to compile with casing options"),
-        } 
+        }
     }
 
     #[test]
@@ -1813,7 +1813,7 @@ mod tests {
         match builder {
             Ok(regex) => assert!(regex.is_match(r"test foo").unwrap_or_default()),
             _ => panic!("builder should be able to compile with casing options"),
-        } 
+        }
     }
 
     #[test]
