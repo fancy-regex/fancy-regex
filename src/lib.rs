@@ -174,7 +174,7 @@ Conditionals - if/then/else:
 
 extern crate alloc;
 
-use alloc::borrow::Cow;
+use alloc::borrow::{Cow, ToOwned};
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
