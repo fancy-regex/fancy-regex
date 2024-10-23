@@ -73,7 +73,7 @@ jobs:
     name: coverage
     runs-on: ubuntu-latest
     container:
-      image: xd009642/tarpaulin:0.27.1
+      image: xd009642/tarpaulin:0.31.2
       options: --security-opt seccomp=unconfined
     steps:
       - uses: actions/checkout@v4
