@@ -174,7 +174,7 @@ Conditionals - if/then/else:
 
 extern crate alloc;
 
-use alloc::borrow::Cow;
+use alloc::borrow::{Cow, ToOwned};
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
@@ -188,6 +188,7 @@ use core::str::FromStr;
 use core::{fmt, usize};
 use regex_automata::meta::Regex as RaRegex;
 use regex_automata::util::captures::Captures as RaCaptures;
+use regex_automata::util::syntax::Config as SyntaxConfig;
 use regex_automata::Input as RaInput;
 
 mod analyze;
@@ -458,6 +459,7 @@ impl<'r, 'h> core::iter::FusedIterator for Split<'r, 'h> {}
 #[derive(Clone, Debug)]
 struct RegexOptions {
     pattern: String,
+    syntaxc: SyntaxConfig,
     backtrack_limit: usize,
     delegate_size_limit: Option<usize>,
     delegate_dfa_size_limit: Option<usize>,
@@ -467,6 +469,7 @@ impl Default for RegexOptions {
     fn default() -> Self {
         RegexOptions {
             pattern: String::new(),
+            syntaxc: SyntaxConfig::default(),
             backtrack_limit: 1_000_000,
             delegate_size_limit: None,
             delegate_dfa_size_limit: None,
@@ -489,6 +492,17 @@ impl RegexBuilder {
     /// Returns an [`Error`](enum.Error.html) if the pattern could not be parsed.
     pub fn build(&self) -> Result<Regex> {
         Regex::new_options(self.0.clone())
+    }
+
+    /// Override default case insensitive
+    /// this is to enable/disable casing via builder instead of a flag within
+    /// the raw string provided to the regex builder
+    ///
+    /// Default is false
+    pub fn case_insensitive(&mut self, yes: bool) -> &mut Self {
+        let syntaxc = self.0.syntaxc.to_owned();
+        self.0.syntaxc = syntaxc.case_insensitive(yes);
+        self
     }
 
     /// Limit for how many times backtracking should be attempted for fancy regexes (where
