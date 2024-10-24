@@ -9,7 +9,7 @@ with the exception that 0.x versions can break between minor versions.
 ## [0.14.0] - 2024-10-24
 ### Added
 - Add `split`, `splitn` methods to `Regex` to split a string into substrings (#140)
-- Add `case_insensitive` method to `RegexBuilder` to force case-insensitive mode
+- Add `case_insensitive` method to `RegexBuilder` to force case-insensitive mode (#132)
 ### Changed
 - Bump bit-set dependency to 0.8 (#139)
 
