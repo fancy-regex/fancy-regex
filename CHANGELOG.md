@@ -22,6 +22,10 @@ with the exception that 0.x versions can break between minor versions.
 ### Changed
 - Switch from regex crate to regex-automata and regex-syntax (lower level APIs)
   to simplify internals (#121)
+- **Note:** Due to above change, more backtracking is done in fancy-regex itself
+  instead of regex-automata, and you might get a `BacktrackLimitExceeded` with
+  some patterns that you didn't get before. You can increase the backtrack limit
+  using `RegexBuilder::backtrack_limit` to help with that.
 - Allow escaping some letters in character classes, e.g. `[\A]` used to error
   but now matches the same as `[A]` (for compatibility with Oniguruma)
 - MSRV (minimum supported Rust version) is now 1.66.1 (from 1.61.0)
