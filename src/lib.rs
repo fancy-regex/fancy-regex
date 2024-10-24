@@ -170,7 +170,7 @@ Conditionals - if/then/else:
 [regex]: https://crates.io/crates/regex
 */
 
-#![doc(html_root_url = "https://docs.rs/fancy-regex/0.13.0")]
+#![doc(html_root_url = "https://docs.rs/fancy-regex/0.14.0")]
 #![deny(missing_docs)]
 #![deny(missing_debug_implementations)]
 #![cfg_attr(not(feature = "std"), no_std)]
