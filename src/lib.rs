@@ -642,7 +642,10 @@ impl Regex {
         let tree = ExprTree {
             expr: Expr::Concat(vec![
                 Expr::Repeat {
-                    child: Box::new(Expr::Any { newline: true }),
+                    child: Box::new(Expr::Any {
+                        newline: true,
+                        crlf: true,
+                    }),
                     lo: 0,
                     hi: usize::MAX,
                     greedy: false,
@@ -1397,8 +1400,10 @@ pub enum Expr {
     Empty,
     /// Any character, regex `.`
     Any {
-        /// Whether it also matches newlines or not
+        /// Whether it also matches newlines such as `\n` or not
         newline: bool,
+        /// Whether `\r` is also treated as a newline or not
+        crlf: bool,
     },
     /// An assertion
     Assertion(Assertion),
@@ -1551,12 +1556,16 @@ pub enum Assertion {
     EndText,
     /// Start of a line
     StartLine {
-        /// CRLF mode
+        /// CRLF mode.
+        /// If true, this assertion matches at the starting position of the input text, or at the position immediately
+        /// following either a `\r` or `\n` character, but never after a `\r` when a `\n` follows.
         crlf: bool,
     },
     /// End of a line
     EndLine {
-        /// CRLF mode
+        /// CRLF mode.
+        /// If true, this assertion matches at the starting position of the input text, or at the position immediately
+        /// following either a `\r` or `\n` character, but never after a `\r` when a `\n` follows.
         crlf: bool,
     },
     /// Left word boundary
@@ -1595,7 +1604,22 @@ impl Expr {
     pub fn to_str(&self, buf: &mut String, precedence: u8) {
         match *self {
             Expr::Empty => (),
-            Expr::Any { newline } => buf.push_str(if newline { "(?s:.)" } else { "." }),
+            Expr::Any {
+                newline: true,
+                crlf: true,
+            } => buf.push_str("(?sR:.)"),
+            Expr::Any {
+                newline: true,
+                crlf: false,
+            } => buf.push_str("(?s:.)"),
+            Expr::Any {
+                newline: false,
+                crlf: true,
+            } => buf.push_str("(?R:.)"),
+            Expr::Any {
+                newline: false,
+                crlf: false,
+            } => buf.push_str("."),
             Expr::Literal { ref val, casei } => {
                 if casei {
                     buf.push_str("(?i:");
@@ -1814,6 +1838,60 @@ mod tests {
     }
 
     #[test]
+    fn to_str_assertion() {
+        assert_eq!(to_str(Expr::Assertion(crate::Assertion::StartText)), "^");
+        assert_eq!(to_str(Expr::Assertion(crate::Assertion::EndText)), "$");
+        assert_eq!(
+            to_str(Expr::Assertion(crate::Assertion::StartLine { crlf: false })),
+            "(?m:^)"
+        );
+        assert_eq!(
+            to_str(Expr::Assertion(crate::Assertion::EndLine { crlf: false })),
+            "(?m:$)"
+        );
+        assert_eq!(
+            to_str(Expr::Assertion(crate::Assertion::StartLine { crlf: true })),
+            "(?Rm:^)"
+        );
+        assert_eq!(
+            to_str(Expr::Assertion(crate::Assertion::EndLine { crlf: true })),
+            "(?Rm:$)"
+        );
+    }
+
+    #[test]
+    fn to_str_any() {
+        assert_eq!(
+            to_str(Expr::Any {
+                newline: false,
+                crlf: false
+            }),
+            "."
+        );
+        assert_eq!(
+            to_str(Expr::Any {
+                newline: true,
+                crlf: false
+            }),
+            "(?s:.)"
+        );
+        assert_eq!(
+            to_str(Expr::Any {
+                newline: false,
+                crlf: true
+            }),
+            "(?R:.)"
+        );
+        assert_eq!(
+            to_str(Expr::Any {
+                newline: true,
+                crlf: true
+            }),
+            "(?sR:.)"
+        );
+    }
+
+    #[test]
     fn as_str_debug() {
         let s = r"(a+)b\1";
         let regex = Regex::new(s).unwrap();
@@ -1830,9 +1908,13 @@ mod tests {
 
     #[test]
     fn from_str() {
-        let s = r"(a+)b\1";
-        let regex = s.parse::<Regex>().unwrap();
-        assert_eq!(regex.as_str(), s);
+        for &s in &[
+            r"(a+)b\1", r"(?m:^)", r"(?m:$)", r"(?Rm:^)", r"(?Rm:$)", r"(?s:.)", r"(?R:.)",
+            r"(?sR:.)",
+        ] {
+            let regex = s.parse::<Regex>().unwrap();
+            assert_eq!(regex.as_str(), s);
+        }
     }
 
     #[test]
