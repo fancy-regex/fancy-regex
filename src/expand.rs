@@ -9,10 +9,15 @@ use crate::{Captures, CompileError, Error, ParseError, Regex};
 /// of capture groups.
 #[derive(Debug)]
 pub struct Expander {
-    sub_char: char,
-    open: &'static str,
-    close: &'static str,
-    allow_undelimited_name: bool,
+    /// Substitution character. For example, if `sub_char` is `'$'`, replacement groups should be
+    /// named $1, $2, etc. Defaults to `'$'`.
+    pub sub_char: char,
+    /// Group opening delimiter. Defaults to `"{"`.
+    pub open: &'static str,
+    /// Group closing delimiter. Defaults to `"}"`.
+    pub close: &'static str,
+    /// Allow group names without delimiters. Defaults to `true`.
+    pub allow_undelimited_name: bool,
 }
 
 impl Default for Expander {
