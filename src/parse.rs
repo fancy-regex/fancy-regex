@@ -351,6 +351,18 @@ impl<'a> Parser<'a> {
             (end, Expr::Assertion(Assertion::StartText))
         } else if b == b'z' && !in_class {
             (end, Expr::Assertion(Assertion::EndText))
+        } else if b == b'Z' && !in_class {
+            (
+                end,
+                Expr::LookAround(
+                    Box::new(Expr::Delegate {
+                        inner: "\n*$".to_string(),
+                        size: 1,
+                        casei: self.flag(FLAG_CASEI),
+                    }),
+                    LookAhead,
+                ),
+            )
         } else if b == b'b' && !in_class {
             if bytes.get(end) == Some(&b'{') {
                 // Support for \b{...} is not implemented yet
@@ -959,6 +971,21 @@ mod tests {
     #[test]
     fn end_text() {
         assert_eq!(p("$"), Expr::Assertion(Assertion::EndText));
+    }
+
+    #[test]
+    fn end_text_before_empty_lines() {
+        assert_eq!(
+            p("\\Z"),
+            Expr::LookAround(
+                Box::new(Expr::Delegate {
+                    inner: "\n*$".to_string(),
+                    size: 1,
+                    casei: false,
+                }),
+                LookAhead,
+            )
+        );
     }
 
     #[test]

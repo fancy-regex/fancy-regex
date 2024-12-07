@@ -267,6 +267,11 @@ fn find_conditional() {
     assert_eq!(find(r"(a)?b(?(1)c|d)", "abd"), Some((1, 3)));
 }
 
+#[test]
+fn find_endtext_before_newlines() {
+    assert_eq!(find(r"\Z", "hello\nworld\n\n\n"), Some((11, 11)));
+}
+
 fn find(re: &str, text: &str) -> Option<(usize, usize)> {
     find_match(re, text).map(|m| (m.start(), m.end()))
 }

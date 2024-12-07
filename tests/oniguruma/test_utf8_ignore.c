@@ -10,9 +10,6 @@
   // Compile failed: ParseError(1, InvalidEscape("\\O"))
   x2("$\\O", "bb\n", 2, 3);
 
-  // Compile failed: ParseError(0, InvalidEscape("\\Z"))
-  x2("\\Z", "", 0, 0);
-
   // Compile failed: ParseError(0, InvalidEscape("\\c"))
   x2("\\ca", "\001", 0, 1);
 
@@ -36,15 +33,6 @@
 
   // Compile failed: CompileError(InnerError(BuildError { kind: Syntax { pid: PatternID(0), err: Parse(Error { kind: ClassRangeInvalid, pattern: "[a-&&-a]", span: Span(Position(o: 1, l: 1, c: 2), Position(o: 4, l: 1, c: 5)) }) } }))
   x2("[a-&&-a]", "-", 0, 1);
-
-  // Compile failed: ParseError(2, InvalidEscape("\\Z"))
-  x2("\\A\\Z", "", 0, 0);
-
-  // Compile failed: ParseError(3, InvalidEscape("\\Z"))
-  x2("xyz\\Z", "xyz", 0, 3);
-
-  // Compile failed: ParseError(1, InvalidEscape("\\Z"))
-  x2("a\\Z", "a", 0, 1);
 
   // No match found
   x2("(?i:ss)", "\xc3\x9f", 0, 2);
@@ -79,12 +67,6 @@
   // No match found
   x2("(?m:.b)", "a\nb", 1, 3);
 
-  // Compile failed: ParseError(3, InvalidEscape("\\Z"))
-  x2("a|b\\Z", "ba", 1, 2);
-
-  // Compile failed: ParseError(3, InvalidEscape("\\Z"))
-  x2("a|b\\Z", "b", 0, 1);
-
   // Match found at start 1 and end 2 (expected 0 and 2)
   x2("a(?i)b|c", "aC", 0, 2);
 
@@ -111,12 +93,6 @@
 
   // Compile failed: CompileError(InvalidBackref)
   x2("(?:(?:\\1|z)(a))+$", "zaaa", 0, 4);
-
-  // Compile failed: ParseError(3, InvalidEscape("\\Z"))
-  x2("(a*\\Z)\\1", "a", 1, 1);
-
-  // Compile failed: ParseError(4, InvalidEscape("\\Z"))
-  x2(".(a*\\Z)\\1", "ba", 1, 2);
 
   // Compile failed: ParseError(3, InvalidEscape("\\g"))
   x2("(a)\\g<1>", "aa", 0, 2);
@@ -196,7 +172,7 @@
   // Compile failed: CompileError(InvalidBackref)
   x3("(?:\\1a|())*", "a", 0, 0, 1);
 
-  // Compile failed: ParseError(16, InvalidEscape("\\Z"))
+  // No match found
   x2("x((.)*)*x(?i:\\1)\\Z", "0x1x2x1X2", 1, 9);
 
   // No match found
@@ -442,26 +418,11 @@
   // No match found
   x2("\\xca\\xb8", "\xca\xb8", 0, 2);
 
-  // Compile failed: ParseError(9, InvalidEscape("\\Z"))
-  x2("むめも\\Z", "むめも", 0, 9);
-
-  // Compile failed: ParseError(9, InvalidEscape("\\Z"))
-  x2("かきく\\Z", "かきく\n", 0, 9);
-
   // No match found
   x2("(?m:よ.)", "よ\n", 0, 4);
 
   // No match found
   x2("(?m:.め)", "ま\nめ", 3, 7);
-
-  // Compile failed: ParseError(7, InvalidEscape("\\Z"))
-  x2("鬼|車\\Z", "車鬼", 3, 6);
-
-  // Compile failed: ParseError(7, InvalidEscape("\\Z"))
-  x2("鬼|車\\Z", "車", 0, 3);
-
-  // Compile failed: ParseError(7, InvalidEscape("\\Z"))
-  x2("鬼|車\\Z", "車\n", 0, 3);
 
   // No match found
   x2("(?:あい)?{2}", "", 0, 0);
@@ -480,12 +441,6 @@
 
   // No match found
   x3("((?m:あ.う))", "あ\nう", 0, 7, 1);
-
-  // Compile failed: ParseError(5, InvalidEscape("\\Z"))
-  x2("(あ*\\Z)\\1", "あ", 3, 3);
-
-  // Compile failed: ParseError(6, InvalidEscape("\\Z"))
-  x2(".(あ*\\Z)\\1", "いあ", 3, 6);
 
   // Compile failed: ParseError(16, InvalidEscape("\\g"))
   x2("(?<愚か>変|\\(\\g<愚か>\\))", "((((((変))))))", 0, 15);
