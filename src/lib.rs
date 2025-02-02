@@ -115,7 +115,9 @@ Escapes:
 `\K`
 : keep text matched so far out of the overall match ([docs](https://www.regular-expressions.info/keep.html))\
 `\G`
-: anchor to where the previous match ended ([docs](https://www.regular-expressions.info/continue.html))
+: anchor to where the previous match ended ([docs](https://www.regular-expressions.info/continue.html))\
+`\Z`
+: anchor to the end of the text before any trailing newlines
 
 Backreferences:
 
