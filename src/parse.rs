@@ -1232,6 +1232,29 @@ mod tests {
                 make_literal(","),
             ])
         );
+        assert_eq!(
+            p("a{1,A}"),
+            Expr::Concat(vec![
+                make_literal("a"),
+                make_literal("{"),
+                make_literal("1"),
+                make_literal(","),
+                make_literal("A"),
+                make_literal("}"),
+            ])
+        );
+        assert_eq!(
+            p("a{1,2A}"),
+            Expr::Concat(vec![
+                make_literal("a"),
+                make_literal("{"),
+                make_literal("1"),
+                make_literal(","),
+                make_literal("2"),
+                make_literal("A"),
+                make_literal("}"),
+            ])
+        );
     }
 
     #[test]
@@ -1661,6 +1684,14 @@ mod tests {
         assert_error(
             r"(?(?=\d)\w|!)",
             "Parsing error at position 3: Target of repeat operator is invalid",
+        );
+    }
+
+    #[test]
+    fn conditional_unclosed_at_end_of_pattern() {
+        assert_error(
+            r"(?(",
+            "Parsing error at position 3: Opening parenthesis without closing parenthesis",
         );
     }
 
