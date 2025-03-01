@@ -74,6 +74,7 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::usize;
+use derive_debug::Dbg;
 use regex_automata::meta::Regex;
 use regex_automata::util::look::LookMatcher;
 use regex_automata::util::primitives::NonMaxUsize;
@@ -101,7 +102,7 @@ pub(crate) const OPTION_SKIPPED_EMPTY_MATCH: u32 = 1 << 1;
 const MAX_STACK: usize = 1_000_000;
 
 /// Instruction of the VM.
-#[derive(Debug, Clone)]
+#[derive(Clone, Dbg)]
 pub enum Insn {
     /// Successful end of program
     End,
@@ -181,7 +182,10 @@ pub enum Insn {
     /// Delegate matching to the regex crate
     Delegate {
         /// The regex
+        #[dbg(skip)]
         inner: Regex,
+        /// The regex pattern as a string
+        pattern: String,
         /// The first group number that this regex captures (if it contains groups)
         start_group: usize,
         /// The last group number
@@ -664,6 +668,7 @@ pub(crate) fn run(
                 }
                 Insn::Delegate {
                     ref inner,
+                    pattern: _,
                     start_group,
                     end_group,
                 } => {

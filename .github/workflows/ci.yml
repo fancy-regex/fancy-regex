@@ -55,6 +55,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo run --example toy trace '\d*' '1122 33'
+      - run: cargo test --examples
 
   fmt:
     name: rustfmt

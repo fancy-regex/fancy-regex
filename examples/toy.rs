@@ -23,7 +23,9 @@
 use fancy_regex::internal::{analyze, compile, run_trace, Insn, Prog};
 use fancy_regex::*;
 use std::env;
+use std::io;
 use std::str::FromStr;
+
 
 fn main() {
     let mut args = env::args().skip(1);
@@ -80,40 +82,97 @@ fn main() {
             run_trace(&p, &text, 0).unwrap();
         } else if cmd == "graph" {
             let re = args.next().expect("expected regexp argument");
-            graph(&re);
+            graph(&re, &mut io::stdout()).expect("error making graph");
         } else {
             println!("commands: parse|analyze|compile|graph <expr>, run|trace|trace-inner <expr> <input>");
         }
     }
 }
 
-fn graph(re: &str) {
+fn graph(re: &str, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
     let prog = prog(re);
-    println!("digraph G {{");
+    write!(writer, "digraph G {{\n")?;
     for (i, insn) in prog.body.iter().enumerate() {
         let label = format!("{:?}", insn)
             .replace(r#"\"#, r#"\\"#)
             .replace(r#"""#, r#"\""#);
-        println!(r#"{:3} [label="{}: {}"];"#, i, i, label);
+        write!(writer, r#"{:3} [label="{}: {}"];{}"#, i, i, label, "\n")?;
         match *insn {
             Insn::Split(a, b) => {
-                println!("{:3} -> {};", i, a);
-                println!("{:3} -> {};", i, b);
+                write!(writer, "{:3} -> {};\n", i, a)?;
+                write!(writer, "{:3} -> {};\n", i, b)?;
             }
             Insn::Jmp(target) => {
-                println!("{:3} -> {};", i, target);
+                write!(writer, "{:3} -> {};\n", i, target)?;
             }
             Insn::End => {}
             _ => {
-                println!("{:3} -> {};", i, i + 1);
+                write!(writer, "{:3} -> {};\n", i, i + 1)?;
             }
         }
     }
-    println!("}}");
+    write!(writer, "}}\n")?;
+    Ok(())
 }
 
 fn prog(re: &str) -> Prog {
     let tree = Expr::parse_tree(re).expect("Expected parsing regex to work");
     let result = analyze(&tree).expect("Expected analyze to succeed");
     compile(&result).expect("Expected compile to succeed")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_graph() {
+        assert_graph("a+bc?", "\
+digraph G {
+  0 [label=\"0: Delegate { pattern: \\\"a+bc?\\\", start_group: 0, end_group: 0 }\"];
+  0 -> 1;
+  1 [label=\"1: End\"];
+}
+");
+
+        assert_graph("a+(?<b>b*)(?=c)\\k<b>", "\
+digraph G {
+  0 [label=\"0: Delegate { pattern: \\\"a+bc?\\\", start_group: 0, end_group: 0 }\"];
+  0 -> 1;
+  1 [label=\"1: End\"];
+}
+");
+    }
+
+    fn assert_graph(re: &str, expected: &str) {
+        use crate::graph;
+        let mut buf = Vec::new();
+        graph(re, &mut buf).expect("error making graph");
+        let output = String::from_utf8(buf).expect("error converting graph to string");
+        assert_eq!(&output, &expected);
+    }
+
+    #[test]
+    fn test_compilation_debug_output() {
+        let expected = "\
+  0: Split(3, 1)
+  1: Any
+  2: Jmp(0)
+  3: Save(0)
+  4: Lit(\"a\")
+  5: Split(4, 6)
+  6: Save(2)
+  7: Split(8, 10)
+  8: Lit(\"b\")
+  9: Jmp(7)
+ 10: Save(3)
+ 11: Save(4)
+ 12: Lit(\"c\")
+ 13: Restore(4)
+ 14: Backref(2)
+ 15: Save(1)
+ 16: End
+";
+        use crate::Regex;
+        let r = Regex::new("a+(?<b>b*)(?=c)\\k<b>").unwrap();
+        r.debug_print();
+    }
 }

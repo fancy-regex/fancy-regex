@@ -578,6 +578,7 @@ impl DelegateBuilder {
 
         Ok(Insn::Delegate {
             inner: compiled,
+            pattern: self.re.clone(),
             start_group,
             end_group,
         })
