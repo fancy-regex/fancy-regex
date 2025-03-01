@@ -29,21 +29,18 @@ fn main() {
     let mut args = env::args().skip(1);
     if let Some(cmd) = args.next() {
         if cmd == "parse" {
-            if let Some(re) = args.next() {
-                let e = Expr::parse_tree(&re);
-                println!("{:#?}", e);
-            }
+            let re = args.next().expect("expected regexp argument");
+            let e = Expr::parse_tree(&re);
+            println!("{:#?}", e);
         } else if cmd == "analyze" {
-            if let Some(re) = args.next() {
-                let tree = Expr::parse_tree(&re).unwrap();
-                let a = analyze(&tree);
-                println!("{:#?}", a);
-            }
+            let re = args.next().expect("expected regexp argument");
+            let tree = Expr::parse_tree(&re).unwrap();
+            let a = analyze(&tree);
+            println!("{:#?}", a);
         } else if cmd == "compile" {
-            if let Some(re) = args.next() {
-                let r = Regex::new(&re).unwrap();
-                r.debug_print();
-            }
+            let re = args.next().expect("expected regexp argument");
+            let r = Regex::new(&re).unwrap();
+            r.debug_print();
         } else if cmd == "run" {
             let re = args.next().expect("expected regexp argument");
             let r = Regex::new(&re).unwrap();
@@ -70,21 +67,17 @@ fn main() {
                 println!("no match");
             }
         } else if cmd == "trace" {
-            if let Some(re) = args.next() {
-                let prog = prog(&re);
-                if let Some(s) = args.next() {
-                    run_trace(&prog, &s, 0).unwrap();
-                }
-            }
+            let re = args.next().expect("expected regexp argument");
+            let prog = prog(&re);
+            let text = args.next().expect("expected text argument");
+            run_trace(&prog, &text, 0).unwrap();
         } else if cmd == "trace-inner" {
-            if let Some(re) = args.next() {
-                let tree = Expr::parse_tree(&re).unwrap();
-                let a = analyze(&tree).unwrap();
-                let p = compile(&a).unwrap();
-                if let Some(s) = args.next() {
-                    run_trace(&p, &s, 0).unwrap();
-                }
-            }
+            let re = args.next().expect("expected regexp argument");
+            let tree = Expr::parse_tree(&re).unwrap();
+            let text = args.next().expect("expected text argument");
+            let a = analyze(&tree).unwrap();
+            let p = compile(&a).unwrap();
+            run_trace(&p, &text, 0).unwrap();
         } else if cmd == "graph" {
             let re = args.next().expect("expected regexp argument");
             graph(&re);
