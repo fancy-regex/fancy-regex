@@ -303,7 +303,14 @@ impl<'a> Parser<'a> {
             };
             if let Some(group) = group {
                 self.backrefs.insert(group);
-                return Ok((ix + skip, if is_subroutine_call { Expr::SubroutineCall(group) } else { Expr::Backref(group) }));
+                return Ok((
+                    ix + skip,
+                    if is_subroutine_call {
+                        Expr::SubroutineCall(group)
+                    } else {
+                        Expr::Backref(group)
+                    },
+                ));
             }
             // here the name is parsed but it is invalid
             Err(Error::ParseError(
@@ -316,13 +323,24 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_numbered_backref(&mut self, ix: usize, is_subroutine_call: bool) -> Result<(usize, Expr)> {
+    fn parse_numbered_backref(
+        &mut self,
+        ix: usize,
+        is_subroutine_call: bool,
+    ) -> Result<(usize, Expr)> {
         if let Some((end, group)) = parse_decimal(self.re, ix) {
             // protect BitSet against unreasonably large value
             if group < self.re.len() / 2 {
                 self.numeric_backrefs = true;
                 self.backrefs.insert(group);
-                return Ok((end, if is_subroutine_call { Expr::SubroutineCall(group) } else { Expr::Backref(group) }));
+                return Ok((
+                    end,
+                    if is_subroutine_call {
+                        Expr::SubroutineCall(group)
+                    } else {
+                        Expr::Backref(group)
+                    },
+                ));
             }
         }
         return Err(Error::ParseError(ix, ParseError::InvalidBackref));
@@ -442,7 +460,10 @@ impl<'a> Parser<'a> {
             (end, Expr::ContinueFromPreviousMatchEnd)
         } else if b == b'g' && !in_class {
             if end == self.re.len() {
-                return Err(Error::ParseError(ix, ParseError::InvalidEscape("\\g".to_string())));
+                return Err(Error::ParseError(
+                    ix,
+                    ParseError::InvalidEscape("\\g".to_string()),
+                ));
             }
             let b = bytes[end];
             if is_digit(b) {
@@ -1733,10 +1754,7 @@ mod tests {
             "Parsing error at position 2: Could not parse group name",
         );
 
-        assert_error(
-            r"\g",
-            "Parsing error at position 0: Invalid escape: \\g",
-        );
+        assert_error(r"\g", "Parsing error at position 0: Invalid escape: \\g");
 
         assert_error(
             r"\g test",
@@ -1936,6 +1954,14 @@ mod tests {
 
         assert_eq!(
             p(r"(?<group_name>a)\g'group_name'"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(make_literal("a"))),
+                Expr::SubroutineCall(1)
+            ])
+        );
+
+        assert_eq!(
+            p(r"(?<group_name>a)(?P>group_name)"),
             Expr::Concat(vec![
                 Expr::Group(Box::new(make_literal("a"))),
                 Expr::SubroutineCall(1)
