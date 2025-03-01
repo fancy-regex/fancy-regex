@@ -200,6 +200,9 @@ impl<'a> Analyzer<'a> {
                 children.push(child_info_truth);
                 children.push(child_info_false);
             }
+            Expr::SubroutineCall(_) => {
+                return Err(Error::CompileError(CompileError::FeatureNotYetSupported("Subroutine Call".to_string())));
+            }
         };
 
         Ok(Info {

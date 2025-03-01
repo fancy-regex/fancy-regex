@@ -76,7 +76,7 @@ impl<'a> Parser<'a> {
         }
         Ok(ExprTree {
             expr,
-            backrefs: Default::default(),
+            backrefs: p.backrefs,
             named_groups: p.named_groups,
         })
     }
@@ -286,11 +286,12 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_named_backref(
-        &self,
+        &mut self,
         ix: usize,
         open: &str,
         close: &str,
         allow_relative: bool,
+        is_subroutine_call: bool,
     ) -> Result<(usize, Expr)> {
         if let Some((id, skip)) = parse_id(&self.re[ix..], open, close, allow_relative) {
             let group = if let Some(group) = self.named_groups.get(id) {
@@ -307,7 +308,10 @@ impl<'a> Parser<'a> {
                 None
             };
             if let Some(group) = group {
-                return Ok((ix + skip, Expr::Backref(group)));
+                //if is_subroutine_call {
+                    self.backrefs.insert(group);
+                //}
+                return Ok((ix + skip, if is_subroutine_call { Expr::SubroutineCall(group) } else { Expr::Backref(group) }));
             }
             // here the name is parsed but it is invalid
             Err(Error::ParseError(
@@ -343,9 +347,9 @@ impl<'a> Parser<'a> {
         } else if matches!(b, b'k') && !in_class {
             // Named backref: \k<name>
             if bytes.get(end) == Some(&b'\'') {
-                return self.parse_named_backref(end, "'", "'", true);
+                return self.parse_named_backref(end, "'", "'", true, false);
             } else {
-                return self.parse_named_backref(end, "<", ">", true);
+                return self.parse_named_backref(end, "<", ">", true, false);
             }
         } else if b == b'A' && !in_class {
             (end, Expr::Assertion(Assertion::StartText))
@@ -443,6 +447,23 @@ impl<'a> Parser<'a> {
             (end, Expr::KeepOut)
         } else if b == b'G' && !in_class {
             (end, Expr::ContinueFromPreviousMatchEnd)
+        } else if b == b'g' && !in_class {
+            if end == self.re.len() {
+                return Err(Error::ParseError(ix, ParseError::InvalidEscape("\\g".to_string())));
+            }
+            let b = bytes[end];
+            if is_digit(b) {
+                if let Some((end, group)) = parse_decimal(self.re, end) {
+                    self.backrefs.insert(group);
+                    (end, Expr::SubroutineCall(group))
+                } else {
+                    return Err(Error::ParseError(ix, ParseError::InvalidEscape("\\g".to_string())));
+                }
+            } else if b == b'\'' {
+                self.parse_named_backref(end, "'", "'", true, true)?
+            } else {
+                self.parse_named_backref(end, "<", ">", true, true)?
+            }
         } else {
             // printable ASCII (including space, see issue #29)
             (
@@ -633,11 +654,13 @@ impl<'a> Parser<'a> {
             }
         } else if self.re[ix..].starts_with("?P=") {
             // Backref using Python syntax: (?P=name)
-            return self.parse_named_backref(ix + 3, "", ")", false);
+            return self.parse_named_backref(ix + 3, "", ")", false, false);
         } else if self.re[ix..].starts_with("?>") {
             (None, 2)
         } else if self.re[ix..].starts_with("?(") {
             return self.parse_conditional(ix + 2, depth);
+        } else if self.re[ix..].starts_with("?P>") {
+            return self.parse_named_backref(ix + 3, "", ")", false, true);
         } else if self.re[ix..].starts_with('?') {
             return self.parse_flags(ix, depth);
         } else {
@@ -744,9 +767,9 @@ impl<'a> Parser<'a> {
         let (mut next, condition) = if is_digit(b) {
             self.parse_numbered_backref(ix)?
         } else if b == b'\'' {
-            self.parse_named_backref(ix, "'", "'", true)?
+            self.parse_named_backref(ix, "'", "'", true, false)?
         } else if b == b'<' {
-            self.parse_named_backref(ix, "<", ">", true)?
+            self.parse_named_backref(ix, "<", ">", true, false)?
         } else {
             self.parse_re(ix, depth)?
         };
@@ -1696,6 +1719,52 @@ mod tests {
     }
 
     #[test]
+    fn subroutine_call_unclosed_at_end_of_pattern() {
+        assert_error(
+            r"\g<",
+            "Parsing error at position 2: Could not parse group name",
+        );
+
+        assert_error(
+            r"\g<name",
+            "Parsing error at position 2: Could not parse group name",
+        );
+
+        assert_error(
+            r"\g'",
+            "Parsing error at position 2: Could not parse group name",
+        );
+
+        assert_error(
+            r"\g''",
+            "Parsing error at position 2: Could not parse group name",
+        );
+
+        assert_error(
+            r"\g<>",
+            "Parsing error at position 2: Could not parse group name",
+        );
+
+        assert_error(
+            r"\g",
+            "Parsing error at position 0: Invalid escape: \\g",
+        );
+
+        assert_error(
+            r"\g test",
+            "Parsing error at position 2: Could not parse group name",
+        );
+    }
+
+    #[test]
+    fn subroutine_call_missing_subroutine_reference() {
+        assert_error(
+            r"\g test",
+            "Parsing error at position 2: Could not parse group name",
+        );
+    }
+
+    #[test]
     fn backref_condition_with_one_two_or_three_branches() {
         assert_eq!(
             p("(h)?(?(1)i|x)"),
@@ -1848,6 +1917,41 @@ mod tests {
                 true_branch: Box::new(make_literal("c")),
                 false_branch: Box::new(make_literal("d")),
             },
+        );
+    }
+
+    #[test]
+    fn subroutines() {
+        assert_eq!(
+            p(r"(a)\g1"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(make_literal("a"))),
+                Expr::SubroutineCall(1)
+            ])
+        );
+
+        assert_eq!(
+            p(r"(a)\g<1>"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(make_literal("a"))),
+                Expr::SubroutineCall(1)
+            ])
+        );
+
+        assert_eq!(
+            p(r"(?<group_name>a)\g<group_name>"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(make_literal("a"))),
+                Expr::SubroutineCall(1)
+            ])
+        );
+
+        assert_eq!(
+            p(r"(?<group_name>a)\g'group_name'"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(make_literal("a"))),
+                Expr::SubroutineCall(1)
+            ])
         );
     }
 

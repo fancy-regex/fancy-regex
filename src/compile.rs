@@ -174,6 +174,9 @@ impl Compiler {
             Expr::Conditional { .. } => {
                 self.compile_conditional(|compiler, i| compiler.visit(&info.children[i], hard))?;
             }
+            Expr::SubroutineCall(_) => {
+                return Err(Error::CompileError(CompileError::FeatureNotYetSupported("Subroutine Call".to_string())));
+            }
         }
         Ok(())
     }
