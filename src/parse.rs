@@ -351,6 +351,18 @@ impl<'a> Parser<'a> {
             (end, Expr::Assertion(Assertion::StartText))
         } else if b == b'z' && !in_class {
             (end, Expr::Assertion(Assertion::EndText))
+        } else if b == b'Z' && !in_class {
+            (
+                end,
+                Expr::LookAround(
+                    Box::new(Expr::Delegate {
+                        inner: "\n*$".to_string(),
+                        size: 0,
+                        casei: false,
+                    }),
+                    LookAhead,
+                ),
+            )
         } else if b == b'b' && !in_class {
             if bytes.get(end) == Some(&b'{') {
                 // Support for \b{...} is not implemented yet
@@ -962,6 +974,21 @@ mod tests {
     }
 
     #[test]
+    fn end_text_before_empty_lines() {
+        assert_eq!(
+            p("\\Z"),
+            Expr::LookAround(
+                Box::new(Expr::Delegate {
+                    inner: "\n*$".to_string(),
+                    size: 0,
+                    casei: false,
+                }),
+                LookAhead,
+            )
+        );
+    }
+
+    #[test]
     fn literal() {
         assert_eq!(p("a"), make_literal("a"));
     }
@@ -1203,6 +1230,29 @@ mod tests {
                 make_literal("{"),
                 make_literal("6"),
                 make_literal(","),
+            ])
+        );
+        assert_eq!(
+            p("a{1,A}"),
+            Expr::Concat(vec![
+                make_literal("a"),
+                make_literal("{"),
+                make_literal("1"),
+                make_literal(","),
+                make_literal("A"),
+                make_literal("}"),
+            ])
+        );
+        assert_eq!(
+            p("a{1,2A}"),
+            Expr::Concat(vec![
+                make_literal("a"),
+                make_literal("{"),
+                make_literal("1"),
+                make_literal(","),
+                make_literal("2"),
+                make_literal("A"),
+                make_literal("}"),
             ])
         );
     }
@@ -1634,6 +1684,14 @@ mod tests {
         assert_error(
             r"(?(?=\d)\w|!)",
             "Parsing error at position 3: Target of repeat operator is invalid",
+        );
+    }
+
+    #[test]
+    fn conditional_unclosed_at_end_of_pattern() {
+        assert_error(
+            r"(?(",
+            "Parsing error at position 3: Opening parenthesis without closing parenthesis",
         );
     }
 
