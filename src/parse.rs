@@ -279,14 +279,14 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_named_backref(
+    fn parse_named_backref<F>(
         &mut self,
         ix: usize,
         open: &str,
         close: &str,
         allow_relative: bool,
-        is_subroutine_call: bool,
-    ) -> Result<(usize, Expr)> {
+        create_expr: F,
+    ) -> Result<(usize, Expr)> where F: FnOnce(usize) -> Expr {
         if let Some((id, skip)) = parse_id(&self.re[ix..], open, close, allow_relative) {
             let group = if let Some(group) = self.named_groups.get(id) {
                 Some(*group)
@@ -305,11 +305,7 @@ impl<'a> Parser<'a> {
                 self.backrefs.insert(group);
                 return Ok((
                     ix + skip,
-                    if is_subroutine_call {
-                        Expr::SubroutineCall(group)
-                    } else {
-                        Expr::Backref(group)
-                    },
+                    create_expr(group),
                 ));
             }
             // here the name is parsed but it is invalid
@@ -323,11 +319,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_numbered_backref(
+    fn parse_numbered_backref<F>(
         &mut self,
         ix: usize,
-        is_subroutine_call: bool,
-    ) -> Result<(usize, Expr)> {
+        create_expr: F,
+    ) -> Result<(usize, Expr)> where F: FnOnce(usize) -> Expr {
         if let Some((end, group)) = parse_decimal(self.re, ix) {
             // protect BitSet against unreasonably large value
             if group < self.re.len() / 2 {
@@ -335,11 +331,7 @@ impl<'a> Parser<'a> {
                 self.backrefs.insert(group);
                 return Ok((
                     end,
-                    if is_subroutine_call {
-                        Expr::SubroutineCall(group)
-                    } else {
-                        Expr::Backref(group)
-                    },
+                    create_expr(group),
                 ));
             }
         }
@@ -354,13 +346,13 @@ impl<'a> Parser<'a> {
         };
         let end = ix + 1 + codepoint_len(b);
         Ok(if is_digit(b) {
-            return self.parse_numbered_backref(ix + 1, false);
+            return self.parse_numbered_backref(ix + 1, &|group| Expr::Backref(group));
         } else if matches!(b, b'k') && !in_class {
             // Named backref: \k<name>
             if bytes.get(end) == Some(&b'\'') {
-                return self.parse_named_backref(end, "'", "'", true, false);
+                return self.parse_named_backref(end, "'", "'", true, &|group| Expr::Backref(group));
             } else {
-                return self.parse_named_backref(end, "<", ">", true, false);
+                return self.parse_named_backref(end, "<", ">", true, &|group| Expr::Backref(group));
             }
         } else if b == b'A' && !in_class {
             (end, Expr::Assertion(Assertion::StartText))
@@ -467,11 +459,11 @@ impl<'a> Parser<'a> {
             }
             let b = bytes[end];
             if is_digit(b) {
-                self.parse_numbered_backref(end, true)?
+                self.parse_numbered_backref(end, &|group| Expr::SubroutineCall(group))?
             } else if b == b'\'' {
-                self.parse_named_backref(end, "'", "'", true, true)?
+                self.parse_named_backref(end, "'", "'", true, &|group| Expr::SubroutineCall(group))?
             } else {
-                self.parse_named_backref(end, "<", ">", true, true)?
+                self.parse_named_backref(end, "<", ">", true, &|group| Expr::SubroutineCall(group))?
             }
         } else {
             // printable ASCII (including space, see issue #29)
@@ -663,13 +655,13 @@ impl<'a> Parser<'a> {
             }
         } else if self.re[ix..].starts_with("?P=") {
             // Backref using Python syntax: (?P=name)
-            return self.parse_named_backref(ix + 3, "", ")", false, false);
+            return self.parse_named_backref(ix + 3, "", ")", false, &|group| Expr::Backref(group));
         } else if self.re[ix..].starts_with("?>") {
             (None, 2)
         } else if self.re[ix..].starts_with("?(") {
             return self.parse_conditional(ix + 2, depth);
         } else if self.re[ix..].starts_with("?P>") {
-            return self.parse_named_backref(ix + 3, "", ")", false, true);
+            return self.parse_named_backref(ix + 3, "", ")", false, &|group| Expr::SubroutineCall(group));
         } else if self.re[ix..].starts_with('?') {
             return self.parse_flags(ix, depth);
         } else {
@@ -774,11 +766,11 @@ impl<'a> Parser<'a> {
         // get the character after the open paren
         let b = bytes[ix];
         let (mut next, condition) = if is_digit(b) {
-            self.parse_numbered_backref(ix, false)?
+            self.parse_numbered_backref(ix, &|group| Expr::Backref(group))?
         } else if b == b'\'' {
-            self.parse_named_backref(ix, "'", "'", true, false)?
+            self.parse_named_backref(ix, "'", "'", true, &|group| Expr::Backref(group))?
         } else if b == b'<' {
-            self.parse_named_backref(ix, "<", ">", true, false)?
+            self.parse_named_backref(ix, "<", ">", true, &|group| Expr::Backref(group))?
         } else {
             self.parse_re(ix, depth)?
         };
