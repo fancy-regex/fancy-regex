@@ -357,8 +357,8 @@ impl<'a> Parser<'a> {
                 Expr::LookAround(
                     Box::new(Expr::Delegate {
                         inner: "\n*$".to_string(),
-                        size: 1,
-                        casei: self.flag(FLAG_CASEI),
+                        size: 0,
+                        casei: false,
                     }),
                     LookAhead,
                 ),
@@ -980,7 +980,7 @@ mod tests {
             Expr::LookAround(
                 Box::new(Expr::Delegate {
                     inner: "\n*$".to_string(),
-                    size: 1,
+                    size: 0,
                     casei: false,
                 }),
                 LookAhead,
