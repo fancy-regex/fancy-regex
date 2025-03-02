@@ -286,7 +286,10 @@ impl<'a> Parser<'a> {
         close: &str,
         allow_relative: bool,
         create_expr: F,
-    ) -> Result<(usize, Expr)> where F: FnOnce(usize) -> Expr {
+    ) -> Result<(usize, Expr)>
+    where
+        F: FnOnce(usize) -> Expr,
+    {
         if let Some((id, skip)) = parse_id(&self.re[ix..], open, close, allow_relative) {
             let group = if let Some(group) = self.named_groups.get(id) {
                 Some(*group)
@@ -303,10 +306,7 @@ impl<'a> Parser<'a> {
             };
             if let Some(group) = group {
                 self.backrefs.insert(group);
-                return Ok((
-                    ix + skip,
-                    create_expr(group),
-                ));
+                return Ok((ix + skip, create_expr(group)));
             }
             // here the name is parsed but it is invalid
             Err(Error::ParseError(
@@ -319,20 +319,16 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_numbered_backref<F>(
-        &mut self,
-        ix: usize,
-        create_expr: F,
-    ) -> Result<(usize, Expr)> where F: FnOnce(usize) -> Expr {
+    fn parse_numbered_backref<F>(&mut self, ix: usize, create_expr: F) -> Result<(usize, Expr)>
+    where
+        F: FnOnce(usize) -> Expr,
+    {
         if let Some((end, group)) = parse_decimal(self.re, ix) {
             // protect BitSet against unreasonably large value
             if group < self.re.len() / 2 {
                 self.numeric_backrefs = true;
                 self.backrefs.insert(group);
-                return Ok((
-                    end,
-                    create_expr(group),
-                ));
+                return Ok((end, create_expr(group)));
             }
         }
         return Err(Error::ParseError(ix, ParseError::InvalidBackref));
@@ -350,9 +346,11 @@ impl<'a> Parser<'a> {
         } else if matches!(b, b'k') && !in_class {
             // Named backref: \k<name>
             if bytes.get(end) == Some(&b'\'') {
-                return self.parse_named_backref(end, "'", "'", true, &|group| Expr::Backref(group));
+                return self
+                    .parse_named_backref(end, "'", "'", true, &|group| Expr::Backref(group));
             } else {
-                return self.parse_named_backref(end, "<", ">", true, &|group| Expr::Backref(group));
+                return self
+                    .parse_named_backref(end, "<", ">", true, &|group| Expr::Backref(group));
             }
         } else if b == b'A' && !in_class {
             (end, Expr::Assertion(Assertion::StartText))
@@ -661,7 +659,8 @@ impl<'a> Parser<'a> {
         } else if self.re[ix..].starts_with("?(") {
             return self.parse_conditional(ix + 2, depth);
         } else if self.re[ix..].starts_with("?P>") {
-            return self.parse_named_backref(ix + 3, "", ")", false, &|group| Expr::SubroutineCall(group));
+            return self
+                .parse_named_backref(ix + 3, "", ")", false, &|group| Expr::SubroutineCall(group));
         } else if self.re[ix..].starts_with('?') {
             return self.parse_flags(ix, depth);
         } else {
