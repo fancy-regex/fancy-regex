@@ -20,7 +20,7 @@
 
 //! Compilation of regexes to VM.
 
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::usize;
 use regex_automata::meta::Regex as RaRegex;
@@ -173,6 +173,11 @@ impl Compiler {
             }
             Expr::Conditional { .. } => {
                 self.compile_conditional(|compiler, i| compiler.visit(&info.children[i], hard))?;
+            }
+            Expr::SubroutineCall(_) => {
+                return Err(Error::CompileError(CompileError::FeatureNotYetSupported(
+                    "Subroutine Call".to_string(),
+                )));
             }
         }
         Ok(())

@@ -1466,6 +1466,8 @@ pub enum Expr {
         /// What to execute if the condition is false
         false_branch: Box<Expr>,
     },
+    /// Subroutine call to the specified group number
+    SubroutineCall(usize),
 }
 
 /// Type of look-around assertion as used for a look-around expression.

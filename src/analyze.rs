@@ -26,6 +26,7 @@ use core::cmp::min;
 
 use bit_set::BitSet;
 
+use crate::alloc::string::ToString;
 use crate::parse::ExprTree;
 use crate::{CompileError, Error, Expr, Result};
 
@@ -200,6 +201,11 @@ impl<'a> Analyzer<'a> {
                 children.push(child_info_truth);
                 children.push(child_info_false);
             }
+            Expr::SubroutineCall(_) => {
+                return Err(Error::CompileError(CompileError::FeatureNotYetSupported(
+                    "Subroutine Call".to_string(),
+                )));
+            }
         };
 
         Ok(Info {
@@ -264,6 +270,11 @@ mod tests {
     #[test]
     fn invalid_backref_3() {
         assert!(analyze(&Expr::parse_tree("\\1(.)").unwrap()).is_err());
+    }
+
+    #[test]
+    fn feature_not_yet_supported() {
+        assert!(analyze(&Expr::parse_tree("(a)\\g<1>").unwrap()).is_err());
     }
 
     #[test]
