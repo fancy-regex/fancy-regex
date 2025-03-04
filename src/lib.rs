@@ -943,13 +943,13 @@ impl Regex {
 
     // for debugging only
     #[doc(hidden)]
-    pub fn debug_print(&self) {
+    pub fn debug_print(&self, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
         match &self.inner {
             #[cfg(feature = "std")]
-            RegexImpl::Wrap { inner, .. } => println!("wrapped {:?}", inner),
+            RegexImpl::Wrap { inner, .. } => write!(writer, "wrapped {:?}", inner),
             #[cfg(not(feature = "std"))]
             RegexImpl::Wrap { .. } => {}
-            RegexImpl::Fancy { prog, .. } => prog.debug_print(),
+            RegexImpl::Fancy { prog, .. } => prog.debug_print(writer),
         }
     }
 

@@ -41,8 +41,7 @@ fn main() {
             println!("{:#?}", a);
         } else if cmd == "compile" {
             let re = args.next().expect("expected regexp argument");
-            let r = Regex::new(&re).unwrap();
-            r.debug_print();
+            show_compiled_program(&re, &mut io::stdout()).expect("error compiling program");
         } else if cmd == "run" {
             let re = args.next().expect("expected regexp argument");
             let r = Regex::new(&re).unwrap();
@@ -115,6 +114,12 @@ fn graph(re: &str, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
     Ok(())
 }
 
+fn show_compiled_program(re: &str, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
+    let r = Regex::new(&re).unwrap();
+    r.debug_print(writer)?;
+    Ok(())
+}
+
 fn prog(re: &str) -> Prog {
     let tree = Expr::parse_tree(re).expect("Expected parsing regex to work");
     let result = analyze(&tree).expect("Expected analyze to succeed");
@@ -152,8 +157,8 @@ digraph G {
 
     #[test]
     fn test_compilation_debug_output() {
-        let expected = "\
-  0: Split(3, 1)
+        let expected = " ".to_owned() +
+" 0: Split(3, 1)
   1: Any
   2: Jmp(0)
   3: Save(0)
@@ -171,8 +176,15 @@ digraph G {
  15: Save(1)
  16: End
 ";
-        use crate::Regex;
-        let r = Regex::new("a+(?<b>b*)(?=c)\\k<b>").unwrap();
-        r.debug_print();
+
+        assert_compiled_prog("a+(?<b>b*)(?=c)\\k<b>", &expected);
+    }
+
+    fn assert_compiled_prog(re: &str, expected: &str) {
+        use crate::show_compiled_program;
+        let mut buf = Vec::new();
+        show_compiled_program(re, &mut buf).expect("error compiling program");
+        let output = String::from_utf8(buf).expect("error converting program to string");
+        assert_eq!(&output, &expected);
     }
 }

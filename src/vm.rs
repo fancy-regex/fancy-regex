@@ -211,11 +211,12 @@ impl Prog {
     }
 
     #[doc(hidden)]
-    pub(crate) fn debug_print(&self) {
+    pub(crate) fn debug_print(&self, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
         #[cfg(feature = "std")]
         for (i, insn) in self.body.iter().enumerate() {
-            println!("{:3}: {:?}", i, insn);
+            write!(writer, "{:3}: {:?}\n", i, insn)?;
         }
+        Ok(())
     }
 }
 
