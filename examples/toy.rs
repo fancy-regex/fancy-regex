@@ -26,7 +26,6 @@ use std::env;
 use std::io;
 use std::str::FromStr;
 
-
 fn main() {
     let mut args = env::args().skip(1);
     if let Some(cmd) = args.next() {
@@ -130,21 +129,27 @@ fn prog(re: &str) -> Prog {
 mod tests {
     #[test]
     fn test_graph() {
-        assert_graph("a+bc?", "\
+        assert_graph(
+            "a+bc?",
+            "\
 digraph G {
   0 [label=\"0: Delegate { pattern: \\\"a+bc?\\\", start_group: 0, end_group: 0 }\"];
   0 -> 1;
   1 [label=\"1: End\"];
 }
-");
+",
+        );
 
-        assert_graph("a+(?<b>b*)(?=c)\\k<b>", "\
+        assert_graph(
+            "a+(?<b>b*)(?=c)\\k<b>",
+            "\
 digraph G {
   0 [label=\"0: Delegate { pattern: \\\"a+bc?\\\", start_group: 0, end_group: 0 }\"];
   0 -> 1;
   1 [label=\"1: End\"];
 }
-");
+",
+        );
     }
 
     fn assert_graph(re: &str, expected: &str) {
@@ -157,8 +162,8 @@ digraph G {
 
     #[test]
     fn test_compilation_debug_output() {
-        let expected = " ".to_owned() +
-" 0: Split(3, 1)
+        let expected = " ".to_owned()
+            + " 0: Split(3, 1)
   1: Any
   2: Jmp(0)
   3: Save(0)
