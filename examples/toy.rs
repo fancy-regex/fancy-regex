@@ -162,8 +162,9 @@ digraph G {
 
     #[test]
     fn test_compilation_debug_output() {
-        let expected = " ".to_owned()
-            + " 0: Split(3, 1)
+        let expected = "  ".to_owned()
+            + "\
+  0: Split(3, 1)
   1: Any
   2: Jmp(0)
   3: Save(0)
