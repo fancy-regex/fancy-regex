@@ -113,7 +113,8 @@ fn graph(re: &str, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
 
 fn show_analysis(re: &str, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
     let tree = Expr::parse_tree(&re).unwrap();
-    let a = analyze(&tree);
+    let wrapped_tree = wrap_tree(tree);
+    let a = analyze(&wrapped_tree);
     write!(writer, "{:#?}\n", a)
 }
 
@@ -124,7 +125,8 @@ fn show_compiled_program(re: &str, writer: &mut dyn std::io::Write) -> std::io::
 
 fn prog(re: &str) -> Prog {
     let tree = Expr::parse_tree(re).expect("Expected parsing regex to work");
-    let result = analyze(&tree).expect("Expected analyze to succeed");
+    let wrapped_tree = wrap_tree(tree);
+    let result = analyze(&wrapped_tree).expect("Expected analyze to succeed");
     compile(&result).expect("Expected compile to succeed")
 }
 
@@ -136,7 +138,7 @@ mod tests {
             "a+bc?",
             "\
 digraph G {
-  0 [label=\"0: Delegate { pattern: \\\"a+bc?\\\", start_group: 0, end_group: 0 }\"];
+  0 [label=\"0: Delegate { pattern: \\\"(?s:.)*?(a+bc?)\\\", start_group: 0, end_group: 1 }\"];
   0 -> 1;
   1 [label=\"1: End\"];
 }
@@ -150,7 +152,42 @@ digraph G {
             "a+(?<b>b*)(?=c)\\k<b>",
             "\
 digraph G {
-  
+  0 [label=\"0: Split(3, 1)\"];
+  0 -> 3;
+  0 -> 1;
+  1 [label=\"1: Any\"];
+  1 -> 2;
+  2 [label=\"2: Jmp(0)\"];
+  2 -> 0;
+  3 [label=\"3: Save(0)\"];
+  3 -> 4;
+  4 [label=\"4: Lit(\\\"a\\\")\"];
+  4 -> 5;
+  5 [label=\"5: Split(4, 6)\"];
+  5 -> 4;
+  5 -> 6;
+  6 [label=\"6: Save(2)\"];
+  6 -> 7;
+  7 [label=\"7: Split(8, 10)\"];
+  7 -> 8;
+  7 -> 10;
+  8 [label=\"8: Lit(\\\"b\\\")\"];
+  8 -> 9;
+  9 [label=\"9: Jmp(7)\"];
+  9 -> 7;
+ 10 [label=\"10: Save(3)\"];
+ 10 -> 11;
+ 11 [label=\"11: Save(4)\"];
+ 11 -> 12;
+ 12 [label=\"12: Lit(\\\"c\\\")\"];
+ 12 -> 13;
+ 13 [label=\"13: Restore(4)\"];
+ 13 -> 14;
+ 14 [label=\"14: Backref(2)\"];
+ 14 -> 15;
+ 15 [label=\"15: Save(1)\"];
+ 15 -> 16;
+ 16 [label=\"16: End\"];
 }
 ",
         );
@@ -213,6 +250,7 @@ digraph G {
         let mut buf = Vec::new();
         show_analysis(re, &mut buf).expect("error analyzing program");
         let output = String::from_utf8(buf).expect("error converting analysis to string");
+        println!("{}", output);
         assert!(&output.starts_with("Ok(\n    Info {"));
     }
 }
