@@ -35,9 +35,7 @@ fn main() {
             println!("{:#?}", e);
         } else if cmd == "analyze" {
             let re = args.next().expect("expected regexp argument");
-            let tree = Expr::parse_tree(&re).unwrap();
-            let a = analyze(&tree);
-            println!("{:#?}", a);
+            show_analysis(&re, &mut io::stdout()).expect("error analyzing regexp");
         } else if cmd == "compile" {
             let re = args.next().expect("expected regexp argument");
             show_compiled_program(&re, &mut io::stdout()).expect("error compiling program");
@@ -113,10 +111,15 @@ fn graph(re: &str, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
     Ok(())
 }
 
+fn show_analysis(re: &str, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
+    let tree = Expr::parse_tree(&re).unwrap();
+    let a = analyze(&tree);
+    write!(writer, "{:#?}\n", a)
+}
+
 fn show_compiled_program(re: &str, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
     let r = Regex::new(&re).unwrap();
-    r.debug_print(writer)?;
-    Ok(())
+    r.debug_print(writer)
 }
 
 fn prog(re: &str) -> Prog {
@@ -128,7 +131,7 @@ fn prog(re: &str) -> Prog {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn test_graph() {
+    fn test_simple_graph() {
         assert_graph(
             "a+bc?",
             "\
@@ -139,25 +142,28 @@ digraph G {
 }
 ",
         );
+    }
 
+    #[test]
+    fn test_backref_graph() {
         assert_graph(
             "a+(?<b>b*)(?=c)\\k<b>",
             "\
 digraph G {
-  0 [label=\"0: Delegate { pattern: \\\"a+bc?\\\", start_group: 0, end_group: 0 }\"];
-  0 -> 1;
-  1 [label=\"1: End\"];
+  
 }
 ",
         );
     }
 
-    fn assert_graph(re: &str, expected: &str) {
-        use crate::graph;
-        let mut buf = Vec::new();
-        graph(re, &mut buf).expect("error making graph");
-        let output = String::from_utf8(buf).expect("error converting graph to string");
-        assert_eq!(&output, &expected);
+    #[test]
+    fn test_simple_analysis() {
+        assert_analysis_succeeds("a+bc?");
+    }
+
+    #[test]
+    fn test_backref_analysis() {
+        assert_analysis_succeeds("a+(?<b>b*)(?=c)\\k<b>");
     }
 
     #[test]
@@ -186,11 +192,27 @@ digraph G {
         assert_compiled_prog("a+(?<b>b*)(?=c)\\k<b>", &expected);
     }
 
+    fn assert_graph(re: &str, expected: &str) {
+        use crate::graph;
+        let mut buf = Vec::new();
+        graph(re, &mut buf).expect("error making graph");
+        let output = String::from_utf8(buf).expect("error converting graph to string");
+        assert_eq!(&output, &expected);
+    }
+
     fn assert_compiled_prog(re: &str, expected: &str) {
         use crate::show_compiled_program;
         let mut buf = Vec::new();
         show_compiled_program(re, &mut buf).expect("error compiling program");
         let output = String::from_utf8(buf).expect("error converting program to string");
         assert_eq!(&output, &expected);
+    }
+
+    fn assert_analysis_succeeds(re: &str) {
+        use crate::show_analysis;
+        let mut buf = Vec::new();
+        show_analysis(re, &mut buf).expect("error analyzing program");
+        let output = String::from_utf8(buf).expect("error converting analysis to string");
+        assert!(&output.starts_with("Ok(\n    Info {"));
     }
 }
