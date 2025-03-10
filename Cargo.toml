@@ -34,8 +34,10 @@ default-features = false
 version = "0.8"
 default-features = false
 
-[dependencies]
-derive-debug = "0.1"
+[dependencies.derivative]
+version = "2.2.0"
+default-features = false
+features = ["use_core"]
 
 [dev-dependencies]
 criterion = "0.5"

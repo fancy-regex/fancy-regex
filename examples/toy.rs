@@ -24,7 +24,9 @@ use fancy_regex::internal::{analyze, compile, run_trace, Insn, Prog};
 use fancy_regex::*;
 use std::env;
 use std::io;
+use std::io::Write;
 use std::str::FromStr;
+use std::fmt::{Display, Formatter, Result};
 
 fn main() {
     let mut args = env::args().skip(1);
@@ -35,10 +37,14 @@ fn main() {
             println!("{:#?}", e);
         } else if cmd == "analyze" {
             let re = args.next().expect("expected regexp argument");
-            show_analysis(&re, &mut io::stdout()).expect("error analyzing regexp");
+            let stdout = io::stdout();
+            let mut handle = stdout.lock();
+            write!(&mut handle, "{}", AnalyzeFormatterWrapper { regex: &re }).expect("error analyzing regexp");
         } else if cmd == "compile" {
             let re = args.next().expect("expected regexp argument");
-            show_compiled_program(&re, &mut io::stdout()).expect("error compiling program");
+            let stdout = io::stdout();
+            let mut handle = stdout.lock();
+            write!(&mut handle, "{}", CompileFormatterWrapper { regex: &re }).expect("error compiling regexp");
         } else if cmd == "run" {
             let re = args.next().expect("expected regexp argument");
             let r = Regex::new(&re).unwrap();
@@ -111,16 +117,18 @@ fn graph(re: &str, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
     Ok(())
 }
 
-fn show_analysis(re: &str, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
+fn show_analysis(re: &str, writer: &mut Formatter<'_>) -> Result {
     let tree = Expr::parse_tree(&re).unwrap();
     let wrapped_tree = wrap_tree(tree);
     let a = analyze(&wrapped_tree);
-    write!(writer, "{:#?}\n", a)
+    write!(writer, "{:#?}\n", a)?;
+    Ok(())
 }
 
-fn show_compiled_program(re: &str, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
+fn show_compiled_program(re: &str, writer: &mut Formatter<'_>) -> Result {
     let r = Regex::new(&re).unwrap();
-    r.debug_print(writer)
+    r.debug_print(writer)?;
+    Ok(())
 }
 
 fn prog(re: &str) -> Prog {
@@ -130,8 +138,33 @@ fn prog(re: &str) -> Prog {
     compile(&result).expect("Expected compile to succeed")
 }
 
+struct AnalyzeFormatterWrapper<'a> {
+    regex: &'a str,
+}
+
+impl<'a> Display for AnalyzeFormatterWrapper<'a> {
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        show_analysis(self.regex, f)
+    }
+}
+
+struct CompileFormatterWrapper<'a> {
+    regex: &'a str,
+}
+
+impl<'a> Display for CompileFormatterWrapper<'a> {
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        show_compiled_program(self.regex, f)
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
+    use crate::Write;
+    use crate::graph;
+    use crate::{AnalyzeFormatterWrapper, CompileFormatterWrapper};
+
     #[test]
     fn test_simple_graph() {
         assert_graph(
@@ -230,26 +263,23 @@ digraph G {
     }
 
     fn assert_graph(re: &str, expected: &str) {
-        use crate::graph;
         let mut buf = Vec::new();
-        graph(re, &mut buf).expect("error making graph");
-        let output = String::from_utf8(buf).expect("error converting graph to string");
+        graph(&re, &mut buf).expect("error compiling regexp");
+        let output = String::from_utf8(buf).expect("string not utf8");
         assert_eq!(&output, &expected);
     }
 
     fn assert_compiled_prog(re: &str, expected: &str) {
-        use crate::show_compiled_program;
         let mut buf = Vec::new();
-        show_compiled_program(re, &mut buf).expect("error compiling program");
-        let output = String::from_utf8(buf).expect("error converting program to string");
+        write!(&mut buf, "{}", CompileFormatterWrapper { regex: &re }).expect("error compiling regexp");
+        let output = String::from_utf8(buf).expect("string not utf8");
         assert_eq!(&output, &expected);
     }
 
     fn assert_analysis_succeeds(re: &str) {
-        use crate::show_analysis;
         let mut buf = Vec::new();
-        show_analysis(re, &mut buf).expect("error analyzing program");
-        let output = String::from_utf8(buf).expect("error converting analysis to string");
+        write!(&mut buf, "{}", AnalyzeFormatterWrapper { regex: &re }).expect("error analyzing regexp");
+        let output = String::from_utf8(buf).expect("string not utf8");
         println!("{}", output);
         assert!(&output.starts_with("Ok(\n    Info {"));
     }

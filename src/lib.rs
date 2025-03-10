@@ -932,12 +932,12 @@ impl Regex {
 
     // for debugging only
     #[doc(hidden)]
-    pub fn debug_print(&self, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
+    pub fn debug_print(&self, writer: &mut Formatter<'_>) -> fmt::Result {
         match &self.inner {
-            #[cfg(feature = "std")]
+            //#[cfg(feature = "std")]
             RegexImpl::Wrap { inner, .. } => write!(writer, "wrapped {:?}", inner),
-            #[cfg(not(feature = "std"))]
-            RegexImpl::Wrap { .. } => {}
+            //#[cfg(not(feature = "std"))]
+            //RegexImpl::Wrap { .. } => Ok(()),
             RegexImpl::Fancy { prog, .. } => prog.debug_print(writer),
         }
     }
