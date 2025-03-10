@@ -89,7 +89,6 @@ use crate::Formatter;
 use crate::Result;
 use crate::{codepoint_len, RegexOptions};
 
-
 /// Enable tracing of VM execution. Only for debugging/investigating.
 const OPTION_TRACE: u32 = 1 << 0;
 /// When iterating over all matches within a text (e.g. with `find_iter`), empty matches need to be
@@ -185,7 +184,7 @@ pub enum Insn {
     /// Delegate matching to the regex crate
     Delegate {
         /// The regex
-        #[derivative(Debug="ignore")]
+        #[derivative(Debug = "ignore")]
         inner: Regex,
         /// The regex pattern as a string
         pattern: String,
@@ -215,7 +214,6 @@ impl Prog {
 
     #[doc(hidden)]
     pub(crate) fn debug_print(&self, writer: &mut Formatter<'_>) -> core::fmt::Result {
-        //#[cfg(feature = "std")]
         for (i, insn) in self.body.iter().enumerate() {
             write!(writer, "{:3}: {:?}\n", i, insn)?;
         }

@@ -934,10 +934,7 @@ impl Regex {
     #[doc(hidden)]
     pub fn debug_print(&self, writer: &mut Formatter<'_>) -> fmt::Result {
         match &self.inner {
-            //#[cfg(feature = "std")]
             RegexImpl::Wrap { inner, .. } => write!(writer, "wrapped {:?}", inner),
-            //#[cfg(not(feature = "std"))]
-            //RegexImpl::Wrap { .. } => Ok(()),
             RegexImpl::Fancy { prog, .. } => prog.debug_print(writer),
         }
     }
