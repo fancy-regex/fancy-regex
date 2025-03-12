@@ -641,18 +641,7 @@ impl Regex {
 
         // wrapper to search for re at arbitrary start position,
         // and to capture the match bounds
-        let tree = ExprTree {
-            expr: Expr::Concat(vec![
-                Expr::Repeat {
-                    child: Box::new(Expr::Any { newline: true }),
-                    lo: 0,
-                    hi: usize::MAX,
-                    greedy: false,
-                },
-                Expr::Group(Box::new(raw_tree.expr)),
-            ]),
-            ..raw_tree
-        };
+        let tree = wrap_tree(raw_tree);
 
         let info = analyze(&tree)?;
 
@@ -943,13 +932,10 @@ impl Regex {
 
     // for debugging only
     #[doc(hidden)]
-    pub fn debug_print(&self) {
+    pub fn debug_print(&self, writer: &mut Formatter<'_>) -> fmt::Result {
         match &self.inner {
-            #[cfg(feature = "std")]
-            RegexImpl::Wrap { inner, .. } => println!("wrapped {:?}", inner),
-            #[cfg(not(feature = "std"))]
-            RegexImpl::Wrap { .. } => {}
-            RegexImpl::Fancy { prog, .. } => prog.debug_print(),
+            RegexImpl::Wrap { inner, .. } => write!(writer, "wrapped {:?}", inner),
+            RegexImpl::Fancy { prog, .. } => prog.debug_print(writer),
         }
     }
 
@@ -1758,6 +1744,23 @@ pub fn detect_possible_backref(re: &str) -> bool {
     }
 }
 */
+
+/// wrapper to search for re at arbitrary start position,
+/// and to capture the match bounds
+pub fn wrap_tree(raw_tree: ExprTree) -> ExprTree {
+    return ExprTree {
+        expr: Expr::Concat(vec![
+            Expr::Repeat {
+                child: Box::new(Expr::Any { newline: true }),
+                lo: 0,
+                hi: usize::MAX,
+                greedy: false,
+            },
+            Expr::Group(Box::new(raw_tree.expr)),
+        ]),
+        ..raw_tree
+    };
+}
 
 /// The internal module only exists so that the toy example can access internals for debugging and
 /// experimenting.

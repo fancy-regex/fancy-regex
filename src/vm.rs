@@ -74,6 +74,7 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::usize;
+use derivative::Derivative;
 use regex_automata::meta::Regex;
 use regex_automata::util::look::LookMatcher;
 use regex_automata::util::primitives::NonMaxUsize;
@@ -84,6 +85,7 @@ use crate::error::RuntimeError;
 use crate::prev_codepoint_ix;
 use crate::Assertion;
 use crate::Error;
+use crate::Formatter;
 use crate::Result;
 use crate::{codepoint_len, RegexOptions};
 
@@ -101,7 +103,8 @@ pub(crate) const OPTION_SKIPPED_EMPTY_MATCH: u32 = 1 << 1;
 const MAX_STACK: usize = 1_000_000;
 
 /// Instruction of the VM.
-#[derive(Debug, Clone)]
+#[derive(Clone, Derivative)]
+#[derivative(Debug)]
 pub enum Insn {
     /// Successful end of program
     End,
@@ -181,7 +184,10 @@ pub enum Insn {
     /// Delegate matching to the regex crate
     Delegate {
         /// The regex
+        #[derivative(Debug = "ignore")]
         inner: Regex,
+        /// The regex pattern as a string
+        pattern: String,
         /// The first group number that this regex captures (if it contains groups)
         start_group: usize,
         /// The last group number
@@ -207,11 +213,11 @@ impl Prog {
     }
 
     #[doc(hidden)]
-    pub(crate) fn debug_print(&self) {
-        #[cfg(feature = "std")]
+    pub(crate) fn debug_print(&self, writer: &mut Formatter<'_>) -> core::fmt::Result {
         for (i, insn) in self.body.iter().enumerate() {
-            println!("{:3}: {:?}", i, insn);
+            write!(writer, "{:3}: {:?}\n", i, insn)?;
         }
+        Ok(())
     }
 }
 
@@ -664,6 +670,7 @@ pub(crate) fn run(
                 }
                 Insn::Delegate {
                     ref inner,
+                    pattern: _,
                     start_group,
                     end_group,
                 } => {
