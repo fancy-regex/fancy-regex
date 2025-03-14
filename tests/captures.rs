@@ -198,6 +198,17 @@ fn captures_from_pos_looking_left() {
     assert_match(captures.get(1), "x", 1, 2);
 }
 
+#[test]
+fn captures_iter_collect_when_backtrack_limit_hit() {
+    use fancy_regex::RegexBuilder;
+    let r = RegexBuilder::new("(x+x+)+(?=y)")
+        .backtrack_limit(1)
+        .build()
+        .unwrap();
+    let result: Vec<_> = r.captures_iter("xxxxxxxxxxy").collect();
+    assert_eq!(result.len(), 1);
+}
+
 #[cfg_attr(feature = "track_caller", track_caller)]
 fn captures<'a>(re: &str, text: &'a str) -> Captures<'a> {
     let regex = common::regex(re);

@@ -302,7 +302,12 @@ impl<'r, 't> Iterator for Matches<'r, 't> {
                 .re
                 .find_from_pos_with_option_flags(self.text, self.last_end, option_flags)
             {
-                Err(error) => return Some(Err(error)),
+                Err(error) => {
+                    // Stop on first error: If an error is encountered, return it, and set the "last match position"
+                    // to the string length, so that the next next() call will return None, to prevent an infinite loop.
+                    self.last_end = self.text.len() + 1;
+                    return Some(Err(error));
+                }
                 Ok(None) => return None,
                 Ok(Some(mat)) => mat,
             };
@@ -360,7 +365,12 @@ impl<'r, 't> Iterator for CaptureMatches<'r, 't> {
         }
 
         let captures = match self.0.re.captures_from_pos(self.0.text, self.0.last_end) {
-            Err(error) => return Some(Err(error)),
+            Err(error) => {
+                // Stop on first error: If an error is encountered, return it, and set the "last match position"
+                // to the string length, so that the next next() call will return None, to prevent an infinite loop.
+                self.0.last_end = self.0.text.len() + 1;
+                return Some(Err(error));
+            }
             Ok(None) => return None,
             Ok(Some(captures)) => captures,
         };
