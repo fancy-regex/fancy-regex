@@ -207,7 +207,9 @@ impl<'a> Analyzer<'a> {
                 )));
             }
             Expr::UnresolvedNamedSubroutineCall { ref name, .. } => {
-                return Err(Error::CompileError(CompileError::InvalidGroupNameBackref(name.to_string())));
+                return Err(Error::CompileError(CompileError::InvalidGroupNameBackref(
+                    name.to_string(),
+                )));
             }
         };
 

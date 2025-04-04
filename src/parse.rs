@@ -328,7 +328,10 @@ impl<'a> Parser<'a> {
         }
         if let Some(id) = id {
             // here the name was parsed but doesn't match a capture group we have already parsed
-            let expr = Expr::UnresolvedNamedSubroutineCall { name: id.to_string(), ix };
+            let expr = Expr::UnresolvedNamedSubroutineCall {
+                name: id.to_string(),
+                ix,
+            };
             self.has_unresolved_subroutines = true;
             self.contains_subroutines = true;
             return Ok((end, expr));
@@ -955,7 +958,11 @@ impl<'a> Parser<'a> {
             Expr::Repeat { child, .. } => {
                 self.resolve_named_subroutine_calls(child);
             }
-            Expr::Conditional { condition, true_branch, false_branch } => {
+            Expr::Conditional {
+                condition,
+                true_branch,
+                false_branch,
+            } => {
                 self.resolve_named_subroutine_calls(condition);
                 self.resolve_named_subroutine_calls(true_branch);
                 self.resolve_named_subroutine_calls(false_branch);
@@ -2069,7 +2076,19 @@ mod tests {
 
         assert_eq!(
             p(r"\g<c>(?:a|b|(?<c>c)?)"),
-            Expr::Concat(vec![Expr::SubroutineCall(1), Expr::Alt(vec![make_literal("a"), make_literal("b"), Expr::Repeat { child: Box::new(Expr::Group(Box::new(make_literal("c")))), lo: 0, hi: 1, greedy: true }])])
+            Expr::Concat(vec![
+                Expr::SubroutineCall(1),
+                Expr::Alt(vec![
+                    make_literal("a"),
+                    make_literal("b"),
+                    Expr::Repeat {
+                        child: Box::new(Expr::Group(Box::new(make_literal("c")))),
+                        lo: 0,
+                        hi: 1,
+                        greedy: true
+                    }
+                ])
+            ])
         );
 
         assert_eq!(
@@ -2081,46 +2100,24 @@ mod tests {
         );
     }
 
-    
     #[test]
     fn recursive_subroutine_call() {
         assert_eq!(
             p(r"\A(?<a>|.|(?:(?<b>.)\g<a>\k<b>))\z"),
-            Expr::Concat(
-            vec![
-                Expr::Assertion(
-                    Assertion::StartText,
-                ),
-                Expr::Group(Box::new(
-                    Expr::Alt(
-                        vec![
-                            Expr::Empty,
-                            Expr::Any {
-                                newline: false,
-                            },
-                            Expr::Concat(
-                                vec![
-                                    Expr::Group(
-                                        Box::new(Expr::Any {
-                                            newline: false,
-                                        },
-                                    )),
-                                    Expr::SubroutineCall(
-                                        1,
-                                    ),
-                                    Expr::Backref(
-                                        2,
-                                    ),
-                                ],
-                            ),
-                        ],
-                    ),
-                )),
-                Expr::Assertion(
-                    Assertion::EndText,
-                ),
-            ],
-        ));
+            Expr::Concat(vec![
+                Expr::Assertion(Assertion::StartText,),
+                Expr::Group(Box::new(Expr::Alt(vec![
+                    Expr::Empty,
+                    Expr::Any { newline: false },
+                    Expr::Concat(vec![
+                        Expr::Group(Box::new(Expr::Any { newline: false },)),
+                        Expr::SubroutineCall(1,),
+                        Expr::Backref(2,),
+                    ],),
+                ],),)),
+                Expr::Assertion(Assertion::EndText,),
+            ],)
+        );
     }
 
     // found by cargo fuzz, then minimized
