@@ -187,19 +187,19 @@
   // Compile failed: ParseError(0, InvalidEscape("\\o"))
   x2("\\o{101}", "A", 0, 1);
 
-  // Compile failed: ParseError(15, InvalidGroupName)
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("\\A(a|b\\g<1>c)\\k<1+3>\\z", "bbacca", 0, 6);
 
-  // Compile failed: ParseError(19, InvalidGroupName)
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("(?i)\\A(a|b\\g<1>c)\\k<1+2>\\z", "bBACcbac", 0, 8);
 
   // No match found
   x2("(?i)(?<X>aa)|(?<X>bb)\\k<X>", "BBbb", 0, 4);
 
-  // Compile failed: ParseError(5, InvalidGroupName)
+  // Compile failed: CompileError(InvalidBackref)
   x2("(?:\\k'+1'B|(A)C)*", "ACAB", 0, 4);
 
-  // Compile failed: ParseError(2, InvalidGroupName)
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("\\g<+2>(abc)(ABC){0}", "ABCabc", 0, 6);
 
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
@@ -208,10 +208,7 @@
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x3("(A\\g'0')|B", "AAAAB", 0, 5, 1);
 
-  // Compile failed: ParseError(10, GeneralParseError("expected conditional to be a backreference or at least an expression for when the condition is true"))
-  x2("(a*)(?(-1))aa", "aaaaa", 0, 5);
-
-  // Compile failed: ParseError(7, GeneralParseError("expected close paren"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Backref at recursion level"))
   x2("(a)(?(1+0)b|c)d", "abd", 0, 3);
 
   // No match found
