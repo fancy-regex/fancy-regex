@@ -301,7 +301,14 @@ impl<'a> Parser<'a> {
             self.parse_named_backref_or_subroutine(ix, open, close, allow_relative)?;
         if let Some(group) = group {
             self.backrefs.insert(group);
-            return Ok((end, if let Some(recursion_level) = recursion_level { Expr::BackrefWithRelativeRecursionLevel(group, recursion_level) } else { Expr::Backref(group) }));
+            return Ok((
+                end,
+                if let Some(recursion_level) = recursion_level {
+                    Expr::BackrefWithRelativeRecursionLevel(group, recursion_level)
+                } else {
+                    Expr::Backref(group)
+                },
+            ));
         }
         if let Some(id) = id {
             // here the name was parsed but doesn't match a capture group we have already parsed
@@ -323,10 +330,7 @@ impl<'a> Parser<'a> {
         let (end, group, id, recursion_level) =
             self.parse_named_backref_or_subroutine(ix, open, close, allow_relative)?;
         if let Some(_) = recursion_level {
-            return Err(Error::ParseError(
-                ix,
-                ParseError::InvalidGroupName,
-            ));
+            return Err(Error::ParseError(ix, ParseError::InvalidGroupName));
         }
         if let Some(group) = group {
             self.contains_subroutines = true;
@@ -345,7 +349,6 @@ impl<'a> Parser<'a> {
         unreachable!()
     }
 
-
     // Returns Ok(ix, resolved group number, unresolved group name, recursion level)
     fn parse_named_backref_or_subroutine(
         &self,
@@ -354,7 +357,9 @@ impl<'a> Parser<'a> {
         close: &str,
         allow_relative: bool,
     ) -> Result<(usize, Option<usize>, Option<&str>, Option<isize>)> {
-        if let Some((id, mut relative, skip)) = parse_id(&self.re[ix..], open, close, allow_relative) {
+        if let Some((id, mut relative, skip)) =
+            parse_id(&self.re[ix..], open, close, allow_relative)
+        {
             let group = if let Some(group) = self.named_groups.get(id) {
                 Some(*group)
             } else if let Ok(group) = id.parse::<usize>() {
@@ -362,7 +367,11 @@ impl<'a> Parser<'a> {
             } else if let Some(relative_group) = relative {
                 if id.is_empty() {
                     relative = None;
-                    self.curr_group.checked_add_signed(if relative_group < 0 { relative_group + 1 } else { relative_group })
+                    self.curr_group.checked_add_signed(if relative_group < 0 {
+                        relative_group + 1
+                    } else {
+                        relative_group
+                    })
                 } else {
                     None
                 }
@@ -1002,7 +1011,7 @@ pub(crate) fn parse_id<'a>(
     allow_relative: bool,
 ) -> Option<(&'a str, Option<isize>, usize)> {
     debug_assert!(!close.starts_with(is_id_char));
-    
+
     if !s.starts_with(open) || s.len() <= open.len() + close.len() {
         return None;
     }
@@ -1010,13 +1019,13 @@ pub(crate) fn parse_id<'a>(
     let id_start = open.len();
     let mut iter = s[id_start..].char_indices().peekable();
     let after_id = iter.find(|(_, ch)| !is_id_char(*ch));
-    
+
     let id_len = match after_id.map(|(i, _)| i) {
         Some(id_len) => id_len,
         None if close.is_empty() => s.len(),
         _ => 0,
     };
-    
+
     let id_end = id_start + id_len;
     if id_len > 0 && s[id_end..].starts_with(close) {
         return Some((&s[id_start..id_end], None, id_end + close.len()));
@@ -1034,7 +1043,11 @@ pub(crate) fn parse_id<'a>(
                 if relative_sign == b'-' {
                     relative_amount_signed = 0 - relative_amount_signed;
                 }
-                return Some((&s[id_start..id_end], Some(relative_amount_signed), end + close.len()));
+                return Some((
+                    &s[id_start..id_end],
+                    Some(relative_amount_signed),
+                    end + close.len(),
+                ));
             }
         }
     }
@@ -1564,14 +1577,16 @@ mod tests {
             Expr::Concat(vec![
                 Expr::Assertion(Assertion::StartText),
                 Expr::Group(Box::new(Expr::Alt(vec![
-                    Expr::Empty, Expr::Any { newline: false },
+                    Expr::Empty,
+                    Expr::Any { newline: false },
                     Expr::Concat(vec![
                         Expr::Group(Box::new(Expr::Any { newline: false })),
                         Expr::SubroutineCall(1),
                         Expr::BackrefWithRelativeRecursionLevel(2, 0),
                     ])
                 ]))),
-                Expr::Assertion(Assertion::EndText)]),
+                Expr::Assertion(Assertion::EndText)
+            ]),
         );
     }
 
