@@ -206,6 +206,9 @@ impl<'a> Analyzer<'a> {
                     "Subroutine Call".to_string(),
                 )));
             }
+            Expr::UnresolvedNamedSubroutineCall { ref name, .. } => {
+                return Err(Error::CompileError(CompileError::InvalidGroupNameBackref(name.to_string())));
+            }
         };
 
         Ok(Info {

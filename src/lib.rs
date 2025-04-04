@@ -1464,6 +1464,13 @@ pub enum Expr {
     },
     /// Subroutine call to the specified group number
     SubroutineCall(usize),
+    /// Unresolved subroutine call to the specified group name
+    UnresolvedNamedSubroutineCall {
+        /// The capture group name
+        name: String,
+        /// The position in the original regex pattern where the subroutine call is made
+        ix: usize,
+    },
 }
 
 /// Type of look-around assertion as used for a look-around expression.

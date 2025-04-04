@@ -50,6 +50,7 @@ pub struct ExprTree {
     pub expr: Expr,
     pub backrefs: BitSet,
     pub named_groups: NamedGroups,
+    pub contains_subroutines: bool,
 }
 
 #[derive(Debug)]
@@ -60,6 +61,8 @@ pub(crate) struct Parser<'a> {
     named_groups: NamedGroups,
     numeric_backrefs: bool,
     curr_group: usize, // need to keep track of which group number we're parsing
+    contains_subroutines: bool,
+    has_unresolved_subroutines: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -67,17 +70,24 @@ impl<'a> Parser<'a> {
     /// that are referenced by backrefs.
     pub(crate) fn parse(re: &str) -> Result<ExprTree> {
         let mut p = Parser::new(re);
-        let (ix, expr) = p.parse_re(0, 0)?;
+        let (ix, mut expr) = p.parse_re(0, 0)?;
         if ix < re.len() {
             return Err(Error::ParseError(
                 ix,
                 ParseError::GeneralParseError("end of string not reached".to_string()),
             ));
         }
+
+        if p.has_unresolved_subroutines {
+            p.has_unresolved_subroutines = false;
+            p.resolve_named_subroutine_calls(&mut expr);
+        }
+
         Ok(ExprTree {
             expr,
             backrefs: p.backrefs,
             named_groups: p.named_groups,
+            contains_subroutines: p.contains_subroutines,
         })
     }
 
@@ -89,6 +99,8 @@ impl<'a> Parser<'a> {
             numeric_backrefs: false,
             flags: FLAG_UNICODE,
             curr_group: 0,
+            contains_subroutines: false,
+            has_unresolved_subroutines: false,
         }
     }
 
@@ -279,17 +291,58 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_named_backref<F>(
+    fn parse_named_backref(
         &mut self,
         ix: usize,
         open: &str,
         close: &str,
         allow_relative: bool,
-        create_expr: F,
-    ) -> Result<(usize, Expr)>
-    where
-        F: FnOnce(usize) -> Expr,
-    {
+    ) -> Result<(usize, Expr)> {
+        let (end, group, id) =
+            self.parse_named_backref_or_subroutine(ix, open, close, allow_relative)?;
+        if let Some(group) = group {
+            self.backrefs.insert(group);
+            return Ok((end, Expr::Backref(group)));
+        }
+        if let Some(id) = id {
+            // here the name was parsed but doesn't match a capture group we have already parsed
+            return Err(Error::ParseError(
+                ix,
+                ParseError::InvalidGroupNameBackref(id.to_string()),
+            ));
+        }
+        unreachable!()
+    }
+
+    fn parse_named_subroutine_call(
+        &mut self,
+        ix: usize,
+        open: &str,
+        close: &str,
+        allow_relative: bool,
+    ) -> Result<(usize, Expr)> {
+        let (end, group, id) =
+            self.parse_named_backref_or_subroutine(ix, open, close, allow_relative)?;
+        if let Some(group) = group {
+            return Ok((end, Expr::SubroutineCall(group)));
+        }
+        if let Some(id) = id {
+            // here the name was parsed but doesn't match a capture group we have already parsed
+            let expr = Expr::UnresolvedNamedSubroutineCall { name: id.to_string(), ix };
+            self.has_unresolved_subroutines = true;
+            self.contains_subroutines = true;
+            return Ok((end, expr));
+        }
+        unreachable!()
+    }
+
+    fn parse_named_backref_or_subroutine(
+        &self,
+        ix: usize,
+        open: &str,
+        close: &str,
+        allow_relative: bool,
+    ) -> Result<(usize, Option<usize>, Option<&str>)> {
         if let Some((id, skip)) = parse_id(&self.re[ix..], open, close, allow_relative) {
             let group = if let Some(group) = self.named_groups.get(id) {
                 Some(*group)
@@ -305,30 +358,36 @@ impl<'a> Parser<'a> {
                 None
             };
             if let Some(group) = group {
-                self.backrefs.insert(group);
-                return Ok((ix + skip, create_expr(group)));
+                Ok((ix + skip, Some(group), None))
+            } else {
+                // here the name was parsed but doesn't match a capture group we have already parsed
+                Ok((ix + skip, None, Some(id)))
             }
-            // here the name is parsed but it is invalid
-            Err(Error::ParseError(
-                ix,
-                ParseError::InvalidGroupNameBackref(id.to_string()),
-            ))
         } else {
             // in this case the name can't be parsed
             Err(Error::ParseError(ix, ParseError::InvalidGroupName))
         }
     }
 
-    fn parse_numbered_backref<F>(&mut self, ix: usize, create_expr: F) -> Result<(usize, Expr)>
-    where
-        F: FnOnce(usize) -> Expr,
-    {
+    fn parse_numbered_backref(&mut self, ix: usize) -> Result<(usize, Expr)> {
+        let (end, group) = self.parse_numbered_backref_or_subroutine_call(ix)?;
+        self.numeric_backrefs = true;
+        self.backrefs.insert(group);
+        Ok((end, Expr::Backref(group)))
+    }
+
+    fn parse_numbered_subroutine_call(&mut self, ix: usize) -> Result<(usize, Expr)> {
+        let (end, group) = self.parse_numbered_backref_or_subroutine_call(ix)?;
+        self.numeric_backrefs = true;
+        self.contains_subroutines = true;
+        Ok((end, Expr::SubroutineCall(group)))
+    }
+
+    fn parse_numbered_backref_or_subroutine_call(&self, ix: usize) -> Result<(usize, usize)> {
         if let Some((end, group)) = parse_decimal(self.re, ix) {
             // protect BitSet against unreasonably large value
             if group < self.re.len() / 2 {
-                self.numeric_backrefs = true;
-                self.backrefs.insert(group);
-                return Ok((end, create_expr(group)));
+                return Ok((end, group));
             }
         }
         return Err(Error::ParseError(ix, ParseError::InvalidBackref));
@@ -342,15 +401,13 @@ impl<'a> Parser<'a> {
         };
         let end = ix + 1 + codepoint_len(b);
         Ok(if is_digit(b) {
-            return self.parse_numbered_backref(ix + 1, &|group| Expr::Backref(group));
+            return self.parse_numbered_backref(ix + 1);
         } else if matches!(b, b'k') && !in_class {
             // Named backref: \k<name>
             if bytes.get(end) == Some(&b'\'') {
-                return self
-                    .parse_named_backref(end, "'", "'", true, &|group| Expr::Backref(group));
+                return self.parse_named_backref(end, "'", "'", true);
             } else {
-                return self
-                    .parse_named_backref(end, "<", ">", true, &|group| Expr::Backref(group));
+                return self.parse_named_backref(end, "<", ">", true);
             }
         } else if b == b'A' && !in_class {
             (end, Expr::Assertion(Assertion::StartText))
@@ -457,11 +514,11 @@ impl<'a> Parser<'a> {
             }
             let b = bytes[end];
             if is_digit(b) {
-                self.parse_numbered_backref(end, &|group| Expr::SubroutineCall(group))?
+                self.parse_numbered_subroutine_call(end)?
             } else if b == b'\'' {
-                self.parse_named_backref(end, "'", "'", true, &|group| Expr::SubroutineCall(group))?
+                self.parse_named_subroutine_call(end, "'", "'", true)?
             } else {
-                self.parse_named_backref(end, "<", ">", true, &|group| Expr::SubroutineCall(group))?
+                self.parse_named_subroutine_call(end, "<", ">", true)?
             }
         } else {
             // printable ASCII (including space, see issue #29)
@@ -658,14 +715,13 @@ impl<'a> Parser<'a> {
             }
         } else if self.re[ix..].starts_with("?P=") {
             // Backref using Python syntax: (?P=name)
-            return self.parse_named_backref(ix + 3, "", ")", false, &|group| Expr::Backref(group));
+            return self.parse_named_backref(ix + 3, "", ")", false);
         } else if self.re[ix..].starts_with("?>") {
             (None, 2)
         } else if self.re[ix..].starts_with("?(") {
             return self.parse_conditional(ix + 2, depth);
         } else if self.re[ix..].starts_with("?P>") {
-            return self
-                .parse_named_backref(ix + 3, "", ")", false, &|group| Expr::SubroutineCall(group));
+            return self.parse_named_subroutine_call(ix + 3, "", ")", false);
         } else if self.re[ix..].starts_with('?') {
             return self.parse_flags(ix, depth);
         } else {
@@ -770,11 +826,11 @@ impl<'a> Parser<'a> {
         // get the character after the open paren
         let b = bytes[ix];
         let (mut next, condition) = if is_digit(b) {
-            self.parse_numbered_backref(ix, &|group| Expr::Backref(group))?
+            self.parse_numbered_backref(ix)?
         } else if b == b'\'' {
-            self.parse_named_backref(ix, "'", "'", true, &|group| Expr::Backref(group))?
+            self.parse_named_backref(ix, "'", "'", true)?
         } else if b == b'<' {
-            self.parse_named_backref(ix, "<", ">", true, &|group| Expr::Backref(group))?
+            self.parse_named_backref(ix, "<", ">", true)?
         } else {
             self.parse_re(ix, depth)?
         };
@@ -875,6 +931,36 @@ impl<'a> Parser<'a> {
                 }
                 _ => return Ok(ix),
             }
+        }
+    }
+
+    fn resolve_named_subroutine_calls(&mut self, expr: &mut Expr) {
+        match expr {
+            Expr::UnresolvedNamedSubroutineCall { name, .. } => {
+                if let Some(group) = self.named_groups.get(name) {
+                    *expr = Expr::SubroutineCall(*group);
+                } else {
+                    self.has_unresolved_subroutines = true;
+                }
+            }
+            // recursively resolve in inner expressions
+            Expr::Group(inner) | Expr::LookAround(inner, _) | Expr::AtomicGroup(inner) => {
+                self.resolve_named_subroutine_calls(inner);
+            }
+            Expr::Concat(children) | Expr::Alt(children) => {
+                for child in children {
+                    self.resolve_named_subroutine_calls(child);
+                }
+            }
+            Expr::Repeat { child, .. } => {
+                self.resolve_named_subroutine_calls(child);
+            }
+            Expr::Conditional { condition, true_branch, false_branch } => {
+                self.resolve_named_subroutine_calls(condition);
+                self.resolve_named_subroutine_calls(true_branch);
+                self.resolve_named_subroutine_calls(false_branch);
+            }
+            _ => {}
         }
     }
 }
@@ -1969,6 +2055,72 @@ mod tests {
                 Expr::SubroutineCall(1)
             ])
         );
+    }
+
+    #[test]
+    fn subroutine_defined_later() {
+        assert_eq!(
+            p(r"\g<name>(?<name>a)"),
+            Expr::Concat(vec![
+                Expr::SubroutineCall(1),
+                Expr::Group(Box::new(make_literal("a"))),
+            ])
+        );
+
+        assert_eq!(
+            p(r"\g<c>(?:a|b|(?<c>c)?)"),
+            Expr::Concat(vec![Expr::SubroutineCall(1), Expr::Alt(vec![make_literal("a"), make_literal("b"), Expr::Repeat { child: Box::new(Expr::Group(Box::new(make_literal("c")))), lo: 0, hi: 1, greedy: true }])])
+        );
+
+        assert_eq!(
+            p(r"\g<1>(a)"),
+            Expr::Concat(vec![
+                Expr::SubroutineCall(1),
+                Expr::Group(Box::new(make_literal("a"))),
+            ])
+        );
+    }
+
+    
+    #[test]
+    fn recursive_subroutine_call() {
+        assert_eq!(
+            p(r"\A(?<a>|.|(?:(?<b>.)\g<a>\k<b>))\z"),
+            Expr::Concat(
+            vec![
+                Expr::Assertion(
+                    Assertion::StartText,
+                ),
+                Expr::Group(Box::new(
+                    Expr::Alt(
+                        vec![
+                            Expr::Empty,
+                            Expr::Any {
+                                newline: false,
+                            },
+                            Expr::Concat(
+                                vec![
+                                    Expr::Group(
+                                        Box::new(Expr::Any {
+                                            newline: false,
+                                        },
+                                    )),
+                                    Expr::SubroutineCall(
+                                        1,
+                                    ),
+                                    Expr::Backref(
+                                        2,
+                                    ),
+                                ],
+                            ),
+                        ],
+                    ),
+                )),
+                Expr::Assertion(
+                    Assertion::EndText,
+                ),
+            ],
+        ));
     }
 
     // found by cargo fuzz, then minimized
