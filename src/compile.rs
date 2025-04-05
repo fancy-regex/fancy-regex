@@ -179,6 +179,7 @@ impl Compiler {
                     "Subroutine Call".to_string(),
                 )));
             }
+            Expr::UnresolvedNamedSubroutineCall { .. } => unreachable!(),
         }
         Ok(())
     }
@@ -614,6 +615,7 @@ mod tests {
             ]),
             backrefs: BitSet::new(),
             named_groups: Default::default(),
+            contains_subroutines: false,
         };
         let info = analyze(&tree).unwrap();
 
