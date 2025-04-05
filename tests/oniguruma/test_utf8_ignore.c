@@ -214,11 +214,8 @@
   // Compile failed: ParseError(7, GeneralParseError("expected close paren"))
   x2("(a)(?(1+0)b|c)d", "abd", 0, 3);
 
-  // Compile failed: ParseError(5, UnknownFlag("(?'"))
+  // No match found
   x2("(?:(?'name'a)|(?'name'b))(?('name')c|d)e", "ace", 0, 3);
-
-  // Compile failed: ParseError(5, UnknownFlag("(?'"))
-  x2("(?:(?'name'a)|(?'name'b))(?('name')c|d)e", "bce", 0, 3);
 
   // Compile failed: ParseError(0, InvalidEscape("\\R"))
   x2("\\R", "\r\n", 0, 2);
