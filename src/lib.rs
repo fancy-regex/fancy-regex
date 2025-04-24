@@ -117,7 +117,9 @@ Escapes:
 `\G`
 : anchor to where the previous match ended ([docs](https://www.regular-expressions.info/continue.html))\
 `\Z`
-: anchor to the end of the text before any trailing newlines
+: anchor to the end of the text before any trailing newlines\
+`\O`
+: any character including newline
 
 Backreferences:
 

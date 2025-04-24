@@ -7,7 +7,7 @@
   // No match found
   x2("^a", "\na", 1, 2);
 
-  // Compile failed: ParseError(1, InvalidEscape("\\O"))
+  // No match found
   x2("$\\O", "bb\n", 2, 3);
 
   // Compile failed: ParseError(0, InvalidEscape("\\c"))
@@ -237,18 +237,6 @@
 
   // Compile failed: ParseError(0, InvalidEscape("\\N"))
   x2("\\N", "a", 0, 1);
-
-  // Compile failed: ParseError(0, InvalidEscape("\\O"))
-  x2("\\O", "a", 0, 1);
-
-  // Compile failed: ParseError(0, InvalidEscape("\\O"))
-  x2("\\O", "\n", 0, 1);
-
-  // Compile failed: ParseError(4, InvalidEscape("\\O"))
-  x2("(?m:\\O)", "\n", 0, 1);
-
-  // Compile failed: ParseError(5, InvalidEscape("\\O"))
-  x2("(?-m:\\O)", "\n", 0, 1);
 
   // No match found
   x2("(?:()|())*\\1", "abc", 0, 0);
