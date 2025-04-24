@@ -176,7 +176,12 @@ pub enum Insn {
     /// Set IX back by the specified number of characters
     GoBack(usize),
     /// Back reference to a group number to check
-    Backref(usize),
+    Backref {
+        /// The save slot representing the start of the capture group
+        slot: usize,
+        /// Whether the backref should be matched case insensitively
+        casei: bool,
+    },
     /// Begin of atomic group
     BeginAtomic,
     /// End of atomic group
@@ -419,6 +424,15 @@ fn matches_literal(s: &str, ix: usize, end: usize, literal: &str) -> bool {
     end <= s.len() && &s.as_bytes()[ix..end] == literal.as_bytes()
 }
 
+#[inline]
+fn matches_literal_casei(s: &str, ix: usize, end: usize, literal: &str) -> bool {
+    end <= s.len()
+        && (matches_literal(s, ix, end, literal)
+            || (s.is_char_boundary(ix)
+                && s.is_char_boundary(end)
+                && s[ix..end].eq_ignore_ascii_case(literal)))
+}
+
 /// Run the program with trace printing for debugging.
 pub fn run_trace(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
     run(prog, s, pos, OPTION_TRACE, &RegexOptions::default())
@@ -635,7 +649,7 @@ pub(crate) fn run(
                     }
                     break 'fail;
                 }
-                Insn::Backref(slot) => {
+                Insn::Backref { slot, casei } => {
                     let lo = state.get(slot);
                     if lo == usize::MAX {
                         // Referenced group hasn't matched, so the backref doesn't match either
@@ -648,7 +662,11 @@ pub(crate) fn run(
                     }
                     let ref_text = &s[lo..hi];
                     let ix_end = ix + ref_text.len();
-                    if !matches_literal(s, ix, ix_end, ref_text) {
+                    if casei {
+                        if !matches_literal_casei(s, ix, ix_end, ref_text) {
+                            break 'fail;
+                        }
+                    } else if !matches_literal(s, ix, ix_end, ref_text) {
                         break 'fail;
                     }
                     ix = ix_end;

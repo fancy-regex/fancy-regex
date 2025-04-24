@@ -213,7 +213,7 @@ digraph G {
  12 -> 13;
  13 [label=\"13: Restore(4)\"];
  13 -> 14;
- 14 [label=\"14: Backref(2)\"];
+ 14 [label=\"14: Backref { slot: 2, casei: false }\"];
  14 -> 15;
  15 [label=\"15: Save(1)\"];
  15 -> 16;
@@ -251,7 +251,7 @@ digraph G {
  11: Save(4)
  12: Lit(\"c\")
  13: Restore(4)
- 14: Backref(2)
+ 14: Backref { slot: 2, casei: false }
  15: Save(1)
  16: End
 ";
