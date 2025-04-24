@@ -304,7 +304,11 @@ impl<'a> Parser<'a> {
             return Ok((
                 end,
                 if let Some(recursion_level) = recursion_level {
-                    Expr::BackrefWithRelativeRecursionLevel(group, recursion_level)
+                    Expr::BackrefWithRelativeRecursionLevel {
+                        group,
+                        relative_level: recursion_level,
+                        casei: self.flag(FLAG_CASEI),
+                    }
                 } else {
                     Expr::Backref {
                         group,
@@ -1565,7 +1569,11 @@ mod tests {
             p(r"()\k<1+3>"),
             Expr::Concat(vec![
                 Expr::Group(Box::new(Expr::Empty)),
-                Expr::BackrefWithRelativeRecursionLevel(1, 3)
+                Expr::BackrefWithRelativeRecursionLevel {
+                    group: 1,
+                    relative_level: 3,
+                    casei: false,
+                },
             ]),
         );
 
@@ -1573,7 +1581,11 @@ mod tests {
             p(r"()\k<1-0>"),
             Expr::Concat(vec![
                 Expr::Group(Box::new(Expr::Empty)),
-                Expr::BackrefWithRelativeRecursionLevel(1, 0)
+                Expr::BackrefWithRelativeRecursionLevel {
+                    group: 1,
+                    relative_level: 0,
+                    casei: false,
+                },
             ]),
         );
 
@@ -1581,7 +1593,11 @@ mod tests {
             p(r"(?<n>)\k<n+3>"),
             Expr::Concat(vec![
                 Expr::Group(Box::new(Expr::Empty)),
-                Expr::BackrefWithRelativeRecursionLevel(1, 3)
+                Expr::BackrefWithRelativeRecursionLevel {
+                    group: 1,
+                    relative_level: 3,
+                    casei: false,
+                },
             ]),
         );
 
@@ -1589,7 +1605,11 @@ mod tests {
             p(r"(?<n>)\k<n-3>"),
             Expr::Concat(vec![
                 Expr::Group(Box::new(Expr::Empty)),
-                Expr::BackrefWithRelativeRecursionLevel(1, -3)
+                Expr::BackrefWithRelativeRecursionLevel {
+                    group: 1,
+                    relative_level: -3,
+                    casei: false,
+                }
             ]),
         );
 
@@ -1603,7 +1623,11 @@ mod tests {
                     Expr::Concat(vec![
                         Expr::Group(Box::new(Expr::Any { newline: false })),
                         Expr::SubroutineCall(1),
-                        Expr::BackrefWithRelativeRecursionLevel(2, 0),
+                        Expr::BackrefWithRelativeRecursionLevel {
+                            group: 2,
+                            relative_level: 0,
+                            casei: false,
+                        },
                     ])
                 ]))),
                 Expr::Assertion(Assertion::EndText)

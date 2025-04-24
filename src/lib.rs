@@ -1450,7 +1450,14 @@ pub enum Expr {
         casei: bool,
     },
     /// Back reference to a capture group at the given specified relative recursion level.
-    BackrefWithRelativeRecursionLevel(usize, isize),
+    BackrefWithRelativeRecursionLevel {
+        /// The capture group number being referenced
+        group: usize,
+        /// Relative recursion level
+        relative_level: isize,
+        /// Whether the matching is case-insensitive or not
+        casei: bool,
+    },
     /// Atomic non-capturing group, e.g. `(?>ab|a)` in text that contains `ab` will match `ab` and
     /// never backtrack and try `a`, even if matching fails after the atomic group.
     AtomicGroup(Box<Expr>),

@@ -211,7 +211,7 @@ impl<'a> Analyzer<'a> {
                     name.to_string(),
                 )));
             }
-            Expr::BackrefWithRelativeRecursionLevel(_, _) => {
+            Expr::BackrefWithRelativeRecursionLevel { .. } => {
                 return Err(Error::CompileError(CompileError::FeatureNotYetSupported(
                     "Backref at recursion level".to_string(),
                 )));
