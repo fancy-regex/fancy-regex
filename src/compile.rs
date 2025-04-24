@@ -145,8 +145,11 @@ impl Compiler {
             Expr::LookAround(_, la) => {
                 self.compile_lookaround(info, la)?;
             }
-            Expr::Backref(group) => {
-                self.b.add(Insn::Backref(group * 2));
+            Expr::Backref { group, casei } => {
+                self.b.add(Insn::Backref {
+                    slot: group * 2,
+                    casei,
+                });
             }
             Expr::BackrefExistsCondition(group) => {
                 self.b.add(Insn::BackrefExistsCondition(group));

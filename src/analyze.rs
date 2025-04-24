@@ -150,7 +150,7 @@ impl<'a> Analyzer<'a> {
                 min_size = size;
                 const_size = true;
             }
-            Expr::Backref(group) => {
+            Expr::Backref { group, .. } => {
                 if group >= self.group_ix {
                     return Err(Error::CompileError(CompileError::InvalidBackref));
                 }
