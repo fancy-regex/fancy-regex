@@ -234,7 +234,7 @@ digraph G {
     }
 
     #[test]
-    fn test_compilation_debug_output() {
+    fn test_compilation_fancy_debug_output() {
         let expected = "  ".to_owned()
             + "\
   0: Split(3, 1)
@@ -257,6 +257,13 @@ digraph G {
 ";
 
         assert_compiled_prog("a+(?<b>b*)(?=c)\\k<b>", &expected);
+    }
+
+    #[test]
+    fn test_compilation_wrapped_debug_output() {
+        let expected = "wrapped Regex \"a+bc?\"";
+
+        assert_compiled_prog("a+bc?", &expected);
     }
 
     fn assert_graph(re: &str, expected: &str) {
