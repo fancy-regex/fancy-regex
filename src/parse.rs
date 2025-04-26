@@ -635,10 +635,15 @@ impl<'a> Parser<'a> {
             (Some(LookBehind), 3)
         } else if self.re[ix..].starts_with("?<!") {
             (Some(LookBehindNeg), 3)
-        } else if self.re[ix..].starts_with("?<") {
-            // Named capture group using Oniguruma syntax: (?<name>...)
+        } else if self.re[ix..].starts_with("?<") || self.re[ix..].starts_with("?'") {
+            // Named capture group using Oniguruma syntax: (?<name>...) or (?'name'...)
             self.curr_group += 1;
-            if let Some((id, skip)) = parse_id(&self.re[ix + 1..], "<", ">", false) {
+            let (open, close) = if self.re[ix..].starts_with("?<") {
+                ("<", ">")
+            } else {
+                ("'", "'")
+            };
+            if let Some((id, skip)) = parse_id(&self.re[ix + 1..], open, close, false) {
                 self.named_groups.insert(id.to_string(), self.curr_group);
                 (None, skip + 1)
             } else {
@@ -1141,6 +1146,12 @@ mod tests {
     #[test]
     fn group() {
         assert_eq!(p("(a)"), Expr::Group(Box::new(make_literal("a"),)));
+    }
+
+    #[test]
+    fn named_group() {
+        assert_eq!(p("(?'name'a)"), Expr::Group(Box::new(make_literal("a"),)));
+        assert_eq!(p("(?<name>a)"), Expr::Group(Box::new(make_literal("a"),)));
     }
 
     #[test]
