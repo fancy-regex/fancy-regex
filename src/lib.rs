@@ -117,7 +117,9 @@ Escapes:
 `\G`
 : anchor to where the previous match ended ([docs](https://www.regular-expressions.info/continue.html))\
 `\Z`
-: anchor to the end of the text before any trailing newlines
+: anchor to the end of the text before any trailing newlines\
+`\O`
+: any character including newline
 
 Backreferences:
 
@@ -944,7 +946,9 @@ impl Regex {
     #[doc(hidden)]
     pub fn debug_print(&self, writer: &mut Formatter<'_>) -> fmt::Result {
         match &self.inner {
-            RegexImpl::Wrap { inner, .. } => write!(writer, "wrapped {:?}", inner),
+            RegexImpl::Wrap { options, .. } => {
+                write!(writer, "wrapped Regex {:?}", options.pattern)
+            }
             RegexImpl::Fancy { prog, .. } => prog.debug_print(writer),
         }
     }

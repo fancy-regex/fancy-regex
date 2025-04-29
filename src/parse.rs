@@ -508,6 +508,8 @@ impl<'a> Parser<'a> {
             (end, Expr::KeepOut)
         } else if b == b'G' && !in_class {
             (end, Expr::ContinueFromPreviousMatchEnd)
+        } else if b == b'O' && !in_class {
+            (end, Expr::Any { newline: true })
         } else if b == b'g' && !in_class {
             if end == self.re.len() {
                 return Err(Error::ParseError(
