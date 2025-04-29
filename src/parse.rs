@@ -2092,6 +2092,24 @@ mod tests {
         );
 
         assert_eq!(
+            p(r"(?<a>a)?\g<b>(?(<a>)(?<b>b)|c)"),
+            Expr::Concat(vec![
+                Expr::Repeat {
+                    child: Box::new(Expr::Group(Box::new(make_literal("a")))),
+                    lo: 0,
+                    hi: 1,
+                    greedy: true
+                },
+                Expr::SubroutineCall(2),
+                Expr::Conditional {
+                    condition: Box::new(Expr::BackrefExistsCondition(1)),
+                    true_branch: Box::new(Expr::Group(Box::new(make_literal("b")))),
+                    false_branch: Box::new(make_literal("c")),
+                }
+            ])
+        );
+
+        assert_eq!(
             p(r"\g<1>(a)"),
             Expr::Concat(vec![
                 Expr::SubroutineCall(1),
@@ -2117,6 +2135,20 @@ mod tests {
                 ],),)),
                 Expr::Assertion(Assertion::EndText,),
             ],)
+        );
+    }
+
+    #[test]
+    fn named_subroutine_not_defined_later() {
+        assert_eq!(
+            p(r"\g<name>(?<different_name>a)"),
+            Expr::Concat(vec![
+                Expr::UnresolvedNamedSubroutineCall {
+                    name: "name".to_string(),
+                    ix: 2
+                },
+                Expr::Group(Box::new(make_literal("a"))),
+            ])
         );
     }
 
