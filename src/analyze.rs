@@ -286,7 +286,25 @@ mod tests {
 
     #[test]
     fn feature_not_yet_supported() {
-        assert!(analyze(&Expr::parse_tree("(a)\\g<1>").unwrap()).is_err());
+        let tree = &Expr::parse_tree(r"(a)\g<1>").unwrap();
+        let result = analyze(tree);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(CompileError::FeatureNotYetSupported(
+                _
+            )))
+        ));
+
+        let tree = &Expr::parse_tree(r"(a)\k<1-0>").unwrap();
+        let result = analyze(tree);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(CompileError::FeatureNotYetSupported(
+                _
+            )))
+        ));
     }
 
     #[test]
