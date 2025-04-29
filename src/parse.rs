@@ -1538,6 +1538,9 @@ mod tests {
         fail("(.)(?P=-)");
         fail(r"(a)\k<-0>(.)");
         fail(r"(a)\k<+0>(.)");
+        fail(r"(a)\k<+>(.)");
+        fail(r"(a)\k<->(.)");
+        fail(r"(a)\k<>(.)");
     }
 
     #[test]
