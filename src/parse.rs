@@ -2143,10 +2143,10 @@ mod tests {
     #[test]
     fn named_subroutine_not_defined_later() {
         assert_eq!(
-            p(r"\g<name>(?<different_name>a)"),
+            p(r"\g<wrong_name>(?<different_name>a)"),
             Expr::Concat(vec![
                 Expr::UnresolvedNamedSubroutineCall {
-                    name: "name".to_string(),
+                    name: "wrong_name".to_string(),
                     ix: 2
                 },
                 Expr::Group(Box::new(make_literal("a"))),
