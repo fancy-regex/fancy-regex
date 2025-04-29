@@ -291,9 +291,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(CompileError::FeatureNotYetSupported(
-                _
-            )))
+            Some(Error::CompileError(CompileError::FeatureNotYetSupported(_)))
         ));
 
         let tree = &Expr::parse_tree(r"(a)\k<1-0>").unwrap();
@@ -301,9 +299,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(CompileError::FeatureNotYetSupported(
-                _
-            )))
+            Some(Error::CompileError(CompileError::FeatureNotYetSupported(_)))
         ));
     }
 

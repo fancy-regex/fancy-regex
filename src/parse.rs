@@ -1988,6 +1988,18 @@ mod tests {
     }
 
     #[test]
+    fn subroutine_call_name_includes_dash() {
+        assert_error(
+            r"\g<1-0>(a)",
+            "Parsing error at position 2: Could not parse group name",
+        );
+        assert_error(
+            r"\g<name+1>(?'name'a)",
+            "Parsing error at position 2: Could not parse group name",
+        );
+    }
+
+    #[test]
     fn backref_condition_with_one_two_or_three_branches() {
         assert_eq!(
             p("(h)?(?(1)i|x)"),
