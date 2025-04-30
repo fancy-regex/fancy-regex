@@ -1596,6 +1596,33 @@ mod tests {
     }
 
     #[test]
+    fn relative_subroutine_call() {
+        assert_eq!(
+            p(r"(a)(.)\g<-1>"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(make_literal("a"))),
+                Expr::Group(Box::new(Expr::Any { newline: false })),
+                Expr::SubroutineCall(2),
+            ])
+        );
+
+        assert_eq!(
+            p(r"(a)\g<+1>(.)"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(make_literal("a"))),
+                Expr::SubroutineCall(2),
+                Expr::Group(Box::new(Expr::Any { newline: false })),
+            ])
+        );
+
+        fail(r"(a)\g<-0>(.)");
+        fail(r"(a)\g<+0>(.)");
+        fail(r"(a)\g<+>(.)");
+        fail(r"(a)\g<->(.)");
+        fail(r"(a)\g<>(.)");
+    }
+
+    #[test]
     fn lookaround() {
         assert_eq!(
             p("(?=a)"),
