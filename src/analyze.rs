@@ -211,6 +211,11 @@ impl<'a> Analyzer<'a> {
                     CompileError::SubroutineCallTargetNotFound(name.to_string(), ix),
                 ));
             }
+            Expr::BackrefWithRelativeRecursionLevel(_, _) => {
+                return Err(Error::CompileError(CompileError::FeatureNotYetSupported(
+                    "Backref at recursion level".to_string(),
+                )));
+            }
         };
 
         Ok(Info {
@@ -281,7 +286,21 @@ mod tests {
 
     #[test]
     fn feature_not_yet_supported() {
-        assert!(analyze(&Expr::parse_tree("(a)\\g<1>").unwrap()).is_err());
+        let tree = &Expr::parse_tree(r"(a)\g<1>").unwrap();
+        let result = analyze(tree);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(CompileError::FeatureNotYetSupported(_)))
+        ));
+
+        let tree = &Expr::parse_tree(r"(a)\k<1-0>").unwrap();
+        let result = analyze(tree);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(CompileError::FeatureNotYetSupported(_)))
+        ));
     }
 
     #[test]
