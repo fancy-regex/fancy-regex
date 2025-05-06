@@ -207,10 +207,9 @@ impl<'a> Analyzer<'a> {
                 )));
             }
             Expr::UnresolvedNamedSubroutineCall { ref name, ix } => {
-                return Err(Error::CompileError(CompileError::SubroutineCallTargetNotFound(
-                    name.to_string(),
-                    ix,
-                )));
+                return Err(Error::CompileError(
+                    CompileError::SubroutineCallTargetNotFound(name.to_string(), ix),
+                ));
             }
         };
 
@@ -292,9 +291,9 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(CompileError::SubroutineCallTargetNotFound(
-                _, _
-            )))
+            Some(Error::CompileError(
+                CompileError::SubroutineCallTargetNotFound(_, _)
+            ))
         ));
     }
 
