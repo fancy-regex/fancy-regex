@@ -206,9 +206,10 @@ impl<'a> Analyzer<'a> {
                     "Subroutine Call".to_string(),
                 )));
             }
-            Expr::UnresolvedNamedSubroutineCall { ref name, .. } => {
-                return Err(Error::CompileError(CompileError::InvalidGroupNameBackref(
+            Expr::UnresolvedNamedSubroutineCall { ref name, ix } => {
+                return Err(Error::CompileError(CompileError::SubroutineCallTargetNotFound(
                     name.to_string(),
+                    ix,
                 )));
             }
         };
@@ -291,8 +292,8 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.err(),
-            Some(Error::CompileError(CompileError::InvalidGroupNameBackref(
-                _
+            Some(Error::CompileError(CompileError::SubroutineCallTargetNotFound(
+                _, _
             )))
         ));
     }
