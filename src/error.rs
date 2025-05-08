@@ -75,6 +75,8 @@ pub enum CompileError {
     NamedBackrefOnly,
     /// Feature not supported yet
     FeatureNotYetSupported(String),
+    /// Subroutine call to non-existent group
+    SubroutineCallTargetNotFound(String, usize),
 }
 
 /// An error as the result of executing a regex.
@@ -133,6 +135,9 @@ impl fmt::Display for CompileError {
             CompileError::InvalidBackref => write!(f, "Invalid back reference"),
             CompileError::NamedBackrefOnly => write!(f, "Numbered backref/call not allowed because named group was used, use a named backref instead"),
             CompileError::FeatureNotYetSupported(s) => write!(f, "Regex uses currently unimplemented feature: {}", s),
+            CompileError::SubroutineCallTargetNotFound(s, ix) => {
+                write!(f, "Subroutine call target not found at position {}: {}", ix, s)
+            }
         }
     }
 }

@@ -206,6 +206,11 @@ impl<'a> Analyzer<'a> {
                     "Subroutine Call".to_string(),
                 )));
             }
+            Expr::UnresolvedNamedSubroutineCall { ref name, ix } => {
+                return Err(Error::CompileError(
+                    CompileError::SubroutineCallTargetNotFound(name.to_string(), ix),
+                ));
+            }
         };
 
         Ok(Info {
@@ -241,6 +246,8 @@ pub fn analyze<'a>(tree: &'a ExprTree) -> Result<Info<'a>> {
 mod tests {
     use super::analyze;
     // use super::literal_const_size;
+    use crate::CompileError;
+    use crate::Error;
     use crate::Expr;
 
     // #[test]
@@ -275,6 +282,19 @@ mod tests {
     #[test]
     fn feature_not_yet_supported() {
         assert!(analyze(&Expr::parse_tree("(a)\\g<1>").unwrap()).is_err());
+    }
+
+    #[test]
+    fn subroutine_call_undefined() {
+        let tree = &Expr::parse_tree(r"\g<wrong_name>(?<different_name>a)").unwrap();
+        let result = analyze(tree);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(
+                CompileError::SubroutineCallTargetNotFound(_, _)
+            ))
+        ));
     }
 
     #[test]
