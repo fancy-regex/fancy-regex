@@ -50,7 +50,7 @@ pub struct ExprTree {
     pub expr: Expr,
     pub backrefs: BitSet,
     pub named_groups: NamedGroups,
-    pub contains_subroutines: bool,
+    pub(crate) contains_subroutines: bool,
 }
 
 #[derive(Debug)]
