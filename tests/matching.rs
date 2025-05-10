@@ -171,6 +171,9 @@ fn backrefs() {
     assert_no_match(r"(δ)\1", "δΔ");
     assert_no_match(r"(δδ)\1", "δΔfoo");
     assert_no_match(r"(δδ)\1", "δΔ");
+
+    assert_match(r"(.)(?i:\1)", "\\\\");
+    assert_match(r"(.)(?i:\1)", "((");
 }
 
 #[cfg_attr(feature = "track_caller", track_caller)]
