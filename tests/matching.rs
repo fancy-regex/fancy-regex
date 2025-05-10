@@ -154,6 +154,25 @@ fn conditional_with_lookaround_condition() {
     assert_no_match(r"^(?((?=\d))\wabc|\d!)$", "5!");
 }
 
+#[test]
+fn backrefs() {
+    assert_match(r"(abc)\1", "abcabc");
+    assert_match(r"(abc|def)\1", "abcabc");
+    assert_no_match(r"(abc|def)\1", "abcdef");
+    assert_match(r"(abc|def)\1", "defdef");
+
+    assert_no_match(r"(abc|def)\1", "abcABC");
+    assert_match(r"(abc|def)(?i:\1)", "abcABC");
+    assert_match(r"(abc|def)(?i:\1)", "abcAbc");
+    assert_no_match(r"(abc|def)(?i:\1)", "abcAB");
+    assert_no_match(r"(abc|def)(?i:\1)", "abcdef");
+
+    assert_match(r"(δ)(?i:\1)", "δΔ");
+    assert_no_match(r"(δ)\1", "δΔ");
+    assert_no_match(r"(δδ)\1", "δΔfoo");
+    assert_no_match(r"(δδ)\1", "δΔ");
+}
+
 #[cfg_attr(feature = "track_caller", track_caller)]
 fn assert_match(re: &str, text: &str) {
     let result = match_text(re, text);
