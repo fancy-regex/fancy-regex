@@ -197,6 +197,9 @@ impl<'a> Parser<'a> {
             Expr::LookAround(_, _) => false,
             Expr::Empty => false,
             Expr::Assertion(_) => false,
+            Expr::KeepOut => false,
+            Expr::ContinueFromPreviousMatchEnd => false,
+            Expr::BackrefExistsCondition(_) => false,
             _ => true,
         }
     }
@@ -539,6 +542,8 @@ impl<'a> Parser<'a> {
             (end, Expr::KeepOut)
         } else if b == b'G' && !in_class {
             (end, Expr::ContinueFromPreviousMatchEnd)
+        } else if b == b'O' && !in_class {
+            (end, Expr::Any { newline: true })
         } else if b == b'g' && !in_class {
             if end == self.re.len() {
                 return Err(Error::ParseError(
@@ -1932,6 +1937,22 @@ mod tests {
         assert_eq!(
             p("a\\Kb"),
             Expr::Concat(vec![make_literal("a"), Expr::KeepOut, make_literal("b"),])
+        );
+    }
+
+    #[test]
+    fn no_quantifiers_on_other_non_repeatable_expressions() {
+        assert_error(
+            r"\K?",
+            "Parsing error at position 2: Target of repeat operator is invalid",
+        );
+        assert_error(
+            r"\G*",
+            "Parsing error at position 2: Target of repeat operator is invalid",
+        );
+        assert_error(
+            r"\b+",
+            "Parsing error at position 2: Target of repeat operator is invalid",
         );
     }
 
