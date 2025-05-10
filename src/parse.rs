@@ -1566,6 +1566,9 @@ mod tests {
         fail("(.)(?P=-)");
         fail(r"(a)\k<-0>(.)");
         fail(r"(a)\k<+0>(.)");
+        fail(r"(a)\k<+>(.)");
+        fail(r"(a)\k<->(.)");
+        fail(r"(a)\k<>(.)");
     }
 
     #[test]
@@ -1638,6 +1641,33 @@ mod tests {
                 Expr::Assertion(Assertion::EndText)
             ]),
         );
+    }
+
+    #[test]
+    fn relative_subroutine_call() {
+        assert_eq!(
+            p(r"(a)(.)\g<-1>"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(make_literal("a"))),
+                Expr::Group(Box::new(Expr::Any { newline: false })),
+                Expr::SubroutineCall(2),
+            ])
+        );
+
+        assert_eq!(
+            p(r"(a)\g<+1>(.)"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(make_literal("a"))),
+                Expr::SubroutineCall(2),
+                Expr::Group(Box::new(Expr::Any { newline: false })),
+            ])
+        );
+
+        fail(r"(a)\g<-0>(.)");
+        fail(r"(a)\g<+0>(.)");
+        fail(r"(a)\g<+>(.)");
+        fail(r"(a)\g<->(.)");
+        fail(r"(a)\g<>(.)");
     }
 
     #[test]
@@ -2052,6 +2082,18 @@ mod tests {
     }
 
     #[test]
+    fn subroutine_call_name_includes_dash() {
+        assert_error(
+            r"\g<1-0>(a)",
+            "Parsing error at position 2: Could not parse group name",
+        );
+        assert_error(
+            r"\g<name+1>(?'name'a)",
+            "Parsing error at position 2: Could not parse group name",
+        );
+    }
+
+    #[test]
     fn backref_condition_with_one_two_or_three_branches() {
         assert_eq!(
             p("(h)?(?(1)i|x)"),
@@ -2281,6 +2323,24 @@ mod tests {
         );
 
         assert_eq!(
+            p(r"(?<a>a)?\g<b>(?(<a>)(?<b>b)|c)"),
+            Expr::Concat(vec![
+                Expr::Repeat {
+                    child: Box::new(Expr::Group(Box::new(make_literal("a")))),
+                    lo: 0,
+                    hi: 1,
+                    greedy: true
+                },
+                Expr::SubroutineCall(2),
+                Expr::Conditional {
+                    condition: Box::new(Expr::BackrefExistsCondition(1)),
+                    true_branch: Box::new(Expr::Group(Box::new(make_literal("b")))),
+                    false_branch: Box::new(make_literal("c")),
+                }
+            ])
+        );
+
+        assert_eq!(
             p(r"\g<1>(a)"),
             Expr::Concat(vec![
                 Expr::SubroutineCall(1),
@@ -2309,6 +2369,20 @@ mod tests {
                 ],),)),
                 Expr::Assertion(Assertion::EndText,),
             ],)
+        );
+    }
+
+    #[test]
+    fn named_subroutine_not_defined_later() {
+        assert_eq!(
+            p(r"\g<wrong_name>(?<different_name>a)"),
+            Expr::Concat(vec![
+                Expr::UnresolvedNamedSubroutineCall {
+                    name: "wrong_name".to_string(),
+                    ix: 2
+                },
+                Expr::Group(Box::new(make_literal("a"))),
+            ])
         );
     }
 
