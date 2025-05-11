@@ -174,6 +174,10 @@ fn backrefs() {
 
     assert_match(r"(.)(?i:\1)", "\\\\");
     assert_match(r"(.)(?i:\1)", "((");
+
+    assert_match(r"(.)(?i:\1)", "įĮ");
+    assert_no_match(r"(.)(?i:\1)", "įi");
+    assert_no_match(r"(.)(?i:\1)", "įĖ");
 }
 
 #[cfg_attr(feature = "track_caller", track_caller)]
