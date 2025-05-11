@@ -1041,10 +1041,11 @@ pub(crate) fn parse_id<'a>(
                 if relative_amount == 0 && id_len == 0 {
                     return None;
                 }
-                let mut relative_amount_signed = relative_amount as isize;
-                if relative_sign == b'-' {
-                    relative_amount_signed = 0 - relative_amount_signed;
-                }
+                let relative_amount_signed = if relative_sign == b'-' {
+                    -(relative_amount as isize)
+                } else {
+                    relative_amount as isize
+                };
                 return Some((
                     &s[id_start..id_end],
                     Some(relative_amount_signed),
