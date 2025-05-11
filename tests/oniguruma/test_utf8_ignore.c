@@ -86,9 +86,6 @@
   x2("(?:abc)+?{2}", "abcabcabc", 0, 6);
 
   // No match found
-  x2("(abc)(?i:\\1)", "abcABC", 0, 6);
-
-  // No match found
   x3("((?m:a.c))", "a\nc", 0, 3, 1);
 
   // Compile failed: CompileError(InvalidBackref)
@@ -173,9 +170,6 @@
   x3("(?:\\1a|())*", "a", 0, 0, 1);
 
   // No match found
-  x2("x((.)*)*x(?i:\\1)\\Z", "0x1x2x1X2", 1, 9);
-
-  // No match found
   x2("(?:()|()|()|()|()|())*\\2\\5", "", 0, 0);
 
   // No match found
@@ -192,9 +186,6 @@
 
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("(?i)\\A(a|b\\g<1>c)\\k<1+2>\\z", "bBACcbac", 0, 8);
-
-  // No match found
-  x2("(?i)(?<X>aa)|(?<X>bb)\\k<X>", "BBbb", 0, 4);
 
   // Compile failed: CompileError(InvalidBackref)
   x2("(?:\\k'+1'B|(A)C)*", "ACAB", 0, 4);

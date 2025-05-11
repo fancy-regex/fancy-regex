@@ -1447,9 +1447,21 @@ pub enum Expr {
     },
     /// Back reference to a capture group, e.g. `\1` in `(abc|def)\1` references the captured group
     /// and the whole regex matches either `abcabc` or `defdef`.
-    Backref(usize),
+    Backref {
+        /// The capture group number being referenced
+        group: usize,
+        /// Whether the matching is case-insensitive or not
+        casei: bool,
+    },
     /// Back reference to a capture group at the given specified relative recursion level.
-    BackrefWithRelativeRecursionLevel(usize, isize),
+    BackrefWithRelativeRecursionLevel {
+        /// The capture group number being referenced
+        group: usize,
+        /// Relative recursion level
+        relative_level: isize,
+        /// Whether the matching is case-insensitive or not
+        casei: bool,
+    },
     /// Atomic non-capturing group, e.g. `(?>ab|a)` in text that contains `ab` will match `ab` and
     /// never backtrack and try `a`, even if matching fails after the atomic group.
     AtomicGroup(Box<Expr>),

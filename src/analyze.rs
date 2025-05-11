@@ -150,7 +150,7 @@ impl<'a> Analyzer<'a> {
                 min_size = size;
                 const_size = true;
             }
-            Expr::Backref(group) => {
+            Expr::Backref { group, .. } => {
                 if group >= self.group_ix {
                     return Err(Error::CompileError(CompileError::InvalidBackref));
                 }
@@ -211,7 +211,7 @@ impl<'a> Analyzer<'a> {
                     CompileError::SubroutineCallTargetNotFound(name.to_string(), ix),
                 ));
             }
-            Expr::BackrefWithRelativeRecursionLevel(_, _) => {
+            Expr::BackrefWithRelativeRecursionLevel { .. } => {
                 return Err(Error::CompileError(CompileError::FeatureNotYetSupported(
                     "Backref at recursion level".to_string(),
                 )));

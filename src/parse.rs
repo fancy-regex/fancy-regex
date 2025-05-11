@@ -307,9 +307,16 @@ impl<'a> Parser<'a> {
             return Ok((
                 end,
                 if let Some(recursion_level) = recursion_level {
-                    Expr::BackrefWithRelativeRecursionLevel(group, recursion_level)
+                    Expr::BackrefWithRelativeRecursionLevel {
+                        group,
+                        relative_level: recursion_level,
+                        casei: self.flag(FLAG_CASEI),
+                    }
                 } else {
-                    Expr::Backref(group)
+                    Expr::Backref {
+                        group,
+                        casei: self.flag(FLAG_CASEI),
+                    }
                 },
             ));
         }
@@ -397,7 +404,13 @@ impl<'a> Parser<'a> {
         let (end, group) = self.parse_numbered_backref_or_subroutine_call(ix)?;
         self.numeric_backrefs = true;
         self.backrefs.insert(group);
-        Ok((end, Expr::Backref(group)))
+        Ok((
+            end,
+            Expr::Backref {
+                group,
+                casei: self.flag(FLAG_CASEI),
+            },
+        ))
     }
 
     fn parse_numbered_subroutine_call(&mut self, ix: usize) -> Result<(usize, Expr)> {
@@ -864,7 +877,7 @@ impl<'a> Parser<'a> {
         let (end, child) = self.parse_re(next, depth)?;
         if end == next {
             // Backreference validity checker
-            if let Expr::Backref(group) = condition {
+            if let Expr::Backref { group, .. } = condition {
                 let after = self.check_for_close_paren(end)?;
                 return Ok((after, Expr::BackrefExistsCondition(group)));
             } else {
@@ -892,7 +905,7 @@ impl<'a> Parser<'a> {
             // there is only one branch - the truth branch. i.e. "if" without "else"
             if_true = child;
         }
-        let inner_condition = if let Expr::Backref(group) = condition {
+        let inner_condition = if let Expr::Backref { group, .. } = condition {
             Expr::BackrefExistsCondition(group)
         } else {
             condition
@@ -1501,7 +1514,10 @@ mod tests {
             p("(.)\\1"),
             Expr::Concat(vec![
                 Expr::Group(Box::new(Expr::Any { newline: false })),
-                Expr::Backref(1),
+                Expr::Backref {
+                    group: 1,
+                    casei: false,
+                },
             ])
         );
     }
@@ -1512,7 +1528,10 @@ mod tests {
             p("(?<i>.)\\k<i>"),
             Expr::Concat(vec![
                 Expr::Group(Box::new(Expr::Any { newline: false })),
-                Expr::Backref(1),
+                Expr::Backref {
+                    group: 1,
+                    casei: false,
+                },
             ])
         );
     }
@@ -1524,7 +1543,10 @@ mod tests {
             Expr::Concat(vec![
                 Expr::Group(Box::new(make_literal("a"))),
                 Expr::Group(Box::new(Expr::Any { newline: false })),
-                Expr::Backref(2),
+                Expr::Backref {
+                    group: 2,
+                    casei: false,
+                },
             ])
         );
 
@@ -1532,7 +1554,10 @@ mod tests {
             p(r"(a)\k<+1>(.)"),
             Expr::Concat(vec![
                 Expr::Group(Box::new(make_literal("a"))),
-                Expr::Backref(2),
+                Expr::Backref {
+                    group: 2,
+                    casei: false,
+                },
                 Expr::Group(Box::new(Expr::Any { newline: false })),
             ])
         );
@@ -1552,7 +1577,11 @@ mod tests {
             p(r"()\k<1+3>"),
             Expr::Concat(vec![
                 Expr::Group(Box::new(Expr::Empty)),
-                Expr::BackrefWithRelativeRecursionLevel(1, 3)
+                Expr::BackrefWithRelativeRecursionLevel {
+                    group: 1,
+                    relative_level: 3,
+                    casei: false,
+                },
             ]),
         );
 
@@ -1560,7 +1589,11 @@ mod tests {
             p(r"()\k<1-0>"),
             Expr::Concat(vec![
                 Expr::Group(Box::new(Expr::Empty)),
-                Expr::BackrefWithRelativeRecursionLevel(1, 0)
+                Expr::BackrefWithRelativeRecursionLevel {
+                    group: 1,
+                    relative_level: 0,
+                    casei: false,
+                },
             ]),
         );
 
@@ -1568,7 +1601,11 @@ mod tests {
             p(r"(?<n>)\k<n+3>"),
             Expr::Concat(vec![
                 Expr::Group(Box::new(Expr::Empty)),
-                Expr::BackrefWithRelativeRecursionLevel(1, 3)
+                Expr::BackrefWithRelativeRecursionLevel {
+                    group: 1,
+                    relative_level: 3,
+                    casei: false,
+                },
             ]),
         );
 
@@ -1576,7 +1613,11 @@ mod tests {
             p(r"(?<n>)\k<n-3>"),
             Expr::Concat(vec![
                 Expr::Group(Box::new(Expr::Empty)),
-                Expr::BackrefWithRelativeRecursionLevel(1, -3)
+                Expr::BackrefWithRelativeRecursionLevel {
+                    group: 1,
+                    relative_level: -3,
+                    casei: false,
+                }
             ]),
         );
 
@@ -1590,7 +1631,11 @@ mod tests {
                     Expr::Concat(vec![
                         Expr::Group(Box::new(Expr::Any { newline: false })),
                         Expr::SubroutineCall(1),
-                        Expr::BackrefWithRelativeRecursionLevel(2, 0),
+                        Expr::BackrefWithRelativeRecursionLevel {
+                            group: 2,
+                            relative_level: 0,
+                            casei: false,
+                        },
                     ])
                 ]))),
                 Expr::Assertion(Assertion::EndText)
@@ -2139,7 +2184,10 @@ mod tests {
                     true_branch: Box::new(make_literal("b")),
                     false_branch: Box::new(make_literal("c"))
                 })),
-                Expr::Group(Box::new(Expr::Backref(1)))
+                Expr::Group(Box::new(Expr::Backref {
+                    group: 1,
+                    casei: false,
+                },))
             ])
         );
 
@@ -2313,7 +2361,10 @@ mod tests {
                     Expr::Concat(vec![
                         Expr::Group(Box::new(Expr::Any { newline: false },)),
                         Expr::SubroutineCall(1,),
-                        Expr::Backref(2,),
+                        Expr::Backref {
+                            group: 2,
+                            casei: false,
+                        },
                     ],),
                 ],),)),
                 Expr::Assertion(Assertion::EndText,),
