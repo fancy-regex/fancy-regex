@@ -304,8 +304,12 @@ impl<'a> Parser<'a> {
         close: &str,
         allow_relative: bool,
     ) -> Result<(usize, Expr)> {
-        let NamedBackrefOrSubroutine { ix: end, group_ix, group_name, recursion_level } =
-            self.parse_named_backref_or_subroutine(ix, open, close, allow_relative)?;
+        let NamedBackrefOrSubroutine {
+            ix: end,
+            group_ix,
+            group_name,
+            recursion_level,
+        } = self.parse_named_backref_or_subroutine(ix, open, close, allow_relative)?;
         if let Some(group) = group_ix {
             self.backrefs.insert(group);
             return Ok((
@@ -334,8 +338,12 @@ impl<'a> Parser<'a> {
         close: &str,
         allow_relative: bool,
     ) -> Result<(usize, Expr)> {
-        let NamedBackrefOrSubroutine { ix: end, group_ix, group_name, recursion_level } =
-            self.parse_named_backref_or_subroutine(ix, open, close, allow_relative)?;
+        let NamedBackrefOrSubroutine {
+            ix: end,
+            group_ix,
+            group_name,
+            recursion_level,
+        } = self.parse_named_backref_or_subroutine(ix, open, close, allow_relative)?;
         if let Some(_) = recursion_level {
             return Err(Error::ParseError(ix, ParseError::InvalidGroupName));
         }
@@ -363,8 +371,11 @@ impl<'a> Parser<'a> {
         close: &str,
         allow_relative: bool,
     ) -> Result<NamedBackrefOrSubroutine> {
-        if let Some(ParsedId { id, mut relative, skip }) =
-            parse_id(&self.re[ix..], open, close, allow_relative)
+        if let Some(ParsedId {
+            id,
+            mut relative,
+            skip,
+        }) = parse_id(&self.re[ix..], open, close, allow_relative)
         {
             let group = if let Some(group) = self.named_groups.get(id) {
                 Some(*group)
@@ -737,7 +748,12 @@ impl<'a> Parser<'a> {
             } else {
                 ("'", "'")
             };
-            if let Some(ParsedId { id, relative: None, skip }) = parse_id(&self.re[ix + 1..], open, close, false) {
+            if let Some(ParsedId {
+                id,
+                relative: None,
+                skip,
+            }) = parse_id(&self.re[ix + 1..], open, close, false)
+            {
                 self.named_groups.insert(id.to_string(), self.curr_group);
                 (None, skip + 1)
             } else {
@@ -746,7 +762,12 @@ impl<'a> Parser<'a> {
         } else if self.re[ix..].starts_with("?P<") {
             // Named capture group using Python syntax: (?P<name>...)
             self.curr_group += 1; // this is a capture group
-            if let Some(ParsedId { id, relative: None, skip }) = parse_id(&self.re[ix + 2..], "<", ">", false) {
+            if let Some(ParsedId {
+                id,
+                relative: None,
+                skip,
+            }) = parse_id(&self.re[ix + 2..], "<", ">", false)
+            {
                 self.named_groups.insert(id.to_string(), self.curr_group);
                 (None, skip + 2)
             } else {
@@ -1053,7 +1074,11 @@ pub(crate) fn parse_id<'a>(
 
     let id_end = id_start + id_len;
     if id_len > 0 && s[id_end..].starts_with(close) {
-        return Some(ParsedId { id: &s[id_start..id_end], relative: None, skip: id_end + close.len() });
+        return Some(ParsedId {
+            id: &s[id_start..id_end],
+            relative: None,
+            skip: id_end + close.len(),
+        });
     } else if !allow_relative {
         return None;
     }
@@ -1205,18 +1230,42 @@ mod tests {
 
         assert_eq!(parse_id("<+1>", "<", ">", true), create_id("", Some(1), 4));
         assert_eq!(parse_id("<-3>", "<", ">", true), create_id("", Some(-3), 4));
-        assert_eq!(parse_id("<n+1>", "<", ">", true), create_id("n", Some(1), 5));
-        assert_eq!(parse_id("<n-1>", "<", ">", true), create_id("n", Some(-1), 5));
+        assert_eq!(
+            parse_id("<n+1>", "<", ">", true),
+            create_id("n", Some(1), 5)
+        );
+        assert_eq!(
+            parse_id("<n-1>", "<", ">", true),
+            create_id("n", Some(-1), 5)
+        );
         assert_eq!(parse_id("<>", "<", ">", true), None);
         assert_eq!(parse_id("<", "<", ">", true), None);
         assert_eq!(parse_id("<+0>", "<", ">", true), None);
         assert_eq!(parse_id("<-0>", "<", ">", true), None);
-        assert_eq!(parse_id("<n+0>", "<", ">", true), create_id("n", Some(0), 5));
-        assert_eq!(parse_id("<n-0>", "<", ">", true), create_id("n", Some(0), 5));
-        assert_eq!(parse_id("<2-0>", "<", ">", true), create_id("2", Some(0), 5));
-        assert_eq!(parse_id("<2+0>", "<", ">", true), create_id("2", Some(0), 5));
-        assert_eq!(parse_id("<2+1>", "<", ">", true), create_id("2", Some(1), 5));
-        assert_eq!(parse_id("<2-1>", "<", ">", true), create_id("2", Some(-1), 5));
+        assert_eq!(
+            parse_id("<n+0>", "<", ">", true),
+            create_id("n", Some(0), 5)
+        );
+        assert_eq!(
+            parse_id("<n-0>", "<", ">", true),
+            create_id("n", Some(0), 5)
+        );
+        assert_eq!(
+            parse_id("<2-0>", "<", ">", true),
+            create_id("2", Some(0), 5)
+        );
+        assert_eq!(
+            parse_id("<2+0>", "<", ">", true),
+            create_id("2", Some(0), 5)
+        );
+        assert_eq!(
+            parse_id("<2+1>", "<", ">", true),
+            create_id("2", Some(1), 5)
+        );
+        assert_eq!(
+            parse_id("<2-1>", "<", ">", true),
+            create_id("2", Some(-1), 5)
+        );
     }
 
     #[test]
