@@ -424,7 +424,6 @@ fn matches_literal(s: &str, ix: usize, end: usize, literal: &str) -> bool {
     end <= s.len() && &s.as_bytes()[ix..end] == literal.as_bytes()
 }
 
-#[inline]
 fn matches_literal_casei(s: &str, ix: usize, end: usize, literal: &str) -> bool {
     if end > s.len() {
         return false;
@@ -437,39 +436,27 @@ fn matches_literal_casei(s: &str, ix: usize, end: usize, literal: &str) -> bool 
     }
 
     // text captured and being backreferenced is not ascii, so we utilize regex-automata's case insensitive matching
-
-    let chars = literal.chars();
-
-    use alloc::boxed::Box;
     use regex_syntax::ast::*;
-
     let span = Span::splat(Position::new(0, 0, 0));
-    let mut literals = Vec::with_capacity(literal.len());
-    for c in chars {
-        let ast_literal = Ast::Literal(Box::new(Literal {
-            span,
-            kind: LiteralKind::Verbatim,
-            c: c,
-        }));
-        literals.push(ast_literal);
-    }
-    let ast_flags = Ast::Group(Box::new(Group {
-        span,
-        kind: GroupKind::NonCapturing(Flags {
-            span,
-            items: vec![FlagsItem {
+    let literals = literal
+        .chars()
+        .map(|c| {
+            Ast::literal(Literal {
                 span,
-                kind: FlagsItemKind::Flag(Flag::CaseInsensitive),
-            }],
-        }),
-        ast: Box::new(Ast::Concat(Box::new(Concat {
-            span,
-            asts: literals,
-        }))),
-    }));
+                kind: LiteralKind::Verbatim,
+                c: c,
+            })
+        })
+        .collect();
+    let ast = Ast::concat(Concat {
+        span,
+        asts: literals,
+    });
 
-    let mut translator = regex_syntax::hir::translate::Translator::new();
-    let hir = translator.translate(literal, &ast_flags).unwrap();
+    let mut translator = regex_syntax::hir::translate::TranslatorBuilder::new()
+        .case_insensitive(true)
+        .build();
+    let hir = translator.translate(literal, &ast).unwrap();
 
     use regex_automata::meta::Builder as RaBuilder;
     let re = RaBuilder::new()
