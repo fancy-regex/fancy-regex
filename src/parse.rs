@@ -64,6 +64,13 @@ pub(crate) struct Parser<'a> {
     has_unresolved_subroutines: bool,
 }
 
+struct NamedBackrefOrSubroutine<'a> {
+    ix: usize,
+    group_ix: Option<usize>,
+    group_name: Option<&'a str>,
+    recursion_level: Option<isize>,
+}
+
 impl<'a> Parser<'a> {
     /// Parse the regex and return an expression (AST) and a bit set with the indexes of groups
     /// that are referenced by backrefs.
@@ -300,9 +307,13 @@ impl<'a> Parser<'a> {
         close: &str,
         allow_relative: bool,
     ) -> Result<(usize, Expr)> {
-        let (end, group, id, recursion_level) =
-            self.parse_named_backref_or_subroutine(ix, open, close, allow_relative)?;
-        if let Some(group) = group {
+        let NamedBackrefOrSubroutine {
+            ix: end,
+            group_ix,
+            group_name,
+            recursion_level,
+        } = self.parse_named_backref_or_subroutine(ix, open, close, allow_relative)?;
+        if let Some(group) = group_ix {
             self.backrefs.insert(group);
             return Ok((
                 end,
@@ -320,11 +331,11 @@ impl<'a> Parser<'a> {
                 },
             ));
         }
-        if let Some(id) = id {
+        if let Some(group_name) = group_name {
             // here the name was parsed but doesn't match a capture group we have already parsed
             return Err(Error::ParseError(
                 ix,
-                ParseError::InvalidGroupNameBackref(id.to_string()),
+                ParseError::InvalidGroupNameBackref(group_name.to_string()),
             ));
         }
         unreachable!()
@@ -337,19 +348,23 @@ impl<'a> Parser<'a> {
         close: &str,
         allow_relative: bool,
     ) -> Result<(usize, Expr)> {
-        let (end, group, id, recursion_level) =
-            self.parse_named_backref_or_subroutine(ix, open, close, allow_relative)?;
+        let NamedBackrefOrSubroutine {
+            ix: end,
+            group_ix,
+            group_name,
+            recursion_level,
+        } = self.parse_named_backref_or_subroutine(ix, open, close, allow_relative)?;
         if let Some(_) = recursion_level {
             return Err(Error::ParseError(ix, ParseError::InvalidGroupName));
         }
-        if let Some(group) = group {
+        if let Some(group) = group_ix {
             self.contains_subroutines = true;
             return Ok((end, Expr::SubroutineCall(group)));
         }
-        if let Some(id) = id {
+        if let Some(group_name) = group_name {
             // here the name was parsed but doesn't match a capture group we have already parsed
             let expr = Expr::UnresolvedNamedSubroutineCall {
-                name: id.to_string(),
+                name: group_name.to_string(),
                 ix,
             };
             self.has_unresolved_subroutines = true;
@@ -359,16 +374,18 @@ impl<'a> Parser<'a> {
         unreachable!()
     }
 
-    // Returns Ok(ix, resolved group number, unresolved group name, recursion level)
     fn parse_named_backref_or_subroutine(
         &self,
         ix: usize,
         open: &str,
         close: &str,
         allow_relative: bool,
-    ) -> Result<(usize, Option<usize>, Option<&str>, Option<isize>)> {
-        if let Some((id, mut relative, skip)) =
-            parse_id(&self.re[ix..], open, close, allow_relative)
+    ) -> Result<NamedBackrefOrSubroutine> {
+        if let Some(ParsedId {
+            id,
+            mut relative,
+            skip,
+        }) = parse_id(&self.re[ix..], open, close, allow_relative)
         {
             let group = if let Some(group) = self.named_groups.get(id) {
                 Some(*group)
@@ -389,10 +406,20 @@ impl<'a> Parser<'a> {
                 None
             };
             if let Some(group) = group {
-                Ok((ix + skip, Some(group), None, relative))
+                Ok(NamedBackrefOrSubroutine {
+                    ix: ix + skip,
+                    group_ix: Some(group),
+                    group_name: None,
+                    recursion_level: relative,
+                })
             } else {
                 // here the name was parsed but doesn't match a capture group we have already parsed
-                Ok((ix + skip, None, Some(id), relative))
+                Ok(NamedBackrefOrSubroutine {
+                    ix: ix + skip,
+                    group_ix: None,
+                    group_name: Some(id),
+                    recursion_level: relative,
+                })
             }
         } else {
             // in this case the name can't be parsed
@@ -737,7 +764,12 @@ impl<'a> Parser<'a> {
             } else {
                 ("'", "'")
             };
-            if let Some((id, None, skip)) = parse_id(&self.re[ix + 1..], open, close, false) {
+            if let Some(ParsedId {
+                id,
+                relative: None,
+                skip,
+            }) = parse_id(&self.re[ix + 1..], open, close, false)
+            {
                 self.named_groups.insert(id.to_string(), self.curr_group);
                 (None, skip + 1)
             } else {
@@ -746,7 +778,12 @@ impl<'a> Parser<'a> {
         } else if self.re[ix..].starts_with("?P<") {
             // Named capture group using Python syntax: (?P<name>...)
             self.curr_group += 1; // this is a capture group
-            if let Some((id, None, skip)) = parse_id(&self.re[ix + 2..], "<", ">", false) {
+            if let Some(ParsedId {
+                id,
+                relative: None,
+                skip,
+            }) = parse_id(&self.re[ix + 2..], "<", ">", false)
+            {
                 self.named_groups.insert(id.to_string(), self.curr_group);
                 (None, skip + 2)
             } else {
@@ -1019,6 +1056,13 @@ pub(crate) fn parse_decimal(s: &str, ix: usize) -> Option<(usize, usize)> {
         .map(|val| (end, val))
 }
 
+#[derive(Debug, PartialEq)]
+pub(crate) struct ParsedId<'a> {
+    pub id: &'a str,
+    pub relative: Option<isize>,
+    pub skip: usize,
+}
+
 /// Attempts to parse an identifier, optionally followed by a relative number between the
 /// specified opening and closing delimiters.  On success, returns
 /// `Some((id, relative, skip))`, where `skip` is how much of the string was used.
@@ -1027,7 +1071,7 @@ pub(crate) fn parse_id<'a>(
     open: &'_ str,
     close: &'_ str,
     allow_relative: bool,
-) -> Option<(&'a str, Option<isize>, usize)> {
+) -> Option<ParsedId<'a>> {
     debug_assert!(!close.starts_with(is_id_char));
 
     if !s.starts_with(open) || s.len() <= open.len() + close.len() {
@@ -1046,7 +1090,11 @@ pub(crate) fn parse_id<'a>(
 
     let id_end = id_start + id_len;
     if id_len > 0 && s[id_end..].starts_with(close) {
-        return Some((&s[id_start..id_end], None, id_end + close.len()));
+        return Some(ParsedId {
+            id: &s[id_start..id_end],
+            relative: None,
+            skip: id_end + close.len(),
+        });
     } else if !allow_relative {
         return None;
     }
@@ -1057,15 +1105,16 @@ pub(crate) fn parse_id<'a>(
                 if relative_amount == 0 && id_len == 0 {
                     return None;
                 }
-                let mut relative_amount_signed = relative_amount as isize;
-                if relative_sign == b'-' {
-                    relative_amount_signed = 0 - relative_amount_signed;
-                }
-                return Some((
-                    &s[id_start..id_end],
-                    Some(relative_amount_signed),
-                    end + close.len(),
-                ));
+                let relative_amount_signed = if relative_sign == b'-' {
+                    -(relative_amount as isize)
+                } else {
+                    relative_amount as isize
+                };
+                return Some(ParsedId {
+                    id: &s[id_start..id_end],
+                    relative: Some(relative_amount_signed),
+                    skip: end + close.len(),
+                });
             }
         }
     }
@@ -1174,37 +1223,65 @@ mod tests {
 
     #[test]
     fn parse_id_test() {
-        assert_eq!(parse_id("foo.", "", "", true), Some(("foo", None, 3)));
-        assert_eq!(parse_id("1.", "", "", true), Some(("1", None, 1)));
-        assert_eq!(parse_id("{foo}", "{", "}", true), Some(("foo", None, 5)));
+        use crate::parse::ParsedId;
+        fn create_id(id: &str, relative: Option<isize>, skip: usize) -> Option<ParsedId> {
+            Some(ParsedId { id, relative, skip })
+        }
+        assert_eq!(parse_id("foo.", "", "", true), create_id("foo", None, 3));
+        assert_eq!(parse_id("1.", "", "", true), create_id("1", None, 1));
+        assert_eq!(parse_id("{foo}", "{", "}", true), create_id("foo", None, 5));
         assert_eq!(parse_id("{foo.", "{", "}", true), None);
         assert_eq!(parse_id("{foo", "{", "}", true), None);
         assert_eq!(parse_id("{}", "{", "}", true), None);
         assert_eq!(parse_id("", "", "", true), None);
-        assert_eq!(parse_id("{-1}", "{", "}", true), Some(("", Some(-1), 4)));
+        assert_eq!(parse_id("{-1}", "{", "}", true), create_id("", Some(-1), 4));
         assert_eq!(parse_id("{-1}", "{", "}", false), None);
         assert_eq!(parse_id("{-a}", "{", "}", true), None);
         assert_eq!(parse_id("{-a}", "{", "}", false), None);
         assert_eq!(parse_id("{+a}", "{", "}", false), None);
         assert_eq!(parse_id("+a", "", "", false), None);
         assert_eq!(parse_id("-a", "", "", false), None);
-        assert_eq!(parse_id("2+a", "", "", false), Some(("2", None, 1)));
-        assert_eq!(parse_id("2-a", "", "", false), Some(("2", None, 1)));
+        assert_eq!(parse_id("2+a", "", "", false), create_id("2", None, 1));
+        assert_eq!(parse_id("2-a", "", "", false), create_id("2", None, 1));
 
-        assert_eq!(parse_id("<+1>", "<", ">", true), Some(("", Some(1), 4)));
-        assert_eq!(parse_id("<-3>", "<", ">", true), Some(("", Some(-3), 4)));
-        assert_eq!(parse_id("<n+1>", "<", ">", true), Some(("n", Some(1), 5)));
-        assert_eq!(parse_id("<n-1>", "<", ">", true), Some(("n", Some(-1), 5)));
+        assert_eq!(parse_id("<+1>", "<", ">", true), create_id("", Some(1), 4));
+        assert_eq!(parse_id("<-3>", "<", ">", true), create_id("", Some(-3), 4));
+        assert_eq!(
+            parse_id("<n+1>", "<", ">", true),
+            create_id("n", Some(1), 5)
+        );
+        assert_eq!(
+            parse_id("<n-1>", "<", ">", true),
+            create_id("n", Some(-1), 5)
+        );
         assert_eq!(parse_id("<>", "<", ">", true), None);
         assert_eq!(parse_id("<", "<", ">", true), None);
         assert_eq!(parse_id("<+0>", "<", ">", true), None);
         assert_eq!(parse_id("<-0>", "<", ">", true), None);
-        assert_eq!(parse_id("<n+0>", "<", ">", true), Some(("n", Some(0), 5)));
-        assert_eq!(parse_id("<n-0>", "<", ">", true), Some(("n", Some(0), 5)));
-        assert_eq!(parse_id("<2-0>", "<", ">", true), Some(("2", Some(0), 5)));
-        assert_eq!(parse_id("<2+0>", "<", ">", true), Some(("2", Some(0), 5)));
-        assert_eq!(parse_id("<2+1>", "<", ">", true), Some(("2", Some(1), 5)));
-        assert_eq!(parse_id("<2-1>", "<", ">", true), Some(("2", Some(-1), 5)));
+        assert_eq!(
+            parse_id("<n+0>", "<", ">", true),
+            create_id("n", Some(0), 5)
+        );
+        assert_eq!(
+            parse_id("<n-0>", "<", ">", true),
+            create_id("n", Some(0), 5)
+        );
+        assert_eq!(
+            parse_id("<2-0>", "<", ">", true),
+            create_id("2", Some(0), 5)
+        );
+        assert_eq!(
+            parse_id("<2+0>", "<", ">", true),
+            create_id("2", Some(0), 5)
+        );
+        assert_eq!(
+            parse_id("<2+1>", "<", ">", true),
+            create_id("2", Some(1), 5)
+        );
+        assert_eq!(
+            parse_id("<2-1>", "<", ">", true),
+            create_id("2", Some(-1), 5)
+        );
     }
 
     #[test]
