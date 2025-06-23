@@ -537,7 +537,7 @@ struct RegexOptions {
     syntaxc: SyntaxConfig,
     backtrack_limit: usize,
     delegate_size_limit: Option<usize>,
-    delegate_dfa_size_limit: Option<usize>,
+    delegate_dfa_size_limit: Option<usize>
 }
 
 impl Default for RegexOptions {
@@ -547,7 +547,7 @@ impl Default for RegexOptions {
             syntaxc: SyntaxConfig::default(),
             backtrack_limit: 1_000_000,
             delegate_size_limit: None,
-            delegate_dfa_size_limit: None,
+            delegate_dfa_size_limit: None
         }
     }
 }
@@ -578,6 +578,31 @@ impl RegexBuilder {
         let syntaxc = self.0.syntaxc.to_owned();
         self.0.syntaxc = syntaxc.case_insensitive(yes);
         self
+    }
+
+    /// Enable multi-line regex
+    pub fn multi_line(&mut self, yes:bool) -> &mut Self {
+        let syntaxc = self.0.syntaxc.to_owned();
+        self.0.syntaxc = syntaxc.multi_line(yes);
+        self
+    }
+
+    /// Allow ignore whitespace
+    pub fn ignore_whitespace(&mut self, yes:bool) -> &mut Self {
+        let syntaxc = self.0.syntaxc.to_owned();
+        self.0.syntaxc = syntaxc.ignore_whitespace(yes);
+        self
+    }
+
+    ///Enable or disable the "dot matches any character" flag by default.
+    ///When this is enabled, . will match any character. When it's disabled, then . will match any character 
+    /// except for a new line character.
+    pub fn dot_matches_new_line(&mut self, yes:bool) -> &mut Self {
+        let syntaxc = self.0.syntaxc.to_owned();
+        self.0.syntaxc = syntaxc.dot_matches_new_line(yes);
+        self
+    }
+
     }
 
     /// Limit for how many times backtracking should be attempted for fancy regexes (where
