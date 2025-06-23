@@ -42,3 +42,36 @@ fn check_casing_insensitive_option() {
         _ => panic!("builder should be able to compile with casing options"),
     }
 }
+
+
+#[test]
+fn check_multi_line_option() {
+    let builder = RegexBuilder::new(r"test.*foo")
+        .multi_line(true)
+        .build();
+
+    let test_text = r"test 
+
+    foo";
+
+    match builder {
+        Ok(regex) => assert!(regex.is_match(r"test foo").unwrap_or_default()),
+        _ => panic!("builder should be able to compile with casing options"),
+    }
+}
+
+#[test]
+fn check_ignore_whitespace_option() {
+    let builder = RegexBuilder::new(r"  test.*foo")
+        .ignore_whitespace(true)
+        .build();
+
+    let test_text = r"test 
+
+    foo";
+
+    match builder {
+        Ok(regex) => assert!(regex.is_match(r"test foo").unwrap_or_default()),
+        _ => panic!("builder should be able to compile with casing options"),
+    }
+}

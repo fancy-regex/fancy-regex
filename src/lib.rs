@@ -603,7 +603,6 @@ impl RegexBuilder {
         self
     }
 
-    }
 
     /// Limit for how many times backtracking should be attempted for fancy regexes (where
     /// backtracking is used). If this limit is exceeded, execution returns an error with
