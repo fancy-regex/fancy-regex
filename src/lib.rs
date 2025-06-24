@@ -569,38 +569,37 @@ impl RegexBuilder {
         Regex::new_options(self.0.clone())
     }
 
+    fn set_config(&mut self,  func: impl Fn(SyntaxConfig) -> SyntaxConfig) -> &mut Self {
+        let syntaxc = self.0.syntaxc.to_owned();
+        self.0.syntaxc = func(syntaxc);
+        self
+    }
+
     /// Override default case insensitive
     /// this is to enable/disable casing via builder instead of a flag within
     /// the raw string provided to the regex builder
     ///
     /// Default is false
     pub fn case_insensitive(&mut self, yes: bool) -> &mut Self {
-        let syntaxc = self.0.syntaxc.to_owned();
-        self.0.syntaxc = syntaxc.case_insensitive(yes);
-        self
+        self.set_config(|x| x.case_insensitive(yes))
     }
 
     /// Enable multi-line regex
     pub fn multi_line(&mut self, yes:bool) -> &mut Self {
-        let syntaxc = self.0.syntaxc.to_owned();
-        self.0.syntaxc = syntaxc.multi_line(yes);
-        self
+        self.set_config(|x| x.multi_line(yes))
     }
 
     /// Allow ignore whitespace
     pub fn ignore_whitespace(&mut self, yes:bool) -> &mut Self {
-        let syntaxc = self.0.syntaxc.to_owned();
-        self.0.syntaxc = syntaxc.ignore_whitespace(yes);
-        self
+        self.set_config(|x| x.ignore_whitespace(yes))
     }
+
 
     ///Enable or disable the "dot matches any character" flag by default.
     ///When this is enabled, . will match any character. When it's disabled, then . will match any character 
     /// except for a new line character.
     pub fn dot_matches_new_line(&mut self, yes:bool) -> &mut Self {
-        let syntaxc = self.0.syntaxc.to_owned();
-        self.0.syntaxc = syntaxc.dot_matches_new_line(yes);
-        self
+        self.set_config(|x| x.dot_matches_new_line(yes))
     }
 
 
