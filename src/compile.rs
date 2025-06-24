@@ -106,6 +106,13 @@ impl Compiler {
         }
     }
 
+    fn new_with_options(max_group: usize, options: &RegexOptions) -> Compiler {
+        Compiler {
+            b: VMBuilder::new(max_group),
+            options: options.clone(),
+        }
+    }
+
     fn visit(&mut self, info: &Info<'_>, hard: bool) -> Result<()> {
         if !hard && !info.hard {
             // easy case, delegate entire subexpr
@@ -525,7 +532,16 @@ pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<Ra
 
 /// Compile the analyzed expressions into a program.
 pub fn compile(info: &Info<'_>) -> Result<Prog> {
-    let mut c = Compiler::new(info.end_group);
+    compile_with_options(info, None)
+}
+
+/// Compile the analyzed expressions into a program.
+pub fn compile_with_options(info: &Info<'_>, options: Option<&RegexOptions>) -> Result<Prog> {
+    let mut c = if let Some(opts) = options {
+        Compiler::new_with_options(info.end_group, opts)
+    } else {
+        Compiler::new(info.end_group)   
+    };
     c.visit(info, false)?;
     c.b.add(Insn::End);
     Ok(c.b.build())

@@ -84,3 +84,21 @@ fn check_dot_matches_new_line_option() {
         _ => panic!("builder should be able to compile with dot matches new line option"),
     }
 }
+
+
+#[test]
+fn check_casing_insensitive_option_hard() {
+    let builder = RegexBuilder::new(r"[a-z](?<=[^f])")
+        .case_insensitive(true)
+        .build();
+    
+    match builder {
+        Ok(regex) => {
+            assert!(regex.is_match(r"J").unwrap_or_default());
+            assert!(!regex.is_match(r"F").unwrap_or_default());
+            assert!(regex.is_match(r"j").unwrap_or_default());
+        }
+        _ => panic!("builder should be able to compile with casing options"),
+    }
+    
+}
