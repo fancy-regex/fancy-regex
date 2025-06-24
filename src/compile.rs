@@ -540,7 +540,7 @@ pub fn compile_with_options(info: &Info<'_>, options: Option<&RegexOptions>) -> 
     let mut c = if let Some(opts) = options {
         Compiler::new_with_options(info.end_group, opts)
     } else {
-        Compiler::new(info.end_group)   
+        Compiler::new(info.end_group)
     };
     c.visit(info, false)?;
     c.b.add(Insn::End);

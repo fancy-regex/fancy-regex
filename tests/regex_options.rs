@@ -85,13 +85,12 @@ fn check_dot_matches_new_line_option() {
     }
 }
 
-
 #[test]
 fn check_casing_insensitive_option_hard() {
     let builder = RegexBuilder::new(r"[a-z](?<=[^f])")
         .case_insensitive(true)
         .build();
-    
+
     match builder {
         Ok(regex) => {
             assert!(regex.is_match(r"J").unwrap_or_default());
@@ -100,12 +99,10 @@ fn check_casing_insensitive_option_hard() {
         }
         _ => panic!("builder should be able to compile with casing options"),
     }
-    
 }
 
 #[test]
 fn check_ignore_whitespace_option_fancy() {
-
     let builder = RegexBuilder::new(r"(?=test    foo)")
         .ignore_whitespace(true)
         .build();
@@ -114,12 +111,12 @@ fn check_ignore_whitespace_option_fancy() {
 
     let reggie = builder.unwrap();
     reggie.is_match(test_text);
-    let x  = reggie.is_match(test_text).unwrap_or_default();
+    let x = reggie.is_match(test_text).unwrap_or_default();
 
     println!("done {}", x)
 
-    /* 
-    
+    /*
+
     match builder {
         Ok(regex) => assert!(regex.is_match(test_text).unwrap_or_default()),
         _ => panic!("builder should be able to compile with ignore whitespace option"),
@@ -129,7 +126,6 @@ fn check_ignore_whitespace_option_fancy() {
 
 #[test]
 fn issue_163_fancy_email_test() {
-
     let regex = fancy_regex::RegexBuilder::new(
         r"^(?!\.)(?!.*\.\.)([a-z0-9_'+\-\.]*)[a-z0-9_'+\-]@([a-z0-9][a-z0-9\-]*\.)+[a-z]{2,}$",
     )
@@ -140,5 +136,4 @@ fn issue_163_fancy_email_test() {
     let test_email = "VALID@domain.com";
     let is_valid = regex.is_match(test_email).unwrap();
     assert!(is_valid);
-
 }
