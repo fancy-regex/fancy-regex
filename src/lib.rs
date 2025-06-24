@@ -207,7 +207,7 @@ mod replacer;
 mod vm;
 
 use crate::analyze::analyze;
-use crate::compile::compile;
+use crate::compile::compile_with_options;
 use crate::parse::{ExprTree, NamedGroups, Parser};
 use crate::vm::{Prog, OPTION_SKIPPED_EMPTY_MATCH};
 
@@ -700,7 +700,7 @@ impl Regex {
             });
         }
 
-        let prog = compile(&info)?;
+        let prog = compile_with_options(&info, Some(&options))?;
         Ok(Regex {
             inner: RegexImpl::Fancy {
                 prog,
