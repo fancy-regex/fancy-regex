@@ -72,6 +72,6 @@ fn check_ignore_whitespace_option() {
 
     match builder {
         Ok(regex) => assert!(regex.is_match(r"test foo").unwrap_or_default()),
-        _ => panic!("builder should be able to compile with casing options"),
+        _ => panic!("builder should be able to compile with ignore whitespace option"),
     }
 }
