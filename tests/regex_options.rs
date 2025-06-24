@@ -43,12 +43,9 @@ fn check_casing_insensitive_option() {
     }
 }
 
-
 #[test]
 fn check_multi_line_option() {
-    let builder = RegexBuilder::new(r"^test$")
-        .multi_line(true)
-        .build();
+    let builder = RegexBuilder::new(r"^test$").multi_line(true).build();
 
     let test_text = r"test
 hugo
@@ -62,7 +59,6 @@ test";
 
 #[test]
 fn check_ignore_whitespace_option() {
-
     let builder = RegexBuilder::new(r"test    foo")
         .ignore_whitespace(true)
         .build();
@@ -76,7 +72,6 @@ fn check_ignore_whitespace_option() {
 
 #[test]
 fn check_dot_matches_new_line_option() {
-
     let builder = RegexBuilder::new(r"<div>(.*?)<\/div>")
         .dot_matches_new_line(true)
         .build();

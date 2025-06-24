@@ -537,7 +537,7 @@ struct RegexOptions {
     syntaxc: SyntaxConfig,
     backtrack_limit: usize,
     delegate_size_limit: Option<usize>,
-    delegate_dfa_size_limit: Option<usize>
+    delegate_dfa_size_limit: Option<usize>,
 }
 
 impl Default for RegexOptions {
@@ -547,7 +547,7 @@ impl Default for RegexOptions {
             syntaxc: SyntaxConfig::default(),
             backtrack_limit: 1_000_000,
             delegate_size_limit: None,
-            delegate_dfa_size_limit: None
+            delegate_dfa_size_limit: None,
         }
     }
 }
@@ -569,7 +569,7 @@ impl RegexBuilder {
         Regex::new_options(self.0.clone())
     }
 
-    fn set_config(&mut self,  func: impl Fn(SyntaxConfig) -> SyntaxConfig) -> &mut Self {
+    fn set_config(&mut self, func: impl Fn(SyntaxConfig) -> SyntaxConfig) -> &mut Self {
         let syntaxc = self.0.syntaxc.to_owned();
         self.0.syntaxc = func(syntaxc);
         self
@@ -585,23 +585,21 @@ impl RegexBuilder {
     }
 
     /// Enable multi-line regex
-    pub fn multi_line(&mut self, yes:bool) -> &mut Self {
+    pub fn multi_line(&mut self, yes: bool) -> &mut Self {
         self.set_config(|x| x.multi_line(yes))
     }
 
     /// Allow ignore whitespace
-    pub fn ignore_whitespace(&mut self, yes:bool) -> &mut Self {
+    pub fn ignore_whitespace(&mut self, yes: bool) -> &mut Self {
         self.set_config(|x| x.ignore_whitespace(yes))
     }
 
-
     ///Enable or disable the "dot matches any character" flag by default.
-    ///When this is enabled, . will match any character. When it's disabled, then . will match any character 
+    ///When this is enabled, . will match any character. When it's disabled, then . will match any character
     /// except for a new line character.
-    pub fn dot_matches_new_line(&mut self, yes:bool) -> &mut Self {
+    pub fn dot_matches_new_line(&mut self, yes: bool) -> &mut Self {
         self.set_config(|x| x.dot_matches_new_line(yes))
     }
-
 
     /// Limit for how many times backtracking should be attempted for fancy regexes (where
     /// backtracking is used). If this limit is exceeded, execution returns an error with
