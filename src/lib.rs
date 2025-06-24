@@ -532,7 +532,7 @@ impl<'r, 'h> Iterator for SplitN<'r, 'h> {
 impl<'r, 'h> core::iter::FusedIterator for SplitN<'r, 'h> {}
 
 #[derive(Clone, Debug)]
-struct RegexOptions {
+pub (crate) struct RegexOptions {
     pattern: String,
     syntaxc: SyntaxConfig,
     backtrack_limit: usize,
