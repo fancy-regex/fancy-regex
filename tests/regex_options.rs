@@ -51,7 +51,7 @@ fn check_multi_line_option() {
         .build();
 
     let test_text = r"test
-something
+hugo
 test";
 
     match builder {
