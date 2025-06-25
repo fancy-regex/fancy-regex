@@ -188,6 +188,7 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use core::cmp::min;
 use core::convert::TryFrom;
 use core::fmt::{Debug, Formatter};
 use core::ops::{Index, Range};
@@ -203,12 +204,14 @@ mod compile;
 mod error;
 mod expand;
 mod parse;
+mod regexflags;
 mod replacer;
 mod vm;
 
 use crate::analyze::analyze;
 use crate::compile::compile_with_options;
 use crate::parse::{ExprTree, NamedGroups, Parser};
+use crate::regexflags::*;
 use crate::vm::{Prog, OPTION_SKIPPED_EMPTY_MATCH};
 
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
@@ -533,12 +536,32 @@ impl<'r, 'h> core::iter::FusedIterator for SplitN<'r, 'h> {}
 
 #[derive(Clone, Debug)]
 /// Allows the settings of Regex Options
-pub struct RegexOptions {
+struct RegexOptions {
     pattern: String,
     syntaxc: SyntaxConfig,
     backtrack_limit: usize,
     delegate_size_limit: Option<usize>,
     delegate_dfa_size_limit: Option<usize>,
+}
+
+impl RegexOptions {
+    fn get_flag_value(flag_value: bool, enum_value: u32) -> u32 {
+        if flag_value {
+            enum_value
+        } else {
+            0
+        }
+    }
+
+    fn compute_flags(&self) -> u32 {
+        let insenstive = Self::get_flag_value(self.syntaxc.get_case_insensitive(), FLAG_CASEI);
+        let multiline = Self::get_flag_value(self.syntaxc.get_multi_line(), FLAG_MULTI);
+        let whitespace =
+            Self::get_flag_value(self.syntaxc.get_ignore_whitespace(), FLAG_IGNORE_SPACE);
+
+        let all_flags = insenstive | multiline | whitespace;
+        all_flags
+    }
 }
 
 impl Default for RegexOptions {
@@ -671,7 +694,7 @@ impl Regex {
     }
 
     fn new_options(options: RegexOptions) -> Result<Regex> {
-        let raw_tree = Expr::parse_tree_with_options(&options)?;
+        let raw_tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags())?;
 
         // wrapper to search for re at arbitrary start position,
         // and to capture the match bounds
@@ -1634,10 +1657,10 @@ impl Expr {
         Parser::parse(re)
     }
 
-    /// Parse the regex and return an expression (AST) - modifes the AST based on the options
-    // TODO - This feels clunky why not use bitflags  ?
-    pub fn parse_tree_with_options(options: &RegexOptions) -> Result<ExprTree> {
-        Parser::parse_options(options)
+    /// Parse the regex and return an expression (AST)
+    /// Flags should be bit based based on RegexFlags
+    pub fn parse_tree_with_flags(re: &str, flags: u32) -> Result<ExprTree> {
+        Parser::parse_with_flags(re, flags)
     }
 
     /// Convert expression to a regex string in the regex crate's syntax.

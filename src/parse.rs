@@ -30,15 +30,9 @@ use bit_set::BitSet;
 use core::usize;
 use regex_syntax::escape_into;
 
+use crate::regexflags::*;
 use crate::{codepoint_len, CompileError, Error, Expr, ParseError, Result, MAX_RECURSION};
 use crate::{Assertion, LookAround::*};
-
-const FLAG_CASEI: u32 = 1;
-const FLAG_MULTI: u32 = 1 << 1;
-const FLAG_DOTNL: u32 = 1 << 2;
-const FLAG_SWAP_GREED: u32 = 1 << 3;
-const FLAG_IGNORE_SPACE: u32 = 1 << 4;
-const FLAG_UNICODE: u32 = 1 << 5;
 
 #[cfg(not(feature = "std"))]
 pub(crate) type NamedGroups = alloc::collections::BTreeMap<String, usize>;
@@ -73,9 +67,8 @@ struct NamedBackrefOrSubroutine<'a> {
 }
 
 impl<'a> Parser<'a> {
-    pub(crate) fn parse_options(options: &RegexOptions) -> Result<ExprTree> {
-        let re = &options.pattern;
-        let mut p = Parser::new_with_options(options);
+    pub(crate) fn parse_with_flags(re: &str, flags: u32) -> Result<ExprTree> {
+        let mut p = Parser::new_with_flags(re, flags);
         let (ix, mut expr) = p.parse_re(0, 0)?;
         if ix < re.len() {
             return Err(Error::ParseError(
@@ -102,7 +95,7 @@ impl<'a> Parser<'a> {
     pub(crate) fn parse(re: &str) -> Result<ExprTree> {
         let mut options = RegexOptions::default();
         options.pattern = String::from(re);
-        Self::parse_options(&options)
+        Self::parse_with_flags(&options.pattern, options.compute_flags())
     }
 
     fn new(re: &str) -> Parser<'_> {
@@ -118,26 +111,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn get_flag_value(flag_value: bool, enum_value: u32) -> u32 {
-        if flag_value {
-            enum_value
-        } else {
-            0
-        }
-    }
-
-    fn new_with_options(options: &RegexOptions) -> Parser<'_> {
-        let re = options.pattern.as_str();
-
-        //Should this be Config be changed to just use BitFlags ?
-        //Would more closely align with most other regex libraries
-
-        let insenstive = Self::get_flag_value(options.syntaxc.get_case_insensitive(), FLAG_CASEI);
-        let multiline = Self::get_flag_value(options.syntaxc.get_multi_line(), FLAG_MULTI);
-        let whitespace =
-            Self::get_flag_value(options.syntaxc.get_ignore_whitespace(), FLAG_IGNORE_SPACE);
-
-        let flags = whitespace | insenstive | multiline | FLAG_UNICODE;
+    fn new_with_flags(re: &str, flags: u32) -> Parser<'_> {
+        let flags = flags | FLAG_UNICODE;
 
         Parser {
             re,
@@ -2549,7 +2524,7 @@ mod tests {
     fn parse_with_insenstive_args() {
         let options = get_options("hello", |x| x.case_insensitive(true));
 
-        let tree = Expr::parse_tree_with_options(&options);
+        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
         let expr = tree.unwrap().expr;
         let mut s = String::from("");
         let s_ref: &mut String = &mut s;
@@ -2562,7 +2537,7 @@ mod tests {
     fn parse_with_string_multiline() {
         let options = get_options("(?m)^hello$", |x| x);
 
-        let tree = Expr::parse_tree_with_options(&options);
+        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
         let expr = tree.unwrap().expr;
         let mut s = String::from("");
         let s_ref: &mut String = &mut s;
@@ -2576,7 +2551,7 @@ mod tests {
     fn parse_with_multiline_args() {
         let options = get_options("^hello$", |x| x.multi_line(true));
 
-        let tree = Expr::parse_tree_with_options(&options);
+        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
         let expr = tree.unwrap().expr;
         let mut s = String::from("");
         let s_ref: &mut String = &mut s;
