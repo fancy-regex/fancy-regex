@@ -21,7 +21,6 @@
 //! A regex parser yielding an AST.
 
 use crate::RegexOptions;
-use crate::SyntaxConfig;
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -1006,8 +1005,7 @@ impl<'a> Parser<'a> {
     }
 
     fn flag(&self, flag: u32) -> bool {
-        let v = (self.flags & flag);
-        println!("testing flag {} flags {} v = {}", flag, self.flags, v);
+        let v = self.flags & flag;
         v == flag
     }
 
