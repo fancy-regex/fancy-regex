@@ -20,6 +20,8 @@
 
 //! A regex parser yielding an AST.
 
+use crate::RegexOptions;
+use crate::SyntaxConfig;
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -72,10 +74,9 @@ struct NamedBackrefOrSubroutine<'a> {
 }
 
 impl<'a> Parser<'a> {
-    /// Parse the regex and return an expression (AST) and a bit set with the indexes of groups
-    /// that are referenced by backrefs.
-    pub(crate) fn parse(re: &str) -> Result<ExprTree> {
-        let mut p = Parser::new(re);
+    pub(crate) fn parse_options(options: &RegexOptions) -> Result<ExprTree> {
+        let re = &options.pattern;
+        let mut p = Parser::new_with_options(options);
         let (ix, mut expr) = p.parse_re(0, 0)?;
         if ix < re.len() {
             return Err(Error::ParseError(
@@ -97,6 +98,14 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// Parse the regex and return an expression (AST) and a bit set with the indexes of groups
+    /// that are referenced by backrefs.
+    pub(crate) fn parse(re: &str) -> Result<ExprTree> {
+        let mut options = RegexOptions::default();
+        options.pattern = String::from(re);
+        Self::parse_options(&options)
+    }
+
     fn new(re: &str) -> Parser<'_> {
         Parser {
             re,
@@ -104,6 +113,39 @@ impl<'a> Parser<'a> {
             named_groups: Default::default(),
             numeric_backrefs: false,
             flags: FLAG_UNICODE,
+            curr_group: 0,
+            contains_subroutines: false,
+            has_unresolved_subroutines: false,
+        }
+    }
+
+    fn get_flag_value(flag_value: bool, enum_value: u32) -> u32 {
+        if flag_value {
+            enum_value
+        } else {
+            0
+        }
+    }
+
+    fn new_with_options(options: &RegexOptions) -> Parser<'_> {
+        let re = options.pattern.as_str();
+
+        //Should this be Config be changed to just use BitFlags ?
+        //Would more closely align with most other regex libraries
+
+        let insenstive = Self::get_flag_value(options.syntaxc.get_case_insensitive(), FLAG_CASEI);
+        let multiline = Self::get_flag_value(options.syntaxc.get_multi_line(), FLAG_MULTI);
+        let whitespace =
+            Self::get_flag_value(options.syntaxc.get_ignore_whitespace(), FLAG_IGNORE_SPACE);
+
+        let flags = whitespace | insenstive | multiline | FLAG_UNICODE;
+
+        Parser {
+            re,
+            backrefs: Default::default(),
+            named_groups: Default::default(),
+            numeric_backrefs: false,
+            flags: flags,
             curr_group: 0,
             contains_subroutines: false,
             has_unresolved_subroutines: false,
@@ -964,7 +1006,9 @@ impl<'a> Parser<'a> {
     }
 
     fn flag(&self, flag: u32) -> bool {
-        (self.flags & flag) != 0
+        let v = (self.flags & flag);
+        println!("testing flag {} flags {} v = {}", flag, self.flags, v);
+        v == flag
     }
 
     fn update_flag(&mut self, flag: u32, neg: bool) {
@@ -1147,8 +1191,8 @@ mod tests {
     use alloc::{format, vec};
 
     use crate::parse::{make_literal, parse_id};
-    use crate::LookAround::*;
     use crate::{Assertion, Expr};
+    use crate::{LookAround::*, RegexOptions, SyntaxConfig};
 
     fn p(s: &str) -> Expr {
         Expr::parse_tree(s).unwrap().expr
@@ -2483,5 +2527,64 @@ mod tests {
     #[test]
     fn fuzz_4() {
         fail(r"\u{2}(?(2)");
+    }
+
+    fn get_options(pattern: &str, func: impl Fn(SyntaxConfig) -> SyntaxConfig) -> RegexOptions {
+        let mut options = RegexOptions::default();
+        options.syntaxc = func(options.syntaxc);
+        options.pattern = String::from(pattern);
+        options
+    }
+
+    #[test]
+    fn parse_with_string_insenstive() {
+        let tree = Expr::parse_tree("(?i)hello");
+        let expr = tree.unwrap().expr;
+        let mut s = String::from("");
+        let s_ref: &mut String = &mut s;
+        expr.to_str(s_ref, 0);
+        let expected = "(?i:h)(?i:e)(?i:l)(?i:l)(?i:o)";
+        assert_eq!(expected, s);
+    }
+
+    #[test]
+    fn parse_with_insenstive_args() {
+        let options = get_options("hello", |x| x.case_insensitive(true));
+
+        let tree = Expr::parse_tree_with_options(&options);
+        let expr = tree.unwrap().expr;
+        let mut s = String::from("");
+        let s_ref: &mut String = &mut s;
+        expr.to_str(s_ref, 0);
+        let expected = "(?i:h)(?i:e)(?i:l)(?i:l)(?i:o)";
+        assert_eq!(expected, s);
+    }
+
+    #[test]
+    fn parse_with_string_multiline() {
+        let options = get_options("(?m)^hello$", |x| x);
+
+        let tree = Expr::parse_tree_with_options(&options);
+        let expr = tree.unwrap().expr;
+        let mut s = String::from("");
+        let s_ref: &mut String = &mut s;
+        expr.to_str(s_ref, 0);
+        println!("{}", s);
+        let expected = "(?m:^)hello(?m:$)";
+        assert_eq!(expected, s);
+    }
+
+    #[test]
+    fn parse_with_multiline_args() {
+        let options = get_options("^hello$", |x| x.multi_line(true));
+
+        let tree = Expr::parse_tree_with_options(&options);
+        let expr = tree.unwrap().expr;
+        let mut s = String::from("");
+        let s_ref: &mut String = &mut s;
+        expr.to_str(s_ref, 0);
+        println!("{}", s);
+        let expected = "(?m:^)hello(?m:$)";
+        assert_eq!(expected, s);
     }
 }

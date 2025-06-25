@@ -671,7 +671,7 @@ impl Regex {
     }
 
     fn new_options(options: RegexOptions) -> Result<Regex> {
-        let raw_tree = Expr::parse_tree(&options.pattern)?;
+        let raw_tree = Expr::parse_tree_with_options(&options)?;
 
         // wrapper to search for re at arbitrary start position,
         // and to capture the match bounds
@@ -1632,6 +1632,12 @@ impl Expr {
     /// that are referenced by backrefs.
     pub fn parse_tree(re: &str) -> Result<ExprTree> {
         Parser::parse(re)
+    }
+
+    /// Parse the regex and return an expression (AST) - modifes the AST based on the options
+    // TODO - This feels clunky why not use bitflags  ?
+    pub fn parse_tree_with_options(options: &RegexOptions) -> Result<ExprTree> {
+        Parser::parse_options(options)
     }
 
     /// Convert expression to a regex string in the regex crate's syntax.
