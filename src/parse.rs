@@ -1154,7 +1154,7 @@ pub(crate) fn make_literal(s: &str) -> Expr {
     make_literal_with_case_senitivity(s, false)
 }
 
-pub(crate) fn make_literal_with_case_senitivity(s: &str, case_insensitive: bool) -> Expr {
+pub(crate) fn make_literal_with_case_sensitivity(s: &str, case_insensitive: bool) -> Expr {
     Expr::Literal {
         val: String::from(s),
         casei: case_insensitive,
