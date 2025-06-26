@@ -535,7 +535,6 @@ impl<'r, 'h> Iterator for SplitN<'r, 'h> {
 impl<'r, 'h> core::iter::FusedIterator for SplitN<'r, 'h> {}
 
 #[derive(Clone, Debug)]
-/// Allows the settings of Regex Options
 struct RegexOptions {
     pattern: String,
     syntaxc: SyntaxConfig,
@@ -554,12 +553,12 @@ impl RegexOptions {
     }
 
     fn compute_flags(&self) -> u32 {
-        let insenstive = Self::get_flag_value(self.syntaxc.get_case_insensitive(), FLAG_CASEI);
+        let insensitive = Self::get_flag_value(self.syntaxc.get_case_insensitive(), FLAG_CASEI);
         let multiline = Self::get_flag_value(self.syntaxc.get_multi_line(), FLAG_MULTI);
         let whitespace =
             Self::get_flag_value(self.syntaxc.get_ignore_whitespace(), FLAG_IGNORE_SPACE);
 
-        let all_flags = insenstive | multiline | whitespace;
+        let all_flags = insensitive | multiline | whitespace;
         all_flags
     }
 }
