@@ -2589,6 +2589,35 @@ mod tests {
     }
 
     #[test]
+    fn parse_fancy_with_dot_matches_new_line() {
+        let options = get_options("(.*)(?<=hugo)", |x| x.dot_matches_new_line(true));
+
+        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
+        let expr = tree.unwrap().expr;
+
+        assert_eq!(
+            expr,
+            Expr::Concat(vec![
+                Expr::Group(Box::new(Expr::Repeat {
+                    child: Box::new(Expr::Any { newline: true }),
+                    lo: 0,
+                    hi: usize::MAX,
+                    greedy: true
+                })),
+                Expr::LookAround(
+                    Box::new(Expr::Concat(vec![
+                        make_literal("h"),
+                        make_literal("u"),
+                        make_literal("g"),
+                        make_literal("o")
+                    ])),
+                    LookBehind
+                )
+            ])
+        );
+    }
+
+    #[test]
     fn parse_with_options_dot_matches_new_line() {
         let options = get_options("(?s)(.*)", |x| x.dot_matches_new_line(true));
 
