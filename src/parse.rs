@@ -1151,7 +1151,7 @@ fn is_hex_digit(b: u8) -> bool {
 }
 
 pub(crate) fn make_literal(s: &str) -> Expr {
-    make_literal_with_case_senitivity(s, false)
+    make_literal_with_case_sensitivity(s, false)
 }
 
 pub(crate) fn make_literal_with_case_sensitivity(s: &str, case_insensitive: bool) -> Expr {
@@ -1167,7 +1167,7 @@ mod tests {
     use alloc::string::{String, ToString};
     use alloc::{format, vec};
 
-    use crate::parse::{make_literal, make_literal_with_case_senitivity, parse_id};
+    use crate::parse::{make_literal, make_literal_with_case_sensitivity, parse_id};
     use crate::{Assertion, Expr};
     use crate::{LookAround::*, RegexOptions, SyntaxConfig};
 
@@ -2521,11 +2521,11 @@ mod tests {
         assert_eq!(
             expr,
             Expr::Concat(vec![
-                make_literal_with_case_senitivity("h", true),
-                make_literal_with_case_senitivity("e", true),
-                make_literal_with_case_senitivity("l", true),
-                make_literal_with_case_senitivity("l", true),
-                make_literal_with_case_senitivity("o", true)
+                make_literal_with_case_sensitivity("h", true),
+                make_literal_with_case_sensitivity("e", true),
+                make_literal_with_case_sensitivity("l", true),
+                make_literal_with_case_sensitivity("l", true),
+                make_literal_with_case_sensitivity("o", true)
             ])
         );
     }
@@ -2540,11 +2540,11 @@ mod tests {
         assert_eq!(
             expr,
             Expr::Concat(vec![
-                make_literal_with_case_senitivity("h", true),
-                make_literal_with_case_senitivity("e", true),
-                make_literal_with_case_senitivity("l", true),
-                make_literal_with_case_senitivity("l", true),
-                make_literal_with_case_senitivity("o", true)
+                make_literal_with_case_sensitivity("h", true),
+                make_literal_with_case_sensitivity("e", true),
+                make_literal_with_case_sensitivity("l", true),
+                make_literal_with_case_sensitivity("l", true),
+                make_literal_with_case_sensitivity("o", true)
             ])
         );
     }
@@ -2667,11 +2667,11 @@ mod tests {
             expr,
             Expr::Concat(vec![
                 Expr::Assertion(Assertion::StartLine { crlf: false }),
-                make_literal_with_case_senitivity("h", true),
-                make_literal_with_case_senitivity("e", true),
-                make_literal_with_case_senitivity("l", true),
-                make_literal_with_case_senitivity("l", true),
-                make_literal_with_case_senitivity("o", true),
+                make_literal_with_case_sensitivity("h", true),
+                make_literal_with_case_sensitivity("e", true),
+                make_literal_with_case_sensitivity("l", true),
+                make_literal_with_case_sensitivity("l", true),
+                make_literal_with_case_sensitivity("o", true),
                 Expr::Assertion(Assertion::EndLine { crlf: false })
             ])
         );
@@ -2689,11 +2689,11 @@ mod tests {
             expr,
             Expr::Concat(vec![
                 Expr::Assertion(Assertion::StartLine { crlf: false }),
-                make_literal_with_case_senitivity("h", true),
-                make_literal_with_case_senitivity("e", true),
-                make_literal_with_case_senitivity("l", true),
-                make_literal_with_case_senitivity("l", true),
-                make_literal_with_case_senitivity("o", true),
+                make_literal_with_case_sensitivity("h", true),
+                make_literal_with_case_sensitivity("e", true),
+                make_literal_with_case_sensitivity("l", true),
+                make_literal_with_case_sensitivity("l", true),
+                make_literal_with_case_sensitivity("o", true),
                 Expr::Assertion(Assertion::EndLine { crlf: false })
             ])
         );

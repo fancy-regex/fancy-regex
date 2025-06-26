@@ -116,7 +116,7 @@ fn check_ignore_whitespace_option_fancy() {
 }
 
 #[test]
-fn check_ignore_whitespace_option_fancy_wrong() {
+fn check_ignore_whitespace_with_lookahead_matches() {
     let builder = RegexBuilder::new(r"(?=test    foo)")
         .ignore_whitespace(true)
         .build();
