@@ -2571,6 +2571,42 @@ mod tests {
     }
 
     #[test]
+    fn parse_with_string_dot_matches_new_line() {
+        let options = get_options("(?s)(.*)", |x| x);
+
+        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
+        let expr = tree.unwrap().expr;
+
+        assert_eq!(
+            expr,
+            Expr::Group(Box::new(Expr::Repeat {
+                child: Box::new(Expr::Any { newline: true }),
+                lo: 0,
+                hi: usize::MAX,
+                greedy: true
+            }))
+        );
+    }
+
+    #[test]
+    fn parse_with_options_dot_matches_new_line() {
+        let options = get_options("(?s)(.*)", |x| x.dot_matches_new_line(true));
+
+        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
+        let expr = tree.unwrap().expr;
+
+        assert_eq!(
+            expr,
+            Expr::Group(Box::new(Expr::Repeat {
+                child: Box::new(Expr::Any { newline: true }),
+                lo: 0,
+                hi: usize::MAX,
+                greedy: true
+            }))
+        );
+    }
+
+    #[test]
     fn parse_with_multiline_args() {
         let options = get_options("^hello$", |x| x.multi_line(true));
 

@@ -557,8 +557,9 @@ impl RegexOptions {
         let multiline = Self::get_flag_value(self.syntaxc.get_multi_line(), FLAG_MULTI);
         let whitespace =
             Self::get_flag_value(self.syntaxc.get_ignore_whitespace(), FLAG_IGNORE_SPACE);
+        let dotnl = Self::get_flag_value(self.syntaxc.get_dot_matches_new_line(), FLAG_DOTNL);
 
-        let all_flags = insensitive | multiline | whitespace;
+        let all_flags = insensitive | multiline | whitespace | dotnl;
         all_flags
     }
 }
