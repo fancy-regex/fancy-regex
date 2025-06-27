@@ -618,8 +618,8 @@ impl RegexBuilder {
         self.set_config(|x| x.ignore_whitespace(yes))
     }
 
-    ///Enable or disable the "dot matches any character" flag by default.
-    ///When this is enabled, . will match any character. When it's disabled, then . will match any character
+    /// Enable or disable the "dot matches any character" flag.
+    /// When this is enabled, `.` will match any character. When it's disabled, then `.` will match any character
     /// except for a new line character.
     pub fn dot_matches_new_line(&mut self, yes: bool) -> &mut Self {
         self.set_config(|x| x.dot_matches_new_line(yes))
