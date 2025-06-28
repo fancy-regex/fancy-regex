@@ -188,7 +188,6 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use core::cmp::min;
 use core::convert::TryFrom;
 use core::fmt::{Debug, Formatter};
 use core::ops::{Index, Range};
@@ -204,14 +203,14 @@ mod compile;
 mod error;
 mod expand;
 mod parse;
-mod regexflags;
+mod flags;
 mod replacer;
 mod vm;
 
 use crate::analyze::analyze;
 use crate::compile::compile;
 use crate::parse::{ExprTree, NamedGroups, Parser};
-use crate::regexflags::*;
+use crate::flags::*;
 use crate::vm::{Prog, OPTION_SKIPPED_EMPTY_MATCH};
 
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
@@ -594,8 +593,7 @@ impl RegexBuilder {
     }
 
     fn set_config(&mut self, func: impl Fn(SyntaxConfig) -> SyntaxConfig) -> &mut Self {
-        let syntaxc = self.0.syntaxc.to_owned();
-        self.0.syntaxc = func(syntaxc);
+        self.0.syntaxc = func(self.0.syntaxc);
         self
     }
 
