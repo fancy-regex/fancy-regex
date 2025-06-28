@@ -1652,13 +1652,13 @@ impl Expr {
     /// Parse the regex and return an expression (AST) and a bit set with the indexes of groups
     /// that are referenced by backrefs.
     pub fn parse_tree(re: &str) -> Result<ExprTree> {
-        Parser::parse(re)
+        Parser::parse(re, 0)
     }
 
     /// Parse the regex and return an expression (AST)
-    /// Flags should be bit based based on RegexFlags
+    /// Flags should be bit based based on flags
     pub fn parse_tree_with_flags(re: &str, flags: u32) -> Result<ExprTree> {
-        Parser::parse_with_flags(re, flags)
+        Parser::parse(re, flags)
     }
 
     /// Convert expression to a regex string in the regex crate's syntax.
