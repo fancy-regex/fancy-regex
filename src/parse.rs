@@ -93,9 +93,7 @@ impl<'a> Parser<'a> {
     /// Parse the regex and return an expression (AST) and a bit set with the indexes of groups
     /// that are referenced by backrefs.
     pub(crate) fn parse(re: &str) -> Result<ExprTree> {
-        let mut options = RegexOptions::default();
-        options.pattern = String::from(re);
-        Self::parse_with_flags(&options.pattern, options.compute_flags())
+        Self::parse_with_flags(re, RegexOptions::default().compute_flags())
     }
 
     fn new(re: &str) -> Parser<'_> {
