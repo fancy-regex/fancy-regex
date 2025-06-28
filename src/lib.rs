@@ -594,8 +594,7 @@ impl RegexBuilder {
     }
 
     fn set_config(&mut self, func: impl Fn(SyntaxConfig) -> SyntaxConfig) -> &mut Self {
-        let syntaxc = self.0.syntaxc.to_owned();
-        self.0.syntaxc = func(syntaxc);
+        self.0.syntaxc = func(self.0.syntaxc);
         self
     }
 
