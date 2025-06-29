@@ -68,7 +68,7 @@ struct NamedBackrefOrSubroutine<'a> {
 
 impl<'a> Parser<'a> {
     pub(crate) fn parse_with_flags(re: &str, flags: u32) -> Result<ExprTree> {
-        let mut p = Parser::new_with_flags(re, flags);
+        let mut p = Parser::new(re, flags);
         let (ix, mut expr) = p.parse_re(0, 0)?;
         if ix < re.len() {
             return Err(Error::ParseError(
@@ -94,20 +94,7 @@ impl<'a> Parser<'a> {
         Self::parse_with_flags(re, RegexOptions::default().compute_flags())
     }
 
-    fn new(re: &str) -> Parser<'_> {
-        Parser {
-            re,
-            backrefs: Default::default(),
-            named_groups: Default::default(),
-            numeric_backrefs: false,
-            flags: FLAG_UNICODE,
-            curr_group: 0,
-            contains_subroutines: false,
-            has_unresolved_subroutines: false,
-        }
-    }
-
-    fn new_with_flags(re: &str, flags: u32) -> Parser<'_> {
+    fn new(re: &str, flags: u32) -> Parser<'_> {
         let flags = flags | FLAG_UNICODE;
 
         Parser {
