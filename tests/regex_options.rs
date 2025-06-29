@@ -89,6 +89,19 @@ fn check_ignore_whitespace_with_lookahead_matches() {
 
     assert!(!regex.is_match(test_text).unwrap_or_default());
 }
+
+#[test]
+fn check_verbose_mode_option() {
+    let pattern = "
+test  foo #hugo
+";
+    let regex = build_regex(RegexBuilder::new(pattern).verbose_mode(true));
+
+    let test_text = r"test    foo";
+
+    assert!(!regex.is_match(test_text).unwrap_or_default());
+}
+
 #[test]
 fn issue_163_fancy_email_test() {
     let pattern =

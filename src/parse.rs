@@ -2681,46 +2681,4 @@ mod tests {
             ])
         );
     }
-
-    #[test]
-    fn parse_with_swap_greed_in_pattern() {
-        let tree = Expr::parse_tree("(?U)A.*Z");
-        let expr = tree.unwrap().expr;
-
-        assert_eq!(
-            expr,
-            Expr::Concat(vec![
-                make_literal("A"),
-                Expr::Repeat {
-                    child: Box::new(Expr::Any { newline: false }),
-                    lo: 0,
-                    hi: usize::MAX,
-                    greedy: false
-                },
-                make_literal("Z"),
-            ])
-        );
-    }
-
-    #[test]
-    fn parse_with_swap_greed_options() {
-        let options = get_options("A.*Z", |x| x.swap_greed(true));
-
-        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
-        let expr = tree.unwrap().expr;
-
-        assert_eq!(
-            expr,
-            Expr::Concat(vec![
-                make_literal("A"),
-                Expr::Repeat {
-                    child: Box::new(Expr::Any { newline: false }),
-                    lo: 0,
-                    hi: usize::MAX,
-                    greedy: false
-                },
-                make_literal("Z"),
-            ])
-        );
-    }
 }

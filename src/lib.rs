@@ -557,11 +557,9 @@ impl RegexOptions {
         let whitespace =
             Self::get_flag_value(self.syntaxc.get_ignore_whitespace(), FLAG_IGNORE_SPACE);
         let dotnl = Self::get_flag_value(self.syntaxc.get_dot_matches_new_line(), FLAG_DOTNL);
-        let swap_greed = Self::get_flag_value(self.syntaxc.get_swap_greed(), FLAG_SWAP_GREED);
         let unicode = Self::get_flag_value(self.syntaxc.get_unicode(), FLAG_UNICODE);
 
-        let all_flags =
-            insensitive | multiline | whitespace | dotnl | swap_greed | unicode | unicode;
+        let all_flags = insensitive | multiline | whitespace | dotnl | unicode | unicode;
         all_flags
     }
 }
@@ -624,17 +622,6 @@ impl RegexBuilder {
     /// except for a new line character.
     pub fn dot_matches_new_line(&mut self, yes: bool) -> &mut Self {
         self.set_config(|x| x.dot_matches_new_line(yes))
-    }
-
-    /// Enable or disable the "swap greed" flag by default.
-    ///
-    /// When this is enabled, `.*` (for example) will become ungreedy and `.*?`
-    /// will become greedy.
-    ///
-    /// By default this is disabled. It may alternatively be selectively
-    /// enabled in the regular expression itself via the `U` flag.
-    pub fn swap_greed(&mut self, yes: bool) -> &mut Self {
-        self.set_config(|x| x.swap_greed(yes))
     }
 
     /// Enable verbose mode in the regular expression.
