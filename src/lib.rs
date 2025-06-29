@@ -181,7 +181,7 @@ Conditionals - if/then/else:
 
 extern crate alloc;
 
-use alloc::borrow::{Cow, ToOwned};
+use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
@@ -202,15 +202,15 @@ mod analyze;
 mod compile;
 mod error;
 mod expand;
-mod parse;
 mod flags;
+mod parse;
 mod replacer;
 mod vm;
 
 use crate::analyze::analyze;
 use crate::compile::compile;
-use crate::parse::{ExprTree, NamedGroups, Parser};
 use crate::flags::*;
+use crate::parse::{ExprTree, NamedGroups, Parser};
 use crate::vm::{Prog, OPTION_SKIPPED_EMPTY_MATCH};
 
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
@@ -557,8 +557,11 @@ impl RegexOptions {
         let whitespace =
             Self::get_flag_value(self.syntaxc.get_ignore_whitespace(), FLAG_IGNORE_SPACE);
         let dotnl = Self::get_flag_value(self.syntaxc.get_dot_matches_new_line(), FLAG_DOTNL);
+        let swap_greed = Self::get_flag_value(self.syntaxc.get_swap_greed(), FLAG_SWAP_GREED);
+        let unicode = Self::get_flag_value(self.syntaxc.get_unicode(), FLAG_UNICODE);
 
-        let all_flags = insensitive | multiline | whitespace | dotnl;
+        let all_flags =
+            insensitive | multiline | whitespace | dotnl | swap_greed | unicode | unicode;
         all_flags
     }
 }
@@ -621,6 +624,49 @@ impl RegexBuilder {
     /// except for a new line character.
     pub fn dot_matches_new_line(&mut self, yes: bool) -> &mut Self {
         self.set_config(|x| x.dot_matches_new_line(yes))
+    }
+
+    /// Enable or disable the "swap greed" flag by default.
+    ///
+    /// When this is enabled, `.*` (for example) will become ungreedy and `.*?`
+    /// will become greedy.
+    ///
+    /// By default this is disabled. It may alternatively be selectively
+    /// enabled in the regular expression itself via the `U` flag.
+    pub fn swap_greed(&mut self, yes: bool) -> &mut Self {
+        self.set_config(|x| x.swap_greed(yes))
+    }
+
+    /// Enable verbose mode in the regular expression.
+    ///
+    /// The same as ignore_whitespace
+    ///
+    /// When enabled, verbose mode permits insigificant whitespace in many
+    /// places in the regular expression, as well as comments. Comments are
+    /// started using `#` and continue until the end of the line.
+    ///
+    /// By default, this is disabled. It may be selectively enabled in the
+    /// regular expression by using the `x` flag regardless of this setting.
+    pub fn verbose_mode(&mut self, yes: bool) -> &mut Self {
+        self.set_config(|x| x.ignore_whitespace(yes))
+    }
+
+    /// Enable or disable the Unicode flag (`u`) by default.
+    ///
+    /// By default this is **enabled**. It may alternatively be selectively
+    /// disabled in the regular expression itself via the `u` flag.
+    ///
+    /// Note that unless "allow invalid UTF-8" is enabled (it's disabled by
+    /// default), a regular expression will fail to parse if Unicode mode is
+    /// disabled and a sub-expression could possibly match invalid UTF-8.
+    ///
+    /// **WARNING**: Unicode mode can greatly increase the size of the compiled
+    /// DFA, which can noticeably impact both memory usage and compilation
+    /// time. This is especially noticeable if your regex contains character
+    /// classes like `\w` that are impacted by whether Unicode is enabled or
+    /// not. If Unicode is not necessary, you are encouraged to disable it.
+    pub fn unicode_mode(&mut self, yes: bool) -> &mut Self {
+        self.set_config(|x| x.unicode(yes))
     }
 
     /// Limit for how many times backtracking should be attempted for fancy regexes (where
@@ -1652,13 +1698,13 @@ impl Expr {
     /// Parse the regex and return an expression (AST) and a bit set with the indexes of groups
     /// that are referenced by backrefs.
     pub fn parse_tree(re: &str) -> Result<ExprTree> {
-        Parser::parse(re, 0)
+        Parser::parse(re)
     }
 
     /// Parse the regex and return an expression (AST)
     /// Flags should be bit based based on flags
     pub fn parse_tree_with_flags(re: &str, flags: u32) -> Result<ExprTree> {
-        Parser::parse(re, flags)
+        Parser::parse_with_flags(re, flags)
     }
 
     /// Convert expression to a regex string in the regex crate's syntax.
