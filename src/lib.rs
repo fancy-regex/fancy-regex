@@ -181,7 +181,7 @@ Conditionals - if/then/else:
 
 extern crate alloc;
 
-use alloc::borrow::{Cow, ToOwned};
+use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
@@ -202,12 +202,14 @@ mod analyze;
 mod compile;
 mod error;
 mod expand;
+mod flags;
 mod parse;
 mod replacer;
 mod vm;
 
 use crate::analyze::analyze;
 use crate::compile::compile;
+use crate::flags::*;
 use crate::parse::{ExprTree, NamedGroups, Parser};
 use crate::vm::{Prog, OPTION_SKIPPED_EMPTY_MATCH};
 
@@ -540,6 +542,28 @@ struct RegexOptions {
     delegate_dfa_size_limit: Option<usize>,
 }
 
+impl RegexOptions {
+    fn get_flag_value(flag_value: bool, enum_value: u32) -> u32 {
+        if flag_value {
+            enum_value
+        } else {
+            0
+        }
+    }
+
+    fn compute_flags(&self) -> u32 {
+        let insensitive = Self::get_flag_value(self.syntaxc.get_case_insensitive(), FLAG_CASEI);
+        let multiline = Self::get_flag_value(self.syntaxc.get_multi_line(), FLAG_MULTI);
+        let whitespace =
+            Self::get_flag_value(self.syntaxc.get_ignore_whitespace(), FLAG_IGNORE_SPACE);
+        let dotnl = Self::get_flag_value(self.syntaxc.get_dot_matches_new_line(), FLAG_DOTNL);
+        let unicode = Self::get_flag_value(self.syntaxc.get_unicode(), FLAG_UNICODE);
+
+        let all_flags = insensitive | multiline | whitespace | dotnl | unicode | unicode;
+        all_flags
+    }
+}
+
 impl Default for RegexOptions {
     fn default() -> Self {
         RegexOptions {
@@ -569,15 +593,67 @@ impl RegexBuilder {
         Regex::new_options(self.0.clone())
     }
 
+    fn set_config(&mut self, func: impl Fn(SyntaxConfig) -> SyntaxConfig) -> &mut Self {
+        self.0.syntaxc = func(self.0.syntaxc);
+        self
+    }
+
     /// Override default case insensitive
     /// this is to enable/disable casing via builder instead of a flag within
     /// the raw string provided to the regex builder
     ///
     /// Default is false
     pub fn case_insensitive(&mut self, yes: bool) -> &mut Self {
-        let syntaxc = self.0.syntaxc.to_owned();
-        self.0.syntaxc = syntaxc.case_insensitive(yes);
-        self
+        self.set_config(|x| x.case_insensitive(yes))
+    }
+
+    /// Enable multi-line regex
+    pub fn multi_line(&mut self, yes: bool) -> &mut Self {
+        self.set_config(|x| x.multi_line(yes))
+    }
+
+    /// Allow ignore whitespace
+    pub fn ignore_whitespace(&mut self, yes: bool) -> &mut Self {
+        self.set_config(|x| x.ignore_whitespace(yes))
+    }
+
+    /// Enable or disable the "dot matches any character" flag.
+    /// When this is enabled, `.` will match any character. When it's disabled, then `.` will match any character
+    /// except for a new line character.
+    pub fn dot_matches_new_line(&mut self, yes: bool) -> &mut Self {
+        self.set_config(|x| x.dot_matches_new_line(yes))
+    }
+
+    /// Enable verbose mode in the regular expression.
+    ///
+    /// The same as ignore_whitespace
+    ///
+    /// When enabled, verbose mode permits insigificant whitespace in many
+    /// places in the regular expression, as well as comments. Comments are
+    /// started using `#` and continue until the end of the line.
+    ///
+    /// By default, this is disabled. It may be selectively enabled in the
+    /// regular expression by using the `x` flag regardless of this setting.
+    pub fn verbose_mode(&mut self, yes: bool) -> &mut Self {
+        self.set_config(|x| x.ignore_whitespace(yes))
+    }
+
+    /// Enable or disable the Unicode flag (`u`) by default.
+    ///
+    /// By default this is **enabled**. It may alternatively be selectively
+    /// disabled in the regular expression itself via the `u` flag.
+    ///
+    /// Note that unless "allow invalid UTF-8" is enabled (it's disabled by
+    /// default), a regular expression will fail to parse if Unicode mode is
+    /// disabled and a sub-expression could possibly match invalid UTF-8.
+    ///
+    /// **WARNING**: Unicode mode can greatly increase the size of the compiled
+    /// DFA, which can noticeably impact both memory usage and compilation
+    /// time. This is especially noticeable if your regex contains character
+    /// classes like `\w` that are impacted by whether Unicode is enabled or
+    /// not. If Unicode is not necessary, you are encouraged to disable it.
+    pub fn unicode_mode(&mut self, yes: bool) -> &mut Self {
+        self.set_config(|x| x.unicode(yes))
     }
 
     /// Limit for how many times backtracking should be attempted for fancy regexes (where
@@ -649,7 +725,7 @@ impl Regex {
     }
 
     fn new_options(options: RegexOptions) -> Result<Regex> {
-        let raw_tree = Expr::parse_tree(&options.pattern)?;
+        let raw_tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags())?;
 
         // wrapper to search for re at arbitrary start position,
         // and to capture the match bounds
@@ -1610,6 +1686,12 @@ impl Expr {
     /// that are referenced by backrefs.
     pub fn parse_tree(re: &str) -> Result<ExprTree> {
         Parser::parse(re)
+    }
+
+    /// Parse the regex and return an expression (AST)
+    /// Flags should be bit based based on flags
+    pub fn parse_tree_with_flags(re: &str, flags: u32) -> Result<ExprTree> {
+        Parser::parse_with_flags(re, flags)
     }
 
     /// Convert expression to a regex string in the regex crate's syntax.
