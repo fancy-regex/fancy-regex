@@ -20,6 +20,7 @@
 
 //! A regex parser yielding an AST.
 
+use crate::RegexOptions;
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -29,15 +30,9 @@ use bit_set::BitSet;
 use core::usize;
 use regex_syntax::escape_into;
 
+use crate::flags::*;
 use crate::{codepoint_len, CompileError, Error, Expr, ParseError, Result, MAX_RECURSION};
 use crate::{Assertion, LookAround::*};
-
-const FLAG_CASEI: u32 = 1;
-const FLAG_MULTI: u32 = 1 << 1;
-const FLAG_DOTNL: u32 = 1 << 2;
-const FLAG_SWAP_GREED: u32 = 1 << 3;
-const FLAG_IGNORE_SPACE: u32 = 1 << 4;
-const FLAG_UNICODE: u32 = 1 << 5;
 
 #[cfg(not(feature = "std"))]
 pub(crate) type NamedGroups = alloc::collections::BTreeMap<String, usize>;
@@ -72,10 +67,8 @@ struct NamedBackrefOrSubroutine<'a> {
 }
 
 impl<'a> Parser<'a> {
-    /// Parse the regex and return an expression (AST) and a bit set with the indexes of groups
-    /// that are referenced by backrefs.
-    pub(crate) fn parse(re: &str) -> Result<ExprTree> {
-        let mut p = Parser::new(re);
+    pub(crate) fn parse_with_flags(re: &str, flags: u32) -> Result<ExprTree> {
+        let mut p = Parser::new(re, flags);
         let (ix, mut expr) = p.parse_re(0, 0)?;
         if ix < re.len() {
             return Err(Error::ParseError(
@@ -97,13 +90,19 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn new(re: &str) -> Parser<'_> {
+    pub(crate) fn parse(re: &str) -> Result<ExprTree> {
+        Self::parse_with_flags(re, RegexOptions::default().compute_flags())
+    }
+
+    fn new(re: &str, flags: u32) -> Parser<'_> {
+        let flags = flags | FLAG_UNICODE;
+
         Parser {
             re,
             backrefs: Default::default(),
             named_groups: Default::default(),
             numeric_backrefs: false,
-            flags: FLAG_UNICODE,
+            flags: flags,
             curr_group: 0,
             contains_subroutines: false,
             has_unresolved_subroutines: false,
@@ -964,7 +963,8 @@ impl<'a> Parser<'a> {
     }
 
     fn flag(&self, flag: u32) -> bool {
-        (self.flags & flag) != 0
+        let v = self.flags & flag;
+        v == flag
     }
 
     fn update_flag(&mut self, flag: u32, neg: bool) {
@@ -1134,9 +1134,13 @@ fn is_hex_digit(b: u8) -> bool {
 }
 
 pub(crate) fn make_literal(s: &str) -> Expr {
+    make_literal_case_insensitive(s, false)
+}
+
+pub(crate) fn make_literal_case_insensitive(s: &str, case_insensitive: bool) -> Expr {
     Expr::Literal {
         val: String::from(s),
-        casei: false,
+        casei: case_insensitive,
     }
 }
 
@@ -1146,9 +1150,9 @@ mod tests {
     use alloc::string::{String, ToString};
     use alloc::{format, vec};
 
-    use crate::parse::{make_literal, parse_id};
-    use crate::LookAround::*;
+    use crate::parse::{make_literal, make_literal_case_insensitive, parse_id};
     use crate::{Assertion, Expr};
+    use crate::{LookAround::*, RegexOptions, SyntaxConfig};
 
     fn p(s: &str) -> Expr {
         Expr::parse_tree(s).unwrap().expr
@@ -2483,5 +2487,198 @@ mod tests {
     #[test]
     fn fuzz_4() {
         fail(r"\u{2}(?(2)");
+    }
+
+    fn get_options(pattern: &str, func: impl Fn(SyntaxConfig) -> SyntaxConfig) -> RegexOptions {
+        let mut options = RegexOptions::default();
+        options.syntaxc = func(options.syntaxc);
+        options.pattern = String::from(pattern);
+        options
+    }
+
+    #[test]
+    fn parse_with_case_insensitive_in_pattern() {
+        let tree = Expr::parse_tree("(?i)hello");
+        let expr = tree.unwrap().expr;
+
+        assert_eq!(
+            expr,
+            Expr::Concat(vec![
+                make_literal_case_insensitive("h", true),
+                make_literal_case_insensitive("e", true),
+                make_literal_case_insensitive("l", true),
+                make_literal_case_insensitive("l", true),
+                make_literal_case_insensitive("o", true)
+            ])
+        );
+    }
+
+    #[test]
+    fn parse_with_case_insensitive_option() {
+        let options = get_options("hello", |x| x.case_insensitive(true));
+
+        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
+        let expr = tree.unwrap().expr;
+
+        assert_eq!(
+            expr,
+            Expr::Concat(vec![
+                make_literal_case_insensitive("h", true),
+                make_literal_case_insensitive("e", true),
+                make_literal_case_insensitive("l", true),
+                make_literal_case_insensitive("l", true),
+                make_literal_case_insensitive("o", true)
+            ])
+        );
+    }
+
+    #[test]
+    fn parse_with_multiline_in_pattern() {
+        let options = get_options("(?m)^hello$", |x| x);
+
+        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
+        let expr = tree.unwrap().expr;
+
+        assert_eq!(
+            expr,
+            Expr::Concat(vec![
+                Expr::Assertion(Assertion::StartLine { crlf: false }),
+                make_literal("h"),
+                make_literal("e"),
+                make_literal("l"),
+                make_literal("l"),
+                make_literal("o"),
+                Expr::Assertion(Assertion::EndLine { crlf: false })
+            ])
+        );
+    }
+
+    #[test]
+    fn pparse_with_multiline_option() {
+        let options = get_options("^hello$", |x| x.multi_line(true));
+
+        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
+        let expr = tree.unwrap().expr;
+
+        assert_eq!(
+            expr,
+            Expr::Concat(vec![
+                Expr::Assertion(Assertion::StartLine { crlf: false }),
+                make_literal("h"),
+                make_literal("e"),
+                make_literal("l"),
+                make_literal("l"),
+                make_literal("o"),
+                Expr::Assertion(Assertion::EndLine { crlf: false })
+            ])
+        );
+    }
+
+    #[test]
+    fn parse_with_dot_matches_new_line_in_pattern() {
+        let options = get_options("(?s)(.*)", |x| x);
+
+        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
+        let expr = tree.unwrap().expr;
+
+        assert_eq!(
+            expr,
+            Expr::Group(Box::new(Expr::Repeat {
+                child: Box::new(Expr::Any { newline: true }),
+                lo: 0,
+                hi: usize::MAX,
+                greedy: true
+            }))
+        );
+    }
+
+    #[test]
+    fn parse_with_dot_matches_new_line_option() {
+        let options = get_options("(.*)", |x| x.dot_matches_new_line(true));
+
+        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
+        let expr = tree.unwrap().expr;
+
+        assert_eq!(
+            expr,
+            Expr::Group(Box::new(Expr::Repeat {
+                child: Box::new(Expr::Any { newline: true }),
+                lo: 0,
+                hi: usize::MAX,
+                greedy: true
+            }))
+        );
+    }
+
+    #[test]
+    fn parse_fancy_with_dot_matches_new_line_in_pattern() {
+        let options = get_options("(.*)(?<=hugo)", |x| x.dot_matches_new_line(true));
+
+        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
+        let expr = tree.unwrap().expr;
+
+        assert_eq!(
+            expr,
+            Expr::Concat(vec![
+                Expr::Group(Box::new(Expr::Repeat {
+                    child: Box::new(Expr::Any { newline: true }),
+                    lo: 0,
+                    hi: usize::MAX,
+                    greedy: true
+                })),
+                Expr::LookAround(
+                    Box::new(Expr::Concat(vec![
+                        make_literal("h"),
+                        make_literal("u"),
+                        make_literal("g"),
+                        make_literal("o")
+                    ])),
+                    LookBehind
+                )
+            ])
+        );
+    }
+
+    #[test]
+    fn parse_with_case_insensitre_from_pattern_and_multi_line_option() {
+        let options = get_options("(?i)^hello$", |x| x.multi_line(true));
+
+        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
+        let expr = tree.unwrap().expr;
+
+        assert_eq!(
+            expr,
+            Expr::Concat(vec![
+                Expr::Assertion(Assertion::StartLine { crlf: false }),
+                make_literal_case_insensitive("h", true),
+                make_literal_case_insensitive("e", true),
+                make_literal_case_insensitive("l", true),
+                make_literal_case_insensitive("l", true),
+                make_literal_case_insensitive("o", true),
+                Expr::Assertion(Assertion::EndLine { crlf: false })
+            ])
+        );
+    }
+
+    #[test]
+    fn parse_with_multi_line_and_case_insensitive_options() {
+        let mut options = get_options("^hello$", |x| x.multi_line(true));
+        options.syntaxc = options.syntaxc.case_insensitive(true);
+
+        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
+        let expr = tree.unwrap().expr;
+
+        assert_eq!(
+            expr,
+            Expr::Concat(vec![
+                Expr::Assertion(Assertion::StartLine { crlf: false }),
+                make_literal_case_insensitive("h", true),
+                make_literal_case_insensitive("e", true),
+                make_literal_case_insensitive("l", true),
+                make_literal_case_insensitive("l", true),
+                make_literal_case_insensitive("o", true),
+                Expr::Assertion(Assertion::EndLine { crlf: false })
+            ])
+        );
     }
 }
