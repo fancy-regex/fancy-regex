@@ -5,7 +5,7 @@ use std::panic;
 
 use regex::Regex;
 
-use fancy_regex::Regex as FancyRegex;
+use fancy_regex::RegexBuilder;
 
 #[derive(Debug, Eq, Hash, PartialEq)]
 struct Test {
@@ -151,7 +151,7 @@ fn run_test(test: &Test) -> Option<String> {
         ..
     } = test;
 
-    let compile_result = FancyRegex::new(pattern);
+    let compile_result = RegexBuilder::new(pattern).multi_line(true).build();
     let Ok(regex) = compile_result else {
         let error = format!("{:?}", compile_result.unwrap_err());
         return Some(format!("Compile failed: {}", error));
@@ -181,7 +181,6 @@ fn run_test(test: &Test) -> Option<String> {
             }
         }
         Assertion::NoMatch => {
-            let regex = FancyRegex::new(pattern).unwrap();
             let result = regex.find(&text).unwrap();
             if result.is_some() {
                 Some("Match found".to_string())
