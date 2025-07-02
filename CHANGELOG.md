@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
+## [Unreleased]
+### Added
+- Support `\Z` - anchor to the end of the text before any trailing newlines. (#148)
+- Support `\O` - any character including newlines. (#158)
+- The parser can now parse subroutine calls and relative backreferences (but execution is still unsupported). This is preparation for future work. Some new error variants have been added for features which can be parsed but are still otherwise unsupported.
+- Backreferences can now be case insensitive. (#160)
+- `RegexBuilder`: Add options for `multi_line`, `ignore_whitespace`, `dot_matches_new_line` (#165)
+### Fixed
+- Fix infinite loop when backtracking limit is hit (#153)
+- Fix `RegexBuilder.case_insensitive` not always applying when it should. (#163)
+- The `toy` example has had various bugfixes, and unit tests added. (#152, #159)
+
 ## [0.14.0] - 2024-10-24
 ### Added
 - Add `split`, `splitn` methods to `Regex` to split a string into substrings (#140)
@@ -187,6 +199,7 @@ with the exception that 0.x versions can break between minor versions.
 - Initial release
 
 
+[Unreleased]: https://github.com/fancy-regex/fancy-regex/compare/0.14.0...HEAD
 [0.14.0]: https://github.com/fancy-regex/fancy-regex/compare/0.13.0...0.14.0
 [0.13.0]: https://github.com/fancy-regex/fancy-regex/compare/0.12.0...0.13.0
 [0.12.0]: https://github.com/fancy-regex/fancy-regex/compare/0.11.0...0.12.0

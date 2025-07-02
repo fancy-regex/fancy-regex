@@ -4,12 +4,6 @@
 // x3 tests have an additional argument which is the group number to check.
 
 
-  // No match found
-  x2("^a", "\na", 1, 2);
-
-  // No match found
-  x2("$\\O", "bb\n", 2, 3);
-
   // Compile failed: ParseError(0, InvalidEscape("\\c"))
   x2("\\ca", "\001", 0, 1);
 

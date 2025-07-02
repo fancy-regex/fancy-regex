@@ -481,7 +481,7 @@ impl<'a> Parser<'a> {
                 end,
                 Expr::LookAround(
                     Box::new(Expr::Delegate {
-                        inner: "\n*$".to_string(),
+                        inner: "\\n*$".to_string(),
                         size: 0,
                         casei: false,
                     }),
@@ -1205,7 +1205,7 @@ mod tests {
             p("\\Z"),
             Expr::LookAround(
                 Box::new(Expr::Delegate {
-                    inner: "\n*$".to_string(),
+                    inner: "\\n*$".to_string(),
                     size: 0,
                     casei: false,
                 }),
