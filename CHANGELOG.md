@@ -10,7 +10,7 @@ with the exception that 0.x versions can break between minor versions.
 ### Added
 - Support `\Z` - anchor to the end of the text before any trailing newlines. (#148)
 - Support `\O` - any character including newlines. (#158)
-- The parser can now parse subroutine calls and relative backreferences. This is preparation for future work. Some new error variants have been added for features which can be parsed but are still otherwise unsupported.
+- The parser can now parse subroutine calls and relative backreferences (but execution is still unsupported). This is preparation for future work. Some new error variants have been added for features which can be parsed but are still otherwise unsupported.
 - Backreferences can now be case insensitive. (#160)
 - `RegexBuilder`: Add options for `multi_line`, `ignore_whitespace`, `dot_matches_new_line` (#165)
 ### Fixed
