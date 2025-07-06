@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
-## [Unreleased]
+## [0.15.0] - 2025-07-06
 ### Added
 - Support `\Z` - anchor to the end of the text before any trailing newlines. (#148)
 - Support `\O` - any character including newlines. (#158)
@@ -199,7 +199,7 @@ with the exception that 0.x versions can break between minor versions.
 - Initial release
 
 
-[Unreleased]: https://github.com/fancy-regex/fancy-regex/compare/0.14.0...HEAD
+[0.15.0]: https://github.com/fancy-regex/fancy-regex/compare/0.14.0...0.15.0
 [0.14.0]: https://github.com/fancy-regex/fancy-regex/compare/0.13.0...0.14.0
 [0.13.0]: https://github.com/fancy-regex/fancy-regex/compare/0.12.0...0.13.0
 [0.12.0]: https://github.com/fancy-regex/fancy-regex/compare/0.11.0...0.12.0
