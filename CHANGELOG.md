@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
+## [Unreleased]
+### Added
+- Add an optimization step after the pattern is parsed but before it is analyzed.
+  Currently it only optimizes one specific use-case - where the expression is easy except
+  for a trailing positive lookahead whose contents are also easy. The optimization is to avoid the VM.
+
 ## [0.15.0] - 2025-07-06
 ### Added
 - Support `\Z` - anchor to the end of the text before any trailing newlines. (#148)

@@ -251,9 +251,7 @@ pub fn analyze<'a>(tree: &'a ExprTree) -> Result<Info<'a>> {
 mod tests {
     use super::analyze;
     // use super::literal_const_size;
-    use crate::CompileError;
-    use crate::Error;
-    use crate::Expr;
+    use crate::{CompileError, Error, Expr};
 
     // #[test]
     // fn case_folding_safe() {
