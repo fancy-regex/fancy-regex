@@ -20,7 +20,7 @@
 
 //! A simple test app for exercising and debugging the regex engine.
 
-use fancy_regex::internal::{analyze, compile, run_trace, Insn, Prog};
+use fancy_regex::internal::{analyze, compile, optimize, run_trace, Insn, Prog};
 use fancy_regex::*;
 use std::env;
 use std::fmt::{Display, Formatter, Result};
@@ -35,6 +35,10 @@ fn main() {
             let re = args.next().expect("expected regexp argument");
             let e = Expr::parse_tree(&re);
             println!("{:#?}", e);
+        } else if cmd == "optimize" {
+            let re = args.next().expect("expected regexp argument");
+            let e = Expr::parse_tree(&re).expect("expected regexp to be parsed successfully");
+            println!("{:#?}", optimize(wrap_tree(e)));
         } else if cmd == "analyze" {
             let re = args.next().expect("expected regexp argument");
             let stdout = io::stdout();
@@ -122,7 +126,8 @@ fn graph(re: &str, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
 fn show_analysis(re: &str, writer: &mut Formatter<'_>) -> Result {
     let tree = Expr::parse_tree(&re).unwrap();
     let wrapped_tree = wrap_tree(tree);
-    let a = analyze(&wrapped_tree);
+    let (optimized_tree, _) = optimize(wrapped_tree).expect("Expected optimization to succeed");
+    let a = analyze(&optimized_tree);
     write!(writer, "{:#?}\n", a)
 }
 
@@ -132,9 +137,13 @@ fn show_compiled_program(re: &str, writer: &mut Formatter<'_>) -> Result {
 }
 
 fn prog(re: &str) -> Prog {
+    // one thing to note here is that we want the prog, but in lib.rs,
+    // constructing a regex might not produce a prog - it may be wrapped Regex instead,
+    // which means that "toy" behaves differently to tests etc.
     let tree = Expr::parse_tree(re).expect("Expected parsing regex to work");
     let wrapped_tree = wrap_tree(tree);
-    let result = analyze(&wrapped_tree).expect("Expected analyze to succeed");
+    let (optimized_tree, _) = optimize(wrapped_tree).expect("Expected optimization to succeed");
+    let result = analyze(&optimized_tree).expect("Expected analyze to succeed");
     compile(&result).expect("Expected compile to succeed")
 }
 

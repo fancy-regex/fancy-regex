@@ -201,12 +201,14 @@ fn captures_from_pos_looking_left() {
 #[test]
 fn captures_iter_collect_when_backtrack_limit_hit() {
     use fancy_regex::RegexBuilder;
-    let r = RegexBuilder::new("(x+x+)+(?=y)")
+    let r = RegexBuilder::new("(x+x+)+(?>y)")
         .backtrack_limit(1)
         .build()
         .unwrap();
     let result: Vec<_> = r.captures_iter("xxxxxxxxxxy").collect();
+    println!("{:?}", result);
     assert_eq!(result.len(), 1);
+    assert!(result[0].is_err());
 }
 
 #[cfg_attr(feature = "track_caller", track_caller)]
