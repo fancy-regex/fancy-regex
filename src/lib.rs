@@ -748,8 +748,8 @@ impl Regex {
             // we do our own to_str because escapes are different
             // NOTE: there is a good opportunity here to use Hir to avoid regex-automata re-parsing it
             let mut re_cooked = String::new();
-            // same as raw_tree.expr above, but it was moved, so traverse to find it
             if !requires_capture_group_fixup {
+                // same as raw_tree.expr above, but it was moved, so traverse to find it
                 let raw_e = match tree.expr {
                     Expr::Concat(ref v) => match v[1] {
                         Expr::Group(ref child) => child,
@@ -759,13 +759,26 @@ impl Regex {
                 };
                 raw_e.to_str(&mut re_cooked, 0);
             } else {
-                tree.expr.to_str(&mut re_cooked, 0);
+                match tree.expr {
+                    Expr::Concat(ref v) => {
+                        for expr in v.iter().skip(1) {
+                            expr.to_str(&mut re_cooked, 2);
+                        }
+                    }
+                    _ => unreachable!(),
+                }
             };
             let inner = compile::compile_inner(&re_cooked, &options)?;
             return Ok(Regex {
                 inner: RegexImpl::Wrap {
                     inner,
-                    options,
+                    options: RegexOptions {
+                        pattern: re_cooked.clone(),
+                        syntaxc: options.syntaxc,
+                        backtrack_limit: options.backtrack_limit,
+                        delegate_size_limit: options.delegate_size_limit,
+                        delegate_dfa_size_limit: options.delegate_dfa_size_limit,
+                    },
                     explicit_capture_group_0: requires_capture_group_fixup,
                 },
                 named_groups: Arc::new(tree.named_groups),
