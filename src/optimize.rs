@@ -125,8 +125,7 @@ mod tests {
     #[test]
     fn trailing_positive_lookahead_left_alone_when_self_recursive() {
         let wrapped_tree = wrap_tree(Expr::parse_tree(r"ab?\g<0>?(?=a|$)").unwrap());
-        let (optimized_tree, requires_capture_group_fixup) =
-            optimize(wrapped_tree.clone());
+        let (optimized_tree, requires_capture_group_fixup) = optimize(wrapped_tree.clone());
         assert_eq!(requires_capture_group_fixup, false);
         assert_eq!(&optimized_tree.expr, &wrapped_tree.expr);
     }
@@ -134,8 +133,7 @@ mod tests {
     #[test]
     fn trailing_negative_lookahead_left_alone() {
         let wrapped_tree = wrap_tree(Expr::parse_tree(r"a(?!b)").unwrap());
-        let (optimized_tree, requires_capture_group_fixup) =
-            optimize(wrapped_tree.clone());
+        let (optimized_tree, requires_capture_group_fixup) = optimize(wrapped_tree.clone());
         assert_eq!(requires_capture_group_fixup, false);
         assert_eq!(&optimized_tree.expr, &wrapped_tree.expr);
     }
@@ -143,8 +141,7 @@ mod tests {
     #[test]
     fn trailing_positive_lookbehind_left_alone() {
         let wrapped_tree = wrap_tree(Expr::parse_tree(r"(?<=b)").unwrap());
-        let (optimized_tree, requires_capture_group_fixup) =
-            optimize(wrapped_tree.clone());
+        let (optimized_tree, requires_capture_group_fixup) = optimize(wrapped_tree.clone());
         assert_eq!(requires_capture_group_fixup, false);
         assert_eq!(&optimized_tree.expr, &wrapped_tree.expr);
     }
