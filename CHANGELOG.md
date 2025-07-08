@@ -10,7 +10,7 @@ with the exception that 0.x versions can break between minor versions.
 ### Added
 - Add an optimization step after the pattern is parsed but before it is analyzed.
   Currently it only optimizes one specific use-case - where the expression is easy except
-  for a trailing positive lookahead whose contents are also easy. The optimization is to avoid the VM.
+  for a trailing positive lookahead whose contents are also easy. The optimization is to delegate to the regex crate instead of using the backtracking VM.
 
 ## [0.15.0] - 2025-07-06
 ### Added
