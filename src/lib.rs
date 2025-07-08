@@ -240,10 +240,7 @@ enum RegexImpl {
     Wrap {
         inner: RaRegex,
         options: RegexOptions,
-    },
-    WrapCaptureFixup {
-        inner: RaRegex,
-        options: RegexOptions,
+        explicit_capture_group_0: bool,
     },
     Fancy {
         prog: Prog,
@@ -414,10 +411,7 @@ enum CapturesImpl<'t> {
     Wrap {
         text: &'t str,
         locations: RaCaptures,
-    },
-    WrapCaptureFixup {
-        text: &'t str,
-        locations: RaCaptures,
+        explicit_capture_group_0: bool,
     },
     Fancy {
         text: &'t str,
@@ -765,10 +759,10 @@ impl Regex {
             };
             let inner = compile::compile_inner(&re_cooked, &options)?;
             return Ok(Regex {
-                inner: if requires_capture_group_fixup {
-                    RegexImpl::WrapCaptureFixup { inner, options }
-                } else {
-                    RegexImpl::Wrap { inner, options }
+                inner: RegexImpl::Wrap {
+                    inner,
+                    options,
+                    explicit_capture_group_0: requires_capture_group_fixup,
                 },
                 named_groups: Arc::new(tree.named_groups),
             });
@@ -789,7 +783,6 @@ impl Regex {
     pub fn as_str(&self) -> &str {
         match &self.inner {
             RegexImpl::Wrap { options, .. } => &options.pattern,
-            RegexImpl::WrapCaptureFixup { options, .. } => &options.pattern,
             RegexImpl::Fancy { options, .. } => &options.pattern,
         }
     }
@@ -809,7 +802,6 @@ impl Regex {
     pub fn is_match(&self, text: &str) -> Result<bool> {
         match &self.inner {
             RegexImpl::Wrap { ref inner, .. } => Ok(inner.is_match(text)),
-            RegexImpl::WrapCaptureFixup { ref inner, .. } => Ok(inner.is_match(text)),
             RegexImpl::Fancy {
                 ref prog, options, ..
             } => {
@@ -895,19 +887,26 @@ impl Regex {
         option_flags: u32,
     ) -> Result<Option<Match<'t>>> {
         match &self.inner {
-            RegexImpl::Wrap { inner, .. } => Ok(inner
-                .search(&RaInput::new(text).span(pos..text.len()))
-                .map(|m| Match::new(text, m.start(), m.end()))),
-            RegexImpl::WrapCaptureFixup { inner, .. } => {
-                let mut locations = inner.create_captures();
-                inner.captures(RaInput::new(text).span(pos..text.len()), &mut locations);
-                Ok(locations.is_match().then(|| {
-                    Match::new(
-                        text,
-                        locations.get_group(1).unwrap().start,
-                        locations.get_group(1).unwrap().end,
-                    )
-                }))
+            RegexImpl::Wrap {
+                inner,
+                explicit_capture_group_0,
+                ..
+            } => {
+                if !*explicit_capture_group_0 {
+                    Ok(inner
+                        .search(&RaInput::new(text).span(pos..text.len()))
+                        .map(|m| Match::new(text, m.start(), m.end())))
+                } else {
+                    let mut locations = inner.create_captures();
+                    inner.captures(RaInput::new(text).span(pos..text.len()), &mut locations);
+                    Ok(locations.is_match().then(|| {
+                        Match::new(
+                            text,
+                            locations.get_group(1).unwrap().start,
+                            locations.get_group(1).unwrap().end,
+                        )
+                    }))
+                }
             }
             RegexImpl::Fancy { prog, options, .. } => {
                 let result = vm::run(prog, text, pos, option_flags, options)?;
@@ -1006,19 +1005,19 @@ impl Regex {
     pub fn captures_from_pos<'t>(&self, text: &'t str, pos: usize) -> Result<Option<Captures<'t>>> {
         let named_groups = self.named_groups.clone();
         match &self.inner {
-            RegexImpl::Wrap { inner, .. } => {
+            RegexImpl::Wrap {
+                inner,
+                explicit_capture_group_0,
+                ..
+            } => {
                 let mut locations = inner.create_captures();
                 inner.captures(RaInput::new(text).span(pos..text.len()), &mut locations);
                 Ok(locations.is_match().then(|| Captures {
-                    inner: CapturesImpl::Wrap { text, locations },
-                    named_groups,
-                }))
-            }
-            RegexImpl::WrapCaptureFixup { inner, .. } => {
-                let mut locations = inner.create_captures();
-                inner.captures(RaInput::new(text).span(pos..text.len()), &mut locations);
-                Ok(locations.is_match().then(|| Captures {
-                    inner: CapturesImpl::WrapCaptureFixup { text, locations },
+                    inner: CapturesImpl::Wrap {
+                        text,
+                        locations,
+                        explicit_capture_group_0: *explicit_capture_group_0,
+                    },
                     named_groups,
                 }))
             }
@@ -1043,8 +1042,11 @@ impl Regex {
     /// Returns the number of captures, including the implicit capture of the entire expression.
     pub fn captures_len(&self) -> usize {
         match &self.inner {
-            RegexImpl::Wrap { inner, .. } => inner.captures_len(),
-            RegexImpl::WrapCaptureFixup { inner, .. } => inner.captures_len() - 1,
+            RegexImpl::Wrap {
+                inner,
+                explicit_capture_group_0,
+                ..
+            } => inner.captures_len() - if *explicit_capture_group_0 { 1 } else { 0 },
             RegexImpl::Fancy { n_groups, .. } => *n_groups,
         }
     }
@@ -1063,11 +1065,16 @@ impl Regex {
     #[doc(hidden)]
     pub fn debug_print(&self, writer: &mut Formatter<'_>) -> fmt::Result {
         match &self.inner {
-            RegexImpl::Wrap { options, .. } => {
-                write!(writer, "wrapped Regex {:?}", options.pattern)
-            }
-            RegexImpl::WrapCaptureFixup { options, .. } => {
-                write!(writer, "wrapped capture fixup Regex {:?}", options.pattern)
+            RegexImpl::Wrap {
+                options,
+                explicit_capture_group_0,
+                ..
+            } => {
+                write!(
+                    writer,
+                    "wrapped Regex {:?}, explicit_capture_group_0: {:}",
+                    options.pattern, *explicit_capture_group_0
+                )
             }
             RegexImpl::Fancy { prog, .. } => prog.debug_print(writer),
         }
@@ -1383,18 +1390,17 @@ impl<'t> Captures<'t> {
     /// returned. The index 0 returns the whole match.
     pub fn get(&self, i: usize) -> Option<Match<'t>> {
         match &self.inner {
-            CapturesImpl::Wrap { text, locations } => locations.get_group(i).map(|span| Match {
+            CapturesImpl::Wrap {
                 text,
-                start: span.start,
-                end: span.end,
-            }),
-            CapturesImpl::WrapCaptureFixup { text, locations } => {
-                locations.get_group(i + 1).map(|span| Match {
+                locations,
+                explicit_capture_group_0,
+            } => locations
+                .get_group(i + if *explicit_capture_group_0 { 1 } else { 0 })
+                .map(|span| Match {
                     text,
                     start: span.start,
                     end: span.end,
-                })
-            }
+                }),
             CapturesImpl::Fancy { text, ref saves } => {
                 let slot = i * 2;
                 if slot >= saves.len() {
@@ -1454,8 +1460,11 @@ impl<'t> Captures<'t> {
     /// match.
     pub fn len(&self) -> usize {
         match &self.inner {
-            CapturesImpl::Wrap { locations, .. } => locations.group_len(),
-            CapturesImpl::WrapCaptureFixup { locations, .. } => locations.group_len() - 1,
+            CapturesImpl::Wrap {
+                locations,
+                explicit_capture_group_0,
+                ..
+            } => locations.group_len() - if *explicit_capture_group_0 { 1 } else { 0 },
             CapturesImpl::Fancy { saves, .. } => saves.len() / 2,
         }
     }
@@ -2058,7 +2067,7 @@ mod tests {
         let s = r"(a+)(?=c)";
         let regex = s.parse::<Regex>().unwrap();
         assert!(matches!(regex.inner,
-            RegexImpl::WrapCaptureFixup { .. }),
+            RegexImpl::Wrap { explicit_capture_group_0: true, .. }),
             "trailing positive lookahead for an otherwise easy pattern should avoid going through the VM");
     }
 
@@ -2067,8 +2076,8 @@ mod tests {
         let s = r"(a+)b";
         let regex = s.parse::<Regex>().unwrap();
         assert!(
-            matches!(regex.inner, RegexImpl::Wrap { .. }),
-            "easy pattern should avoid going through the VM"
+            matches!(regex.inner, RegexImpl::Wrap { explicit_capture_group_0: false, .. }),
+            "easy pattern should avoid going through the VM, and capture group 0 should be implicit"
         );
     }
 

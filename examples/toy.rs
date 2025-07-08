@@ -270,9 +270,16 @@ digraph G {
 
     #[test]
     fn test_compilation_wrapped_debug_output() {
-        let expected = "wrapped Regex \"a+bc?\"";
+        let expected = "wrapped Regex \"a+bc?\", explicit_capture_group_0: false";
 
         assert_compiled_prog("a+bc?", &expected);
+    }
+
+    #[test]
+    fn test_compilation_wrapped_debug_output_explict_capture_group_zero() {
+        let expected = "wrapped Regex \"a+b(?=c)\", explicit_capture_group_0: true";
+
+        assert_compiled_prog("a+b(?=c)", &expected);
     }
 
     fn assert_graph(re: &str, expected: &str) {

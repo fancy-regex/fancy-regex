@@ -21,8 +21,8 @@
 //! Optimization of regex expressions.
 
 use crate::parse::ExprTree;
-use crate::LookAround;
 use crate::Expr;
+use crate::LookAround;
 
 /// Rewrite the expression tree to help the VM compile an efficient program.
 /// Expects the tree to have been wrapped ready for the VM, such that the first capture group will be 0.
