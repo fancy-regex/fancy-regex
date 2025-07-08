@@ -2057,30 +2057,29 @@ mod tests {
     fn trailing_positive_lookahead_wrap_capture_group_fixup() {
         let s = r"(a+)(?=c)";
         let regex = s.parse::<Regex>().unwrap();
-        match regex.inner {
-            RegexImpl::WrapCaptureFixup { .. } => {},
-            _ => panic!("trailing positive lookahead for an otherwise easy pattern should avoid going through the VM"),
-        }
+        assert!(matches!(regex.inner,
+            RegexImpl::WrapCaptureFixup { .. }),
+            "trailing positive lookahead for an otherwise easy pattern should avoid going through the VM");
     }
 
     #[test]
     fn easy_regex() {
         let s = r"(a+)b";
         let regex = s.parse::<Regex>().unwrap();
-        match regex.inner {
-            RegexImpl::Wrap { .. } => {}
-            _ => panic!("easy pattern should avoid going through the VM"),
-        }
+        assert!(
+            matches!(regex.inner, RegexImpl::Wrap { .. }),
+            "easy pattern should avoid going through the VM"
+        );
     }
 
     #[test]
     fn hard_regex() {
         let s = r"(a+)(?>c)";
         let regex = s.parse::<Regex>().unwrap();
-        match regex.inner {
-            RegexImpl::Fancy { .. } => {}
-            _ => panic!("hard regex should be compiled into a VM"),
-        }
+        assert!(
+            matches!(regex.inner, RegexImpl::Fancy { .. }),
+            "hard regex should be compiled into a VM"
+        );
     }
 
     /*
