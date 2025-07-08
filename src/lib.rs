@@ -240,6 +240,7 @@ enum RegexImpl {
     Wrap {
         inner: RaRegex,
         options: RegexOptions,
+        /// Some optimizations avoid the VM, but need to use an extra capture group to represent the match boundaries
         explicit_capture_group_0: bool,
     },
     Fancy {
@@ -411,6 +412,9 @@ enum CapturesImpl<'t> {
     Wrap {
         text: &'t str,
         locations: RaCaptures,
+        /// Some optimizations avoid the VM but need an extra capture group to represent the match boundaries.
+        /// Therefore what is actually capture group 1 should be treated as capture group 0, and all other
+        /// capture groups should have their index reduced by one as well to line up with what the pattern specifies.
         explicit_capture_group_0: bool,
     },
     Fancy {
