@@ -102,7 +102,7 @@ impl<'a> Parser<'a> {
             backrefs: Default::default(),
             named_groups: Default::default(),
             numeric_backrefs: false,
-            flags: flags,
+            flags,
             curr_group: 0,
             contains_subroutines: false,
             has_unresolved_subroutines: false,

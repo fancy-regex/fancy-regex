@@ -444,7 +444,7 @@ fn matches_literal_casei(s: &str, ix: usize, end: usize, literal: &str) -> bool 
             Ast::literal(Literal {
                 span,
                 kind: LiteralKind::Verbatim,
-                c: c,
+                c,
             })
         })
         .collect();
