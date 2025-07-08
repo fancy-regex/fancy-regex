@@ -761,6 +761,7 @@ impl Regex {
             } else {
                 match tree.expr {
                     Expr::Concat(ref v) => {
+                        // skip the `(?s:.)*?` at the beginning of the regex, we don't need it when delegating
                         for expr in v.iter().skip(1) {
                             expr.to_str(&mut re_cooked, 2);
                         }
