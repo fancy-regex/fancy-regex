@@ -168,7 +168,7 @@ mod tests {
             "a+bc?",
             "\
 digraph G {
-  0 [label=\"0: Delegate { pattern: \\\"(?s:.)*?(a+bc?)\\\", start_group: 0, end_group: 1 }\"];
+  0 [label=\"0: Delegate(Delegate { pattern: \\\"(?s:.)*?(a+bc?)\\\", start_group: 0, end_group: 1 })\"];
   0 -> 1;
   1 [label=\"1: End\"];
 }
