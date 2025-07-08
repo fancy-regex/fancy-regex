@@ -87,6 +87,16 @@ mod tests {
     }
 
     #[test]
+    fn trailing_positive_lookahead_with_alternative_optimized() {
+        let tree = Expr::parse_tree("a(?=b|c)").unwrap();
+        let (optimized_tree, requires_capture_group_fixup) = optimize(wrap_tree(tree)).unwrap();
+        assert_eq!(requires_capture_group_fixup, true);
+        let mut s = String::new();
+        optimized_tree.expr.to_str(&mut s, 0);
+        assert_eq!(s, "(?s:.)*?(a)(?:b|c)");
+    }
+
+    #[test]
     fn trailing_positive_lookahead_moved_even_if_not_easy() {
         let tree = Expr::parse_tree(r"(a)\1(?=c)").unwrap();
         let (optimized_tree, requires_capture_group_fixup) = optimize(wrap_tree(tree)).unwrap();
