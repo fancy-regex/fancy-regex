@@ -277,9 +277,16 @@ digraph G {
 
     #[test]
     fn test_compilation_wrapped_debug_output_explict_capture_group_zero() {
-        let expected = "wrapped Regex \"a+b(?=c)\", explicit_capture_group_0: true";
+        let expected = "wrapped Regex \"(a+b)c\", explicit_capture_group_0: true";
 
         assert_compiled_prog("a+b(?=c)", &expected);
+    }
+
+    #[test]
+    fn test_compilation_wrapped_debug_output_explict_capture_group_zero_with_non_capture_group() {
+        let expected = "wrapped Regex \"(a+b)(?:c|d)\", explicit_capture_group_0: true";
+
+        assert_compiled_prog("a+b(?=c|d)", &expected);
     }
 
     fn assert_graph(re: &str, expected: &str) {
