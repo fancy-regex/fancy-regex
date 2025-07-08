@@ -29,7 +29,7 @@ use regex_automata::meta::{Builder as RaBuilder, Config as RaConfig};
 use std::{collections::BTreeMap, sync::RwLock};
 
 use crate::analyze::Info;
-use crate::vm::{Insn, Prog};
+use crate::vm::{Delegate, Insn, Prog};
 use crate::LookAround::*;
 use crate::{CompileError, Error, Expr, LookAround, RegexOptions, Result};
 
@@ -581,12 +581,12 @@ impl DelegateBuilder {
 
         let compiled = compile_inner(&self.re, options)?;
 
-        Ok(Insn::Delegate {
+        Ok(Insn::Delegate(Delegate {
             inner: compiled,
             pattern: self.re.clone(),
             start_group,
             end_group,
-        })
+        }))
     }
 }
 
@@ -723,8 +723,10 @@ mod tests {
 
     #[cfg(feature = "std")]
     fn assert_delegate(insn: &Insn, re: &str) {
+        use crate::vm::Delegate;
+
         match insn {
-            Insn::Delegate { inner, .. } => {
+            Insn::Delegate(Delegate { inner, .. }) => {
                 assert_eq!(
                     PATTERN_MAPPING
                         .read()

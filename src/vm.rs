@@ -74,7 +74,6 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::usize;
-use derivative::Derivative;
 use regex_automata::meta::Regex;
 use regex_automata::util::look::LookMatcher;
 use regex_automata::util::primitives::NonMaxUsize;
@@ -102,9 +101,39 @@ pub(crate) const OPTION_SKIPPED_EMPTY_MATCH: u32 = 1 << 1;
 // TODO: make configurable
 const MAX_STACK: usize = 1_000_000;
 
+#[derive(Clone)]
+/// Delegate matching to the regex crate
+pub struct Delegate {
+    /// The regex
+    pub inner: Regex,
+    /// The regex pattern as a string
+    pub pattern: String,
+    /// The first group number that this regex captures (if it contains groups)
+    pub start_group: usize,
+    /// The last group number
+    pub end_group: usize,
+}
+
+impl core::fmt::Debug for Delegate {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        // Ensures it fails to compile if the struct changes
+        let Self {
+            inner: _,
+            pattern,
+            start_group,
+            end_group,
+        } = self;
+
+        f.debug_struct("Delegate")
+            .field("pattern", pattern)
+            .field("start_group", start_group)
+            .field("end_group", end_group)
+            .finish()
+    }
+}
+
 /// Instruction of the VM.
-#[derive(Clone, Derivative)]
-#[derivative(Debug)]
+#[derive(Clone, Debug)]
 pub enum Insn {
     /// Successful end of program
     End,
@@ -187,17 +216,7 @@ pub enum Insn {
     /// End of atomic group
     EndAtomic,
     /// Delegate matching to the regex crate
-    Delegate {
-        /// The regex
-        #[derivative(Debug = "ignore")]
-        inner: Regex,
-        /// The regex pattern as a string
-        pattern: String,
-        /// The first group number that this regex captures (if it contains groups)
-        start_group: usize,
-        /// The last group number
-        end_group: usize,
-    },
+    Delegate(Delegate),
     /// Anchor to match at the position where the previous match ended
     ContinueFromPreviousMatchEnd,
     /// Continue only if the specified capture group has already been populated as part of the match
@@ -444,7 +463,7 @@ fn matches_literal_casei(s: &str, ix: usize, end: usize, literal: &str) -> bool 
             Ast::literal(Literal {
                 span,
                 kind: LiteralKind::Verbatim,
-                c: c,
+                c,
             })
         })
         .collect();
@@ -718,12 +737,12 @@ pub(crate) fn run(
                     let count = state.stack_pop();
                     state.backtrack_cut(count);
                 }
-                Insn::Delegate {
+                Insn::Delegate(Delegate {
                     ref inner,
                     pattern: _,
                     start_group,
                     end_group,
-                } => {
+                }) => {
                     let input = Input::new(s).span(ix..s.len()).anchored(Anchored::Yes);
                     if start_group == end_group {
                         // No groups, so we can use faster methods
