@@ -741,7 +741,7 @@ impl Regex {
         // - and capture the match bounds
         // try to optimize the expression tree
         let tree = wrap_tree(raw_tree);
-        let (tree, requires_capture_group_fixup) = optimize(tree)?;
+        let (tree, requires_capture_group_fixup) = optimize(tree);
         let info = analyze(&tree)?;
 
         if !info.hard {

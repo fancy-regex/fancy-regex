@@ -126,7 +126,7 @@ fn graph(re: &str, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
 fn show_analysis(re: &str, writer: &mut Formatter<'_>) -> Result {
     let tree = Expr::parse_tree(&re).unwrap();
     let wrapped_tree = wrap_tree(tree);
-    let (optimized_tree, _) = optimize(wrapped_tree).expect("Expected optimization to succeed");
+    let (optimized_tree, _) = optimize(wrapped_tree);
     let a = analyze(&optimized_tree);
     write!(writer, "{:#?}\n", a)
 }
@@ -142,7 +142,7 @@ fn prog(re: &str) -> Prog {
     // which means that "toy" behaves differently to tests etc.
     let tree = Expr::parse_tree(re).expect("Expected parsing regex to work");
     let wrapped_tree = wrap_tree(tree);
-    let (optimized_tree, _) = optimize(wrapped_tree).expect("Expected optimization to succeed");
+    let (optimized_tree, _) = optimize(wrapped_tree);
     let result = analyze(&optimized_tree).expect("Expected analyze to succeed");
     compile(&result).expect("Expected compile to succeed")
 }

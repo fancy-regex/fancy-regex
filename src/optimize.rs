@@ -26,18 +26,18 @@ use crate::{Expr, Result};
 
 /// Rewrite the expression tree to help the VM compile an efficient program.
 /// Expects the tree to have been wrapped ready for the VM, such that the first capture group will be 0.
-pub fn optimize(tree: ExprTree) -> Result<(ExprTree, bool)> {
+pub fn optimize(tree: ExprTree) -> (ExprTree, bool) {
     // self recursion prevents us from moving the trailing lookahead out of group 0
     if !tree.self_recursive {
         let mut optimized_tree = tree.clone();
-        let requires_capture_group_fixup = optimize_trailing_lookahead(&mut optimized_tree)?;
-        Ok((optimized_tree, requires_capture_group_fixup))
+        let requires_capture_group_fixup = optimize_trailing_lookahead(&mut optimized_tree);
+        (optimized_tree, requires_capture_group_fixup)
     } else {
-        Ok((tree, false))
+        (tree, false)
     }
 }
 
-fn optimize_trailing_lookahead(tree: &mut ExprTree) -> Result<bool> {
+fn optimize_trailing_lookahead(tree: &mut ExprTree) -> bool {
     // returns a boolean to say whether the optimization was applied.
     // - if it was applied, capture group 0 is no longer implicit, but explicit
     //   if/when the whole expression gets delegated to regex-automata
@@ -60,14 +60,14 @@ fn optimize_trailing_lookahead(tree: &mut ExprTree) -> Result<bool> {
                         let inner_box = children.pop().expect("lookaround should be popped");
                         if let Expr::LookAround(inner, LookAround::LookAhead) = inner_box {
                             root_concat_children.push(*inner);
-                            return Ok(true);
+                            return true;
                         }
                     }
                 }
             }
         }
     }
-    Ok(false)
+    false
 }
 
 #[cfg(test)]
@@ -79,7 +79,7 @@ mod tests {
     #[test]
     fn trailing_positive_lookahead_optimized() {
         let tree = Expr::parse_tree("a(?=b)").unwrap();
-        let (optimized_tree, requires_capture_group_fixup) = optimize(wrap_tree(tree)).unwrap();
+        let (optimized_tree, requires_capture_group_fixup) = optimize(wrap_tree(tree));
         assert_eq!(requires_capture_group_fixup, true);
         let mut s = String::new();
         optimized_tree.expr.to_str(&mut s, 0);
@@ -89,7 +89,7 @@ mod tests {
     #[test]
     fn trailing_positive_lookahead_with_alternative_optimized() {
         let tree = Expr::parse_tree("a(?=b|c)").unwrap();
-        let (optimized_tree, requires_capture_group_fixup) = optimize(wrap_tree(tree)).unwrap();
+        let (optimized_tree, requires_capture_group_fixup) = optimize(wrap_tree(tree));
         assert_eq!(requires_capture_group_fixup, true);
         let mut s = String::new();
         optimized_tree.expr.to_str(&mut s, 0);
@@ -99,7 +99,7 @@ mod tests {
     #[test]
     fn trailing_positive_lookahead_moved_even_if_not_easy() {
         let tree = Expr::parse_tree(r"(a)\1(?=c)").unwrap();
-        let (optimized_tree, requires_capture_group_fixup) = optimize(wrap_tree(tree)).unwrap();
+        let (optimized_tree, requires_capture_group_fixup) = optimize(wrap_tree(tree));
         assert_eq!(requires_capture_group_fixup, true);
         assert_eq!(
             optimized_tree.expr,
@@ -126,7 +126,7 @@ mod tests {
     fn trailing_positive_lookahead_left_alone_when_self_recursive() {
         let wrapped_tree = wrap_tree(Expr::parse_tree(r"ab?\g<0>?(?=a|$)").unwrap());
         let (optimized_tree, requires_capture_group_fixup) =
-            optimize(wrapped_tree.clone()).unwrap();
+            optimize(wrapped_tree.clone());
         assert_eq!(requires_capture_group_fixup, false);
         assert_eq!(&optimized_tree.expr, &wrapped_tree.expr);
     }
@@ -135,7 +135,7 @@ mod tests {
     fn trailing_negative_lookahead_left_alone() {
         let wrapped_tree = wrap_tree(Expr::parse_tree(r"a(?!b)").unwrap());
         let (optimized_tree, requires_capture_group_fixup) =
-            optimize(wrapped_tree.clone()).unwrap();
+            optimize(wrapped_tree.clone());
         assert_eq!(requires_capture_group_fixup, false);
         assert_eq!(&optimized_tree.expr, &wrapped_tree.expr);
     }
@@ -144,7 +144,7 @@ mod tests {
     fn trailing_positive_lookbehind_left_alone() {
         let wrapped_tree = wrap_tree(Expr::parse_tree(r"(?<=b)").unwrap());
         let (optimized_tree, requires_capture_group_fixup) =
-            optimize(wrapped_tree.clone()).unwrap();
+            optimize(wrapped_tree.clone());
         assert_eq!(requires_capture_group_fixup, false);
         assert_eq!(&optimized_tree.expr, &wrapped_tree.expr);
     }
