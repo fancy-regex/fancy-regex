@@ -180,6 +180,23 @@ fn backrefs() {
     assert_no_match(r"(.)(?i:\1)", "įĖ");
 }
 
+#[test]
+fn easy_trailing_positive_lookaheads() {
+    assert_match(r"(?=c)", "abcabc");
+    assert_match(r"abc(?=abc)", "abcabc");
+    assert_no_match(r"abc(?=abc)", "abcdef");
+    assert_match(r"abc(?=a|b)", "abcabc");
+    assert_no_match(r"abc(?=a|f)", "f");
+}
+
+#[test]
+fn hard_trailing_positive_lookaheads() {
+    assert_match(r"(abc|def)(?=\1)", "defdef");
+    assert_match(r"(abc|def)(?=a(?!b))", "abca");
+    assert_match(r"(abc|def)(?=a(?!b))", "abcaa");
+    assert_no_match(r"(abc|def)(?=a(?!b))", "abcabc");
+}
+
 #[cfg_attr(feature = "track_caller", track_caller)]
 fn assert_match(re: &str, text: &str) {
     let result = match_text(re, text);
