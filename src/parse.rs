@@ -39,12 +39,13 @@ pub(crate) type NamedGroups = alloc::collections::BTreeMap<String, usize>;
 #[cfg(feature = "std")]
 pub(crate) type NamedGroups = std::collections::HashMap<String, usize>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ExprTree {
     pub expr: Expr,
     pub backrefs: BitSet,
     pub named_groups: NamedGroups,
     pub(crate) contains_subroutines: bool,
+    pub(crate) self_recursive: bool,
 }
 
 #[derive(Debug)]
@@ -57,6 +58,7 @@ pub(crate) struct Parser<'a> {
     curr_group: usize, // need to keep track of which group number we're parsing
     contains_subroutines: bool,
     has_unresolved_subroutines: bool,
+    self_recursive: bool,
 }
 
 struct NamedBackrefOrSubroutine<'a> {
@@ -87,6 +89,7 @@ impl<'a> Parser<'a> {
             backrefs: p.backrefs,
             named_groups: p.named_groups,
             contains_subroutines: p.contains_subroutines,
+            self_recursive: p.self_recursive,
         })
     }
 
@@ -106,6 +109,7 @@ impl<'a> Parser<'a> {
             curr_group: 0,
             contains_subroutines: false,
             has_unresolved_subroutines: false,
+            self_recursive: false,
         }
     }
 
@@ -358,6 +362,9 @@ impl<'a> Parser<'a> {
         }
         if let Some(group) = group_ix {
             self.contains_subroutines = true;
+            if group == 0 {
+                self.self_recursive = true;
+            }
             return Ok((end, Expr::SubroutineCall(group)));
         }
         if let Some(group_name) = group_name {
@@ -443,6 +450,9 @@ impl<'a> Parser<'a> {
         let (end, group) = self.parse_numbered_backref_or_subroutine_call(ix)?;
         self.numeric_backrefs = true;
         self.contains_subroutines = true;
+        if group == 0 {
+            self.self_recursive = true;
+        }
         Ok((end, Expr::SubroutineCall(group)))
     }
 
@@ -2451,6 +2461,30 @@ mod tests {
                 Expr::Assertion(Assertion::EndText,),
             ],)
         );
+    }
+
+    #[test]
+    fn self_recursive_subroutine_call() {
+        let tree = Expr::parse_tree(r"hello\g<0>?world").unwrap();
+        assert_eq!(tree.self_recursive, true);
+
+        let tree = Expr::parse_tree(r"hello\g0?world").unwrap();
+        assert_eq!(tree.self_recursive, true);
+
+        let tree = Expr::parse_tree(r"hello world").unwrap();
+        assert_eq!(tree.self_recursive, false);
+
+        let tree = Expr::parse_tree(r"hello\g1world").unwrap();
+        assert_eq!(tree.self_recursive, false);
+
+        let tree = Expr::parse_tree(r"hello\g<1>world").unwrap();
+        assert_eq!(tree.self_recursive, false);
+
+        let tree = Expr::parse_tree(r"(hello\g1?world)").unwrap();
+        assert_eq!(tree.self_recursive, false);
+
+        let tree = Expr::parse_tree(r"(?<a>hello\g<a>world)").unwrap();
+        assert_eq!(tree.self_recursive, false);
     }
 
     #[test]

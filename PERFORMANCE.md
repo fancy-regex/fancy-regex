@@ -12,7 +12,9 @@ For a good explanation of that, read
 
 Let's look at the regex from the README again:
 
+```regex
     (a|b|ab)*bc
+```
 
 And the input text:
 
@@ -47,15 +49,28 @@ delegate to the regex crate which matches it in linear runtime.
 
 Let's look at another regex, one that makes use of a "fancy" look-ahead:
 
+```regex
     (a|b|ab)*(?=c)
-
+```
 When fancy-regex matches it against this input:
 
     abababababababababababababababababababababababababababab
 
-It's slow! The reason is that `(?=c)` is not supported by the regex
-crate, so we need to handle it with backtracking. And because
-`(a|b|ab)*` is before it, we need to do it with backtracking as well.
+It's still fast! The reason is that although `(?=c)` is not supported
+by the regex crate, fancy-regex detects the trailing positive lookahead
+and is able to essentially rewrite the pattern into
+
+```regex
+    ((a|b|ab)*)c
+```
+
+and thus delegate the whole thing to the regex crate, and fixup the
+captures/match boundaries after a match is found.
+
+If, however, the lookahead didn't come at the end of the pattern,
+it would be slow! The reason is that fancy-regex would need to handle
+the lookahead with backtracking. And because `(a|b|ab)*` is before it,
+that also needs to be done with backtracking as well.
 
 Oniguruma doesn't have a problem with this particular case because its
 optimization saves it again: It checks if there's a `c` in the input
@@ -70,8 +85,10 @@ inner part of the look-ahead can be delegated to regex entirely.
 
 ### Summary
 
-* If the regex doesn't use fancy features, fancy-regex should have
-  linear runtime compared to Oniguruma's exponential worst-case.
+* If the regex doesn't use fancy features, or the features used in the
+  pattern can be identified as being syntactic sugar and slightly
+  rewritten, fancy-regex should have linear runtime compared to
+  Oniguruma's exponential worst-case.
 * Even if the regex doesn't use any fancy features, Oniguruma can be
   faster because it is a mature and highly optimized engine.
 * With fancy features, Oniguruma can be faster because of optimizations.

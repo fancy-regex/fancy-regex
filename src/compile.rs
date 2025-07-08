@@ -620,6 +620,7 @@ mod tests {
             backrefs: BitSet::new(),
             named_groups: Default::default(),
             contains_subroutines: false,
+            self_recursive: false,
         };
         let info = analyze(&tree).unwrap();
 
