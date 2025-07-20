@@ -81,8 +81,8 @@ fn main() {
             let re = args.next().expect("expected regexp argument");
             let tree = Expr::parse_tree(&re).unwrap();
             let text = args.next().expect("expected text argument");
-            let a = analyze(&tree).unwrap();
-            let p = compile(&a).unwrap();
+            let a = analyze(&tree, 1).unwrap();
+            let p = compile(&a, true).unwrap();
             run_trace(&p, &text, 0).unwrap();
         } else if cmd == "graph" {
             let re = args.next().expect("expected regexp argument");
@@ -122,7 +122,7 @@ fn graph(re: &str, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
 fn show_analysis(re: &str, writer: &mut Formatter<'_>) -> Result {
     let tree = Expr::parse_tree(&re).unwrap();
     let wrapped_tree = wrap_tree(tree);
-    let a = analyze(&wrapped_tree);
+    let a = analyze(&wrapped_tree, 0);
     write!(writer, "{:#?}\n", a)
 }
 
@@ -134,8 +134,8 @@ fn show_compiled_program(re: &str, writer: &mut Formatter<'_>) -> Result {
 fn prog(re: &str) -> Prog {
     let tree = Expr::parse_tree(re).expect("Expected parsing regex to work");
     let wrapped_tree = wrap_tree(tree);
-    let result = analyze(&wrapped_tree).expect("Expected analyze to succeed");
-    compile(&result).expect("Expected compile to succeed")
+    let result = analyze(&wrapped_tree, 0).expect("Expected analyze to succeed");
+    compile(&result, false).expect("Expected compile to succeed")
 }
 
 struct AnalyzeFormatterWrapper<'a> {

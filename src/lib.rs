@@ -724,29 +724,16 @@ impl Regex {
     }
 
     fn new_options(options: RegexOptions) -> Result<Regex> {
-        let raw_tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags())?;
+        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags())?;
 
-        // wrapper to search for re at arbitrary start position,
-        // and to capture the match bounds
-        let tree = wrap_tree(raw_tree);
+        let info = analyze(&tree, 1)?;
 
-        let info = analyze(&tree)?;
-
-        let inner_info = &info.children[1].children[0]; // references inner expr
-        if !inner_info.hard {
+        if !info.hard {
             // easy case, wrap regex
 
             // we do our own to_str because escapes are different
             let mut re_cooked = String::new();
-            // same as raw_tree.expr above, but it was moved, so traverse to find it
-            let raw_e = match tree.expr {
-                Expr::Concat(ref v) => match v[1] {
-                    Expr::Group(ref child) => child,
-                    _ => unreachable!(),
-                },
-                _ => unreachable!(),
-            };
-            raw_e.to_str(&mut re_cooked, 0);
+            tree.expr.to_str(&mut re_cooked, 0);
             let inner = compile::compile_inner(&re_cooked, &options)?;
             return Ok(Regex {
                 inner: RegexImpl::Wrap { inner, options },
@@ -754,7 +741,11 @@ impl Regex {
             });
         }
 
-        let prog = compile(&info)?;
+        // wrapper to capture the match bounds
+        let tree = wrap_tree(tree);
+        let info = analyze(&tree, 0)?;
+
+        let prog = compile(&info, false)?;
         Ok(Regex {
             inner: RegexImpl::Fancy {
                 prog,
@@ -1861,19 +1852,10 @@ pub fn detect_possible_backref(re: &str) -> bool {
 }
 */
 
-/// wrapper to search for re at arbitrary start position,
-/// and to capture the match bounds
+/// wrap in explicit capture group 0 to capture the match bounds
 pub fn wrap_tree(raw_tree: ExprTree) -> ExprTree {
     return ExprTree {
-        expr: Expr::Concat(vec![
-            Expr::Repeat {
-                child: Box::new(Expr::Any { newline: true }),
-                lo: 0,
-                hi: usize::MAX,
-                greedy: false,
-            },
-            Expr::Group(Box::new(raw_tree.expr)),
-        ]),
+        expr: Expr::Concat(vec![Expr::Group(Box::new(raw_tree.expr))]),
         ..raw_tree
     };
 }

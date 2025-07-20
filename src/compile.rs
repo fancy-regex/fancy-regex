@@ -524,8 +524,13 @@ pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<Ra
 }
 
 /// Compile the analyzed expressions into a program.
-pub fn compile(info: &Info<'_>) -> Result<Prog> {
+pub fn compile(info: &Info<'_>, anchored: bool) -> Result<Prog> {
     let mut c = Compiler::new(info.end_group);
+    if !anchored {
+        c.b.add(Insn::Split(3, 1));
+        c.b.add(Insn::Any);
+        c.b.add(Insn::Jmp(0));
+    }
     c.visit(info, false)?;
     c.b.add(Insn::End);
     Ok(c.b.build())
@@ -621,7 +626,7 @@ mod tests {
             named_groups: Default::default(),
             contains_subroutines: false,
         };
-        let info = analyze(&tree).unwrap();
+        let info = analyze(&tree, 1).unwrap();
 
         let mut c = Compiler::new(0);
         // Force "hard" so that compiler doesn't just delegate
@@ -733,8 +738,8 @@ mod tests {
 
     fn compile_prog(re: &str) -> Vec<Insn> {
         let tree = Expr::parse_tree(re).unwrap();
-        let info = analyze(&tree).unwrap();
-        let prog = compile(&info).unwrap();
+        let info = analyze(&tree, 0).unwrap();
+        let prog = compile(&info, true).unwrap();
         prog.body
     }
 

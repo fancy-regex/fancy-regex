@@ -70,7 +70,7 @@ pub enum CompileError {
     /// Invalid group id in escape sequence
     InvalidGroupNameBackref(String),
     /// Invalid back reference
-    InvalidBackref,
+    InvalidBackref(usize),
     /// Once named groups are used you cannot refer to groups by number
     NamedBackrefOnly,
     /// Feature not supported yet
@@ -132,7 +132,7 @@ impl fmt::Display for CompileError {
             },
             CompileError::InvalidGroupName => write!(f, "Could not parse group name"),
             CompileError::InvalidGroupNameBackref(s) => write!(f, "Invalid group name in back reference: {}", s),
-            CompileError::InvalidBackref => write!(f, "Invalid back reference"),
+            CompileError::InvalidBackref(g) => write!(f, "Invalid back reference to group {}", g),
             CompileError::NamedBackrefOnly => write!(f, "Numbered backref/call not allowed because named group was used, use a named backref instead"),
             CompileError::FeatureNotYetSupported(s) => write!(f, "Regex uses currently unimplemented feature: {}", s),
             CompileError::SubroutineCallTargetNotFound(s, ix) => {

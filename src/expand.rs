@@ -76,7 +76,7 @@ impl Expander {
             } else if num < regex.captures_len() {
                 Ok(())
             } else {
-                Err(Error::CompileError(CompileError::InvalidBackref))
+                Err(Error::CompileError(CompileError::InvalidBackref(num)))
             }
         };
         self.exec(template, |step| match step {
@@ -87,7 +87,9 @@ impl Expander {
                 } else if let Ok(num) = name.parse() {
                     on_group_num(num)
                 } else {
-                    Err(Error::CompileError(CompileError::InvalidBackref))
+                    Err(Error::CompileError(CompileError::InvalidGroupNameBackref(
+                        name.to_string(),
+                    )))
                 }
             }
             Step::GroupNum(num) => on_group_num(num),
