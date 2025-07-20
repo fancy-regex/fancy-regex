@@ -207,6 +207,7 @@ mod replacer;
 mod vm;
 
 use crate::analyze::analyze;
+use crate::analyze::can_compile_as_anchored;
 use crate::compile::compile;
 use crate::flags::*;
 use crate::parse::{ExprTree, NamedGroups, Parser};
@@ -741,17 +742,7 @@ impl Regex {
             });
         }
 
-        let anchored = match tree.expr {
-            Expr::Concat(ref children) => {
-                match children[0] {
-                    Expr::Assertion(assertion) => assertion == Assertion::StartText,
-                    _ => false,
-                }
-            }
-            Expr::Assertion(assertion) => assertion == Assertion::StartText,
-            _ => false,
-        };
-        let prog = compile(&info, anchored)?;
+        let prog = compile(&info, can_compile_as_anchored(&tree.expr))?;
         Ok(Regex {
             inner: RegexImpl::Fancy {
                 prog,
@@ -1862,7 +1853,7 @@ pub fn detect_possible_backref(re: &str) -> bool {
 /// experimenting.
 #[doc(hidden)]
 pub mod internal {
-    pub use crate::analyze::analyze;
+    pub use crate::analyze::{analyze, can_compile_as_anchored};
     pub use crate::compile::compile;
     pub use crate::vm::{run_default, run_trace, Insn, Prog};
 }

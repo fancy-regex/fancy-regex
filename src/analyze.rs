@@ -250,10 +250,25 @@ pub fn analyze<'a>(tree: &'a ExprTree, start_group: usize) -> Result<Info<'a>> {
     analyzed
 }
 
+/// Determine if the expression will always only ever match at position 0
+pub fn can_compile_as_anchored(root_expr: &Expr) -> bool {
+    use crate::Assertion;
+
+    match root_expr {
+        Expr::Concat(ref children) => match children[0] {
+            Expr::Assertion(ref assertion) => *assertion == Assertion::StartText,
+            _ => false,
+        },
+        Expr::Assertion(ref assertion) => *assertion == Assertion::StartText,
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::analyze;
     // use super::literal_const_size;
+    use crate::can_compile_as_anchored;
     use crate::CompileError;
     use crate::Error;
     use crate::Expr;
@@ -340,5 +355,20 @@ mod tests {
         let tree = Expr::parse_tree("abc*").unwrap();
         let info = analyze(&tree, 1).unwrap();
         assert_eq!(info.is_literal(), false);
+    }
+
+    #[test]
+    fn anchored_for_starttext_assertions() {
+        let tree = Expr::parse_tree(r"^(\w+)\1").unwrap();
+        assert_eq!(can_compile_as_anchored(&tree.expr), true);
+
+        let tree = Expr::parse_tree(r"^").unwrap();
+        assert_eq!(can_compile_as_anchored(&tree.expr), true);
+    }
+
+    #[test]
+    fn not_anchored_for_startline_assertions() {
+        let tree = Expr::parse_tree(r"(?m)^(\w+)\1").unwrap();
+        assert_eq!(can_compile_as_anchored(&tree.expr), false);
     }
 }
