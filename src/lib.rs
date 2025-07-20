@@ -741,7 +741,17 @@ impl Regex {
             });
         }
 
-        let prog = compile(&info, false)?;
+        let anchored = match tree.expr {
+            Expr::Concat(ref children) => {
+                match children[0] {
+                    Expr::Assertion(assertion) => assertion == Assertion::StartText,
+                    _ => false,
+                }
+            }
+            Expr::Assertion(assertion) => assertion == Assertion::StartText,
+            _ => false,
+        };
+        let prog = compile(&info, anchored)?;
         Ok(Regex {
             inner: RegexImpl::Fancy {
                 prog,
