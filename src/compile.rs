@@ -531,7 +531,15 @@ pub fn compile(info: &Info<'_>, anchored: bool) -> Result<Prog> {
         c.b.add(Insn::Any);
         c.b.add(Insn::Jmp(0));
     }
+    if info.start_group == 1 {
+        // add implicit capture group 0 begin
+        c.b.add(Insn::Save(0));
+    }
     c.visit(info, false)?;
+    if info.start_group == 1 {
+        // add implicit capture group 0 end
+        c.b.add(Insn::Save(1));
+    }
     c.b.add(Insn::End);
     Ok(c.b.build())
 }

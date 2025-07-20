@@ -17,6 +17,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo check
       - run: cargo check --no-default-features
+      - run: cargo check --examples
+      - run: cargo check --benches
 
   test:
     name: test

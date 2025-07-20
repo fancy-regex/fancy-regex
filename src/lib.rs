@@ -741,10 +741,6 @@ impl Regex {
             });
         }
 
-        // wrapper to capture the match bounds
-        let tree = wrap_tree(tree);
-        let info = analyze(&tree, 0)?;
-
         let prog = compile(&info, false)?;
         Ok(Regex {
             inner: RegexImpl::Fancy {
@@ -1851,14 +1847,6 @@ pub fn detect_possible_backref(re: &str) -> bool {
     }
 }
 */
-
-/// wrap in explicit capture group 0 to capture the match bounds
-pub fn wrap_tree(raw_tree: ExprTree) -> ExprTree {
-    return ExprTree {
-        expr: Expr::Concat(vec![Expr::Group(Box::new(raw_tree.expr))]),
-        ..raw_tree
-    };
-}
 
 /// The internal module only exists so that the toy example can access internals for debugging and
 /// experimenting.
