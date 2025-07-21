@@ -268,7 +268,7 @@ pub fn can_compile_as_anchored(root_expr: &Expr) -> bool {
 mod tests {
     use super::analyze;
     // use super::literal_const_size;
-    use crate::{CompileError, Error, Expr, can_compile_as_anchored};
+    use crate::{can_compile_as_anchored, CompileError, Error, Expr};
 
     // #[test]
     // fn case_folding_safe() {

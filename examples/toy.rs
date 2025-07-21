@@ -20,7 +20,9 @@
 
 //! A simple test app for exercising and debugging the regex engine.
 
-use fancy_regex::internal::{analyze, can_compile_as_anchored, compile, optimize, run_trace, Insn, Prog};
+use fancy_regex::internal::{
+    analyze, can_compile_as_anchored, compile, optimize, run_trace, Insn, Prog,
+};
 use fancy_regex::*;
 use std::env;
 use std::fmt::{Display, Formatter, Result};
@@ -143,7 +145,8 @@ fn prog(re: &str, start_group: usize) -> Prog {
     // TODO: ideally don't clone the tree unnecessarily - it is cloned in optimize if needed
     let (optimized_tree, _) = optimize(tree.clone());
     let result = analyze(&optimized_tree, start_group).expect("Expected analyze to succeed");
-    compile(&result, can_compile_as_anchored(&optimized_tree.expr)).expect("Expected compile to succeed")
+    compile(&result, can_compile_as_anchored(&optimized_tree.expr))
+        .expect("Expected compile to succeed")
 }
 
 struct AnalyzeFormatterWrapper<'a> {

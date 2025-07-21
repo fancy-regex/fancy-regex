@@ -24,8 +24,11 @@ use crate::parse::ExprTree;
 use crate::Expr;
 use crate::LookAround;
 
+use alloc::boxed::Box;
+use alloc::vec;
+use core::mem;
+
 /// Rewrite the expression tree to help the VM compile an efficient program.
-/// Expects the tree to have been wrapped ready for the VM, such that the first capture group will be 0.
 pub fn optimize(tree: ExprTree) -> (ExprTree, bool) {
     // self recursion prevents us from moving the trailing lookahead out of group 0
     if !tree.self_recursive {
@@ -42,30 +45,39 @@ fn optimize_trailing_lookahead(tree: &mut ExprTree) -> bool {
     // - if it was applied, capture group 0 is no longer implicit, but explicit
     //   if/when the whole expression gets delegated to regex-automata
     // converts i.e. original pattern `a(?=b)` when wrapped in the capture group 0
-    // as `(?s:.)*?(a(?=b))`
-    // to `(?s:.)*?(a)b`
+    // as `(a(?=b))`
+    // to `(a)b`
 
-    // here we traverse the tree to find capture group 0
-    // we start with the root concat, and get the last child
     if let Expr::Concat(ref mut root_concat_children) = tree.expr {
         if let Some(last_child_of_root_concat) = &mut root_concat_children.last_mut() {
-            // we get the last child if it is a capture group
-            if let Expr::Group(ref mut inner) = last_child_of_root_concat {
-                // if the inner expression to the capture group is a concatenation
-                if let Expr::Concat(ref mut children) = **inner {
-                    // whose last child is a positive lookahead
-                    if let Some(Expr::LookAround(_, LookAround::LookAhead)) = &children.last_mut() {
-                        // then pop the lookahead and attach the inner expression to the root concat
-                        // after capture group 0 ends
-                        let inner_box = children.pop().expect("lookaround should be popped");
-                        if let Expr::LookAround(inner, LookAround::LookAhead) = inner_box {
-                            root_concat_children.push(*inner);
-                            return true;
-                        }
-                    }
+            // we get the last child if it is a positive lookahead
+            if let Expr::LookAround(_, LookAround::LookAhead) = &last_child_of_root_concat {
+                // then pop the lookahead
+                let lookahead_expr = root_concat_children
+                    .pop()
+                    .expect("lookaround should be popped");
+                // take the rest of the children from the original Concat
+                let group0_children = mem::take(root_concat_children);
+
+                // extract the inner expression from the lookahead
+                if let Expr::LookAround(inner, LookAround::LookAhead) = lookahead_expr {
+                    let group0 = Expr::Group(Box::new(Expr::Concat(group0_children)));
+                    // compose new Concat: [Group0, lookahead inner expr]
+                    let new_concat = Expr::Concat(vec![group0, *inner]);
+                    tree.expr = new_concat;
+                    return true;
+                } else {
+                    unreachable!("already check it is a lookahead");
                 }
             }
         }
+    } else if let Expr::LookAround(ref mut inner, LookAround::LookAhead) = &mut tree.expr {
+        let group0 = Expr::Group(Box::new(Expr::Empty));
+        let mut swap = Expr::Empty;
+        mem::swap(&mut swap, inner);
+        // compose new Concat: [Group0, lookahead inner expr]
+        tree.expr = Expr::Concat(vec![group0, swap]);
+        return true;
     }
     false
 }
@@ -73,8 +85,11 @@ fn optimize_trailing_lookahead(tree: &mut ExprTree) -> bool {
 #[cfg(test)]
 mod tests {
     use super::optimize;
+    use super::vec;
+    use super::Box;
     use crate::parse::make_literal;
     use crate::Expr;
+    use alloc::string::String;
 
     #[test]
     fn trailing_positive_lookahead_optimized() {
@@ -83,7 +98,17 @@ mod tests {
         assert_eq!(requires_capture_group_fixup, true);
         let mut s = String::new();
         optimized_tree.expr.to_str(&mut s, 0);
-        assert_eq!(s, "(?s:.)*?(a)b");
+        assert_eq!(s, "(a)b");
+    }
+
+    #[test]
+    fn standalone_positive_lookahead_optimized() {
+        let tree = Expr::parse_tree("(?=b)").unwrap();
+        let (optimized_tree, requires_capture_group_fixup) = optimize(tree);
+        assert_eq!(requires_capture_group_fixup, true);
+        let mut s = String::new();
+        optimized_tree.expr.to_str(&mut s, 0);
+        assert_eq!(s, "()b");
     }
 
     #[test]
@@ -93,7 +118,7 @@ mod tests {
         assert_eq!(requires_capture_group_fixup, true);
         let mut s = String::new();
         optimized_tree.expr.to_str(&mut s, 0);
-        assert_eq!(s, "(?s:.)*?(a)(?:b|c)");
+        assert_eq!(s, "(a)(?:b|c)");
     }
 
     #[test]
@@ -104,12 +129,6 @@ mod tests {
         assert_eq!(
             optimized_tree.expr,
             Expr::Concat(vec![
-                Expr::Repeat {
-                    child: Box::new(Expr::Any { newline: true }),
-                    lo: 0,
-                    hi: usize::MAX,
-                    greedy: false
-                },
                 Expr::Group(Box::new(Expr::Concat(vec![
                     Expr::Group(Box::new(make_literal("a"))),
                     Expr::Backref {
@@ -141,6 +160,19 @@ mod tests {
     #[test]
     fn trailing_positive_lookbehind_left_alone() {
         let tree = Expr::parse_tree(r"(?<=b)").unwrap();
+        let (optimized_tree, requires_capture_group_fixup) = optimize(tree.clone());
+        assert_eq!(requires_capture_group_fixup, false);
+        assert_eq!(&optimized_tree.expr, &tree.expr);
+    }
+
+    #[test]
+    fn non_trailing_positive_lookahead_left_alone() {
+        let tree = Expr::parse_tree(r"a(?=(b))\1").unwrap();
+        let (optimized_tree, requires_capture_group_fixup) = optimize(tree.clone());
+        assert_eq!(requires_capture_group_fixup, false);
+        assert_eq!(&optimized_tree.expr, &tree.expr);
+
+        let tree = Expr::parse_tree(r"(?=(b))\1").unwrap();
         let (optimized_tree, requires_capture_group_fixup) = optimize(tree.clone());
         assert_eq!(requires_capture_group_fixup, false);
         assert_eq!(&optimized_tree.expr, &tree.expr);

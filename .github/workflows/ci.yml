@@ -49,6 +49,7 @@ jobs:
         run: cp Cargo.lock.msrv Cargo.lock
 
       - run: cargo test
+      - run: cargo test --no-default-features
 
   example:
     name: example
