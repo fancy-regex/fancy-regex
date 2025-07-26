@@ -524,9 +524,22 @@ pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<Ra
 }
 
 /// Compile the analyzed expressions into a program.
-pub fn compile(info: &Info<'_>) -> Result<Prog> {
+pub fn compile(info: &Info<'_>, anchored: bool) -> Result<Prog> {
     let mut c = Compiler::new(info.end_group);
+    if !anchored {
+        c.b.add(Insn::Split(3, 1));
+        c.b.add(Insn::Any);
+        c.b.add(Insn::Jmp(0));
+    }
+    if info.start_group == 1 {
+        // add implicit capture group 0 begin
+        c.b.add(Insn::Save(0));
+    }
     c.visit(info, false)?;
+    if info.start_group == 1 {
+        // add implicit capture group 0 end
+        c.b.add(Insn::Save(1));
+    }
     c.b.add(Insn::End);
     Ok(c.b.build())
 }
@@ -622,7 +635,7 @@ mod tests {
             contains_subroutines: false,
             self_recursive: false,
         };
-        let info = analyze(&tree).unwrap();
+        let info = analyze(&tree, 1).unwrap();
 
         let mut c = Compiler::new(0);
         // Force "hard" so that compiler doesn't just delegate
@@ -715,10 +728,27 @@ mod tests {
         assert_matches!(prog[7], End);
     }
 
+    #[test]
+    fn lazy_any_can_be_compiled_explicit_capture_group_zero() {
+        let prog = compile_prog(r"\O*?((?!a))");
+
+        assert_eq!(prog.len(), 9, "prog: {:?}", prog);
+
+        assert_matches!(prog[0], Split(3, 1));
+        assert_matches!(prog[1], Any);
+        assert_matches!(prog[2], Jmp(0));
+        assert_matches!(prog[3], Save(0));
+        assert_matches!(prog[4], Split(5, 7));
+        assert_matches!(prog[5], Lit(ref l) if l == "a");
+        assert_matches!(prog[6], FailNegativeLookAround);
+        assert_matches!(prog[7], Save(1));
+        assert_matches!(prog[8], End);
+    }
+
     fn compile_prog(re: &str) -> Vec<Insn> {
         let tree = Expr::parse_tree(re).unwrap();
-        let info = analyze(&tree).unwrap();
-        let prog = compile(&info).unwrap();
+        let info = analyze(&tree, 0).unwrap();
+        let prog = compile(&info, true).unwrap();
         prog.body
     }
 

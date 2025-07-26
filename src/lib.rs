@@ -208,6 +208,7 @@ mod replacer;
 mod vm;
 
 use crate::analyze::analyze;
+use crate::analyze::can_compile_as_anchored;
 use crate::compile::compile;
 use crate::flags::*;
 use crate::optimize::optimize;
@@ -732,15 +733,11 @@ impl Regex {
     }
 
     fn new_options(options: RegexOptions) -> Result<Regex> {
-        let raw_tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags())?;
+        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags())?;
 
-        // after wrapping to:
-        // - search for re at arbitrary start position
-        // - and capture the match bounds
         // try to optimize the expression tree
-        let tree = wrap_tree(raw_tree);
         let (tree, requires_capture_group_fixup) = optimize(tree);
-        let info = analyze(&tree)?;
+        let info = analyze(&tree, if requires_capture_group_fixup { 0 } else { 1 })?;
 
         if !info.hard {
             // easy case, wrap regex
@@ -748,27 +745,7 @@ impl Regex {
             // we do our own to_str because escapes are different
             // NOTE: there is a good opportunity here to use Hir to avoid regex-automata re-parsing it
             let mut re_cooked = String::new();
-            if !requires_capture_group_fixup {
-                // same as raw_tree.expr above, but it was moved, so traverse to find it
-                let raw_e = match tree.expr {
-                    Expr::Concat(ref v) => match v[1] {
-                        Expr::Group(ref child) => child,
-                        _ => unreachable!(),
-                    },
-                    _ => unreachable!(),
-                };
-                raw_e.to_str(&mut re_cooked, 0);
-            } else {
-                match tree.expr {
-                    Expr::Concat(ref v) => {
-                        // skip the `(?s:.)*?` at the beginning of the regex, we don't need it when delegating
-                        for expr in v.iter().skip(1) {
-                            expr.to_str(&mut re_cooked, 2);
-                        }
-                    }
-                    _ => unreachable!(),
-                }
-            };
+            tree.expr.to_str(&mut re_cooked, 0);
             let inner = compile::compile_inner(&re_cooked, &options)?;
             return Ok(Regex {
                 inner: RegexImpl::Wrap {
@@ -786,7 +763,7 @@ impl Regex {
             });
         }
 
-        let prog = compile(&info)?;
+        let prog = compile(&info, can_compile_as_anchored(&tree.expr))?;
         Ok(Regex {
             inner: RegexImpl::Fancy {
                 prog,
@@ -1941,28 +1918,11 @@ pub fn detect_possible_backref(re: &str) -> bool {
 }
 */
 
-/// wrapper to search for re at arbitrary start position,
-/// and to capture the match bounds
-pub fn wrap_tree(raw_tree: ExprTree) -> ExprTree {
-    return ExprTree {
-        expr: Expr::Concat(vec![
-            Expr::Repeat {
-                child: Box::new(Expr::Any { newline: true }),
-                lo: 0,
-                hi: usize::MAX,
-                greedy: false,
-            },
-            Expr::Group(Box::new(raw_tree.expr)),
-        ]),
-        ..raw_tree
-    };
-}
-
 /// The internal module only exists so that the toy example can access internals for debugging and
 /// experimenting.
 #[doc(hidden)]
 pub mod internal {
-    pub use crate::analyze::analyze;
+    pub use crate::analyze::{analyze, can_compile_as_anchored};
     pub use crate::compile::compile;
     pub use crate::optimize::optimize;
     pub use crate::vm::{run_default, run_trace, Insn, Prog};
