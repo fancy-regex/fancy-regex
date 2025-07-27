@@ -88,7 +88,7 @@ fn run_tricky(c: &mut Criterion) {
 }
 
 fn run_backtrack_limit(c: &mut Criterion) {
-    let tree = Expr::parse_tree("(?i)(a|b|ab)*(?=c)").unwrap();
+    let tree = Expr::parse_tree("(?i)(a|b|ab)*(?>c)").unwrap();
     let a = analyze(&tree, 1).unwrap();
     let p = compile(&a, false).unwrap();
     let s = "abababababababababababababababababababababababababababab";

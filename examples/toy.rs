@@ -20,7 +20,9 @@
 
 //! A simple test app for exercising and debugging the regex engine.
 
-use fancy_regex::internal::{analyze, can_compile_as_anchored, compile, run_trace, Insn, Prog};
+use fancy_regex::internal::{
+    analyze, can_compile_as_anchored, compile, optimize, run_trace, Insn, Prog,
+};
 use fancy_regex::*;
 use std::env;
 use std::fmt::{Display, Formatter, Result};
@@ -34,6 +36,12 @@ fn main() {
         if cmd == "parse" {
             let re = args.next().expect("expected regexp argument");
             let e = Expr::parse_tree(&re);
+            println!("{:#?}", e);
+        } else if cmd == "optimize" {
+            let re = args.next().expect("expected regexp argument");
+            let mut e = Expr::parse_tree(&re).expect("expected regexp to be parsed successfully");
+            let explicit_capture_group0 = optimize(&mut e);
+            println!("explicit capture group 0: {:?}", explicit_capture_group0);
             println!("{:#?}", e);
         } else if cmd == "analyze" {
             let re = args.next().expect("expected regexp argument");
@@ -120,7 +128,8 @@ fn graph(re: &str, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
 }
 
 fn show_analysis(re: &str, writer: &mut Formatter<'_>) -> Result {
-    let tree = Expr::parse_tree(&re).unwrap();
+    let mut tree = Expr::parse_tree(&re).unwrap();
+    optimize(&mut tree);
     let a = analyze(&tree, 1);
     write!(writer, "{:#?}\n", a)
 }
@@ -131,7 +140,11 @@ fn show_compiled_program(re: &str, writer: &mut Formatter<'_>) -> Result {
 }
 
 fn prog(re: &str, start_group: usize) -> Prog {
-    let tree = Expr::parse_tree(re).expect("Expected parsing regex to work");
+    // one thing to note here is that we want the prog, but in lib.rs,
+    // constructing a regex might not produce a prog - it may be wrapped Regex instead,
+    // which means that "toy" behaves differently to tests etc.
+    let mut tree = Expr::parse_tree(re).expect("Expected parsing regex to work");
+    optimize(&mut tree);
     let result = analyze(&tree, start_group).expect("Expected analyze to succeed");
     compile(&result, can_compile_as_anchored(&tree.expr)).expect("Expected compile to succeed")
 }
@@ -263,9 +276,23 @@ digraph G {
 
     #[test]
     fn test_compilation_wrapped_debug_output() {
-        let expected = "wrapped Regex \"a+bc?\"";
+        let expected = "wrapped Regex \"a+bc?\", explicit_capture_group_0: false";
 
         assert_compiled_prog("a+bc?", &expected);
+    }
+
+    #[test]
+    fn test_compilation_wrapped_debug_output_explict_capture_group_zero() {
+        let expected = "wrapped Regex \"(a+b)c\", explicit_capture_group_0: true";
+
+        assert_compiled_prog("a+b(?=c)", &expected);
+    }
+
+    #[test]
+    fn test_compilation_wrapped_debug_output_explict_capture_group_zero_with_non_capture_group() {
+        let expected = "wrapped Regex \"(a+b)(?:c|d)\", explicit_capture_group_0: true";
+
+        assert_compiled_prog("a+b(?=c|d)", &expected);
     }
 
     fn assert_graph(re: &str, expected: &str) {

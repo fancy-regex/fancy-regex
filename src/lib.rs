@@ -202,6 +202,7 @@ mod compile;
 mod error;
 mod expand;
 mod flags;
+mod optimize;
 mod parse;
 mod replacer;
 mod vm;
@@ -210,6 +211,7 @@ use crate::analyze::analyze;
 use crate::analyze::can_compile_as_anchored;
 use crate::compile::compile;
 use crate::flags::*;
+use crate::optimize::optimize;
 use crate::parse::{ExprTree, NamedGroups, Parser};
 use crate::vm::{Prog, OPTION_SKIPPED_EMPTY_MATCH};
 
@@ -239,6 +241,8 @@ enum RegexImpl {
     Wrap {
         inner: RaRegex,
         options: RegexOptions,
+        /// Some optimizations avoid the VM, but need to use an extra capture group to represent the match boundaries
+        explicit_capture_group_0: bool,
     },
     Fancy {
         prog: Prog,
@@ -409,6 +413,10 @@ enum CapturesImpl<'t> {
     Wrap {
         text: &'t str,
         locations: RaCaptures,
+        /// Some optimizations avoid the VM but need an extra capture group to represent the match boundaries.
+        /// Therefore what is actually capture group 1 should be treated as capture group 0, and all other
+        /// capture groups should have their index reduced by one as well to line up with what the pattern specifies.
+        explicit_capture_group_0: bool,
     },
     Fancy {
         text: &'t str,
@@ -725,19 +733,29 @@ impl Regex {
     }
 
     fn new_options(options: RegexOptions) -> Result<Regex> {
-        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags())?;
+        let mut tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags())?;
 
-        let info = analyze(&tree, 1)?;
+        // try to optimize the expression tree
+        let requires_capture_group_fixup = optimize(&mut tree);
+        let info = analyze(&tree, if requires_capture_group_fixup { 0 } else { 1 })?;
 
         if !info.hard {
             // easy case, wrap regex
 
             // we do our own to_str because escapes are different
+            // NOTE: there is a good opportunity here to use Hir to avoid regex-automata re-parsing it
             let mut re_cooked = String::new();
             tree.expr.to_str(&mut re_cooked, 0);
             let inner = compile::compile_inner(&re_cooked, &options)?;
             return Ok(Regex {
-                inner: RegexImpl::Wrap { inner, options },
+                inner: RegexImpl::Wrap {
+                    inner,
+                    options: RegexOptions {
+                        pattern: re_cooked.clone(),
+                        ..options
+                    },
+                    explicit_capture_group_0: requires_capture_group_fixup,
+                },
                 named_groups: Arc::new(tree.named_groups),
             });
         }
@@ -861,9 +879,27 @@ impl Regex {
         option_flags: u32,
     ) -> Result<Option<Match<'t>>> {
         match &self.inner {
-            RegexImpl::Wrap { inner, .. } => Ok(inner
-                .search(&RaInput::new(text).span(pos..text.len()))
-                .map(|m| Match::new(text, m.start(), m.end()))),
+            RegexImpl::Wrap {
+                inner,
+                explicit_capture_group_0,
+                ..
+            } => {
+                if !*explicit_capture_group_0 {
+                    Ok(inner
+                        .search(&RaInput::new(text).span(pos..text.len()))
+                        .map(|m| Match::new(text, m.start(), m.end())))
+                } else {
+                    let mut locations = inner.create_captures();
+                    inner.captures(RaInput::new(text).span(pos..text.len()), &mut locations);
+                    Ok(locations.is_match().then(|| {
+                        Match::new(
+                            text,
+                            locations.get_group(1).unwrap().start,
+                            locations.get_group(1).unwrap().end,
+                        )
+                    }))
+                }
+            }
             RegexImpl::Fancy { prog, options, .. } => {
                 let result = vm::run(prog, text, pos, option_flags, options)?;
                 Ok(result.map(|saves| Match::new(text, saves[0], saves[1])))
@@ -961,11 +997,19 @@ impl Regex {
     pub fn captures_from_pos<'t>(&self, text: &'t str, pos: usize) -> Result<Option<Captures<'t>>> {
         let named_groups = self.named_groups.clone();
         match &self.inner {
-            RegexImpl::Wrap { inner, .. } => {
+            RegexImpl::Wrap {
+                inner,
+                explicit_capture_group_0,
+                ..
+            } => {
                 let mut locations = inner.create_captures();
                 inner.captures(RaInput::new(text).span(pos..text.len()), &mut locations);
                 Ok(locations.is_match().then(|| Captures {
-                    inner: CapturesImpl::Wrap { text, locations },
+                    inner: CapturesImpl::Wrap {
+                        text,
+                        locations,
+                        explicit_capture_group_0: *explicit_capture_group_0,
+                    },
                     named_groups,
                 }))
             }
@@ -990,7 +1034,11 @@ impl Regex {
     /// Returns the number of captures, including the implicit capture of the entire expression.
     pub fn captures_len(&self) -> usize {
         match &self.inner {
-            RegexImpl::Wrap { inner, .. } => inner.captures_len(),
+            RegexImpl::Wrap {
+                inner,
+                explicit_capture_group_0,
+                ..
+            } => inner.captures_len() - if *explicit_capture_group_0 { 1 } else { 0 },
             RegexImpl::Fancy { n_groups, .. } => *n_groups,
         }
     }
@@ -1009,8 +1057,16 @@ impl Regex {
     #[doc(hidden)]
     pub fn debug_print(&self, writer: &mut Formatter<'_>) -> fmt::Result {
         match &self.inner {
-            RegexImpl::Wrap { options, .. } => {
-                write!(writer, "wrapped Regex {:?}", options.pattern)
+            RegexImpl::Wrap {
+                options,
+                explicit_capture_group_0,
+                ..
+            } => {
+                write!(
+                    writer,
+                    "wrapped Regex {:?}, explicit_capture_group_0: {:}",
+                    options.pattern, *explicit_capture_group_0
+                )
             }
             RegexImpl::Fancy { prog, .. } => prog.debug_print(writer),
         }
@@ -1326,11 +1382,17 @@ impl<'t> Captures<'t> {
     /// returned. The index 0 returns the whole match.
     pub fn get(&self, i: usize) -> Option<Match<'t>> {
         match &self.inner {
-            CapturesImpl::Wrap { text, locations } => locations.get_group(i).map(|span| Match {
+            CapturesImpl::Wrap {
                 text,
-                start: span.start,
-                end: span.end,
-            }),
+                locations,
+                explicit_capture_group_0,
+            } => locations
+                .get_group(i + if *explicit_capture_group_0 { 1 } else { 0 })
+                .map(|span| Match {
+                    text,
+                    start: span.start,
+                    end: span.end,
+                }),
             CapturesImpl::Fancy { text, ref saves } => {
                 let slot = i * 2;
                 if slot >= saves.len() {
@@ -1390,7 +1452,11 @@ impl<'t> Captures<'t> {
     /// match.
     pub fn len(&self) -> usize {
         match &self.inner {
-            CapturesImpl::Wrap { locations, .. } => locations.group_len(),
+            CapturesImpl::Wrap {
+                locations,
+                explicit_capture_group_0,
+                ..
+            } => locations.group_len() - if *explicit_capture_group_0 { 1 } else { 0 },
             CapturesImpl::Fancy { saves, .. } => saves.len() / 2,
         }
     }
@@ -1456,7 +1522,7 @@ impl<'c, 't> Iterator for SubCaptureMatches<'c, 't> {
 // TODO: might be nice to implement ExactSizeIterator etc for SubCaptures
 
 /// Regular expression AST. This is public for now but may change.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Expr {
     /// An empty expression, e.g. the last branch in `(a|b|)`
     Empty,
@@ -1780,7 +1846,7 @@ impl Expr {
                     buf.push_str(")");
                 }
             }
-            _ => panic!("attempting to format hard expr"),
+            _ => panic!("attempting to format hard expr {:?}", self),
         }
     }
 }
@@ -1855,6 +1921,7 @@ pub fn detect_possible_backref(re: &str) -> bool {
 pub mod internal {
     pub use crate::analyze::{analyze, can_compile_as_anchored};
     pub use crate::compile::compile;
+    pub use crate::optimize::optimize;
     pub use crate::vm::{run_default, run_trace, Insn, Prog};
 }
 
@@ -1866,7 +1933,7 @@ mod tests {
     use alloc::{format, vec};
 
     use crate::parse::make_literal;
-    use crate::{Expr, Regex};
+    use crate::{Expr, Regex, RegexImpl};
 
     //use detect_possible_backref;
 
@@ -1968,6 +2035,35 @@ mod tests {
 
         // Check that multibyte characters are handled correctly.
         assert_eq!(crate::escape("fø*ø").into_owned(), "fø\\*ø");
+    }
+
+    #[test]
+    fn trailing_positive_lookahead_wrap_capture_group_fixup() {
+        let s = r"(a+)(?=c)";
+        let regex = s.parse::<Regex>().unwrap();
+        assert!(matches!(regex.inner,
+            RegexImpl::Wrap { explicit_capture_group_0: true, .. }),
+            "trailing positive lookahead for an otherwise easy pattern should avoid going through the VM");
+    }
+
+    #[test]
+    fn easy_regex() {
+        let s = r"(a+)b";
+        let regex = s.parse::<Regex>().unwrap();
+        assert!(
+            matches!(regex.inner, RegexImpl::Wrap { explicit_capture_group_0: false, .. }),
+            "easy pattern should avoid going through the VM, and capture group 0 should be implicit"
+        );
+    }
+
+    #[test]
+    fn hard_regex() {
+        let s = r"(a+)(?>c)";
+        let regex = s.parse::<Regex>().unwrap();
+        assert!(
+            matches!(regex.inner, RegexImpl::Fancy { .. }),
+            "hard regex should be compiled into a VM"
+        );
     }
 
     /*

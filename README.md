@@ -134,7 +134,8 @@ creating the excellent regex crate.
 
 ## Authors
 
-The main author is Raph Levien, with many contributions from Robin Stocker.
+The main author is Raph Levien, with many contributions from Robin Stocker
+and Keith Hall.
 
 ## Contributions
 

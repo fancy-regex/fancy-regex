@@ -92,7 +92,7 @@ fn atomic_group() {
 
 #[test]
 fn backtrack_limit() {
-    let re = RegexBuilder::new("(?i)(a|b|ab)*(?=c)")
+    let re = RegexBuilder::new("(?i)(a|b|ab)*(?>c)")
         .backtrack_limit(100_000)
         .build()
         .unwrap();
@@ -178,6 +178,23 @@ fn backrefs() {
     assert_match(r"(.)(?i:\1)", "įĮ");
     assert_no_match(r"(.)(?i:\1)", "įi");
     assert_no_match(r"(.)(?i:\1)", "įĖ");
+}
+
+#[test]
+fn easy_trailing_positive_lookaheads() {
+    assert_match(r"(?=c)", "abcabc");
+    assert_match(r"abc(?=abc)", "abcabc");
+    assert_no_match(r"abc(?=abc)", "abcdef");
+    assert_match(r"abc(?=a|b)", "abcabc");
+    assert_no_match(r"abc(?=a|f)", "f");
+}
+
+#[test]
+fn hard_trailing_positive_lookaheads() {
+    assert_match(r"(abc|def)(?=\1)", "defdef");
+    assert_match(r"(abc|def)(?=a(?!b))", "abca");
+    assert_match(r"(abc|def)(?=a(?!b))", "abcaa");
+    assert_no_match(r"(abc|def)(?=a(?!b))", "abcabc");
 }
 
 #[cfg_attr(feature = "track_caller", track_caller)]
