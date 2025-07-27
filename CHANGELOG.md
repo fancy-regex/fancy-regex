@@ -10,12 +10,14 @@ with the exception that 0.x versions can break between minor versions.
 ### Added
 - Add an optimization step after the pattern is parsed but before it is analyzed.
   Currently it only optimizes one specific use-case - where the expression is easy except
-  for a trailing positive lookahead whose contents are also easy. The optimization is to delegate to the regex crate instead of using the backtracking VM.
+  for a trailing positive lookahead whose contents are also easy. The optimization is to delegate to the regex crate instead of using the backtracking VM. (#171)
 ### Changed
-- Patterns which are anchored to the start of the text (i.e. with `^` when not in multiline mode) should now fail faster when there is no match, because `fancy-regex` no longer tries to match at other positions.
-- The `CompileError` for an invalid (numbered) backref has been updated to mention which backref was invalid
+- Patterns which are anchored to the start of the text (i.e. with `^` when not in multiline mode) should now fail faster when there is no match, because `fancy-regex` no longer tries to match at other positions. (#170)
+- The `CompileError` for an invalid (numbered) backref has been updated to mention which backref was invalid (#170)
+- Removed dependency on derivative (#169)
+
 ### Fixed
-- Fixed a bug whereby sometimes a capture group containing a backref to itself would cause a compile error, when it is valid - this fixes a few Oniguruma test cases
+- Fixed a bug whereby sometimes a capture group containing a backref to itself would cause a compile error, when it is valid - this fixes a few Oniguruma test cases (#170)
 
 ## [0.15.0] - 2025-07-06
 ### Added
