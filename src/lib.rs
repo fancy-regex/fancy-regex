@@ -733,10 +733,10 @@ impl Regex {
     }
 
     fn new_options(options: RegexOptions) -> Result<Regex> {
-        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags())?;
+        let mut tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags())?;
 
         // try to optimize the expression tree
-        let (tree, requires_capture_group_fixup) = optimize(tree);
+        let requires_capture_group_fixup = optimize(&mut tree);
         let info = analyze(&tree, if requires_capture_group_fixup { 0 } else { 1 })?;
 
         if !info.hard {

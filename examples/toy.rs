@@ -39,8 +39,10 @@ fn main() {
             println!("{:#?}", e);
         } else if cmd == "optimize" {
             let re = args.next().expect("expected regexp argument");
-            let e = Expr::parse_tree(&re).expect("expected regexp to be parsed successfully");
-            println!("{:#?}", optimize(e));
+            let mut e = Expr::parse_tree(&re).expect("expected regexp to be parsed successfully");
+            let explicit_capture_group0 = optimize(&mut e);
+            println!("explicit capture group 0: {:?}", explicit_capture_group0);
+            println!("{:#?}", e);
         } else if cmd == "analyze" {
             let re = args.next().expect("expected regexp argument");
             let stdout = io::stdout();
@@ -126,9 +128,9 @@ fn graph(re: &str, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
 }
 
 fn show_analysis(re: &str, writer: &mut Formatter<'_>) -> Result {
-    let tree = Expr::parse_tree(&re).unwrap();
-    let (optimized_tree, _) = optimize(tree);
-    let a = analyze(&optimized_tree, 1);
+    let mut tree = Expr::parse_tree(&re).unwrap();
+    optimize(&mut tree);
+    let a = analyze(&tree, 1);
     write!(writer, "{:#?}\n", a)
 }
 
@@ -141,12 +143,10 @@ fn prog(re: &str, start_group: usize) -> Prog {
     // one thing to note here is that we want the prog, but in lib.rs,
     // constructing a regex might not produce a prog - it may be wrapped Regex instead,
     // which means that "toy" behaves differently to tests etc.
-    let tree = Expr::parse_tree(re).expect("Expected parsing regex to work");
-    // TODO: ideally don't clone the tree unnecessarily - it is cloned in optimize if needed
-    let (optimized_tree, _) = optimize(tree.clone());
-    let result = analyze(&optimized_tree, start_group).expect("Expected analyze to succeed");
-    compile(&result, can_compile_as_anchored(&optimized_tree.expr))
-        .expect("Expected compile to succeed")
+    let mut tree = Expr::parse_tree(re).expect("Expected parsing regex to work");
+    optimize(&mut tree);
+    let result = analyze(&tree, start_group).expect("Expected analyze to succeed");
+    compile(&result, can_compile_as_anchored(&tree.expr)).expect("Expected compile to succeed")
 }
 
 struct AnalyzeFormatterWrapper<'a> {
