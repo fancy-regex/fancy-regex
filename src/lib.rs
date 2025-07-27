@@ -752,10 +752,7 @@ impl Regex {
                     inner,
                     options: RegexOptions {
                         pattern: re_cooked.clone(),
-                        syntaxc: options.syntaxc,
-                        backtrack_limit: options.backtrack_limit,
-                        delegate_size_limit: options.delegate_size_limit,
-                        delegate_dfa_size_limit: options.delegate_dfa_size_limit,
+                        ..options
                     },
                     explicit_capture_group_0: requires_capture_group_fixup,
                 },
