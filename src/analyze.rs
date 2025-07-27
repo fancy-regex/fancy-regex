@@ -250,7 +250,9 @@ pub fn analyze<'a>(tree: &'a ExprTree, start_group: usize) -> Result<Info<'a>> {
     analyzed
 }
 
-/// Determine if the expression will always only ever match at position 0
+/// Determine if the expression will always only ever match at position 0.
+/// Note that false negatives are possible - it can return false even if it could be anchored.
+/// This should therefore only be treated as an optimization.
 pub fn can_compile_as_anchored(root_expr: &Expr) -> bool {
     use crate::Assertion;
 
