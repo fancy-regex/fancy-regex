@@ -527,9 +527,13 @@ pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<Ra
 pub fn compile(info: &Info<'_>, anchored: bool) -> Result<Prog> {
     let mut c = Compiler::new(info.end_group);
     if !anchored {
-        c.b.add(Insn::Split(3, 1));
+        // add instructions as if \O*? was used at the start of the expression
+        // so that we bump the haystack index by one when failing to match at the current position
+        let current_pc = c.b.pc();
+        // we are adding 3 instructions, so the current program counter plus 3 gives us the first real instruction
+        c.b.add(Insn::Split(current_pc + 3, current_pc + 1));
         c.b.add(Insn::Any);
-        c.b.add(Insn::Jmp(0));
+        c.b.add(Insn::Jmp(current_pc));
     }
     if info.start_group == 1 {
         // add implicit capture group 0 begin
