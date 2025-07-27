@@ -20,7 +20,7 @@
 
 //! A simple test app for exercising and debugging the regex engine.
 
-use fancy_regex::internal::{analyze, compile, run_trace, Insn, Prog};
+use fancy_regex::internal::{analyze, can_compile_as_anchored, compile, run_trace, Insn, Prog};
 use fancy_regex::*;
 use std::env;
 use std::fmt::{Display, Formatter, Result};
@@ -74,15 +74,15 @@ fn main() {
             }
         } else if cmd == "trace" {
             let re = args.next().expect("expected regexp argument");
-            let prog = prog(&re);
+            let prog = prog(&re, 1);
             let text = args.next().expect("expected text argument");
             run_trace(&prog, &text, 0).unwrap();
         } else if cmd == "trace-inner" {
             let re = args.next().expect("expected regexp argument");
             let tree = Expr::parse_tree(&re).unwrap();
             let text = args.next().expect("expected text argument");
-            let a = analyze(&tree).unwrap();
-            let p = compile(&a).unwrap();
+            let a = analyze(&tree, 1).unwrap();
+            let p = compile(&a, true).unwrap();
             run_trace(&p, &text, 0).unwrap();
         } else if cmd == "graph" {
             let re = args.next().expect("expected regexp argument");
@@ -94,7 +94,7 @@ fn main() {
 }
 
 fn graph(re: &str, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
-    let prog = prog(re);
+    let prog = prog(re, 1);
     write!(writer, "digraph G {{\n")?;
     for (i, insn) in prog.body.iter().enumerate() {
         let label = format!("{:?}", insn)
@@ -121,8 +121,7 @@ fn graph(re: &str, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
 
 fn show_analysis(re: &str, writer: &mut Formatter<'_>) -> Result {
     let tree = Expr::parse_tree(&re).unwrap();
-    let wrapped_tree = wrap_tree(tree);
-    let a = analyze(&wrapped_tree);
+    let a = analyze(&tree, 1);
     write!(writer, "{:#?}\n", a)
 }
 
@@ -131,11 +130,10 @@ fn show_compiled_program(re: &str, writer: &mut Formatter<'_>) -> Result {
     r.debug_print(writer)
 }
 
-fn prog(re: &str) -> Prog {
+fn prog(re: &str, start_group: usize) -> Prog {
     let tree = Expr::parse_tree(re).expect("Expected parsing regex to work");
-    let wrapped_tree = wrap_tree(tree);
-    let result = analyze(&wrapped_tree).expect("Expected analyze to succeed");
-    compile(&result).expect("Expected compile to succeed")
+    let result = analyze(&tree, start_group).expect("Expected analyze to succeed");
+    compile(&result, can_compile_as_anchored(&tree.expr)).expect("Expected compile to succeed")
 }
 
 struct AnalyzeFormatterWrapper<'a> {
@@ -165,12 +163,16 @@ mod tests {
     #[test]
     fn test_simple_graph() {
         assert_graph(
-            "a+bc?",
+            "^a+bc?",
             "\
 digraph G {
-  0 [label=\"0: Delegate(Delegate { pattern: \\\"(?s:.)*?(a+bc?)\\\", start_group: 0, end_group: 1 })\"];
+  0 [label=\"0: Save(0)\"];
   0 -> 1;
-  1 [label=\"1: End\"];
+  1 [label=\"1: Delegate(Delegate { pattern: \\\"^a+bc?\\\", start_group: 1, end_group: 1 })\"];
+  1 -> 2;
+  2 [label=\"2: Save(1)\"];
+  2 -> 3;
+  3 [label=\"3: End\"];
 }
 ",
         );
@@ -179,7 +181,7 @@ digraph G {
     #[test]
     fn test_backref_graph() {
         assert_graph(
-            "a+(?<b>b*)(?=c)\\k<b>",
+            r"a+(?<b>b*)(?=c)\k<b>",
             "\
 digraph G {
   0 [label=\"0: Split(3, 1)\"];
@@ -269,7 +271,7 @@ digraph G {
     fn assert_graph(re: &str, expected: &str) {
         use crate::graph;
         let mut buf = Vec::new();
-        graph(&re, &mut buf).expect("error compiling regexp");
+        graph(&re, &mut buf).expect("error compiling regexp and building graph");
         let output = String::from_utf8(buf).expect("string not utf8");
         assert_eq!(&output, &expected);
     }

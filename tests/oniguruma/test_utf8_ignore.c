@@ -82,9 +82,6 @@
   // No match found
   x3("((?m:a.c))", "a\nc", 0, 3, 1);
 
-  // Compile failed: CompileError(InvalidBackref)
-  x2("(?:(?:\\1|z)(a))+$", "zaaa", 0, 4);
-
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("(a)\\g<1>", "aa", 0, 2);
 
@@ -160,7 +157,7 @@
   // No match found
   x2("(?:()|())*\\1\\2", "", 0, 0);
 
-  // Compile failed: CompileError(InvalidBackref)
+  // Expected group to exist
   x3("(?:\\1a|())*", "a", 0, 0, 1);
 
   // No match found
@@ -180,9 +177,6 @@
 
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("(?i)\\A(a|b\\g<1>c)\\k<1+2>\\z", "bBACcbac", 0, 8);
-
-  // Compile failed: CompileError(InvalidBackref)
-  x2("(?:\\k'+1'B|(A)C)*", "ACAB", 0, 4);
 
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("\\g<+2>(abc)(ABC){0}", "ABCabc", 0, 6);

@@ -363,20 +363,18 @@ fn expander_errors() {
     // Unmatched group number.
     assert_err!(
         exp.check("$2", &without_names),
-        Error::CompileError(CompileError::InvalidBackref)
+        Error::CompileError(CompileError::InvalidBackref(2))
     );
     assert_err!(
         exp.check("${2}", &without_names),
-        Error::CompileError(CompileError::InvalidBackref)
+        Error::CompileError(CompileError::InvalidBackref(2))
     );
 
     // Unmatched group name.
-    assert_err!(
-        exp.check("$xx", &with_names),
-        Error::CompileError(CompileError::InvalidBackref)
+    assert!(
+        matches!(exp.check("$xx", &with_names), Err(Error::CompileError(CompileError::InvalidGroupNameBackref(ref name))) if name == "xx"),
     );
-    assert_err!(
+    assert!(matches!(
         exp.check("${xx}", &with_names),
-        Error::CompileError(CompileError::InvalidBackref)
-    );
+        Err(Error::CompileError(CompileError::InvalidGroupNameBackref(ref name))) if name == "xx"));
 }
