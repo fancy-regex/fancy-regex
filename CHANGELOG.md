@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
-## [Unreleased]
+## [0.16.0] - 2025-08-01
 ### Added
 - Add an optimization step after the pattern is parsed but before it is analyzed.
   Currently it only optimizes one specific use-case - where the expression is easy except
@@ -15,7 +15,6 @@ with the exception that 0.x versions can break between minor versions.
 - Patterns which are anchored to the start of the text (i.e. with `^` when not in multiline mode) should now fail faster when there is no match, because `fancy-regex` no longer tries to match at other positions. (#170)
 - The `CompileError` for an invalid (numbered) backref has been updated to mention which backref was invalid (#170)
 - Removed dependency on derivative (#169)
-
 ### Fixed
 - Fixed a bug whereby sometimes a capture group containing a backref to itself would cause a compile error, when it is valid - this fixes a few Oniguruma test cases (#170)
 
@@ -212,6 +211,7 @@ with the exception that 0.x versions can break between minor versions.
 - Initial release
 
 
+[0.16.0]: https://github.com/fancy-regex/fancy-regex/compare/0.15.0...0.16.0
 [0.15.0]: https://github.com/fancy-regex/fancy-regex/compare/0.14.0...0.15.0
 [0.14.0]: https://github.com/fancy-regex/fancy-regex/compare/0.13.0...0.14.0
 [0.13.0]: https://github.com/fancy-regex/fancy-regex/compare/0.12.0...0.13.0
