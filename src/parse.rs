@@ -1945,8 +1945,20 @@ mod tests {
     #[test]
     fn invalid_backref() {
         // only syntactic tests; see similar test in analyze module
-        fail(".\\12345678"); // unreasonably large number
-        fail(".\\c"); // not decimal
+        assert_error(
+            ".\\12345678",
+            "Parsing error at position 2: Invalid back reference",
+        ); // unreasonably large number
+        assert_error(".\\c", "Parsing error at position 1: Invalid escape: \\c"); // not decimal
+
+        assert_error(
+            "a\\1",
+            "Parsing error at position 2: Invalid back reference",
+        ); // also an unreasonably large number according to regex length
+        assert_error(
+            "(a)\\2",
+            "Parsing error at position 4: Invalid back reference",
+        ); // also an unreasonably large number according to regex length
     }
 
     #[test]
