@@ -242,8 +242,15 @@ pub fn analyze<'a>(tree: &'a ExprTree, start_group: usize) -> Result<Info<'a>> {
     };
 
     let analyzed = analyzer.visit(&tree.expr);
+    if analyzer.backrefs.contains(0) {
+        return Err(Error::CompileError(CompileError::InvalidBackref(0)));
+    }
     if let Some(highest_backref) = analyzer.backrefs.into_iter().last() {
         if highest_backref > analyzer.group_ix - start_group
+            // if we have an explicit capture group 0, and the highest backref is the number of capture groups
+            // then that backref refers to an invalid group
+            // i.e. `(a\1)b`   has no capture group 1
+            //      `(a(b))\2` has no capture group 2
             || highest_backref == analyzer.group_ix && start_group == 0
         {
             return Err(Error::CompileError(CompileError::InvalidBackref(
@@ -317,6 +324,13 @@ mod tests {
             result.err(),
             Some(Error::CompileError(CompileError::InvalidBackref(0)))
         ));
+
+        let tree = Expr::parse_tree(r"(.)\0\1").unwrap();
+        let result = analyze(&tree, 1);
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(CompileError::InvalidBackref(0)))
+        ));
     }
 
     #[test]
@@ -355,14 +369,28 @@ mod tests {
 
     #[test]
     fn invalid_backref_with_captures_explict_capture_group_zero() {
-        let tree = Expr::parse_tree(r"(a(a)\2)b").unwrap();
+        let tree = Expr::parse_tree(r"(a(b)\2)c").unwrap();
         let result = analyze(&tree, 0);
         assert!(matches!(
             result.err(),
             Some(Error::CompileError(CompileError::InvalidBackref(2)))
         ));
 
-        let tree = Expr::parse_tree(r"(a(a)\1\2)b").unwrap();
+        let tree = Expr::parse_tree(r"(a(b)\1\2)c").unwrap();
+        let result = analyze(&tree, 0);
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(CompileError::InvalidBackref(2)))
+        ));
+
+        let tree = Expr::parse_tree(r"(a\1)b").unwrap();
+        let result = analyze(&tree, 0);
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(CompileError::InvalidBackref(1)))
+        ));
+
+        let tree = Expr::parse_tree(r"(a(b))\2").unwrap();
         let result = analyze(&tree, 0);
         assert!(matches!(
             result.err(),

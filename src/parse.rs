@@ -1946,19 +1946,19 @@ mod tests {
     fn invalid_backref() {
         // only syntactic tests; see similar test in analyze module
         assert_error(
-            ".\\12345678",
+            r".\18446744073709551616",
             "Parsing error at position 2: Invalid back reference",
         ); // unreasonably large number
-        assert_error(".\\c", "Parsing error at position 1: Invalid escape: \\c"); // not decimal
+        assert_error(r".\c", "Parsing error at position 1: Invalid escape: \\c"); // not decimal
 
         assert_error(
-            "a\\1",
+            r"a\1",
             "Parsing error at position 2: Invalid back reference",
-        ); // also an unreasonably large number according to regex length
+        ); // invalid back reference according to regex length - not long enough to contain that many paren pairs
         assert_error(
-            "(a)\\2",
+            r"(a)\2",
             "Parsing error at position 4: Invalid back reference",
-        ); // also an unreasonably large number according to regex length
+        ); // invalid back reference according to regex length - not long enough to contain that many paren pairs
     }
 
     #[test]
