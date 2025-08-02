@@ -242,10 +242,21 @@ pub fn analyze<'a>(tree: &'a ExprTree, start_group: usize) -> Result<Info<'a>> {
     };
 
     let analyzed = analyzer.visit(&tree.expr);
-    if analyzer.backrefs.len() > analyzer.group_ix {
-        return Err(Error::CompileError(CompileError::InvalidBackref(
-            analyzer.backrefs.len() - 1,
-        )));
+    if analyzer.backrefs.contains(0) {
+        return Err(Error::CompileError(CompileError::InvalidBackref(0)));
+    }
+    if let Some(highest_backref) = analyzer.backrefs.into_iter().last() {
+        if highest_backref > analyzer.group_ix - start_group
+            // if we have an explicit capture group 0, and the highest backref is the number of capture groups
+            // then that backref refers to an invalid group
+            // i.e. `(a\1)b`   has no capture group 1
+            //      `(a(b))\2` has no capture group 2
+            || highest_backref == analyzer.group_ix && start_group == 0
+        {
+            return Err(Error::CompileError(CompileError::InvalidBackref(
+                highest_backref,
+            )));
+        }
     }
     analyzed
 }
@@ -287,14 +298,111 @@ mod tests {
     // }
 
     #[test]
-    fn invalid_backref_self_zero() {
-        assert!(analyze(&Expr::parse_tree(".\\0").unwrap(), 1).is_err());
+    fn invalid_backref_zero() {
+        let tree = Expr::parse_tree(r".\0").unwrap();
+        let result = analyze(&tree, 1);
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(CompileError::InvalidBackref(0)))
+        ));
+
+        let result = analyze(&tree, 0);
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(CompileError::InvalidBackref(0)))
+        ));
+
+        let tree = Expr::parse_tree(r"(.)\0").unwrap();
+        let result = analyze(&tree, 1);
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(CompileError::InvalidBackref(0)))
+        ));
+
+        let result = analyze(&tree, 0);
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(CompileError::InvalidBackref(0)))
+        ));
+
+        let tree = Expr::parse_tree(r"(.)\0\1").unwrap();
+        let result = analyze(&tree, 1);
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(CompileError::InvalidBackref(0)))
+        ));
+    }
+
+    #[test]
+    fn invalid_backref_no_captures() {
+        let tree = Expr::parse_tree(r"aa\1").unwrap();
+        let result = analyze(&tree, 1);
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(CompileError::InvalidBackref(1)))
+        ));
+
+        let tree = Expr::parse_tree(r"aaaa\2").unwrap();
+        let result = analyze(&tree, 1);
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(CompileError::InvalidBackref(2)))
+        ));
+    }
+
+    #[test]
+    fn invalid_backref_with_captures() {
+        let tree = Expr::parse_tree(r"a(a)\2").unwrap();
+        let result = analyze(&tree, 1);
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(CompileError::InvalidBackref(2)))
+        ));
+
+        let tree = Expr::parse_tree(r"a(a)\2\1").unwrap();
+        let result = analyze(&tree, 1);
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(CompileError::InvalidBackref(2)))
+        ));
+    }
+
+    #[test]
+    fn invalid_backref_with_captures_explict_capture_group_zero() {
+        let tree = Expr::parse_tree(r"(a(b)\2)c").unwrap();
+        let result = analyze(&tree, 0);
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(CompileError::InvalidBackref(2)))
+        ));
+
+        let tree = Expr::parse_tree(r"(a(b)\1\2)c").unwrap();
+        let result = analyze(&tree, 0);
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(CompileError::InvalidBackref(2)))
+        ));
+
+        let tree = Expr::parse_tree(r"(a\1)b").unwrap();
+        let result = analyze(&tree, 0);
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(CompileError::InvalidBackref(1)))
+        ));
+
+        let tree = Expr::parse_tree(r"(a(b))\2").unwrap();
+        let result = analyze(&tree, 0);
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(CompileError::InvalidBackref(2)))
+        ));
     }
 
     #[test]
     fn allow_analysis_of_self_backref() {
         // even if it will never match, see issue 103
-        assert!(!analyze(&Expr::parse_tree("(.\\1)").unwrap(), 1).is_err());
+        assert!(!analyze(&Expr::parse_tree(r"(.\1)").unwrap(), 1).is_err());
+        assert!(!analyze(&Expr::parse_tree(r"((.\1))").unwrap(), 0).is_err());
         assert!(!analyze(&Expr::parse_tree(r"(([ab]+)\1b)").unwrap(), 1).is_err());
         // in the following scenario it can match
         assert!(!analyze(&Expr::parse_tree(r"(([ab]+?)(?(1)\1| )c)+").unwrap(), 1).is_err());
@@ -302,12 +410,21 @@ mod tests {
 
     #[test]
     fn allow_backref_even_when_capture_group_occurs_after_backref() {
-        assert!(!analyze(&Expr::parse_tree("\\1(.)").unwrap(), 1).is_err());
+        assert!(!analyze(&Expr::parse_tree(r"\1(.)").unwrap(), 1).is_err());
+        assert!(!analyze(&Expr::parse_tree(r"(\1(.))").unwrap(), 0).is_err());
     }
 
     #[test]
     fn valid_backref_occurs_after_capture_group() {
-        assert!(!analyze(&Expr::parse_tree("(.)\\1").unwrap(), 1).is_err());
+        assert!(!analyze(&Expr::parse_tree(r"(.)\1").unwrap(), 1).is_err());
+        assert!(!analyze(&Expr::parse_tree(r"((.)\1)").unwrap(), 0).is_err());
+
+        assert!(!analyze(&Expr::parse_tree(r"((.)\2\2)\1").unwrap(), 1).is_err());
+        assert!(!analyze(&Expr::parse_tree(r"(.)\1(.)\2").unwrap(), 1).is_err());
+        assert!(!analyze(&Expr::parse_tree(r"(.)foo(.)\2").unwrap(), 1).is_err());
+        assert!(!analyze(&Expr::parse_tree(r"(.)(foo)(.)\3\2\1").unwrap(), 1).is_err());
+        assert!(!analyze(&Expr::parse_tree(r"(.)(foo)(.)\3\1").unwrap(), 1).is_err());
+        assert!(!analyze(&Expr::parse_tree(r"(.)(foo)(.)\2\1").unwrap(), 1).is_err());
     }
 
     #[test]
