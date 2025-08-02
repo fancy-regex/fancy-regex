@@ -1,6 +1,6 @@
 [package]
 name = "fancy-regex"
-version = "0.16.0"
+version = "0.16.1"
 authors = ["Raph Levien <raph@google.com>", "Robin Stocker <robin@nibor.org>", "Keith Hall <keith.hall@available.systems>"]
 edition = "2018"
 license = "MIT"
