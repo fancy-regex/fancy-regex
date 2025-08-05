@@ -107,9 +107,9 @@ pub enum Insn {
     End,
     /// Match any character (including newline)
     Any,
-    /// Match any character (including a Line Feed (`\n`) but not including other newline characters)
+    /// Match any character excluding a Line Feed (`\n`) but not other newline characters
     AnyExceptLF,
-    /// Match any character (not including a Line Feed (`\n`) or a Carriage Return (`\r`)
+    /// Match any character excluding a Line Feed (`\n`) or a Carriage Return (`\r`)
     AnyExceptCRLF,
     /// Assertions
     Assertion(Assertion),
