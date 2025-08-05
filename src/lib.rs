@@ -1377,7 +1377,7 @@ pub enum Assertion {
     EndLine {
         /// CRLF mode.
         /// If true, this assertion matches at the ending position of the input text, or at the position immediately
-        /// following either a `\r` or `\n` character, but never after a `\r` when a `\n` follows.
+        /// preceding either a `\r` or `\n` character, but never after a `\r` when a `\n` follows.
         crlf: bool,
     },
     /// Left word boundary
