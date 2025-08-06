@@ -566,8 +566,9 @@ impl RegexOptions {
             Self::get_flag_value(self.syntaxc.get_ignore_whitespace(), FLAG_IGNORE_SPACE);
         let dotnl = Self::get_flag_value(self.syntaxc.get_dot_matches_new_line(), FLAG_DOTNL);
         let unicode = Self::get_flag_value(self.syntaxc.get_unicode(), FLAG_UNICODE);
+        let crlf = Self::get_flag_value(self.syntaxc.get_crlf(), FLAG_CRLF);
 
-        let all_flags = insensitive | multiline | whitespace | dotnl | unicode | unicode;
+        let all_flags = insensitive | multiline | whitespace | dotnl | unicode | crlf;
         all_flags
     }
 }
