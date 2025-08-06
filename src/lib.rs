@@ -733,7 +733,10 @@ impl Regex {
     }
 
     fn new_options(options: RegexOptions) -> Result<Regex> {
-        let raw_tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags())?;
+        let mut tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags())?;
+
+        // try to optimize the expression tree
+        let requires_capture_group_fixup = optimize(&mut tree);
 
         // wrapper to search for re at arbitrary start position,
         // and to capture the match bounds
@@ -748,13 +751,11 @@ impl Regex {
                     hi: usize::MAX,
                     greedy: false,
                 },
-                Expr::Group(Box::new(raw_tree.expr)),
+                Expr::Group(Box::new(tree.expr)),
             ]),
-            ..raw_tree
+            ..tree
         };
 
-        // try to optimize the expression tree
-        let requires_capture_group_fixup = optimize(&mut tree);
         let info = analyze(&tree, if requires_capture_group_fixup { 0 } else { 1 })?;
 
         if !info.hard {
