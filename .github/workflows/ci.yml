@@ -17,6 +17,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo check
       - run: cargo check --no-default-features
+      - run: cargo check --examples
+      - run: cargo check --benches
 
   test:
     name: test
@@ -47,6 +49,7 @@ jobs:
         run: cp Cargo.lock.msrv Cargo.lock
 
       - run: cargo test
+      - run: cargo test --no-default-features
 
   example:
     name: example
@@ -55,6 +58,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo run --example toy trace '\d*' '1122 33'
+      - run: cargo test --examples
 
   fmt:
     name: rustfmt
@@ -73,16 +77,16 @@ jobs:
     name: coverage
     runs-on: ubuntu-latest
     container:
-      image: xd009642/tarpaulin:0.27.1
+      image: xd009642/tarpaulin:0.31.5
       options: --security-opt seccomp=unconfined
     steps:
       - uses: actions/checkout@v4
 
       - name: Generate code coverage
-        run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out Xml
+        run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out Xml --engine llvm
 
       - name: Upload to codecov.io
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true

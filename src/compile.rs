@@ -20,7 +20,7 @@
 
 //! Compilation of regexes to VM.
 
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::usize;
 use regex_automata::meta::Regex as RaRegex;
@@ -29,7 +29,7 @@ use regex_automata::meta::{Builder as RaBuilder, Config as RaConfig};
 use std::{collections::BTreeMap, sync::RwLock};
 
 use crate::analyze::Info;
-use crate::vm::{Insn, Prog};
+use crate::vm::{Delegate, Insn, Prog};
 use crate::LookAround::*;
 use crate::{CompileError, Error, Expr, LookAround, RegexOptions, Result};
 
@@ -154,8 +154,11 @@ impl Compiler {
             Expr::LookAround(_, la) => {
                 self.compile_lookaround(info, la)?;
             }
-            Expr::Backref(group) => {
-                self.b.add(Insn::Backref(group * 2));
+            Expr::Backref { group, casei } => {
+                self.b.add(Insn::Backref {
+                    slot: group * 2,
+                    casei,
+                });
             }
             Expr::BackrefExistsCondition(group) => {
                 self.b.add(Insn::BackrefExistsCondition(group));
@@ -183,6 +186,13 @@ impl Compiler {
             Expr::Conditional { .. } => {
                 self.compile_conditional(|compiler, i| compiler.visit(&info.children[i], hard))?;
             }
+            Expr::SubroutineCall(_) => {
+                return Err(Error::CompileError(CompileError::FeatureNotYetSupported(
+                    "Subroutine Call".to_string(),
+                )));
+            }
+            Expr::UnresolvedNamedSubroutineCall { .. } => unreachable!(),
+            Expr::BackrefWithRelativeRecursionLevel { .. } => unreachable!(),
         }
         Ok(())
     }
@@ -508,6 +518,7 @@ pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<Ra
 
     let re = RaBuilder::new()
         .configure(config)
+        .syntax(options.syntaxc)
         .build(inner_re)
         .map_err(CompileError::InnerError)
         .map_err(Error::CompileError)?;
@@ -522,9 +533,26 @@ pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<Ra
 }
 
 /// Compile the analyzed expressions into a program.
-pub fn compile(info: &Info<'_>) -> Result<Prog> {
+pub fn compile(info: &Info<'_>, anchored: bool) -> Result<Prog> {
     let mut c = Compiler::new(info.end_group);
+    if !anchored {
+        // add instructions as if \O*? was used at the start of the expression
+        // so that we bump the haystack index by one when failing to match at the current position
+        let current_pc = c.b.pc();
+        // we are adding 3 instructions, so the current program counter plus 3 gives us the first real instruction
+        c.b.add(Insn::Split(current_pc + 3, current_pc + 1));
+        c.b.add(Insn::Any);
+        c.b.add(Insn::Jmp(current_pc));
+    }
+    if info.start_group == 1 {
+        // add implicit capture group 0 begin
+        c.b.add(Insn::Save(0));
+    }
     c.visit(info, false)?;
+    if info.start_group == 1 {
+        // add implicit capture group 0 end
+        c.b.add(Insn::Save(1));
+    }
     c.b.add(Insn::End);
     Ok(c.b.build())
 }
@@ -579,11 +607,12 @@ impl DelegateBuilder {
 
         let compiled = compile_inner(&self.re, options)?;
 
-        Ok(Insn::Delegate {
+        Ok(Insn::Delegate(Delegate {
             inner: compiled,
+            pattern: self.re.clone(),
             start_group,
             end_group,
-        })
+        }))
     }
 }
 
@@ -616,8 +645,10 @@ mod tests {
             ]),
             backrefs: BitSet::new(),
             named_groups: Default::default(),
+            contains_subroutines: false,
+            self_recursive: false,
         };
-        let info = analyze(&tree).unwrap();
+        let info = analyze(&tree, 1).unwrap();
 
         let mut c = Compiler::new(0);
         // Force "hard" so that compiler doesn't just delegate
@@ -710,17 +741,36 @@ mod tests {
         assert_matches!(prog[7], End);
     }
 
+    #[test]
+    fn lazy_any_can_be_compiled_explicit_capture_group_zero() {
+        let prog = compile_prog(r"\O*?((?!a))");
+
+        assert_eq!(prog.len(), 9, "prog: {:?}", prog);
+
+        assert_matches!(prog[0], Split(3, 1));
+        assert_matches!(prog[1], AnyExceptLF);
+        assert_matches!(prog[2], Jmp(0));
+        assert_matches!(prog[3], Save(0));
+        assert_matches!(prog[4], Split(5, 7));
+        assert_matches!(prog[5], Lit(ref l) if l == "a");
+        assert_matches!(prog[6], FailNegativeLookAround);
+        assert_matches!(prog[7], Save(1));
+        assert_matches!(prog[8], End);
+    }
+
     fn compile_prog(re: &str) -> Vec<Insn> {
         let tree = Expr::parse_tree(re).unwrap();
-        let info = analyze(&tree).unwrap();
-        let prog = compile(&info).unwrap();
+        let info = analyze(&tree, 0).unwrap();
+        let prog = compile(&info, true).unwrap();
         prog.body
     }
 
     #[cfg(feature = "std")]
     fn assert_delegate(insn: &Insn, re: &str) {
+        use crate::vm::Delegate;
+
         match insn {
-            Insn::Delegate { inner, .. } => {
+            Insn::Delegate(Delegate { inner, .. }) => {
                 assert_eq!(
                     PATTERN_MAPPING
                         .read()

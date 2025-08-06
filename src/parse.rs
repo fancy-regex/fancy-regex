@@ -20,37 +20,32 @@
 
 //! A regex parser yielding an AST.
 
+use crate::RegexOptions;
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use alloc::{format, vec};
 
 use bit_set::BitSet;
-use core::convert::TryInto;
 use core::usize;
 use regex_syntax::escape_into;
 
+use crate::flags::*;
 use crate::{codepoint_len, CompileError, Error, Expr, ParseError, Result, MAX_RECURSION};
 use crate::{Assertion, LookAround::*};
-
-const FLAG_CASEI: u32 = 1;
-const FLAG_MULTI: u32 = 1 << 1;
-const FLAG_DOTNL: u32 = 1 << 2;
-const FLAG_SWAP_GREED: u32 = 1 << 3;
-const FLAG_IGNORE_SPACE: u32 = 1 << 4;
-const FLAG_UNICODE: u32 = 1 << 5;
-const FLAG_CRLF: u32 = 1 << 6;
 
 #[cfg(not(feature = "std"))]
 pub(crate) type NamedGroups = alloc::collections::BTreeMap<String, usize>;
 #[cfg(feature = "std")]
 pub(crate) type NamedGroups = std::collections::HashMap<String, usize>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ExprTree {
     pub expr: Expr,
     pub backrefs: BitSet,
     pub named_groups: NamedGroups,
+    pub(crate) contains_subroutines: bool,
+    pub(crate) self_recursive: bool,
 }
 
 #[derive(Debug)]
@@ -61,35 +56,60 @@ pub(crate) struct Parser<'a> {
     named_groups: NamedGroups,
     numeric_backrefs: bool,
     curr_group: usize, // need to keep track of which group number we're parsing
+    contains_subroutines: bool,
+    has_unresolved_subroutines: bool,
+    self_recursive: bool,
+}
+
+struct NamedBackrefOrSubroutine<'a> {
+    ix: usize,
+    group_ix: Option<usize>,
+    group_name: Option<&'a str>,
+    recursion_level: Option<isize>,
 }
 
 impl<'a> Parser<'a> {
-    /// Parse the regex and return an expression (AST) and a bit set with the indexes of groups
-    /// that are referenced by backrefs.
-    pub(crate) fn parse(re: &str) -> Result<ExprTree> {
-        let mut p = Parser::new(re);
-        let (ix, expr) = p.parse_re(0, 0)?;
+    pub(crate) fn parse_with_flags(re: &str, flags: u32) -> Result<ExprTree> {
+        let mut p = Parser::new(re, flags);
+        let (ix, mut expr) = p.parse_re(0, 0)?;
         if ix < re.len() {
             return Err(Error::ParseError(
                 ix,
                 ParseError::GeneralParseError("end of string not reached".to_string()),
             ));
         }
+
+        if p.has_unresolved_subroutines {
+            p.has_unresolved_subroutines = false;
+            p.resolve_named_subroutine_calls(&mut expr);
+        }
+
         Ok(ExprTree {
             expr,
-            backrefs: Default::default(),
+            backrefs: p.backrefs,
             named_groups: p.named_groups,
+            contains_subroutines: p.contains_subroutines,
+            self_recursive: p.self_recursive,
         })
     }
 
-    fn new(re: &str) -> Parser<'_> {
+    pub(crate) fn parse(re: &str) -> Result<ExprTree> {
+        Self::parse_with_flags(re, RegexOptions::default().compute_flags())
+    }
+
+    fn new(re: &str, flags: u32) -> Parser<'_> {
+        let flags = flags | FLAG_UNICODE;
+
         Parser {
             re,
             backrefs: Default::default(),
             named_groups: Default::default(),
             numeric_backrefs: false,
-            flags: FLAG_UNICODE,
+            flags,
             curr_group: 0,
+            contains_subroutines: false,
+            has_unresolved_subroutines: false,
+            self_recursive: false,
         }
     }
 
@@ -187,6 +207,9 @@ impl<'a> Parser<'a> {
             Expr::LookAround(_, _) => false,
             Expr::Empty => false,
             Expr::Assertion(_) => false,
+            Expr::KeepOut => false,
+            Expr::ContinueFromPreviousMatchEnd => false,
+            Expr::BackrefExistsCondition(_) => false,
             _ => true,
         }
     }
@@ -266,13 +289,7 @@ impl<'a> Parser<'a> {
                 },
             )),
             b'(' => self.parse_group(ix, depth),
-            b'\\' => {
-                let (next, expr) = self.parse_escape(ix, false)?;
-                if let Expr::Backref(group) = expr {
-                    self.backrefs.insert(group);
-                }
-                Ok((next, expr))
-            }
+            b'\\' => self.parse_escape(ix, false),
             b'+' | b'*' | b'?' | b'|' | b')' => Ok((ix, Expr::Empty)),
             b'[' => self.parse_class(ix),
             b => {
@@ -290,34 +307,129 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_named_backref(
-        &self,
+        &mut self,
         ix: usize,
         open: &str,
         close: &str,
         allow_relative: bool,
     ) -> Result<(usize, Expr)> {
-        if let Some((id, skip)) = parse_id(&self.re[ix..], open, close, allow_relative) {
+        let NamedBackrefOrSubroutine {
+            ix: end,
+            group_ix,
+            group_name,
+            recursion_level,
+        } = self.parse_named_backref_or_subroutine(ix, open, close, allow_relative)?;
+        if let Some(group) = group_ix {
+            self.backrefs.insert(group);
+            return Ok((
+                end,
+                if let Some(recursion_level) = recursion_level {
+                    Expr::BackrefWithRelativeRecursionLevel {
+                        group,
+                        relative_level: recursion_level,
+                        casei: self.flag(FLAG_CASEI),
+                    }
+                } else {
+                    Expr::Backref {
+                        group,
+                        casei: self.flag(FLAG_CASEI),
+                    }
+                },
+            ));
+        }
+        if let Some(group_name) = group_name {
+            // here the name was parsed but doesn't match a capture group we have already parsed
+            return Err(Error::ParseError(
+                ix,
+                ParseError::InvalidGroupNameBackref(group_name.to_string()),
+            ));
+        }
+        unreachable!()
+    }
+
+    fn parse_named_subroutine_call(
+        &mut self,
+        ix: usize,
+        open: &str,
+        close: &str,
+        allow_relative: bool,
+    ) -> Result<(usize, Expr)> {
+        let NamedBackrefOrSubroutine {
+            ix: end,
+            group_ix,
+            group_name,
+            recursion_level,
+        } = self.parse_named_backref_or_subroutine(ix, open, close, allow_relative)?;
+        if let Some(_) = recursion_level {
+            return Err(Error::ParseError(ix, ParseError::InvalidGroupName));
+        }
+        if let Some(group) = group_ix {
+            self.contains_subroutines = true;
+            if group == 0 {
+                self.self_recursive = true;
+            }
+            return Ok((end, Expr::SubroutineCall(group)));
+        }
+        if let Some(group_name) = group_name {
+            // here the name was parsed but doesn't match a capture group we have already parsed
+            let expr = Expr::UnresolvedNamedSubroutineCall {
+                name: group_name.to_string(),
+                ix,
+            };
+            self.has_unresolved_subroutines = true;
+            self.contains_subroutines = true;
+            return Ok((end, expr));
+        }
+        unreachable!()
+    }
+
+    fn parse_named_backref_or_subroutine(
+        &self,
+        ix: usize,
+        open: &str,
+        close: &str,
+        allow_relative: bool,
+    ) -> Result<NamedBackrefOrSubroutine> {
+        if let Some(ParsedId {
+            id,
+            mut relative,
+            skip,
+        }) = parse_id(&self.re[ix..], open, close, allow_relative)
+        {
             let group = if let Some(group) = self.named_groups.get(id) {
                 Some(*group)
-            } else if let Ok(group) = id.parse::<isize>() {
-                group.try_into().map_or_else(
-                    |_| {
-                        // relative backref
-                        self.curr_group.checked_add_signed(group + 1)
-                    },
-                    |group| Some(group),
-                )
+            } else if let Ok(group) = id.parse::<usize>() {
+                Some(group)
+            } else if let Some(relative_group) = relative {
+                if id.is_empty() {
+                    relative = None;
+                    self.curr_group.checked_add_signed(if relative_group < 0 {
+                        relative_group + 1
+                    } else {
+                        relative_group
+                    })
+                } else {
+                    None
+                }
             } else {
                 None
             };
             if let Some(group) = group {
-                return Ok((ix + skip, Expr::Backref(group)));
+                Ok(NamedBackrefOrSubroutine {
+                    ix: ix + skip,
+                    group_ix: Some(group),
+                    group_name: None,
+                    recursion_level: relative,
+                })
+            } else {
+                // here the name was parsed but doesn't match a capture group we have already parsed
+                Ok(NamedBackrefOrSubroutine {
+                    ix: ix + skip,
+                    group_ix: None,
+                    group_name: Some(id),
+                    recursion_level: relative,
+                })
             }
-            // here the name is parsed but it is invalid
-            Err(Error::ParseError(
-                ix,
-                ParseError::InvalidGroupNameBackref(id.to_string()),
-            ))
         } else {
             // in this case the name can't be parsed
             Err(Error::ParseError(ix, ParseError::InvalidGroupName))
@@ -325,11 +437,33 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_numbered_backref(&mut self, ix: usize) -> Result<(usize, Expr)> {
+        let (end, group) = self.parse_numbered_backref_or_subroutine_call(ix)?;
+        self.numeric_backrefs = true;
+        self.backrefs.insert(group);
+        Ok((
+            end,
+            Expr::Backref {
+                group,
+                casei: self.flag(FLAG_CASEI),
+            },
+        ))
+    }
+
+    fn parse_numbered_subroutine_call(&mut self, ix: usize) -> Result<(usize, Expr)> {
+        let (end, group) = self.parse_numbered_backref_or_subroutine_call(ix)?;
+        self.numeric_backrefs = true;
+        self.contains_subroutines = true;
+        if group == 0 {
+            self.self_recursive = true;
+        }
+        Ok((end, Expr::SubroutineCall(group)))
+    }
+
+    fn parse_numbered_backref_or_subroutine_call(&self, ix: usize) -> Result<(usize, usize)> {
         if let Some((end, group)) = parse_decimal(self.re, ix) {
             // protect BitSet against unreasonably large value
             if group < self.re.len() / 2 {
-                self.numeric_backrefs = true;
-                return Ok((end, Expr::Backref(group)));
+                return Ok((end, group));
             }
         }
         return Err(Error::ParseError(ix, ParseError::InvalidBackref));
@@ -355,6 +489,18 @@ impl<'a> Parser<'a> {
             (end, Expr::Assertion(Assertion::StartText))
         } else if b == b'z' && !in_class {
             (end, Expr::Assertion(Assertion::EndText))
+        } else if b == b'Z' && !in_class {
+            (
+                end,
+                Expr::LookAround(
+                    Box::new(Expr::Delegate {
+                        inner: "\\n*$".to_string(),
+                        size: 0,
+                        casei: false,
+                    }),
+                    LookAhead,
+                ),
+            )
         } else if b == b'b' && !in_class {
             if bytes.get(end) == Some(&b'{') {
                 // Support for \b{...} is not implemented yet
@@ -435,6 +581,29 @@ impl<'a> Parser<'a> {
             (end, Expr::KeepOut)
         } else if b == b'G' && !in_class {
             (end, Expr::ContinueFromPreviousMatchEnd)
+        } else if b == b'O' && !in_class {
+            (
+                end,
+                Expr::Any {
+                    newline: self.flag(FLAG_DOTNL),
+                    crlf: self.flag(FLAG_CRLF),
+                },
+            )
+        } else if b == b'g' && !in_class {
+            if end == self.re.len() {
+                return Err(Error::ParseError(
+                    ix,
+                    ParseError::InvalidEscape("\\g".to_string()),
+                ));
+            }
+            let b = bytes[end];
+            if is_digit(b) {
+                self.parse_numbered_subroutine_call(end)?
+            } else if b == b'\'' {
+                self.parse_named_subroutine_call(end, "'", "'", true)?
+            } else {
+                self.parse_named_subroutine_call(end, "<", ">", true)?
+            }
         } else {
             // printable ASCII (including space, see issue #29)
             (
@@ -605,10 +774,20 @@ impl<'a> Parser<'a> {
             (Some(LookBehind), 3)
         } else if self.re[ix..].starts_with("?<!") {
             (Some(LookBehindNeg), 3)
-        } else if self.re[ix..].starts_with("?<") {
-            // Named capture group using Oniguruma syntax: (?<name>...)
+        } else if self.re[ix..].starts_with("?<") || self.re[ix..].starts_with("?'") {
+            // Named capture group using Oniguruma syntax: (?<name>...) or (?'name'...)
             self.curr_group += 1;
-            if let Some((id, skip)) = parse_id(&self.re[ix + 1..], "<", ">", false) {
+            let (open, close) = if self.re[ix..].starts_with("?<") {
+                ("<", ">")
+            } else {
+                ("'", "'")
+            };
+            if let Some(ParsedId {
+                id,
+                relative: None,
+                skip,
+            }) = parse_id(&self.re[ix + 1..], open, close, false)
+            {
                 self.named_groups.insert(id.to_string(), self.curr_group);
                 (None, skip + 1)
             } else {
@@ -617,7 +796,12 @@ impl<'a> Parser<'a> {
         } else if self.re[ix..].starts_with("?P<") {
             // Named capture group using Python syntax: (?P<name>...)
             self.curr_group += 1; // this is a capture group
-            if let Some((id, skip)) = parse_id(&self.re[ix + 2..], "<", ">", false) {
+            if let Some(ParsedId {
+                id,
+                relative: None,
+                skip,
+            }) = parse_id(&self.re[ix + 2..], "<", ">", false)
+            {
                 self.named_groups.insert(id.to_string(), self.curr_group);
                 (None, skip + 2)
             } else {
@@ -630,6 +814,8 @@ impl<'a> Parser<'a> {
             (None, 2)
         } else if self.re[ix..].starts_with("?(") {
             return self.parse_conditional(ix + 2, depth);
+        } else if self.re[ix..].starts_with("?P>") {
+            return self.parse_named_subroutine_call(ix + 3, "", ")", false);
         } else if self.re[ix..].starts_with('?') {
             return self.parse_flags(ix, depth);
         } else {
@@ -734,20 +920,20 @@ impl<'a> Parser<'a> {
         let bytes = self.re.as_bytes();
         // get the character after the open paren
         let b = bytes[ix];
-        let (mut next, condition) = if is_digit(b) {
-            self.parse_numbered_backref(ix)?
-        } else if b == b'\'' {
-            self.parse_named_backref(ix, "'", "'", true)?
+        let (next, condition) = if b == b'\'' {
+            self.parse_named_backref(ix, "'", "')", true)?
         } else if b == b'<' {
-            self.parse_named_backref(ix, "<", ">", true)?
+            self.parse_named_backref(ix, "<", ">)", true)?
+        } else if b == b'+' || b == b'-' || is_digit(b) {
+            self.parse_named_backref(ix, "", ")", true)?
         } else {
-            self.parse_re(ix, depth)?
+            let (next, condition) = self.parse_re(ix, depth)?;
+            (self.check_for_close_paren(next)?, condition)
         };
-        next = self.check_for_close_paren(next)?;
         let (end, child) = self.parse_re(next, depth)?;
         if end == next {
             // Backreference validity checker
-            if let Expr::Backref(group) = condition {
+            if let Expr::Backref { group, .. } = condition {
                 let after = self.check_for_close_paren(end)?;
                 return Ok((after, Expr::BackrefExistsCondition(group)));
             } else {
@@ -775,7 +961,7 @@ impl<'a> Parser<'a> {
             // there is only one branch - the truth branch. i.e. "if" without "else"
             if_true = child;
         }
-        let inner_condition = if let Expr::Backref(group) = condition {
+        let inner_condition = if let Expr::Backref { group, .. } = condition {
             Expr::BackrefExistsCondition(group)
         } else {
             condition
@@ -797,7 +983,8 @@ impl<'a> Parser<'a> {
     }
 
     fn flag(&self, flag: u32) -> bool {
-        (self.flags & flag) != 0
+        let v = self.flags & flag;
+        v == flag
     }
 
     fn update_flag(&mut self, flag: u32, neg: bool) {
@@ -842,6 +1029,40 @@ impl<'a> Parser<'a> {
             }
         }
     }
+
+    fn resolve_named_subroutine_calls(&mut self, expr: &mut Expr) {
+        match expr {
+            Expr::UnresolvedNamedSubroutineCall { name, .. } => {
+                if let Some(group) = self.named_groups.get(name) {
+                    *expr = Expr::SubroutineCall(*group);
+                } else {
+                    self.has_unresolved_subroutines = true;
+                }
+            }
+            // recursively resolve in inner expressions
+            Expr::Group(inner) | Expr::LookAround(inner, _) | Expr::AtomicGroup(inner) => {
+                self.resolve_named_subroutine_calls(inner);
+            }
+            Expr::Concat(children) | Expr::Alt(children) => {
+                for child in children {
+                    self.resolve_named_subroutine_calls(child);
+                }
+            }
+            Expr::Repeat { child, .. } => {
+                self.resolve_named_subroutine_calls(child);
+            }
+            Expr::Conditional {
+                condition,
+                true_branch,
+                false_branch,
+            } => {
+                self.resolve_named_subroutine_calls(condition);
+                self.resolve_named_subroutine_calls(true_branch);
+                self.resolve_named_subroutine_calls(false_branch);
+            }
+            _ => {}
+        }
+    }
 }
 
 // return (ix, value)
@@ -855,41 +1076,69 @@ pub(crate) fn parse_decimal(s: &str, ix: usize) -> Option<(usize, usize)> {
         .map(|val| (end, val))
 }
 
-/// Attempts to parse an identifier between the specified opening and closing
-/// delimiters.  On success, returns `Some((id, skip))`, where `skip` is how much
-/// of the string was used.
+#[derive(Debug, PartialEq)]
+pub(crate) struct ParsedId<'a> {
+    pub id: &'a str,
+    pub relative: Option<isize>,
+    pub skip: usize,
+}
+
+/// Attempts to parse an identifier, optionally followed by a relative number between the
+/// specified opening and closing delimiters.  On success, returns
+/// `Some((id, relative, skip))`, where `skip` is how much of the string was used.
 pub(crate) fn parse_id<'a>(
     s: &'a str,
     open: &'_ str,
     close: &'_ str,
     allow_relative: bool,
-) -> Option<(&'a str, usize)> {
+) -> Option<ParsedId<'a>> {
     debug_assert!(!close.starts_with(is_id_char));
 
-    if !s.starts_with(open) {
+    if !s.starts_with(open) || s.len() <= open.len() + close.len() {
         return None;
     }
 
     let id_start = open.len();
     let mut iter = s[id_start..].char_indices().peekable();
-    let after_id = if allow_relative && iter.next_if(|(_, ch)| *ch == '-').is_some() {
-        iter.find(|(_, ch)| !ch.is_ascii_digit())
-    } else {
-        iter.find(|(_, ch)| !is_id_char(*ch))
-    };
+    let after_id = iter.find(|(_, ch)| !is_id_char(*ch));
+
     let id_len = match after_id.map(|(i, _)| i) {
-        Some(id_len) if s[id_start + id_len..].starts_with(close) => Some(id_len),
-        None if close.is_empty() => Some(s.len()),
-        _ => None,
+        Some(id_len) => id_len,
+        None if close.is_empty() => s.len(),
+        _ => 0,
     };
-    match id_len {
-        Some(0) => None,
-        Some(id_len) => {
-            let id_end = id_start + id_len;
-            Some((&s[id_start..id_end], id_end + close.len()))
-        }
-        _ => None,
+
+    let id_end = id_start + id_len;
+    if id_len > 0 && s[id_end..].starts_with(close) {
+        return Some(ParsedId {
+            id: &s[id_start..id_end],
+            relative: None,
+            skip: id_end + close.len(),
+        });
+    } else if !allow_relative {
+        return None;
     }
+    let relative_sign = s.as_bytes()[id_end];
+    if relative_sign == b'+' || relative_sign == b'-' {
+        if let Some((end, relative_amount)) = parse_decimal(&s, id_end + 1) {
+            if s[end..].starts_with(close) {
+                if relative_amount == 0 && id_len == 0 {
+                    return None;
+                }
+                let relative_amount_signed = if relative_sign == b'-' {
+                    -(relative_amount as isize)
+                } else {
+                    relative_amount as isize
+                };
+                return Some(ParsedId {
+                    id: &s[id_start..id_end],
+                    relative: Some(relative_amount_signed),
+                    skip: end + close.len(),
+                });
+            }
+        }
+    }
+    None
 }
 
 fn is_id_char(c: char) -> bool {
@@ -905,9 +1154,13 @@ fn is_hex_digit(b: u8) -> bool {
 }
 
 pub(crate) fn make_literal(s: &str) -> Expr {
+    make_literal_case_insensitive(s, false)
+}
+
+pub(crate) fn make_literal_case_insensitive(s: &str, case_insensitive: bool) -> Expr {
     Expr::Literal {
         val: String::from(s),
-        casei: false,
+        casei: case_insensitive,
     }
 }
 
@@ -917,9 +1170,9 @@ mod tests {
     use alloc::string::{String, ToString};
     use alloc::{format, vec};
 
-    use crate::parse::{make_literal, parse_id};
-    use crate::LookAround::*;
+    use crate::parse::{make_literal, make_literal_case_insensitive, parse_id};
     use crate::{Assertion, Expr};
+    use crate::{LookAround::*, RegexOptions, SyntaxConfig};
 
     fn p(s: &str) -> Expr {
         Expr::parse_tree(s).unwrap().expr
@@ -993,6 +1246,21 @@ mod tests {
     }
 
     #[test]
+    fn end_text_before_empty_lines() {
+        assert_eq!(
+            p("\\Z"),
+            Expr::LookAround(
+                Box::new(Expr::Delegate {
+                    inner: "\\n*$".to_string(),
+                    size: 0,
+                    casei: false,
+                }),
+                LookAhead,
+            )
+        );
+    }
+
+    #[test]
     fn literal() {
         assert_eq!(p("a"), make_literal("a"));
     }
@@ -1005,15 +1273,65 @@ mod tests {
 
     #[test]
     fn parse_id_test() {
-        assert_eq!(parse_id("foo.", "", "", true), Some(("foo", 3)));
-        assert_eq!(parse_id("{foo}", "{", "}", true), Some(("foo", 5)));
+        use crate::parse::ParsedId;
+        fn create_id(id: &str, relative: Option<isize>, skip: usize) -> Option<ParsedId> {
+            Some(ParsedId { id, relative, skip })
+        }
+        assert_eq!(parse_id("foo.", "", "", true), create_id("foo", None, 3));
+        assert_eq!(parse_id("1.", "", "", true), create_id("1", None, 1));
+        assert_eq!(parse_id("{foo}", "{", "}", true), create_id("foo", None, 5));
         assert_eq!(parse_id("{foo.", "{", "}", true), None);
         assert_eq!(parse_id("{foo", "{", "}", true), None);
         assert_eq!(parse_id("{}", "{", "}", true), None);
         assert_eq!(parse_id("", "", "", true), None);
-        assert_eq!(parse_id("{-1}", "{", "}", true), Some(("-1", 4)));
+        assert_eq!(parse_id("{-1}", "{", "}", true), create_id("", Some(-1), 4));
         assert_eq!(parse_id("{-1}", "{", "}", false), None);
         assert_eq!(parse_id("{-a}", "{", "}", true), None);
+        assert_eq!(parse_id("{-a}", "{", "}", false), None);
+        assert_eq!(parse_id("{+a}", "{", "}", false), None);
+        assert_eq!(parse_id("+a", "", "", false), None);
+        assert_eq!(parse_id("-a", "", "", false), None);
+        assert_eq!(parse_id("2+a", "", "", false), create_id("2", None, 1));
+        assert_eq!(parse_id("2-a", "", "", false), create_id("2", None, 1));
+
+        assert_eq!(parse_id("<+1>", "<", ">", true), create_id("", Some(1), 4));
+        assert_eq!(parse_id("<-3>", "<", ">", true), create_id("", Some(-3), 4));
+        assert_eq!(
+            parse_id("<n+1>", "<", ">", true),
+            create_id("n", Some(1), 5)
+        );
+        assert_eq!(
+            parse_id("<n-1>", "<", ">", true),
+            create_id("n", Some(-1), 5)
+        );
+        assert_eq!(parse_id("<>", "<", ">", true), None);
+        assert_eq!(parse_id("<", "<", ">", true), None);
+        assert_eq!(parse_id("<+0>", "<", ">", true), None);
+        assert_eq!(parse_id("<-0>", "<", ">", true), None);
+        assert_eq!(
+            parse_id("<n+0>", "<", ">", true),
+            create_id("n", Some(0), 5)
+        );
+        assert_eq!(
+            parse_id("<n-0>", "<", ">", true),
+            create_id("n", Some(0), 5)
+        );
+        assert_eq!(
+            parse_id("<2-0>", "<", ">", true),
+            create_id("2", Some(0), 5)
+        );
+        assert_eq!(
+            parse_id("<2+0>", "<", ">", true),
+            create_id("2", Some(0), 5)
+        );
+        assert_eq!(
+            parse_id("<2+1>", "<", ">", true),
+            create_id("2", Some(1), 5)
+        );
+        assert_eq!(
+            parse_id("<2-1>", "<", ">", true),
+            create_id("2", Some(-1), 5)
+        );
     }
 
     #[test]
@@ -1120,6 +1438,12 @@ mod tests {
     #[test]
     fn group() {
         assert_eq!(p("(a)"), Expr::Group(Box::new(make_literal("a"),)));
+    }
+
+    #[test]
+    fn named_group() {
+        assert_eq!(p("(?'name'a)"), Expr::Group(Box::new(make_literal("a"),)));
+        assert_eq!(p("(?<name>a)"), Expr::Group(Box::new(make_literal("a"),)));
     }
 
     #[test]
@@ -1236,6 +1560,29 @@ mod tests {
                 make_literal(","),
             ])
         );
+        assert_eq!(
+            p("a{1,A}"),
+            Expr::Concat(vec![
+                make_literal("a"),
+                make_literal("{"),
+                make_literal("1"),
+                make_literal(","),
+                make_literal("A"),
+                make_literal("}"),
+            ])
+        );
+        assert_eq!(
+            p("a{1,2A}"),
+            Expr::Concat(vec![
+                make_literal("a"),
+                make_literal("{"),
+                make_literal("1"),
+                make_literal(","),
+                make_literal("2"),
+                make_literal("A"),
+                make_literal("}"),
+            ])
+        );
     }
 
     #[test]
@@ -1297,7 +1644,10 @@ mod tests {
                     newline: false,
                     crlf: false
                 })),
-                Expr::Backref(1),
+                Expr::Backref {
+                    group: 1,
+                    casei: false,
+                },
             ])
         );
     }
@@ -1311,7 +1661,10 @@ mod tests {
                     newline: false,
                     crlf: false
                 })),
-                Expr::Backref(1),
+                Expr::Backref {
+                    group: 1,
+                    casei: false,
+                },
             ])
         );
     }
@@ -1319,18 +1672,153 @@ mod tests {
     #[test]
     fn relative_backref() {
         assert_eq!(
-            p("(a)(.)\\k<-1>"),
+            p(r"(a)(.)\k<-1>"),
             Expr::Concat(vec![
                 Expr::Group(Box::new(make_literal("a"))),
                 Expr::Group(Box::new(Expr::Any {
                     newline: false,
                     crlf: false
                 })),
-                Expr::Backref(2)
+                Expr::Backref {
+                    group: 2,
+                    casei: false,
+                },
             ])
         );
+
+        assert_eq!(
+            p(r"(a)\k<+1>(.)"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(make_literal("a"))),
+                Expr::Backref {
+                    group: 2,
+                    casei: false,
+                },
+                Expr::Group(Box::new(Expr::Any {
+                    newline: false,
+                    crlf: false
+                })),
+            ])
+        );
+
         fail("(?P<->.)");
-        fail("(.)(?P=-)")
+        fail("(.)(?P=-)");
+        fail(r"(a)\k<-0>(.)");
+        fail(r"(a)\k<+0>(.)");
+        fail(r"(a)\k<+>(.)");
+        fail(r"(a)\k<->(.)");
+        fail(r"(a)\k<>(.)");
+    }
+
+    #[test]
+    fn relative_backref_with_recursion_level() {
+        assert_eq!(
+            p(r"()\k<1+3>"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(Expr::Empty)),
+                Expr::BackrefWithRelativeRecursionLevel {
+                    group: 1,
+                    relative_level: 3,
+                    casei: false,
+                },
+            ]),
+        );
+
+        assert_eq!(
+            p(r"()\k<1-0>"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(Expr::Empty)),
+                Expr::BackrefWithRelativeRecursionLevel {
+                    group: 1,
+                    relative_level: 0,
+                    casei: false,
+                },
+            ]),
+        );
+
+        assert_eq!(
+            p(r"(?<n>)\k<n+3>"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(Expr::Empty)),
+                Expr::BackrefWithRelativeRecursionLevel {
+                    group: 1,
+                    relative_level: 3,
+                    casei: false,
+                },
+            ]),
+        );
+
+        assert_eq!(
+            p(r"(?<n>)\k<n-3>"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(Expr::Empty)),
+                Expr::BackrefWithRelativeRecursionLevel {
+                    group: 1,
+                    relative_level: -3,
+                    casei: false,
+                }
+            ]),
+        );
+
+        assert_eq!(
+            p(r"\A(?<a>|.|(?:(?<b>.)\g<a>\k<b+0>))\z"),
+            Expr::Concat(vec![
+                Expr::Assertion(Assertion::StartText),
+                Expr::Group(Box::new(Expr::Alt(vec![
+                    Expr::Empty,
+                    Expr::Any {
+                        newline: false,
+                        crlf: false
+                    },
+                    Expr::Concat(vec![
+                        Expr::Group(Box::new(Expr::Any {
+                            newline: false,
+                            crlf: false
+                        })),
+                        Expr::SubroutineCall(1),
+                        Expr::BackrefWithRelativeRecursionLevel {
+                            group: 2,
+                            relative_level: 0,
+                            casei: false,
+                        },
+                    ])
+                ]))),
+                Expr::Assertion(Assertion::EndText)
+            ]),
+        );
+    }
+
+    #[test]
+    fn relative_subroutine_call() {
+        assert_eq!(
+            p(r"(a)(.)\g<-1>"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(make_literal("a"))),
+                Expr::Group(Box::new(Expr::Any {
+                    newline: false,
+                    crlf: false
+                })),
+                Expr::SubroutineCall(2),
+            ])
+        );
+
+        assert_eq!(
+            p(r"(a)\g<+1>(.)"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(make_literal("a"))),
+                Expr::SubroutineCall(2),
+                Expr::Group(Box::new(Expr::Any {
+                    newline: false,
+                    crlf: false
+                })),
+            ])
+        );
+
+        fail(r"(a)\g<-0>(.)");
+        fail(r"(a)\g<+0>(.)");
+        fail(r"(a)\g<+>(.)");
+        fail(r"(a)\g<->(.)");
+        fail(r"(a)\g<>(.)");
     }
 
     #[test]
@@ -1607,8 +2095,20 @@ mod tests {
     #[test]
     fn invalid_backref() {
         // only syntactic tests; see similar test in analyze module
-        fail(".\\12345678"); // unreasonably large number
-        fail(".\\c"); // not decimal
+        assert_error(
+            r".\18446744073709551616",
+            "Parsing error at position 2: Invalid back reference",
+        ); // unreasonably large number
+        assert_error(r".\c", "Parsing error at position 1: Invalid escape: \\c"); // not decimal
+
+        assert_error(
+            r"a\1",
+            "Parsing error at position 2: Invalid back reference",
+        ); // invalid back reference according to regex length - not long enough to contain that many paren pairs
+        assert_error(
+            r"(a)\2",
+            "Parsing error at position 4: Invalid back reference",
+        ); // invalid back reference according to regex length - not long enough to contain that many paren pairs
     }
 
     #[test]
@@ -1643,9 +2143,9 @@ mod tests {
             "\\kxxx<id>",
             "Parsing error at position 2: Could not parse group name",
         );
-        // "-" can only be at the start for a relative backref
+        // "-" can only be used after a name for relative recursion level, so must be followed by a number
         assert_error(
-            "\\k<id-2>",
+            "\\k<id-withdash>",
             "Parsing error at position 2: Could not parse group name",
         );
         assert_error(
@@ -1724,6 +2224,22 @@ mod tests {
     }
 
     #[test]
+    fn no_quantifiers_on_other_non_repeatable_expressions() {
+        assert_error(
+            r"\K?",
+            "Parsing error at position 2: Target of repeat operator is invalid",
+        );
+        assert_error(
+            r"\G*",
+            "Parsing error at position 2: Target of repeat operator is invalid",
+        );
+        assert_error(
+            r"\b+",
+            "Parsing error at position 2: Target of repeat operator is invalid",
+        );
+    }
+
+    #[test]
     fn backref_exists_condition() {
         assert_eq!(
             p("(h)?(?(1))"),
@@ -1764,6 +2280,69 @@ mod tests {
         assert_error(
             r"(?(?=\d)\w|!)",
             "Parsing error at position 3: Target of repeat operator is invalid",
+        );
+    }
+
+    #[test]
+    fn conditional_unclosed_at_end_of_pattern() {
+        assert_error(
+            r"(?(",
+            "Parsing error at position 3: Opening parenthesis without closing parenthesis",
+        );
+    }
+
+    #[test]
+    fn subroutine_call_unclosed_at_end_of_pattern() {
+        assert_error(
+            r"\g<",
+            "Parsing error at position 2: Could not parse group name",
+        );
+
+        assert_error(
+            r"\g<name",
+            "Parsing error at position 2: Could not parse group name",
+        );
+
+        assert_error(
+            r"\g'",
+            "Parsing error at position 2: Could not parse group name",
+        );
+
+        assert_error(
+            r"\g''",
+            "Parsing error at position 2: Could not parse group name",
+        );
+
+        assert_error(
+            r"\g<>",
+            "Parsing error at position 2: Could not parse group name",
+        );
+
+        assert_error(r"\g", "Parsing error at position 0: Invalid escape: \\g");
+
+        assert_error(
+            r"\g test",
+            "Parsing error at position 2: Could not parse group name",
+        );
+    }
+
+    #[test]
+    fn subroutine_call_missing_subroutine_reference() {
+        assert_error(
+            r"\g test",
+            "Parsing error at position 2: Could not parse group name",
+        );
+    }
+
+    #[test]
+    fn subroutine_call_name_includes_dash() {
+        assert_error(
+            r"\g<1-0>(a)",
+            "Parsing error at position 2: Could not parse group name",
+        );
+        assert_error(
+            r"\g<name+1>(?'name'a)",
+            "Parsing error at position 2: Could not parse group name",
         );
     }
 
@@ -1858,7 +2437,10 @@ mod tests {
                     true_branch: Box::new(make_literal("b")),
                     false_branch: Box::new(make_literal("c"))
                 })),
-                Expr::Group(Box::new(Expr::Backref(1)))
+                Expr::Group(Box::new(Expr::Backref {
+                    group: 1,
+                    casei: false,
+                },))
             ])
         );
 
@@ -1923,6 +2505,170 @@ mod tests {
         );
     }
 
+    #[test]
+    fn subroutines() {
+        assert_eq!(
+            p(r"(a)\g1"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(make_literal("a"))),
+                Expr::SubroutineCall(1)
+            ])
+        );
+
+        assert_eq!(
+            p(r"(a)\g<1>"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(make_literal("a"))),
+                Expr::SubroutineCall(1)
+            ])
+        );
+
+        assert_eq!(
+            p(r"(?<group_name>a)\g<group_name>"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(make_literal("a"))),
+                Expr::SubroutineCall(1)
+            ])
+        );
+
+        assert_eq!(
+            p(r"(?<group_name>a)\g'group_name'"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(make_literal("a"))),
+                Expr::SubroutineCall(1)
+            ])
+        );
+
+        assert_eq!(
+            p(r"(?<group_name>a)(?P>group_name)"),
+            Expr::Concat(vec![
+                Expr::Group(Box::new(make_literal("a"))),
+                Expr::SubroutineCall(1)
+            ])
+        );
+    }
+
+    #[test]
+    fn subroutine_defined_later() {
+        assert_eq!(
+            p(r"\g<name>(?<name>a)"),
+            Expr::Concat(vec![
+                Expr::SubroutineCall(1),
+                Expr::Group(Box::new(make_literal("a"))),
+            ])
+        );
+
+        assert_eq!(
+            p(r"\g<c>(?:a|b|(?<c>c)?)"),
+            Expr::Concat(vec![
+                Expr::SubroutineCall(1),
+                Expr::Alt(vec![
+                    make_literal("a"),
+                    make_literal("b"),
+                    Expr::Repeat {
+                        child: Box::new(Expr::Group(Box::new(make_literal("c")))),
+                        lo: 0,
+                        hi: 1,
+                        greedy: true
+                    }
+                ])
+            ])
+        );
+
+        assert_eq!(
+            p(r"(?<a>a)?\g<b>(?(<a>)(?<b>b)|c)"),
+            Expr::Concat(vec![
+                Expr::Repeat {
+                    child: Box::new(Expr::Group(Box::new(make_literal("a")))),
+                    lo: 0,
+                    hi: 1,
+                    greedy: true
+                },
+                Expr::SubroutineCall(2),
+                Expr::Conditional {
+                    condition: Box::new(Expr::BackrefExistsCondition(1)),
+                    true_branch: Box::new(Expr::Group(Box::new(make_literal("b")))),
+                    false_branch: Box::new(make_literal("c")),
+                }
+            ])
+        );
+
+        assert_eq!(
+            p(r"\g<1>(a)"),
+            Expr::Concat(vec![
+                Expr::SubroutineCall(1),
+                Expr::Group(Box::new(make_literal("a"))),
+            ])
+        );
+    }
+
+    #[test]
+    fn recursive_subroutine_call() {
+        assert_eq!(
+            p(r"\A(?<a>|.|(?:(?<b>.)\g<a>\k<b>))\z"),
+            Expr::Concat(vec![
+                Expr::Assertion(Assertion::StartText,),
+                Expr::Group(Box::new(Expr::Alt(vec![
+                    Expr::Empty,
+                    Expr::Any {
+                        newline: false,
+                        crlf: false
+                    },
+                    Expr::Concat(vec![
+                        Expr::Group(Box::new(Expr::Any {
+                            newline: false,
+                            crlf: false
+                        },)),
+                        Expr::SubroutineCall(1,),
+                        Expr::Backref {
+                            group: 2,
+                            casei: false,
+                        },
+                    ],),
+                ],),)),
+                Expr::Assertion(Assertion::EndText,),
+            ],)
+        );
+    }
+
+    #[test]
+    fn self_recursive_subroutine_call() {
+        let tree = Expr::parse_tree(r"hello\g<0>?world").unwrap();
+        assert_eq!(tree.self_recursive, true);
+
+        let tree = Expr::parse_tree(r"hello\g0?world").unwrap();
+        assert_eq!(tree.self_recursive, true);
+
+        let tree = Expr::parse_tree(r"hello world").unwrap();
+        assert_eq!(tree.self_recursive, false);
+
+        let tree = Expr::parse_tree(r"hello\g1world").unwrap();
+        assert_eq!(tree.self_recursive, false);
+
+        let tree = Expr::parse_tree(r"hello\g<1>world").unwrap();
+        assert_eq!(tree.self_recursive, false);
+
+        let tree = Expr::parse_tree(r"(hello\g1?world)").unwrap();
+        assert_eq!(tree.self_recursive, false);
+
+        let tree = Expr::parse_tree(r"(?<a>hello\g<a>world)").unwrap();
+        assert_eq!(tree.self_recursive, false);
+    }
+
+    #[test]
+    fn named_subroutine_not_defined_later() {
+        assert_eq!(
+            p(r"\g<wrong_name>(?<different_name>a)"),
+            Expr::Concat(vec![
+                Expr::UnresolvedNamedSubroutineCall {
+                    name: "wrong_name".to_string(),
+                    ix: 2
+                },
+                Expr::Group(Box::new(make_literal("a"))),
+            ])
+        );
+    }
+
     // found by cargo fuzz, then minimized
     #[test]
     fn fuzz_1() {
@@ -1943,5 +2689,207 @@ mod tests {
     #[test]
     fn fuzz_4() {
         fail(r"\u{2}(?(2)");
+    }
+
+    fn get_options(pattern: &str, func: impl Fn(SyntaxConfig) -> SyntaxConfig) -> RegexOptions {
+        let mut options = RegexOptions::default();
+        options.syntaxc = func(options.syntaxc);
+        options.pattern = String::from(pattern);
+        options
+    }
+
+    #[test]
+    fn parse_with_case_insensitive_in_pattern() {
+        let tree = Expr::parse_tree("(?i)hello");
+        let expr = tree.unwrap().expr;
+
+        assert_eq!(
+            expr,
+            Expr::Concat(vec![
+                make_literal_case_insensitive("h", true),
+                make_literal_case_insensitive("e", true),
+                make_literal_case_insensitive("l", true),
+                make_literal_case_insensitive("l", true),
+                make_literal_case_insensitive("o", true)
+            ])
+        );
+    }
+
+    #[test]
+    fn parse_with_case_insensitive_option() {
+        let options = get_options("hello", |x| x.case_insensitive(true));
+
+        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
+        let expr = tree.unwrap().expr;
+
+        assert_eq!(
+            expr,
+            Expr::Concat(vec![
+                make_literal_case_insensitive("h", true),
+                make_literal_case_insensitive("e", true),
+                make_literal_case_insensitive("l", true),
+                make_literal_case_insensitive("l", true),
+                make_literal_case_insensitive("o", true)
+            ])
+        );
+    }
+
+    #[test]
+    fn parse_with_multiline_in_pattern() {
+        let options = get_options("(?m)^hello$", |x| x);
+
+        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
+        let expr = tree.unwrap().expr;
+
+        assert_eq!(
+            expr,
+            Expr::Concat(vec![
+                Expr::Assertion(Assertion::StartLine { crlf: false }),
+                make_literal("h"),
+                make_literal("e"),
+                make_literal("l"),
+                make_literal("l"),
+                make_literal("o"),
+                Expr::Assertion(Assertion::EndLine { crlf: false })
+            ])
+        );
+    }
+
+    #[test]
+    fn pparse_with_multiline_option() {
+        let options = get_options("^hello$", |x| x.multi_line(true));
+
+        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
+        let expr = tree.unwrap().expr;
+
+        assert_eq!(
+            expr,
+            Expr::Concat(vec![
+                Expr::Assertion(Assertion::StartLine { crlf: false }),
+                make_literal("h"),
+                make_literal("e"),
+                make_literal("l"),
+                make_literal("l"),
+                make_literal("o"),
+                Expr::Assertion(Assertion::EndLine { crlf: false })
+            ])
+        );
+    }
+
+    #[test]
+    fn parse_with_dot_matches_new_line_in_pattern() {
+        let options = get_options("(?s)(.*)", |x| x);
+
+        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
+        let expr = tree.unwrap().expr;
+
+        assert_eq!(
+            expr,
+            Expr::Group(Box::new(Expr::Repeat {
+                child: Box::new(Expr::Any {
+                    newline: true,
+                    crlf: false
+                }),
+                lo: 0,
+                hi: usize::MAX,
+                greedy: true
+            }))
+        );
+    }
+
+    #[test]
+    fn parse_with_dot_matches_new_line_option() {
+        let options = get_options("(.*)", |x| x.dot_matches_new_line(true));
+
+        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
+        let expr = tree.unwrap().expr;
+
+        assert_eq!(
+            expr,
+            Expr::Group(Box::new(Expr::Repeat {
+                child: Box::new(Expr::Any {
+                    newline: true,
+                    crlf: false
+                }),
+                lo: 0,
+                hi: usize::MAX,
+                greedy: true
+            }))
+        );
+    }
+
+    #[test]
+    fn parse_fancy_with_dot_matches_new_line_in_pattern() {
+        let options = get_options("(.*)(?<=hugo)", |x| x.dot_matches_new_line(true));
+
+        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
+        let expr = tree.unwrap().expr;
+
+        assert_eq!(
+            expr,
+            Expr::Concat(vec![
+                Expr::Group(Box::new(Expr::Repeat {
+                    child: Box::new(Expr::Any {
+                        newline: true,
+                        crlf: false
+                    }),
+                    lo: 0,
+                    hi: usize::MAX,
+                    greedy: true
+                })),
+                Expr::LookAround(
+                    Box::new(Expr::Concat(vec![
+                        make_literal("h"),
+                        make_literal("u"),
+                        make_literal("g"),
+                        make_literal("o")
+                    ])),
+                    LookBehind
+                )
+            ])
+        );
+    }
+
+    #[test]
+    fn parse_with_case_insensitre_from_pattern_and_multi_line_option() {
+        let options = get_options("(?i)^hello$", |x| x.multi_line(true));
+
+        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
+        let expr = tree.unwrap().expr;
+
+        assert_eq!(
+            expr,
+            Expr::Concat(vec![
+                Expr::Assertion(Assertion::StartLine { crlf: false }),
+                make_literal_case_insensitive("h", true),
+                make_literal_case_insensitive("e", true),
+                make_literal_case_insensitive("l", true),
+                make_literal_case_insensitive("l", true),
+                make_literal_case_insensitive("o", true),
+                Expr::Assertion(Assertion::EndLine { crlf: false })
+            ])
+        );
+    }
+
+    #[test]
+    fn parse_with_multi_line_and_case_insensitive_options() {
+        let mut options = get_options("^hello$", |x| x.multi_line(true));
+        options.syntaxc = options.syntaxc.case_insensitive(true);
+
+        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
+        let expr = tree.unwrap().expr;
+
+        assert_eq!(
+            expr,
+            Expr::Concat(vec![
+                Expr::Assertion(Assertion::StartLine { crlf: false }),
+                make_literal_case_insensitive("h", true),
+                make_literal_case_insensitive("e", true),
+                make_literal_case_insensitive("l", true),
+                make_literal_case_insensitive("l", true),
+                make_literal_case_insensitive("o", true),
+                Expr::Assertion(Assertion::EndLine { crlf: false })
+            ])
+        );
     }
 }

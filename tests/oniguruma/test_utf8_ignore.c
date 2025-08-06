@@ -4,15 +4,6 @@
 // x3 tests have an additional argument which is the group number to check.
 
 
-  // No match found
-  x2("^a", "\na", 1, 2);
-
-  // Compile failed: ParseError(1, InvalidEscape("\\O"))
-  x2("$\\O", "bb\n", 2, 3);
-
-  // Compile failed: ParseError(0, InvalidEscape("\\Z"))
-  x2("\\Z", "", 0, 0);
-
   // Compile failed: ParseError(0, InvalidEscape("\\c"))
   x2("\\ca", "\001", 0, 1);
 
@@ -36,15 +27,6 @@
 
   // Compile failed: CompileError(InnerError(BuildError { kind: Syntax { pid: PatternID(0), err: Parse(Error { kind: ClassRangeInvalid, pattern: "[a-&&-a]", span: Span(Position(o: 1, l: 1, c: 2), Position(o: 4, l: 1, c: 5)) }) } }))
   x2("[a-&&-a]", "-", 0, 1);
-
-  // Compile failed: ParseError(2, InvalidEscape("\\Z"))
-  x2("\\A\\Z", "", 0, 0);
-
-  // Compile failed: ParseError(3, InvalidEscape("\\Z"))
-  x2("xyz\\Z", "xyz", 0, 3);
-
-  // Compile failed: ParseError(1, InvalidEscape("\\Z"))
-  x2("a\\Z", "a", 0, 1);
 
   // No match found
   x2("(?i:ss)", "\xc3\x9f", 0, 2);
@@ -79,12 +61,6 @@
   // No match found
   x2("(?m:.b)", "a\nb", 1, 3);
 
-  // Compile failed: ParseError(3, InvalidEscape("\\Z"))
-  x2("a|b\\Z", "ba", 1, 2);
-
-  // Compile failed: ParseError(3, InvalidEscape("\\Z"))
-  x2("a|b\\Z", "b", 0, 1);
-
   // Match found at start 1 and end 2 (expected 0 and 2)
   x2("a(?i)b|c", "aC", 0, 2);
 
@@ -104,48 +80,36 @@
   x2("(?:abc)+?{2}", "abcabcabc", 0, 6);
 
   // No match found
-  x2("(abc)(?i:\\1)", "abcABC", 0, 6);
-
-  // No match found
   x3("((?m:a.c))", "a\nc", 0, 3, 1);
 
-  // Compile failed: CompileError(InvalidBackref)
-  x2("(?:(?:\\1|z)(a))+$", "zaaa", 0, 4);
-
-  // Compile failed: ParseError(3, InvalidEscape("\\Z"))
-  x2("(a*\\Z)\\1", "a", 1, 1);
-
-  // Compile failed: ParseError(4, InvalidEscape("\\Z"))
-  x2(".(a*\\Z)\\1", "ba", 1, 2);
-
-  // Compile failed: ParseError(3, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("(a)\\g<1>", "aa", 0, 2);
 
-  // Compile failed: ParseError(13, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("(?<name_2>ab)\\g<name_2>", "abab", 0, 4);
 
-  // Compile failed: ParseError(4, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("(?<=\\g<ab>)|-\\zEND (?<ab>XyZ)", "XyZ", 3, 3);
 
-  // Compile failed: ParseError(7, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("(?<n>|a\\g<n>)+", "", 0, 0);
 
-  // Compile failed: ParseError(8, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("(?<n>|\\(\\g<n>\\))+$", "()(())", 0, 6);
 
-  // Compile failed: ParseError(0, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call")
   x3("\\g<n>(?<n>.){0}", "X", 0, 1, 1);
 
-  // Compile failed: ParseError(0, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call")
   x2("\\g<n>(abc|df(?<n>.YZ){2,8}){0}", "XYZ", 0, 3);
 
-  // Compile failed: ParseError(9, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("\\A(?<n>(a\\g<n>)|)\\z", "aaaa", 0, 4);
 
-  // Compile failed: ParseError(6, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call")
   x2("(?<n>|\\g<m>\\g<n>)\\z|\\zEND (?<m>a|(b)\\g<m>)", "bbbbabba", 0, 8);
 
-  // Compile failed: ParseError(15, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x3("(z)()()(?<_9>a)\\g<_9>", "zaa", 2, 3, 1);
 
   // No match found
@@ -154,37 +118,37 @@
   // No match found
   x2("(?:(?<n1>.)|(?<n1>..)|(?<n1>...)|(?<n1>....)|(?<n1>.....)|(?<n1>......)|(?<n1>.......)|(?<n1>........)|(?<n1>.........)|(?<n1>..........)|(?<n1>...........)|(?<n1>............)|(?<n1>.............)|(?<n1>..............))\\k<n1>$", "a-pyumpyum", 2, 10);
 
-  // Compile failed: ParseError(11, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("(?<foo>a|\\(\\g<foo>\\))", "a", 0, 1);
 
-  // Compile failed: ParseError(11, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("(?<foo>a|\\(\\g<foo>\\))", "((((((a))))))", 0, 13);
 
-  // Compile failed: ParseError(11, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x3("(?<foo>a|\\(\\g<foo>\\))", "((((((((a))))))))", 0, 17, 1);
 
-  // Compile failed: ParseError(0, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call")
   x2("\\g<bar>|\\zEND(?<bar>.*abc$)", "abcxxxabc", 0, 9);
 
-  // Compile failed: ParseError(0, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("\\g<1>|\\zEND(.a.)", "bac", 0, 3);
 
-  // Compile failed: ParseError(0, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call")
   x3("\\g<_A>\\g<_A>|\\zEND(.a.)(?<_A>.b.)", "xbxyby", 3, 6, 1);
 
-  // Compile failed: ParseError(5, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call")
   x2("\\A(?:\\g<pon>|\\g<pan>|\\zEND  (?<pan>a|c\\g<pon>c)(?<pon>b|d\\g<pan>d))$", "cdcbcdc", 0, 7);
 
-  // Compile failed: ParseError(9, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call")
   x2("\\A(?<n>|a\\g<m>)\\z|\\zEND (?<m>\\g<n>)", "aaaa", 0, 4);
 
-  // Compile failed: ParseError(9, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("(?<n>(a|b\\g<n>c){3,5})", "baaaaca", 1, 5);
 
-  // Compile failed: ParseError(9, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("(?<n>(a|b\\g<n>c){3,5})", "baaaacaaaaa", 0, 10);
 
-  // Compile failed: ParseError(21, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("(?<pare>\\(([^\\(\\)]++|\\g<pare>)*+\\))", "((a))", 0, 5);
 
   // No match found
@@ -193,11 +157,8 @@
   // No match found
   x2("(?:()|())*\\1\\2", "", 0, 0);
 
-  // Compile failed: CompileError(InvalidBackref)
+  // Expected group to exist
   x3("(?:\\1a|())*", "a", 0, 0, 1);
-
-  // Compile failed: ParseError(16, InvalidEscape("\\Z"))
-  x2("x((.)*)*x(?i:\\1)\\Z", "0x1x2x1X2", 1, 9);
 
   // No match found
   x2("(?:()|()|()|()|()|())*\\2\\5", "", 0, 0);
@@ -205,44 +166,32 @@
   // No match found
   x2("(?:()|()|()|(x)|()|())*\\2b\\5", "b", 0, 1);
 
-  // Compile failed: ParseError(12, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x3("(\\(((?:[^(]|\\g<1>)*)\\))", "(abc)(abc)", 1, 4, 2);
 
   // Compile failed: ParseError(0, InvalidEscape("\\o"))
   x2("\\o{101}", "A", 0, 1);
 
-  // Compile failed: ParseError(6, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("\\A(a|b\\g<1>c)\\k<1+3>\\z", "bbacca", 0, 6);
 
-  // Compile failed: ParseError(10, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("(?i)\\A(a|b\\g<1>c)\\k<1+2>\\z", "bBACcbac", 0, 8);
 
-  // No match found
-  x2("(?i)(?<X>aa)|(?<X>bb)\\k<X>", "BBbb", 0, 4);
-
-  // Compile failed: ParseError(5, InvalidGroupName)
-  x2("(?:\\k'+1'B|(A)C)*", "ACAB", 0, 4);
-
-  // Compile failed: ParseError(0, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("\\g<+2>(abc)(ABC){0}", "ABCabc", 0, 6);
 
-  // Compile failed: ParseError(1, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("A\\g'0'|B()", "AAAAB", 0, 5);
 
-  // Compile failed: ParseError(2, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x3("(A\\g'0')|B", "AAAAB", 0, 5, 1);
 
-  // Compile failed: ParseError(10, GeneralParseError("expected conditional to be a backreference or at least an expression for when the condition is true"))
-  x2("(a*)(?(-1))aa", "aaaaa", 0, 5);
-
-  // Compile failed: ParseError(7, GeneralParseError("expected close paren"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Backref at recursion level"))
   x2("(a)(?(1+0)b|c)d", "abd", 0, 3);
 
-  // Compile failed: ParseError(5, UnknownFlag("(?'"))
+  // No match found
   x2("(?:(?'name'a)|(?'name'b))(?('name')c|d)e", "ace", 0, 3);
-
-  // Compile failed: ParseError(5, UnknownFlag("(?'"))
-  x2("(?:(?'name'a)|(?'name'b))(?('name')c|d)e", "bce", 0, 3);
 
   // Compile failed: ParseError(0, InvalidEscape("\\R"))
   x2("\\R", "\r\n", 0, 2);
@@ -262,18 +211,6 @@
   // Compile failed: ParseError(0, InvalidEscape("\\N"))
   x2("\\N", "a", 0, 1);
 
-  // Compile failed: ParseError(0, InvalidEscape("\\O"))
-  x2("\\O", "a", 0, 1);
-
-  // Compile failed: ParseError(0, InvalidEscape("\\O"))
-  x2("\\O", "\n", 0, 1);
-
-  // Compile failed: ParseError(4, InvalidEscape("\\O"))
-  x2("(?m:\\O)", "\n", 0, 1);
-
-  // Compile failed: ParseError(5, InvalidEscape("\\O"))
-  x2("(?-m:\\O)", "\n", 0, 1);
-
   // No match found
   x2("(?:()|())*\\1", "abc", 0, 0);
 
@@ -283,19 +220,19 @@
   // No match found
   x2("(?:()|()|())*\\3\\1", "abc", 0, 0);
 
-  // Compile failed: ParseError(9, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("(|(?:a(?:\\g'1')*))b|", "abc", 0, 2);
 
-  // Compile failed: ParseError(14, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("((?<x>abc){0}a\\g<x>d)+", "aabcd", 0, 5);
 
   // Match found at start 0 and end 3 (expected 0 and 6)
   x2("(?<x>a)(?<x>b)(\\k<x>)+", "abbaab", 0, 6);
 
-  // Compile failed: ParseError(8, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("(?<x>$|b\\g<x>)", "bbb", 0, 3);
 
-  // Compile failed: ParseError(16, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("(?<x>(?(a)a|b)|c\\g<x>)", "cccb", 0, 4);
 
   // Compile failed: ParseError(1, InvalidEscape("\\o"))
@@ -442,26 +379,11 @@
   // No match found
   x2("\\xca\\xb8", "\xca\xb8", 0, 2);
 
-  // Compile failed: ParseError(9, InvalidEscape("\\Z"))
-  x2("むめも\\Z", "むめも", 0, 9);
-
-  // Compile failed: ParseError(9, InvalidEscape("\\Z"))
-  x2("かきく\\Z", "かきく\n", 0, 9);
-
   // No match found
   x2("(?m:よ.)", "よ\n", 0, 4);
 
   // No match found
   x2("(?m:.め)", "ま\nめ", 3, 7);
-
-  // Compile failed: ParseError(7, InvalidEscape("\\Z"))
-  x2("鬼|車\\Z", "車鬼", 3, 6);
-
-  // Compile failed: ParseError(7, InvalidEscape("\\Z"))
-  x2("鬼|車\\Z", "車", 0, 3);
-
-  // Compile failed: ParseError(7, InvalidEscape("\\Z"))
-  x2("鬼|車\\Z", "車\n", 0, 3);
 
   // No match found
   x2("(?:あい)?{2}", "", 0, 0);
@@ -481,16 +403,10 @@
   // No match found
   x3("((?m:あ.う))", "あ\nう", 0, 7, 1);
 
-  // Compile failed: ParseError(5, InvalidEscape("\\Z"))
-  x2("(あ*\\Z)\\1", "あ", 3, 3);
-
-  // Compile failed: ParseError(6, InvalidEscape("\\Z"))
-  x2(".(あ*\\Z)\\1", "いあ", 3, 6);
-
-  // Compile failed: ParseError(16, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("(?<愚か>変|\\(\\g<愚か>\\))", "((((((変))))))", 0, 15);
 
-  // Compile failed: ParseError(5, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call")
   x2("\\A(?:\\g<阿_1>|\\g<云_2>|\\z終了  (?<阿_1>観|自\\g<云_2>自)(?<云_2>在|菩薩\\g<阿_1>菩薩))$", "菩薩自菩薩自在自菩薩自菩薩", 0, 39);
 
   // Compile failed: CompileError(InnerError(BuildError { kind: Syntax { pid: PatternID(0), err: Parse(Error { kind: ClassRangeInvalid, pattern: "[あ-&&-あ]", span: Span(Position(o: 1, l: 1, c: 2), Position(o: 6, l: 1, c: 5)) }) } }))
@@ -734,16 +650,16 @@
   // Compile failed: ParseError(3, TargetNotRepeatable)
   x2("(?(*FAIL)123|456)", "456", 0, 3);
 
-  // Compile failed: ParseError(0, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("\\g'0'++{,0}",   "abcdefgh", 0, 0);
 
-  // Compile failed: ParseError(0, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("\\g'0'++{,0}?",  "abcdefgh", 0, 0);
 
-  // Compile failed: ParseError(0, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("\\g'0'++{,0}b",  "abcdefgh", 1, 2);
 
-  // Compile failed: ParseError(0, InvalidEscape("\\g"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("\\g'0'++{,0}?def", "abcdefgh", 3, 6);
 
   // Compile failed: CompileError(InnerError(BuildError { kind: Syntax { pid: PatternID(0), err: Parse(Error { kind: RepetitionCountInvalid, pattern: "a{3,2}b", span: Span(Position(o: 1, l: 1, c: 2), Position(o: 6, l: 1, c: 7)) }) } }))

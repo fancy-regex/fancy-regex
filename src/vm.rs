@@ -84,6 +84,7 @@ use crate::error::RuntimeError;
 use crate::prev_codepoint_ix;
 use crate::Assertion;
 use crate::Error;
+use crate::Formatter;
 use crate::Result;
 use crate::{codepoint_len, RegexOptions};
 
@@ -100,8 +101,39 @@ pub(crate) const OPTION_SKIPPED_EMPTY_MATCH: u32 = 1 << 1;
 // TODO: make configurable
 const MAX_STACK: usize = 1_000_000;
 
+#[derive(Clone)]
+/// Delegate matching to the regex crate
+pub struct Delegate {
+    /// The regex
+    pub inner: Regex,
+    /// The regex pattern as a string
+    pub pattern: String,
+    /// The first group number that this regex captures (if it contains groups)
+    pub start_group: usize,
+    /// The last group number
+    pub end_group: usize,
+}
+
+impl core::fmt::Debug for Delegate {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        // Ensures it fails to compile if the struct changes
+        let Self {
+            inner: _,
+            pattern,
+            start_group,
+            end_group,
+        } = self;
+
+        f.debug_struct("Delegate")
+            .field("pattern", pattern)
+            .field("start_group", start_group)
+            .field("end_group", end_group)
+            .finish()
+    }
+}
+
 /// Instruction of the VM.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub enum Insn {
     /// Successful end of program
     End,
@@ -175,20 +207,18 @@ pub enum Insn {
     /// Set IX back by the specified number of characters
     GoBack(usize),
     /// Back reference to a group number to check
-    Backref(usize),
+    Backref {
+        /// The save slot representing the start of the capture group
+        slot: usize,
+        /// Whether the backref should be matched case insensitively
+        casei: bool,
+    },
     /// Begin of atomic group
     BeginAtomic,
     /// End of atomic group
     EndAtomic,
     /// Delegate matching to the regex crate
-    Delegate {
-        /// The regex
-        inner: Regex,
-        /// The first group number that this regex captures (if it contains groups)
-        start_group: usize,
-        /// The last group number
-        end_group: usize,
-    },
+    Delegate(Delegate),
     /// Anchor to match at the position where the previous match ended
     ContinueFromPreviousMatchEnd,
     /// Continue only if the specified capture group has already been populated as part of the match
@@ -209,11 +239,11 @@ impl Prog {
     }
 
     #[doc(hidden)]
-    pub(crate) fn debug_print(&self) {
-        #[cfg(feature = "std")]
+    pub(crate) fn debug_print(&self, writer: &mut Formatter<'_>) -> core::fmt::Result {
         for (i, insn) in self.body.iter().enumerate() {
-            println!("{:3}: {:?}", i, insn);
+            write!(writer, "{:3}: {:?}\n", i, insn)?;
         }
+        Ok(())
     }
 }
 
@@ -413,6 +443,47 @@ fn matches_literal(s: &str, ix: usize, end: usize, literal: &str) -> bool {
     // points to a multibyte char. Comparing with str would result in an error like
     // "byte index N is not a char boundary".
     end <= s.len() && &s.as_bytes()[ix..end] == literal.as_bytes()
+}
+
+fn matches_literal_casei(s: &str, ix: usize, end: usize, literal: &str) -> bool {
+    if end > s.len() {
+        return false;
+    }
+    if matches_literal(s, ix, end, literal) {
+        return true;
+    }
+    if s.is_char_boundary(ix) && s.is_char_boundary(end) && s.is_ascii() {
+        return s[ix..end].eq_ignore_ascii_case(literal);
+    }
+
+    // text captured and being backreferenced is not ascii, so we utilize regex-automata's case insensitive matching
+    use regex_syntax::ast::*;
+    let span = Span::splat(Position::new(0, 0, 0));
+    let literals = literal
+        .chars()
+        .map(|c| {
+            Ast::literal(Literal {
+                span,
+                kind: LiteralKind::Verbatim,
+                c,
+            })
+        })
+        .collect();
+    let ast = Ast::concat(Concat {
+        span,
+        asts: literals,
+    });
+
+    let mut translator = regex_syntax::hir::translate::TranslatorBuilder::new()
+        .case_insensitive(true)
+        .build();
+    let hir = translator.translate(literal, &ast).unwrap();
+
+    use regex_automata::meta::Builder as RaBuilder;
+    let re = RaBuilder::new()
+        .build_from_hir(&hir)
+        .expect("literal hir should get built successfully");
+    re.find(&s[ix..end]).is_some()
 }
 
 /// Run the program with trace printing for debugging.
@@ -638,7 +709,7 @@ pub(crate) fn run(
                     }
                     break 'fail;
                 }
-                Insn::Backref(slot) => {
+                Insn::Backref { slot, casei } => {
                     let lo = state.get(slot);
                     if lo == usize::MAX {
                         // Referenced group hasn't matched, so the backref doesn't match either
@@ -651,7 +722,11 @@ pub(crate) fn run(
                     }
                     let ref_text = &s[lo..hi];
                     let ix_end = ix + ref_text.len();
-                    if !matches_literal(s, ix, ix_end, ref_text) {
+                    if casei {
+                        if !matches_literal_casei(s, ix, ix_end, ref_text) {
+                            break 'fail;
+                        }
+                    } else if !matches_literal(s, ix, ix_end, ref_text) {
                         break 'fail;
                     }
                     ix = ix_end;
@@ -671,11 +746,12 @@ pub(crate) fn run(
                     let count = state.stack_pop();
                     state.backtrack_cut(count);
                 }
-                Insn::Delegate {
+                Insn::Delegate(Delegate {
                     ref inner,
+                    pattern: _,
                     start_group,
                     end_group,
-                } => {
+                }) => {
                     let input = Input::new(s).span(ix..s.len()).anchored(Anchored::Yes);
                     if start_group == end_group {
                         // No groups, so we can use faster methods

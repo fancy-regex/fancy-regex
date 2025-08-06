@@ -2,7 +2,7 @@ use alloc::borrow::Cow;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use crate::parse::{parse_decimal, parse_id};
+use crate::parse::{parse_decimal, parse_id, ParsedId};
 use crate::{Captures, CompileError, Error, ParseError, Regex};
 
 /// A set of options for expanding a template string using the contents
@@ -76,7 +76,7 @@ impl Expander {
             } else if num < regex.captures_len() {
                 Ok(())
             } else {
-                Err(Error::CompileError(CompileError::InvalidBackref))
+                Err(Error::CompileError(CompileError::InvalidBackref(num)))
             }
         };
         self.exec(template, |step| match step {
@@ -87,7 +87,9 @@ impl Expander {
                 } else if let Ok(num) = name.parse() {
                     on_group_num(num)
                 } else {
-                    Err(Error::CompileError(CompileError::InvalidBackref))
+                    Err(Error::CompileError(CompileError::InvalidGroupNameBackref(
+                        name.to_string(),
+                    )))
                 }
             }
             Step::GroupNum(num) => on_group_num(num),
@@ -227,15 +229,17 @@ impl Expander {
                 let skip = if tail.starts_with(self.sub_char) {
                     f(Step::Char(self.sub_char))?;
                     1
-                } else if let Some((id, skip)) = parse_id(tail, self.open, self.close, false)
-                    .or_else(|| {
-                        if self.allow_undelimited_name {
-                            parse_id(tail, "", "", false)
-                        } else {
-                            None
-                        }
-                    })
-                {
+                } else if let Some(ParsedId {
+                    id,
+                    relative: None,
+                    skip,
+                }) = parse_id(tail, self.open, self.close, false).or_else(|| {
+                    if self.allow_undelimited_name {
+                        parse_id(tail, "", "", false)
+                    } else {
+                        None
+                    }
+                }) {
                     f(Step::GroupName(id))?;
                     skip
                 } else if let Some((skip, num)) = parse_decimal(tail, 0) {

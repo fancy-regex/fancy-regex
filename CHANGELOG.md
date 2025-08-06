@@ -6,6 +6,42 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
+## [0.16.1] - 2025-08-02
+### Fixed
+- Fixed a bug whereby sometimes a backreference to a non-existing capture group would compile successfully
+  when it should fail, causing a panic in the VM when trying to match the regex. (#174)
+
+## [0.16.0] - 2025-08-01
+### Added
+- Add an optimization step after the pattern is parsed but before it is analyzed.
+  Currently it only optimizes one specific use-case - where the expression is easy except
+  for a trailing positive lookahead whose contents are also easy. The optimization is to delegate to the regex crate instead of using the backtracking VM. (#171)
+### Changed
+- Patterns which are anchored to the start of the text (i.e. with `^` when not in multiline mode) should now fail faster when there is no match, because `fancy-regex` no longer tries to match at other positions. (#170)
+- The `CompileError` for an invalid (numbered) backref has been updated to mention which backref was invalid (#170)
+- Removed dependency on derivative (#169)
+### Fixed
+- Fixed a bug whereby sometimes a capture group containing a backref to itself would cause a compile error, when it is valid - this fixes a few Oniguruma test cases (#170)
+
+## [0.15.0] - 2025-07-06
+### Added
+- Support `\Z` - anchor to the end of the text before any trailing newlines. (#148)
+- Support `\O` - any character including newlines. (#158)
+- The parser can now parse subroutine calls and relative backreferences (but execution is still unsupported). This is preparation for future work. Some new error variants have been added for features which can be parsed but are still otherwise unsupported.
+- Backreferences can now be case insensitive. (#160)
+- `RegexBuilder`: Add options for `multi_line`, `ignore_whitespace`, `dot_matches_new_line` (#165)
+### Fixed
+- Fix infinite loop when backtracking limit is hit (#153)
+- Fix `RegexBuilder.case_insensitive` not always applying when it should. (#163)
+- The `toy` example has had various bugfixes, and unit tests added. (#152, #159)
+
+## [0.14.0] - 2024-10-24
+### Added
+- Add `split`, `splitn` methods to `Regex` to split a string into substrings (#140)
+- Add `case_insensitive` method to `RegexBuilder` to force case-insensitive mode (#132)
+### Changed
+- Bump bit-set dependency to 0.8 (#139)
+
 ## [0.13.0] - 2023-12-22
 ### Added
 - Support for relative backreferences using `\k<-1>` (-1 references the
@@ -15,6 +51,10 @@ with the exception that 0.x versions can break between minor versions.
 ### Changed
 - Switch from regex crate to regex-automata and regex-syntax (lower level APIs)
   to simplify internals (#121)
+- **Note:** Due to above change, more backtracking is done in fancy-regex itself
+  instead of regex-automata, and you might get a `BacktrackLimitExceeded` with
+  some patterns that you didn't get before. You can increase the backtrack limit
+  using `RegexBuilder::backtrack_limit` to help with that.
 - Allow escaping some letters in character classes, e.g. `[\A]` used to error
   but now matches the same as `[A]` (for compatibility with Oniguruma)
 - MSRV (minimum supported Rust version) is now 1.66.1 (from 1.61.0)
@@ -176,6 +216,10 @@ with the exception that 0.x versions can break between minor versions.
 - Initial release
 
 
+[0.16.1]: https://github.com/fancy-regex/fancy-regex/compare/0.16.0...0.16.1
+[0.16.0]: https://github.com/fancy-regex/fancy-regex/compare/0.15.0...0.16.0
+[0.15.0]: https://github.com/fancy-regex/fancy-regex/compare/0.14.0...0.15.0
+[0.14.0]: https://github.com/fancy-regex/fancy-regex/compare/0.13.0...0.14.0
 [0.13.0]: https://github.com/fancy-regex/fancy-regex/compare/0.12.0...0.13.0
 [0.12.0]: https://github.com/fancy-regex/fancy-regex/compare/0.11.0...0.12.0
 [0.11.0]: https://github.com/fancy-regex/fancy-regex/compare/0.10.0...0.11.0

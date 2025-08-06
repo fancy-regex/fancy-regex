@@ -261,10 +261,26 @@ fn find_iter_attributes() {
 }
 
 #[test]
+fn find_iter_collect_when_backtrack_limit_hit() {
+    use fancy_regex::RegexBuilder;
+    let r = RegexBuilder::new("(x+x+)+(?=y)")
+        .backtrack_limit(1)
+        .build()
+        .unwrap();
+    let result: Vec<_> = r.find_iter("xxxxxxxxxxy").collect();
+    assert_eq!(result.len(), 1);
+}
+
+#[test]
 fn find_conditional() {
     assert_eq!(find(r"(?(ab)c|d)", "acd"), Some((2, 3)));
     assert_eq!(find(r"(a)?b(?(1)c|d)", "abc"), Some((0, 3)));
     assert_eq!(find(r"(a)?b(?(1)c|d)", "abd"), Some((1, 3)));
+}
+
+#[test]
+fn find_endtext_before_newlines() {
+    assert_eq!(find(r"\Z", "hello\nworld\n\n\n"), Some((11, 11)));
 }
 
 fn find(re: &str, text: &str) -> Option<(usize, usize)> {

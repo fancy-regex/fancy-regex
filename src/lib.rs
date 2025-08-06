@@ -86,6 +86,20 @@ let group = captures.get(1).expect("No group");
 assert_eq!(group.as_str(), "20");
 ```
 
+## Example: Splitting text
+
+```rust
+use fancy_regex::Regex;
+
+let re = Regex::new(r"[ \t]+").unwrap();
+let target = "a b \t  c\td    e";
+let fields: Vec<&str> = re.split(target).map(|x| x.unwrap()).collect();
+assert_eq!(fields, vec!["a", "b", "c", "d", "e"]);
+
+let fields: Vec<&str> = re.splitn(target, 3).map(|x| x.unwrap()).collect();
+assert_eq!(fields, vec!["a", "b", "c\td    e"]);
+```
+
 # Syntax
 
 The regex syntax is based on the [regex] crate's, with some additional supported syntax.
@@ -101,7 +115,11 @@ Escapes:
 `\K`
 : keep text matched so far out of the overall match ([docs](https://www.regular-expressions.info/keep.html))\
 `\G`
-: anchor to where the previous match ended ([docs](https://www.regular-expressions.info/continue.html))
+: anchor to where the previous match ended ([docs](https://www.regular-expressions.info/continue.html))\
+`\Z`
+: anchor to the end of the text before any trailing newlines\
+`\O`
+: any character including newline
 
 Backreferences:
 
@@ -156,7 +174,6 @@ Conditionals - if/then/else:
 [regex]: https://crates.io/crates/regex
 */
 
-#![doc(html_root_url = "https://docs.rs/fancy-regex/0.13.0")]
 #![deny(missing_docs)]
 #![deny(missing_debug_implementations)]
 #![cfg_attr(not(feature = "std"), no_std)]
@@ -177,18 +194,24 @@ use core::str::FromStr;
 use core::{fmt, usize};
 use regex_automata::meta::Regex as RaRegex;
 use regex_automata::util::captures::Captures as RaCaptures;
+use regex_automata::util::syntax::Config as SyntaxConfig;
 use regex_automata::Input as RaInput;
 
 mod analyze;
 mod compile;
 mod error;
 mod expand;
+mod flags;
+mod optimize;
 mod parse;
 mod replacer;
 mod vm;
 
 use crate::analyze::analyze;
+use crate::analyze::can_compile_as_anchored;
 use crate::compile::compile;
+use crate::flags::*;
+use crate::optimize::optimize;
 use crate::parse::{ExprTree, NamedGroups, Parser};
 use crate::vm::{Prog, OPTION_SKIPPED_EMPTY_MATCH};
 
@@ -218,6 +241,8 @@ enum RegexImpl {
     Wrap {
         inner: RaRegex,
         options: RegexOptions,
+        /// Some optimizations avoid the VM, but need to use an extra capture group to represent the match boundaries
+        explicit_capture_group_0: bool,
     },
     Fancy {
         prog: Prog,
@@ -285,7 +310,12 @@ impl<'r, 't> Iterator for Matches<'r, 't> {
                 .re
                 .find_from_pos_with_option_flags(self.text, self.last_end, option_flags)
             {
-                Err(error) => return Some(Err(error)),
+                Err(error) => {
+                    // Stop on first error: If an error is encountered, return it, and set the "last match position"
+                    // to the string length, so that the next next() call will return None, to prevent an infinite loop.
+                    self.last_end = self.text.len() + 1;
+                    return Some(Err(error));
+                }
                 Ok(None) => return None,
                 Ok(Some(mat)) => mat,
             };
@@ -343,7 +373,12 @@ impl<'r, 't> Iterator for CaptureMatches<'r, 't> {
         }
 
         let captures = match self.0.re.captures_from_pos(self.0.text, self.0.last_end) {
-            Err(error) => return Some(Err(error)),
+            Err(error) => {
+                // Stop on first error: If an error is encountered, return it, and set the "last match position"
+                // to the string length, so that the next next() call will return None, to prevent an infinite loop.
+                self.0.last_end = self.0.text.len() + 1;
+                return Some(Err(error));
+            }
             Ok(None) => return None,
             Ok(Some(captures)) => captures,
         };
@@ -378,6 +413,10 @@ enum CapturesImpl<'t> {
     Wrap {
         text: &'t str,
         locations: RaCaptures,
+        /// Some optimizations avoid the VM but need an extra capture group to represent the match boundaries.
+        /// Therefore what is actually capture group 1 should be treated as capture group 0, and all other
+        /// capture groups should have their index reduced by one as well to line up with what the pattern specifies.
+        explicit_capture_group_0: bool,
     },
     Fancy {
         text: &'t str,
@@ -392,18 +431,152 @@ pub struct SubCaptureMatches<'c, 't> {
     i: usize,
 }
 
+/// An iterator over all substrings delimited by a regex.
+///
+/// This iterator yields `Result<&'h str>`, where each item is a substring of the
+/// target string that is delimited by matches of the regular expression. It stops when there
+/// are no more substrings to yield.
+///
+/// `'r` is the lifetime of the compiled regular expression, and `'h` is the
+/// lifetime of the target string being split.
+///
+/// This iterator can be created by the [`Regex::split`] method.
+#[derive(Debug)]
+pub struct Split<'r, 'h> {
+    matches: Matches<'r, 'h>,
+    next_start: usize,
+    target: &'h str,
+}
+
+impl<'r, 'h> Iterator for Split<'r, 'h> {
+    type Item = Result<&'h str>;
+
+    /// Returns the next substring that results from splitting the target string by the regex.
+    ///
+    /// If no more matches are found, returns the remaining part of the string,
+    /// or `None` if all substrings have been yielded.
+    fn next(&mut self) -> Option<Result<&'h str>> {
+        match self.matches.next() {
+            None => {
+                let len = self.target.len();
+                if self.next_start > len {
+                    // No more substrings to return
+                    None
+                } else {
+                    // Return the last part of the target string
+                    // Next call will return None
+                    let part = &self.target[self.next_start..len];
+                    self.next_start = len + 1;
+                    Some(Ok(part))
+                }
+            }
+            // Return the next substring
+            Some(Ok(m)) => {
+                let part = &self.target[self.next_start..m.start()];
+                self.next_start = m.end();
+                Some(Ok(part))
+            }
+            Some(Err(e)) => Some(Err(e)),
+        }
+    }
+}
+
+impl<'r, 'h> core::iter::FusedIterator for Split<'r, 'h> {}
+
+/// An iterator over at most `N` substrings delimited by a regex.
+///
+/// This iterator yields `Result<&'h str>`, where each item is a substring of the
+/// target that is delimited by matches of the regular expression. It stops either when
+/// there are no more substrings to yield, or after `N` substrings have been yielded.
+///
+/// The `N`th substring is the remaining part of the target.
+///
+/// `'r` is the lifetime of the compiled regular expression, and `'h` is the
+/// lifetime of the target string being split.
+///
+/// This iterator can be created by the [`Regex::splitn`] method.
+#[derive(Debug)]
+pub struct SplitN<'r, 'h> {
+    splits: Split<'r, 'h>,
+    limit: usize,
+}
+
+impl<'r, 'h> Iterator for SplitN<'r, 'h> {
+    type Item = Result<&'h str>;
+
+    /// Returns the next substring resulting from splitting the target by the regex,
+    /// limited to `N` splits.
+    ///
+    /// Returns `None` if no more matches are found or if the limit is reached after yielding
+    /// the remaining part of the target.
+    fn next(&mut self) -> Option<Result<&'h str>> {
+        if self.limit == 0 {
+            // Limit reached. No more substrings available.
+            return None;
+        }
+
+        // Decrement the limit for each split.
+        self.limit -= 1;
+        if self.limit > 0 {
+            return self.splits.next();
+        }
+
+        // Nth split
+        let len = self.splits.target.len();
+        if self.splits.next_start > len {
+            // No more substrings available.
+            return None;
+        } else {
+            // Return the remaining part of the target
+            let start = self.splits.next_start;
+            self.splits.next_start = len + 1;
+            return Some(Ok(&self.splits.target[start..len]));
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (0, Some(self.limit))
+    }
+}
+
+impl<'r, 'h> core::iter::FusedIterator for SplitN<'r, 'h> {}
+
 #[derive(Clone, Debug)]
 struct RegexOptions {
     pattern: String,
+    syntaxc: SyntaxConfig,
     backtrack_limit: usize,
     delegate_size_limit: Option<usize>,
     delegate_dfa_size_limit: Option<usize>,
+}
+
+impl RegexOptions {
+    fn get_flag_value(flag_value: bool, enum_value: u32) -> u32 {
+        if flag_value {
+            enum_value
+        } else {
+            0
+        }
+    }
+
+    fn compute_flags(&self) -> u32 {
+        let insensitive = Self::get_flag_value(self.syntaxc.get_case_insensitive(), FLAG_CASEI);
+        let multiline = Self::get_flag_value(self.syntaxc.get_multi_line(), FLAG_MULTI);
+        let whitespace =
+            Self::get_flag_value(self.syntaxc.get_ignore_whitespace(), FLAG_IGNORE_SPACE);
+        let dotnl = Self::get_flag_value(self.syntaxc.get_dot_matches_new_line(), FLAG_DOTNL);
+        let unicode = Self::get_flag_value(self.syntaxc.get_unicode(), FLAG_UNICODE);
+
+        let all_flags = insensitive | multiline | whitespace | dotnl | unicode | unicode;
+        all_flags
+    }
 }
 
 impl Default for RegexOptions {
     fn default() -> Self {
         RegexOptions {
             pattern: String::new(),
+            syntaxc: SyntaxConfig::default(),
             backtrack_limit: 1_000_000,
             delegate_size_limit: None,
             delegate_dfa_size_limit: None,
@@ -426,6 +599,69 @@ impl RegexBuilder {
     /// Returns an [`Error`](enum.Error.html) if the pattern could not be parsed.
     pub fn build(&self) -> Result<Regex> {
         Regex::new_options(self.0.clone())
+    }
+
+    fn set_config(&mut self, func: impl Fn(SyntaxConfig) -> SyntaxConfig) -> &mut Self {
+        self.0.syntaxc = func(self.0.syntaxc);
+        self
+    }
+
+    /// Override default case insensitive
+    /// this is to enable/disable casing via builder instead of a flag within
+    /// the raw string provided to the regex builder
+    ///
+    /// Default is false
+    pub fn case_insensitive(&mut self, yes: bool) -> &mut Self {
+        self.set_config(|x| x.case_insensitive(yes))
+    }
+
+    /// Enable multi-line regex
+    pub fn multi_line(&mut self, yes: bool) -> &mut Self {
+        self.set_config(|x| x.multi_line(yes))
+    }
+
+    /// Allow ignore whitespace
+    pub fn ignore_whitespace(&mut self, yes: bool) -> &mut Self {
+        self.set_config(|x| x.ignore_whitespace(yes))
+    }
+
+    /// Enable or disable the "dot matches any character" flag.
+    /// When this is enabled, `.` will match any character. When it's disabled, then `.` will match any character
+    /// except for a new line character.
+    pub fn dot_matches_new_line(&mut self, yes: bool) -> &mut Self {
+        self.set_config(|x| x.dot_matches_new_line(yes))
+    }
+
+    /// Enable verbose mode in the regular expression.
+    ///
+    /// The same as ignore_whitespace
+    ///
+    /// When enabled, verbose mode permits insigificant whitespace in many
+    /// places in the regular expression, as well as comments. Comments are
+    /// started using `#` and continue until the end of the line.
+    ///
+    /// By default, this is disabled. It may be selectively enabled in the
+    /// regular expression by using the `x` flag regardless of this setting.
+    pub fn verbose_mode(&mut self, yes: bool) -> &mut Self {
+        self.set_config(|x| x.ignore_whitespace(yes))
+    }
+
+    /// Enable or disable the Unicode flag (`u`) by default.
+    ///
+    /// By default this is **enabled**. It may alternatively be selectively
+    /// disabled in the regular expression itself via the `u` flag.
+    ///
+    /// Note that unless "allow invalid UTF-8" is enabled (it's disabled by
+    /// default), a regular expression will fail to parse if Unicode mode is
+    /// disabled and a sub-expression could possibly match invalid UTF-8.
+    ///
+    /// **WARNING**: Unicode mode can greatly increase the size of the compiled
+    /// DFA, which can noticeably impact both memory usage and compilation
+    /// time. This is especially noticeable if your regex contains character
+    /// classes like `\w` that are impacted by whether Unicode is enabled or
+    /// not. If Unicode is not necessary, you are encouraged to disable it.
+    pub fn unicode_mode(&mut self, yes: bool) -> &mut Self {
+        self.set_config(|x| x.unicode(yes))
     }
 
     /// Limit for how many times backtracking should be attempted for fancy regexes (where
@@ -497,11 +733,11 @@ impl Regex {
     }
 
     fn new_options(options: RegexOptions) -> Result<Regex> {
-        let raw_tree = Expr::parse_tree(&options.pattern)?;
+        let raw_tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags())?;
 
         // wrapper to search for re at arbitrary start position,
         // and to capture the match bounds
-        let tree = ExprTree {
+        let mut tree = ExprTree {
             expr: Expr::Concat(vec![
                 Expr::Repeat {
                     child: Box::new(Expr::Any {
@@ -517,31 +753,32 @@ impl Regex {
             ..raw_tree
         };
 
-        let info = analyze(&tree)?;
+        // try to optimize the expression tree
+        let requires_capture_group_fixup = optimize(&mut tree);
+        let info = analyze(&tree, if requires_capture_group_fixup { 0 } else { 1 })?;
 
-        let inner_info = &info.children[1].children[0]; // references inner expr
-        if !inner_info.hard {
+        if !info.hard {
             // easy case, wrap regex
 
             // we do our own to_str because escapes are different
+            // NOTE: there is a good opportunity here to use Hir to avoid regex-automata re-parsing it
             let mut re_cooked = String::new();
-            // same as raw_tree.expr above, but it was moved, so traverse to find it
-            let raw_e = match tree.expr {
-                Expr::Concat(ref v) => match v[1] {
-                    Expr::Group(ref child) => child,
-                    _ => unreachable!(),
-                },
-                _ => unreachable!(),
-            };
-            raw_e.to_str(&mut re_cooked, 0);
+            tree.expr.to_str(&mut re_cooked, 0);
             let inner = compile::compile_inner(&re_cooked, &options)?;
             return Ok(Regex {
-                inner: RegexImpl::Wrap { inner, options },
+                inner: RegexImpl::Wrap {
+                    inner,
+                    options: RegexOptions {
+                        pattern: re_cooked.clone(),
+                        ..options
+                    },
+                    explicit_capture_group_0: requires_capture_group_fixup,
+                },
                 named_groups: Arc::new(tree.named_groups),
             });
         }
 
-        let prog = compile(&info)?;
+        let prog = compile(&info, can_compile_as_anchored(&tree.expr))?;
         Ok(Regex {
             inner: RegexImpl::Fancy {
                 prog,
@@ -660,9 +897,27 @@ impl Regex {
         option_flags: u32,
     ) -> Result<Option<Match<'t>>> {
         match &self.inner {
-            RegexImpl::Wrap { inner, .. } => Ok(inner
-                .search(&RaInput::new(text).span(pos..text.len()))
-                .map(|m| Match::new(text, m.start(), m.end()))),
+            RegexImpl::Wrap {
+                inner,
+                explicit_capture_group_0,
+                ..
+            } => {
+                if !*explicit_capture_group_0 {
+                    Ok(inner
+                        .search(&RaInput::new(text).span(pos..text.len()))
+                        .map(|m| Match::new(text, m.start(), m.end())))
+                } else {
+                    let mut locations = inner.create_captures();
+                    inner.captures(RaInput::new(text).span(pos..text.len()), &mut locations);
+                    Ok(locations.is_match().then(|| {
+                        Match::new(
+                            text,
+                            locations.get_group(1).unwrap().start,
+                            locations.get_group(1).unwrap().end,
+                        )
+                    }))
+                }
+            }
             RegexImpl::Fancy { prog, options, .. } => {
                 let result = vm::run(prog, text, pos, option_flags, options)?;
                 Ok(result.map(|saves| Match::new(text, saves[0], saves[1])))
@@ -760,11 +1015,19 @@ impl Regex {
     pub fn captures_from_pos<'t>(&self, text: &'t str, pos: usize) -> Result<Option<Captures<'t>>> {
         let named_groups = self.named_groups.clone();
         match &self.inner {
-            RegexImpl::Wrap { inner, .. } => {
+            RegexImpl::Wrap {
+                inner,
+                explicit_capture_group_0,
+                ..
+            } => {
                 let mut locations = inner.create_captures();
                 inner.captures(RaInput::new(text).span(pos..text.len()), &mut locations);
                 Ok(locations.is_match().then(|| Captures {
-                    inner: CapturesImpl::Wrap { text, locations },
+                    inner: CapturesImpl::Wrap {
+                        text,
+                        locations,
+                        explicit_capture_group_0: *explicit_capture_group_0,
+                    },
                     named_groups,
                 }))
             }
@@ -789,7 +1052,11 @@ impl Regex {
     /// Returns the number of captures, including the implicit capture of the entire expression.
     pub fn captures_len(&self) -> usize {
         match &self.inner {
-            RegexImpl::Wrap { inner, .. } => inner.captures_len(),
+            RegexImpl::Wrap {
+                inner,
+                explicit_capture_group_0,
+                ..
+            } => inner.captures_len() - if *explicit_capture_group_0 { 1 } else { 0 },
             RegexImpl::Fancy { n_groups, .. } => *n_groups,
         }
     }
@@ -806,13 +1073,20 @@ impl Regex {
 
     // for debugging only
     #[doc(hidden)]
-    pub fn debug_print(&self) {
+    pub fn debug_print(&self, writer: &mut Formatter<'_>) -> fmt::Result {
         match &self.inner {
-            #[cfg(feature = "std")]
-            RegexImpl::Wrap { inner, .. } => println!("wrapped {:?}", inner),
-            #[cfg(not(feature = "std"))]
-            RegexImpl::Wrap { .. } => {}
-            RegexImpl::Fancy { prog, .. } => prog.debug_print(),
+            RegexImpl::Wrap {
+                options,
+                explicit_capture_group_0,
+                ..
+            } => {
+                write!(
+                    writer,
+                    "wrapped Regex {:?}, explicit_capture_group_0: {:}",
+                    options.pattern, *explicit_capture_group_0
+                )
+            }
+            RegexImpl::Fancy { prog, .. } => prog.debug_print(writer),
         }
     }
 
@@ -1005,6 +1279,56 @@ impl Regex {
         new.push_str(&text[last_match..]);
         Ok(Cow::Owned(new))
     }
+
+    /// Splits the string by matches of the regex.
+    ///
+    /// Returns an iterator over the substrings of the target string
+    ///  that *aren't* matched by the regex.
+    ///
+    /// # Example
+    ///
+    /// To split a string delimited by arbitrary amounts of spaces or tabs:
+    ///
+    /// ```rust
+    /// # use fancy_regex::Regex;
+    /// let re = Regex::new(r"[ \t]+").unwrap();
+    /// let target = "a b \t  c\td    e";
+    /// let fields: Vec<&str> = re.split(target).map(|x| x.unwrap()).collect();
+    /// assert_eq!(fields, vec!["a", "b", "c", "d", "e"]);
+    /// ```
+    pub fn split<'r, 'h>(&'r self, target: &'h str) -> Split<'r, 'h> {
+        Split {
+            matches: self.find_iter(target),
+            next_start: 0,
+            target,
+        }
+    }
+
+    /// Splits the string by matches of the regex at most `limit` times.
+    ///
+    /// Returns an iterator over the substrings of the target string
+    /// that *aren't* matched by the regex.
+    ///
+    /// The `N`th substring is the remaining part of the target.
+    ///
+    /// # Example
+    ///
+    /// To split a string delimited by arbitrary amounts of spaces or tabs
+    /// 3 times:
+    ///
+    /// ```rust
+    /// # use fancy_regex::Regex;
+    /// let re = Regex::new(r"[ \t]+").unwrap();
+    /// let target = "a b \t  c\td    e";
+    /// let fields: Vec<&str> = re.splitn(target, 3).map(|x| x.unwrap()).collect();
+    /// assert_eq!(fields, vec!["a", "b", "c\td    e"]);
+    /// ```
+    pub fn splitn<'r, 'h>(&'r self, target: &'h str, limit: usize) -> SplitN<'r, 'h> {
+        SplitN {
+            splits: self.split(target),
+            limit: limit,
+        }
+    }
 }
 
 impl TryFrom<&str> for Regex {
@@ -1076,11 +1400,17 @@ impl<'t> Captures<'t> {
     /// returned. The index 0 returns the whole match.
     pub fn get(&self, i: usize) -> Option<Match<'t>> {
         match &self.inner {
-            CapturesImpl::Wrap { text, locations } => locations.get_group(i).map(|span| Match {
+            CapturesImpl::Wrap {
                 text,
-                start: span.start,
-                end: span.end,
-            }),
+                locations,
+                explicit_capture_group_0,
+            } => locations
+                .get_group(i + if *explicit_capture_group_0 { 1 } else { 0 })
+                .map(|span| Match {
+                    text,
+                    start: span.start,
+                    end: span.end,
+                }),
             CapturesImpl::Fancy { text, ref saves } => {
                 let slot = i * 2;
                 if slot >= saves.len() {
@@ -1140,7 +1470,11 @@ impl<'t> Captures<'t> {
     /// match.
     pub fn len(&self) -> usize {
         match &self.inner {
-            CapturesImpl::Wrap { locations, .. } => locations.group_len(),
+            CapturesImpl::Wrap {
+                locations,
+                explicit_capture_group_0,
+                ..
+            } => locations.group_len() - if *explicit_capture_group_0 { 1 } else { 0 },
             CapturesImpl::Fancy { saves, .. } => saves.len() / 2,
         }
     }
@@ -1206,7 +1540,7 @@ impl<'c, 't> Iterator for SubCaptureMatches<'c, 't> {
 // TODO: might be nice to implement ExactSizeIterator etc for SubCaptures
 
 /// Regular expression AST. This is public for now but may change.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Expr {
     /// An empty expression, e.g. the last branch in `(a|b|)`
     Empty,
@@ -1262,7 +1596,21 @@ pub enum Expr {
     },
     /// Back reference to a capture group, e.g. `\1` in `(abc|def)\1` references the captured group
     /// and the whole regex matches either `abcabc` or `defdef`.
-    Backref(usize),
+    Backref {
+        /// The capture group number being referenced
+        group: usize,
+        /// Whether the matching is case-insensitive or not
+        casei: bool,
+    },
+    /// Back reference to a capture group at the given specified relative recursion level.
+    BackrefWithRelativeRecursionLevel {
+        /// The capture group number being referenced
+        group: usize,
+        /// Relative recursion level
+        relative_level: isize,
+        /// Whether the matching is case-insensitive or not
+        casei: bool,
+    },
     /// Atomic non-capturing group, e.g. `(?>ab|a)` in text that contains `ab` will match `ab` and
     /// never backtrack and try `a`, even if matching fails after the atomic group.
     AtomicGroup(Box<Expr>),
@@ -1280,6 +1628,15 @@ pub enum Expr {
         true_branch: Box<Expr>,
         /// What to execute if the condition is false
         false_branch: Box<Expr>,
+    },
+    /// Subroutine call to the specified group number
+    SubroutineCall(usize),
+    /// Unresolved subroutine call to the specified group name
+    UnresolvedNamedSubroutineCall {
+        /// The capture group name
+        name: String,
+        /// The position in the original regex pattern where the subroutine call is made
+        ix: usize,
     },
 }
 
@@ -1408,6 +1765,12 @@ impl Expr {
         Parser::parse(re)
     }
 
+    /// Parse the regex and return an expression (AST)
+    /// Flags should be bit based based on flags
+    pub fn parse_tree_with_flags(re: &str, flags: u32) -> Result<ExprTree> {
+        Parser::parse_with_flags(re, flags)
+    }
+
     /// Convert expression to a regex string in the regex crate's syntax.
     ///
     /// # Panics
@@ -1522,7 +1885,7 @@ impl Expr {
                     buf.push_str(")");
                 }
             }
-            _ => panic!("attempting to format hard expr"),
+            _ => panic!("attempting to format hard expr {:?}", self),
         }
     }
 }
@@ -1595,8 +1958,9 @@ pub fn detect_possible_backref(re: &str) -> bool {
 /// experimenting.
 #[doc(hidden)]
 pub mod internal {
-    pub use crate::analyze::analyze;
+    pub use crate::analyze::{analyze, can_compile_as_anchored};
     pub use crate::compile::compile;
+    pub use crate::optimize::optimize;
     pub use crate::vm::{run_default, run_trace, Insn, Prog};
 }
 
@@ -1608,7 +1972,7 @@ mod tests {
     use alloc::{format, vec};
 
     use crate::parse::make_literal;
-    use crate::{Expr, Regex};
+    use crate::{Expr, Regex, RegexImpl};
 
     //use detect_possible_backref;
 
@@ -1768,6 +2132,35 @@ mod tests {
 
         // Check that multibyte characters are handled correctly.
         assert_eq!(crate::escape("fø*ø").into_owned(), "fø\\*ø");
+    }
+
+    #[test]
+    fn trailing_positive_lookahead_wrap_capture_group_fixup() {
+        let s = r"(a+)(?=c)";
+        let regex = s.parse::<Regex>().unwrap();
+        assert!(matches!(regex.inner,
+            RegexImpl::Wrap { explicit_capture_group_0: true, .. }),
+            "trailing positive lookahead for an otherwise easy pattern should avoid going through the VM");
+    }
+
+    #[test]
+    fn easy_regex() {
+        let s = r"(a+)b";
+        let regex = s.parse::<Regex>().unwrap();
+        assert!(
+            matches!(regex.inner, RegexImpl::Wrap { explicit_capture_group_0: false, .. }),
+            "easy pattern should avoid going through the VM, and capture group 0 should be implicit"
+        );
+    }
+
+    #[test]
+    fn hard_regex() {
+        let s = r"(a+)(?>c)";
+        let regex = s.parse::<Regex>().unwrap();
+        assert!(
+            matches!(regex.inner, RegexImpl::Fancy { .. }),
+            "hard regex should be compiled into a VM"
+        );
     }
 
     /*

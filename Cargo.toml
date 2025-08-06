@@ -1,8 +1,7 @@
 [package]
 name = "fancy-regex"
-# remember to update html_root_url
-version = "0.13.0"
-authors = ["Raph Levien <raph@google.com>", "Robin Stocker <robin@nibor.org>"]
+version = "0.16.1"
+authors = ["Raph Levien <raph@google.com>", "Robin Stocker <robin@nibor.org>", "Keith Hall <keith.hall@available.systems>"]
 edition = "2018"
 license = "MIT"
 description = "An implementation of regexes, supporting a relatively rich set of features, including backreferences and look-around."
@@ -31,7 +30,7 @@ version = "0.8"
 default-features = false
 
 [dependencies.bit-set]
-version = "0.5"
+version = "0.8"
 default-features = false
 
 [dev-dependencies]

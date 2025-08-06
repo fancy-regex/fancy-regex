@@ -314,6 +314,19 @@ fn captures_from_pos_looking_left() {
     assert_match(captures.get(1), "x", 1, 2);
 }
 
+#[test]
+fn captures_iter_collect_when_backtrack_limit_hit() {
+    use fancy_regex::RegexBuilder;
+    let r = RegexBuilder::new("(x+x+)+(?>y)")
+        .backtrack_limit(1)
+        .build()
+        .unwrap();
+    let result: Vec<_> = r.captures_iter("xxxxxxxxxxy").collect();
+    println!("{:?}", result);
+    assert_eq!(result.len(), 1);
+    assert!(result[0].is_err());
+}
+
 #[cfg_attr(feature = "track_caller", track_caller)]
 fn captures<'a>(re: &str, text: &'a str) -> Captures<'a> {
     let regex = common::regex(re);
@@ -468,20 +481,18 @@ fn expander_errors() {
     // Unmatched group number.
     assert_err!(
         exp.check("$2", &without_names),
-        Error::CompileError(CompileError::InvalidBackref)
+        Error::CompileError(CompileError::InvalidBackref(2))
     );
     assert_err!(
         exp.check("${2}", &without_names),
-        Error::CompileError(CompileError::InvalidBackref)
+        Error::CompileError(CompileError::InvalidBackref(2))
     );
 
     // Unmatched group name.
-    assert_err!(
-        exp.check("$xx", &with_names),
-        Error::CompileError(CompileError::InvalidBackref)
+    assert!(
+        matches!(exp.check("$xx", &with_names), Err(Error::CompileError(CompileError::InvalidGroupNameBackref(ref name))) if name == "xx"),
     );
-    assert_err!(
+    assert!(matches!(
         exp.check("${xx}", &with_names),
-        Error::CompileError(CompileError::InvalidBackref)
-    );
+        Err(Error::CompileError(CompileError::InvalidGroupNameBackref(ref name))) if name == "xx"));
 }
