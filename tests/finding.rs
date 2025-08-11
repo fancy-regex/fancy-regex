@@ -285,14 +285,23 @@ fn find_iter_empty_repeat_issue70() {
     assert_expected_matches(r"(?m)(?:^|a)(?:^|a)*");
 }
 
+#[test]
 fn find_iter_collect_when_backtrack_limit_hit() {
+    use fancy_regex::Error;
     use fancy_regex::RegexBuilder;
-    let r = RegexBuilder::new("(x+x+)+(?=y)")
+    use fancy_regex::RuntimeError;
+
+    let r = RegexBuilder::new("(x+x+)+(?>y)")
         .backtrack_limit(1)
         .build()
         .unwrap();
     let result: Vec<_> = r.find_iter("xxxxxxxxxxy").collect();
     assert_eq!(result.len(), 1);
+    assert!(result[0].is_err());
+    match &result[0].as_ref().err() {
+        Some(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded)) => {}
+        _ => panic!("Expected RuntimeError::BacktrackLimitExceeded"),
+    }
 }
 
 #[test]
