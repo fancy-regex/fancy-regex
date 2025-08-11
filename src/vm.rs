@@ -646,8 +646,9 @@ pub(crate) fn run(
                 } => {
                     let repcount = state.get(repeat);
                     if repcount > lo && state.get(check) == ix {
-                        // prevent zero-length match on repeat
-                        break 'fail;
+                        // zero-length match on repeat, then move to next instruction
+                        pc = next;
+                        continue;
                     }
                     state.save(repeat, repcount + 1);
                     if repcount >= lo {
