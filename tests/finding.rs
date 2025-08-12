@@ -283,6 +283,8 @@ fn find_iter_empty_repeat_issue70() {
 
     assert_expected_matches(r"(?m)(?:^|a)+");
     assert_expected_matches(r"(?m)(?:^|a)(?:^|a)*");
+    assert_expected_matches(r"(?m)(?>^|a)+");
+    assert_expected_matches(r"(?m)(?>^|a)(?:^|a)*");
 }
 
 #[test]
