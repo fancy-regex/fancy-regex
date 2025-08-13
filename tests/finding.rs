@@ -283,8 +283,62 @@ fn find_iter_empty_repeat_issue70() {
 
     assert_expected_matches(r"(?m)(?:^|a)+");
     assert_expected_matches(r"(?m)(?:^|a)(?:^|a)*");
-    assert_expected_matches(r"(?m)(?>^|a)+");
-    assert_expected_matches(r"(?m)(?>^|a)(?:^|a)*");
+    assert_expected_matches(r"(?m)(?>)(?:^|a)+");
+    assert_expected_matches(r"(?m)(?>)(?:^|a)(?:^|a)*");
+}
+
+#[test]
+fn find_iter_empty_repeat_non_greedy_issue70() {
+    fn assert_expected_matches(pattern: &str) {
+        let text = "a\naaa\n";
+        let regex = common::regex(pattern);
+
+        let matches: Vec<_> = regex.find_iter(text).collect();
+        assert_eq!(matches.len(), 5);
+
+        for i in 0..matches.len() {
+            let mat = &matches[i].as_ref().unwrap();
+            match i {
+                0 => assert_eq!((mat.start(), mat.end()), (0, 0)),
+                1 => assert_eq!((mat.start(), mat.end()), (2, 2)),
+                2 => assert_eq!((mat.start(), mat.end()), (3, 4)),
+                3 => assert_eq!((mat.start(), mat.end()), (4, 5)),
+                4 => assert_eq!((mat.start(), mat.end()), (6, 6)),
+                i => panic!("Expected 4 results, got {}", i + 1),
+            }
+        }
+    }
+
+    assert_expected_matches(r"(?m)(?:^|a)+?");
+    assert_expected_matches(r"(?m)(?:^|a)(?:^|a)*?");
+    assert_expected_matches(r"(?m)(?>)(?:^|a)+?");
+    assert_expected_matches(r"(?m)(?>)(?:^|a)(?:^|a)*?");
+}
+
+#[test]
+fn find_iter_empty_repeat_anchored_non_greedy_issue70() {
+    fn assert_expected_matches(pattern: &str) {
+        let text = "a\naaa\n";
+        let regex = common::regex(pattern);
+
+        let matches: Vec<_> = regex.find_iter(text).collect();
+        assert_eq!(matches.len(), 3);
+
+        for i in 0..matches.len() {
+            let mat = &matches[i].as_ref().unwrap();
+            match i {
+                0 => assert_eq!((mat.start(), mat.end()), (0, 1)),
+                1 => assert_eq!((mat.start(), mat.end()), (2, 5)),
+                2 => assert_eq!((mat.start(), mat.end()), (6, 6)),
+                i => panic!("Expected 4 results, got {}", i + 1),
+            }
+        }
+    }
+
+    assert_expected_matches(r"(?m)(?:^|a)+?$");
+    assert_expected_matches(r"(?m)(?:^|a)(?:^|a)*?$");
+    assert_expected_matches(r"(?m)(?>)(?:^|a)+?$");
+    assert_expected_matches(r"(?m)(?>)(?:^|a)(?:^|a)*?$");
 }
 
 #[test]
