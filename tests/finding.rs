@@ -261,14 +261,103 @@ fn find_iter_attributes() {
 }
 
 #[test]
+fn find_iter_empty_repeat_issue70() {
+    fn assert_expected_matches(pattern: &str) {
+        let text = "a\naaa\n";
+        let regex = common::regex(pattern);
+
+        let matches: Vec<_> = regex.find_iter(text).collect();
+        assert_eq!(matches.len(), 4);
+
+        for i in 0..matches.len() {
+            let mat = &matches[i].as_ref().unwrap();
+            match i {
+                0 => assert_eq!((mat.start(), mat.end()), (0, 0)),
+                1 => assert_eq!((mat.start(), mat.end()), (2, 2)),
+                2 => assert_eq!((mat.start(), mat.end()), (3, 5)),
+                3 => assert_eq!((mat.start(), mat.end()), (6, 6)),
+                i => panic!("Expected 4 results, got {}", i + 1),
+            }
+        }
+    }
+
+    assert_expected_matches(r"(?m)(?:^|a)+");
+    assert_expected_matches(r"(?m)(?:^|a)(?:^|a)*");
+    assert_expected_matches(r"(?m)(?>)(?:^|a)+");
+    assert_expected_matches(r"(?m)(?>)(?:^|a)(?:^|a)*");
+}
+
+#[test]
+fn find_iter_empty_repeat_non_greedy_issue70() {
+    fn assert_expected_matches(pattern: &str) {
+        let text = "a\naaa\n";
+        let regex = common::regex(pattern);
+
+        let matches: Vec<_> = regex.find_iter(text).collect();
+        assert_eq!(matches.len(), 5);
+
+        for i in 0..matches.len() {
+            let mat = &matches[i].as_ref().unwrap();
+            match i {
+                0 => assert_eq!((mat.start(), mat.end()), (0, 0)),
+                1 => assert_eq!((mat.start(), mat.end()), (2, 2)),
+                2 => assert_eq!((mat.start(), mat.end()), (3, 4)),
+                3 => assert_eq!((mat.start(), mat.end()), (4, 5)),
+                4 => assert_eq!((mat.start(), mat.end()), (6, 6)),
+                i => panic!("Expected 4 results, got {}", i + 1),
+            }
+        }
+    }
+
+    assert_expected_matches(r"(?m)(?:^|a)+?");
+    assert_expected_matches(r"(?m)(?:^|a)(?:^|a)*?");
+    assert_expected_matches(r"(?m)(?>)(?:^|a)+?");
+    assert_expected_matches(r"(?m)(?>)(?:^|a)(?:^|a)*?");
+}
+
+#[test]
+fn find_iter_empty_repeat_anchored_non_greedy_issue70() {
+    fn assert_expected_matches(pattern: &str) {
+        let text = "a\naaa\n";
+        let regex = common::regex(pattern);
+
+        let matches: Vec<_> = regex.find_iter(text).collect();
+        assert_eq!(matches.len(), 3);
+
+        for i in 0..matches.len() {
+            let mat = &matches[i].as_ref().unwrap();
+            match i {
+                0 => assert_eq!((mat.start(), mat.end()), (0, 1)),
+                1 => assert_eq!((mat.start(), mat.end()), (2, 5)),
+                2 => assert_eq!((mat.start(), mat.end()), (6, 6)),
+                i => panic!("Expected 4 results, got {}", i + 1),
+            }
+        }
+    }
+
+    assert_expected_matches(r"(?m)(?:^|a)+?$");
+    assert_expected_matches(r"(?m)(?:^|a)(?:^|a)*?$");
+    assert_expected_matches(r"(?m)(?>)(?:^|a)+?$");
+    assert_expected_matches(r"(?m)(?>)(?:^|a)(?:^|a)*?$");
+}
+
+#[test]
 fn find_iter_collect_when_backtrack_limit_hit() {
+    use fancy_regex::Error;
     use fancy_regex::RegexBuilder;
-    let r = RegexBuilder::new("(x+x+)+(?=y)")
+    use fancy_regex::RuntimeError;
+
+    let r = RegexBuilder::new("(x+x+)+(?>y)")
         .backtrack_limit(1)
         .build()
         .unwrap();
     let result: Vec<_> = r.find_iter("xxxxxxxxxxy").collect();
     assert_eq!(result.len(), 1);
+    assert!(result[0].is_err());
+    match &result[0].as_ref().err() {
+        Some(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded)) => {}
+        _ => panic!("Expected RuntimeError::BacktrackLimitExceeded"),
+    }
 }
 
 #[test]

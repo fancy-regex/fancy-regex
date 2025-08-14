@@ -152,13 +152,7 @@
   x2("(?<pare>\\(([^\\(\\)]++|\\g<pare>)*+\\))", "((a))", 0, 5);
 
   // No match found
-  x2("()*\\1", "", 0, 0);
-
-  // No match found
   x2("(?:()|())*\\1\\2", "", 0, 0);
-
-  // Expected group to exist
-  x3("(?:\\1a|())*", "a", 0, 0, 1);
 
   // No match found
   x2("(?:()|()|()|()|()|())*\\2\\5", "", 0, 0);
@@ -210,12 +204,6 @@
 
   // Compile failed: ParseError(0, InvalidEscape("\\N"))
   x2("\\N", "a", 0, 1);
-
-  // No match found
-  x2("(?:()|())*\\1", "abc", 0, 0);
-
-  // No match found
-  x2("(?:()|())*\\2", "abc", 0, 0);
 
   // No match found
   x2("(?:()|()|())*\\3\\1", "abc", 0, 0);
