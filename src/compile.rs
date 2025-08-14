@@ -120,11 +120,20 @@ impl Compiler {
                     self.compile_delegate(info)?;
                 }
             }
-            Expr::Any { newline: true } => {
+            Expr::Any { newline: true, .. } => {
                 self.b.add(Insn::Any);
             }
-            Expr::Any { newline: false } => {
-                self.b.add(Insn::AnyNoNL);
+            Expr::Any {
+                newline: false,
+                crlf: false,
+            } => {
+                self.b.add(Insn::AnyExceptLF);
+            }
+            Expr::Any {
+                newline: false,
+                crlf: true,
+            } => {
+                self.b.add(Insn::AnyExceptCRLF);
             }
             Expr::Concat(_) => {
                 self.compile_concat(info, hard)?;
@@ -739,7 +748,7 @@ mod tests {
         assert_eq!(prog.len(), 9, "prog: {:?}", prog);
 
         assert_matches!(prog[0], Split(3, 1));
-        assert_matches!(prog[1], Any);
+        assert_matches!(prog[1], AnyExceptLF);
         assert_matches!(prog[2], Jmp(0));
         assert_matches!(prog[3], Save(0));
         assert_matches!(prog[4], Split(5, 7));
