@@ -57,54 +57,77 @@ impl Default for RegexFlags {
     }
 }
 
-#[wasm_bindgen]
-pub fn create_regex(pattern: &str, flags: JsValue) -> Result<JsValue, JsValue> {
-    let flags: RegexFlags = if flags.is_undefined() {
-        RegexFlags::default()
+// Helper function to deserialize flags or use default
+fn get_flags(flags: JsValue) -> Result<RegexFlags, JsValue> {
+    if flags.is_undefined() {
+        Ok(RegexFlags::default())
     } else {
         serde_wasm_bindgen::from_value(flags).map_err(|e| {
             JsValue::from_str(&format!("Invalid flags: {}", e))
-        })?
-    };
+        })
+    }
+}
 
+// Helper function to build regex with flags
+fn build_regex(pattern: &str, flags: &RegexFlags) -> Result<Regex, JsValue> {
     let mut builder = RegexBuilder::new(pattern);
     
+    builder.case_insensitive(flags.case_insensitive);
+    builder.multi_line(flags.multi_line);
+    builder.dot_matches_new_line(flags.dot_matches_new_line);
+    builder.ignore_whitespace(flags.ignore_whitespace);
+    builder.unicode_mode(flags.unicode);
+    
+    builder.build().map_err(|e| {
+        JsValue::from_str(&format!("Regex compilation error: {}", e))
+    })
+}
+
+// Helper function to compute regex flags for parse_tree_with_flags
+fn compute_regex_flags(flags: &RegexFlags) -> u32 {
+    const FLAG_CASEI: u32 = 1;
+    const FLAG_MULTI: u32 = 1 << 1;
+    const FLAG_DOTNL: u32 = 1 << 2;
+    const FLAG_IGNORE_SPACE: u32 = 1 << 4;
+    const FLAG_UNICODE: u32 = 1 << 5;
+    
+    let mut result = 0;
     if flags.case_insensitive {
-        builder.case_insensitive(true);
+        result |= FLAG_CASEI;
     }
     if flags.multi_line {
-        builder.multi_line(true);
+        result |= FLAG_MULTI;
     }
     if flags.dot_matches_new_line {
-        builder.dot_matches_new_line(true);
+        result |= FLAG_DOTNL;
     }
     if flags.ignore_whitespace {
-        builder.ignore_whitespace(true);
+        result |= FLAG_IGNORE_SPACE;
     }
+    if flags.unicode {
+        result |= FLAG_UNICODE;
+    }
+    result
+}
+
+#[wasm_bindgen]
+pub fn create_regex(pattern: &str, flags: JsValue) -> Result<JsValue, JsValue> {
+    let flags = get_flags(flags)?;
+
+    // Test build the regex to validate pattern and flags
+    let _regex = build_regex(pattern, &flags)?;
     
-    match builder.build() {
-        Ok(_regex) => {
-            // Store the pattern for later use since we can't serialize the regex directly
-            let regex_info = serde_json::json!({
-                "pattern": pattern,
-                "flags": flags
-            });
-            Ok(JsValue::from_str(&regex_info.to_string()))
-        }
-        Err(e) => Err(JsValue::from_str(&format!("Regex compilation error: {}", e))),
-    }
+    // Store the pattern for later use since we can't serialize the regex directly
+    let regex_info = serde_json::json!({
+        "pattern": pattern,
+        "flags": flags
+    });
+    Ok(JsValue::from_str(&regex_info.to_string()))
 }
 
 #[wasm_bindgen]
 pub fn find_matches(pattern: &str, text: &str, flags: JsValue) -> Result<JsValue, JsValue> {
-    let flags: RegexFlags = if flags.is_undefined() {
-        RegexFlags::default()
-    } else {
-        serde_wasm_bindgen::from_value(flags).map_err(|e| {
-            JsValue::from_str(&format!("Invalid flags: {}", e))
-        })?
-    };
-
+    let flags = get_flags(flags)?;
     let regex = build_regex(pattern, &flags)?;
 
     let mut matches = Vec::new();
@@ -128,14 +151,7 @@ pub fn find_matches(pattern: &str, text: &str, flags: JsValue) -> Result<JsValue
 
 #[wasm_bindgen]
 pub fn find_captures(pattern: &str, text: &str, flags: JsValue) -> Result<JsValue, JsValue> {
-    let flags: RegexFlags = if flags.is_undefined() {
-        RegexFlags::default()
-    } else {
-        serde_wasm_bindgen::from_value(flags).map_err(|e| {
-            JsValue::from_str(&format!("Invalid flags: {}", e))
-        })?
-    };
-
+    let flags = get_flags(flags)?;
     let regex = build_regex(pattern, &flags)?;
 
     let mut all_captures = Vec::new();
@@ -187,18 +203,10 @@ pub fn find_captures(pattern: &str, text: &str, flags: JsValue) -> Result<JsValu
 
 #[wasm_bindgen]
 pub fn parse_regex(pattern: &str, flags: JsValue) -> Result<String, JsValue> {
-    let flags: RegexFlags = if flags.is_undefined() {
-        RegexFlags::default()
-    } else {
-        serde_wasm_bindgen::from_value(flags).map_err(|e| {
-            JsValue::from_str(&format!("Invalid flags: {}", e))
-        })?
-    };
-
-    // Build the regex with flags to get proper parse tree representation
-    let regex = build_regex(pattern, &flags)?;
+    let flags = get_flags(flags)?;
+    let regex_flags = compute_regex_flags(&flags);
     
-    match fancy_regex::Expr::parse_tree(pattern) {
+    match fancy_regex::Expr::parse_tree_with_flags(pattern, regex_flags) {
         Ok(tree) => Ok(format!("{:#?}", tree)),
         Err(e) => Err(JsValue::from_str(&format!("Parse error: {}", e))),
     }
@@ -206,20 +214,12 @@ pub fn parse_regex(pattern: &str, flags: JsValue) -> Result<String, JsValue> {
 
 #[wasm_bindgen]
 pub fn analyze_regex(pattern: &str, flags: JsValue) -> Result<String, JsValue> {
-    let flags: RegexFlags = if flags.is_undefined() {
-        RegexFlags::default()
-    } else {
-        serde_wasm_bindgen::from_value(flags).map_err(|e| {
-            JsValue::from_str(&format!("Invalid flags: {}", e))
-        })?
-    };
-
-    // Build the regex with flags to ensure analysis takes flags into account
-    let _regex = build_regex(pattern, &flags)?;
+    let flags = get_flags(flags)?;
+    let regex_flags = compute_regex_flags(&flags);
     
     use fancy_regex::internal::{analyze, optimize};
     
-    match fancy_regex::Expr::parse_tree(pattern) {
+    match fancy_regex::Expr::parse_tree_with_flags(pattern, regex_flags) {
         Ok(mut tree) => {
             optimize(&mut tree);
             match analyze(&tree, 1) {
@@ -233,41 +233,13 @@ pub fn analyze_regex(pattern: &str, flags: JsValue) -> Result<String, JsValue> {
 
 #[wasm_bindgen]
 pub fn is_match(pattern: &str, text: &str, flags: JsValue) -> Result<bool, JsValue> {
-    let flags: RegexFlags = if flags.is_undefined() {
-        RegexFlags::default()
-    } else {
-        serde_wasm_bindgen::from_value(flags).map_err(|e| {
-            JsValue::from_str(&format!("Invalid flags: {}", e))
-        })?
-    };
-
+    let flags = get_flags(flags)?;
     let regex = build_regex(pattern, &flags)?;
 
     match regex.is_match(text) {
         Ok(result) => Ok(result),
         Err(e) => Err(JsValue::from_str(&format!("Match error: {}", e))),
     }
-}
-
-fn build_regex(pattern: &str, flags: &RegexFlags) -> Result<Regex, JsValue> {
-    let mut builder = RegexBuilder::new(pattern);
-    
-    if flags.case_insensitive {
-        builder.case_insensitive(true);
-    }
-    if flags.multi_line {
-        builder.multi_line(true);
-    }
-    if flags.dot_matches_new_line {
-        builder.dot_matches_new_line(true);
-    }
-    if flags.ignore_whitespace {
-        builder.ignore_whitespace(true);
-    }
-    
-    builder.build().map_err(|e| {
-        JsValue::from_str(&format!("Regex compilation error: {}", e))
-    })
 }
 
 // Initialize the module

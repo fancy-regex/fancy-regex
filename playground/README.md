@@ -178,9 +178,9 @@ The playground consists of:
 ### Key WASM Functions
 
 - `find_matches(pattern, text, flags)`: Find all matches in text
-- `find_captures(pattern, text, flags)`: Find matches with capture groups
-- `parse_regex(pattern)`: Parse regex and return AST
-- `analyze_regex(pattern)`: Analyze regex and return detailed information
+- `find_captures(pattern, text, flags)`: Find matches with capture groups  
+- `parse_regex(pattern, flags)`: Parse regex and return AST with flag consideration
+- `analyze_regex(pattern, flags)`: Analyze regex and return detailed information with flag consideration
 - `is_match(pattern, text, flags)`: Test if pattern matches text
 
 ## 🛠️ Development

@@ -15,6 +15,14 @@ if ! rustup target list --installed | grep -q "wasm32-unknown-unknown"; then
     rustup target add wasm32-unknown-unknown
 fi
 
+# Extract version from main Cargo.toml
+VERSION=$(grep '^version = ' ../Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+echo "📝 Extracted version: $VERSION"
+
+# Update version in HTML file
+echo "🔧 Updating version in index.html..."
+sed -i.bak "s/<span id=\"version\">.*<\/span>/<span id=\"version\">v$VERSION<\/span>/" web/index.html
+
 # Build the WASM module
 echo "🚀 Building WASM module..."
 wasm-pack build --target web --out-dir pkg --release
