@@ -13,6 +13,17 @@ NFA-based implementations (exemplified by
 [![ci](https://github.com/fancy-regex/fancy-regex/workflows/ci/badge.svg)](https://github.com/fancy-regex/fancy-regex/actions?query=workflow%3Aci)
 [![codecov](https://codecov.io/gh/fancy-regex/fancy-regex/branch/main/graph/badge.svg)](https://codecov.io/gh/fancy-regex/fancy-regex)
 
+## 🎯 Try it Online!
+
+**[fancy-regex Playground](https://fancy-regex.github.io/fancy-regex/)** - Test and explore regular expressions with advanced features in your browser.
+
+The playground includes:
+- Real-time regex testing with highlighting
+- Support for all fancy-regex features (backreferences, lookaround, etc.)
+- Visual parse tree and analysis output
+- Configurable regex flags
+- Mobile-friendly responsive design
+
 A goal is to be as efficient as possible. For a given regex, the NFA
 implementation has asymptotic running time linear in the length of the
 input, while in the general case a backtracking implementation has

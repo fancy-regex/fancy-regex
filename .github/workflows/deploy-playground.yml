@@ -1,0 +1,53 @@
+name: Deploy Playground to GitHub Pages
+
+on:
+  push:
+    branches: [ main ]
+    paths: [ 'playground/**' ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: wasm32-unknown-unknown
+          
+      - name: Install wasm-pack
+        run: cargo install wasm-pack
+        
+      - name: Build WASM
+        run: |
+          cd playground
+          wasm-pack build --target web --out-dir pkg --release
+          cp -r pkg web/
+          
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+        
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './playground/web'
+          
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
