@@ -186,7 +186,18 @@ pub fn find_captures(pattern: &str, text: &str, flags: JsValue) -> Result<JsValu
 }
 
 #[wasm_bindgen]
-pub fn parse_regex(pattern: &str) -> Result<String, JsValue> {
+pub fn parse_regex(pattern: &str, flags: JsValue) -> Result<String, JsValue> {
+    let flags: RegexFlags = if flags.is_undefined() {
+        RegexFlags::default()
+    } else {
+        serde_wasm_bindgen::from_value(flags).map_err(|e| {
+            JsValue::from_str(&format!("Invalid flags: {}", e))
+        })?
+    };
+
+    // Build the regex with flags to get proper parse tree representation
+    let regex = build_regex(pattern, &flags)?;
+    
     match fancy_regex::Expr::parse_tree(pattern) {
         Ok(tree) => Ok(format!("{:#?}", tree)),
         Err(e) => Err(JsValue::from_str(&format!("Parse error: {}", e))),
@@ -194,7 +205,18 @@ pub fn parse_regex(pattern: &str) -> Result<String, JsValue> {
 }
 
 #[wasm_bindgen]
-pub fn analyze_regex(pattern: &str) -> Result<String, JsValue> {
+pub fn analyze_regex(pattern: &str, flags: JsValue) -> Result<String, JsValue> {
+    let flags: RegexFlags = if flags.is_undefined() {
+        RegexFlags::default()
+    } else {
+        serde_wasm_bindgen::from_value(flags).map_err(|e| {
+            JsValue::from_str(&format!("Invalid flags: {}", e))
+        })?
+    };
+
+    // Build the regex with flags to ensure analysis takes flags into account
+    let _regex = build_regex(pattern, &flags)?;
+    
     use fancy_regex::internal::{analyze, optimize};
     
     match fancy_regex::Expr::parse_tree(pattern) {

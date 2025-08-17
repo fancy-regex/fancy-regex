@@ -261,6 +261,12 @@
     <div class="header">
         <h1>🎯 Fancy Regex Playground</h1>
         <p>Test and explore regular expressions with advanced features like backreferences and lookaround</p>
+        <div style="font-size: 0.8rem; margin-top: 0.5rem; opacity: 0.8;">
+            <span>v0.16.1</span> | 
+            <a href="https://github.com/fancy-regex/fancy-regex" target="_blank" style="color: #ecf0f1; text-decoration: none;">
+                📦 GitHub Repository
+            </a>
+        </div>
     </div>
 
     <div class="container">
@@ -292,7 +298,16 @@
                             <input type="checkbox" id="flag-ignore-whitespace">
                             <label for="flag-ignore-whitespace">Ignore whitespace</label>
                         </div>
+                        <div class="flag-group">
+                            <input type="checkbox" id="flag-unicode" checked>
+                            <label for="flag-unicode">Unicode</label>
+                        </div>
                     </div>
+                </div>
+
+                <div class="input-group">
+                    <label for="debounce-delay">Update Delay (ms):</label>
+                    <input type="number" id="debounce-delay" value="300" min="100" max="2000" step="100" style="height: auto;">
                 </div>
 
                 <div class="input-group">

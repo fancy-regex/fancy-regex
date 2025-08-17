@@ -31,11 +31,13 @@ class FancyRegexPlayground {
             analysisDisplay: document.getElementById('analysis-display'),
             showParseTreeBtn: document.getElementById('show-parse-tree'),
             showAnalysisBtn: document.getElementById('show-analysis'),
+            debounceDelayInput: document.getElementById('debounce-delay'),
             flags: {
                 caseInsensitive: document.getElementById('flag-case-insensitive'),
                 multiLine: document.getElementById('flag-multi-line'),
                 dotMatchesNewline: document.getElementById('flag-dot-matches-newline'),
-                ignoreWhitespace: document.getElementById('flag-ignore-whitespace')
+                ignoreWhitespace: document.getElementById('flag-ignore-whitespace'),
+                unicode: document.getElementById('flag-unicode')
             }
         };
 
@@ -53,6 +55,12 @@ class FancyRegexPlayground {
             flag.addEventListener('change', () => this.debounceUpdate());
         });
 
+        // Debounce delay change handler
+        this.elements.debounceDelayInput.addEventListener('input', () => {
+            // No need to debounce the debounce delay change itself
+            this.updateResults();
+        });
+
         // Toggle button handlers
         this.elements.showParseTreeBtn.addEventListener('click', () => this.toggleParseTree());
         this.elements.showAnalysisBtn.addEventListener('click', () => this.toggleAnalysis());
@@ -60,7 +68,8 @@ class FancyRegexPlayground {
 
     debounceUpdate() {
         clearTimeout(this.debounceTimer);
-        this.debounceTimer = setTimeout(() => this.updateResults(), 300);
+        const delay = parseInt(this.elements.debounceDelayInput.value, 10) || 300;
+        this.debounceTimer = setTimeout(() => this.updateResults(), delay);
     }
 
     getFlags() {
@@ -69,7 +78,7 @@ class FancyRegexPlayground {
             multi_line: this.elements.flags.multiLine.checked,
             dot_matches_new_line: this.elements.flags.dotMatchesNewline.checked,
             ignore_whitespace: this.elements.flags.ignoreWhitespace.checked,
-            unicode: true
+            unicode: this.elements.flags.unicode.checked
         };
     }
 
@@ -99,8 +108,8 @@ class FancyRegexPlayground {
             const captures = find_captures(pattern, text, flags);
             
             this.displayResults(matches, captures, text);
-            this.updateParseTreeIfVisible(pattern);
-            this.updateAnalysisIfVisible(pattern);
+            this.updateParseTreeIfVisible(pattern, flags);
+            this.updateAnalysisIfVisible(pattern, flags);
 
         } catch (error) {
             this.displayError(error.toString());
@@ -112,7 +121,7 @@ class FancyRegexPlayground {
     async testRegexValidity(pattern, flags) {
         try {
             // Try to parse the regex first
-            parse_regex(pattern);
+            parse_regex(pattern, flags);
             return true;
         } catch (error) {
             this.displayError(`Pattern error: ${error.toString()}`);
@@ -211,21 +220,24 @@ class FancyRegexPlayground {
         }
     }
 
-    updateParseTreeIfVisible(pattern) {
+    updateParseTreeIfVisible(pattern, flags) {
         if (!this.elements.parseTreeSection.classList.contains('hidden')) {
-            this.updateParseTree(pattern);
+            this.updateParseTree(pattern, flags);
         }
     }
 
-    updateAnalysisIfVisible(pattern) {
+    updateAnalysisIfVisible(pattern, flags) {
         if (!this.elements.analysisSection.classList.contains('hidden')) {
-            this.updateAnalysis(pattern);
+            this.updateAnalysis(pattern, flags);
         }
     }
 
-    updateParseTree(pattern = null) {
+    updateParseTree(pattern = null, flags = null) {
         if (pattern === null) {
             pattern = this.elements.regexInput.value.trim();
+        }
+        if (flags === null) {
+            flags = this.getFlags();
         }
 
         if (!pattern) {
@@ -234,16 +246,19 @@ class FancyRegexPlayground {
         }
 
         try {
-            const parseTree = parse_regex(pattern);
+            const parseTree = parse_regex(pattern, flags);
             this.elements.parseTreeDisplay.textContent = parseTree;
         } catch (error) {
             this.elements.parseTreeDisplay.textContent = `Parse error: ${error.toString()}`;
         }
     }
 
-    updateAnalysis(pattern = null) {
+    updateAnalysis(pattern = null, flags = null) {
         if (pattern === null) {
             pattern = this.elements.regexInput.value.trim();
+        }
+        if (flags === null) {
+            flags = this.getFlags();
         }
 
         if (!pattern) {
@@ -252,7 +267,7 @@ class FancyRegexPlayground {
         }
 
         try {
-            const analysis = analyze_regex(pattern);
+            const analysis = analyze_regex(pattern, flags);
             this.elements.analysisDisplay.textContent = analysis;
         } catch (error) {
             this.elements.analysisDisplay.textContent = `Analysis error: ${error.toString()}`;
