@@ -1,4 +1,5 @@
 use fancy_regex::{Regex, RegexBuilder};
+use fancy_regex::internal::{FLAG_CASEI, FLAG_MULTI, FLAG_DOTNL, FLAG_IGNORE_SPACE, FLAG_UNICODE};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
@@ -85,12 +86,6 @@ fn build_regex(pattern: &str, flags: &RegexFlags) -> Result<Regex, JsValue> {
 
 // Helper function to compute regex flags for parse_tree_with_flags
 fn compute_regex_flags(flags: &RegexFlags) -> u32 {
-    const FLAG_CASEI: u32 = 1;
-    const FLAG_MULTI: u32 = 1 << 1;
-    const FLAG_DOTNL: u32 = 1 << 2;
-    const FLAG_IGNORE_SPACE: u32 = 1 << 4;
-    const FLAG_UNICODE: u32 = 1 << 5;
-    
     let mut result = 0;
     if flags.case_insensitive {
         result |= FLAG_CASEI;
@@ -110,20 +105,7 @@ fn compute_regex_flags(flags: &RegexFlags) -> u32 {
     result
 }
 
-#[wasm_bindgen]
-pub fn create_regex(pattern: &str, flags: JsValue) -> Result<JsValue, JsValue> {
-    let flags = get_flags(flags)?;
 
-    // Test build the regex to validate pattern and flags
-    let _regex = build_regex(pattern, &flags)?;
-    
-    // Store the pattern for later use since we can't serialize the regex directly
-    let regex_info = serde_json::json!({
-        "pattern": pattern,
-        "flags": flags
-    });
-    Ok(JsValue::from_str(&regex_info.to_string()))
-}
 
 #[wasm_bindgen]
 pub fn find_matches(pattern: &str, text: &str, flags: JsValue) -> Result<JsValue, JsValue> {
@@ -154,6 +136,9 @@ pub fn find_captures(pattern: &str, text: &str, flags: JsValue) -> Result<JsValu
     let flags = get_flags(flags)?;
     let regex = build_regex(pattern, &flags)?;
 
+    // Get capture group names once for this regex
+    let capture_names: Vec<Option<&str>> = regex.capture_names().collect();
+
     let mut all_captures = Vec::new();
 
     for caps_result in regex.captures_iter(text) {
@@ -167,10 +152,11 @@ pub fn find_captures(pattern: &str, text: &str, flags: JsValue) -> Result<JsValu
 
                 let mut captures = Vec::new();
                 for i in 0..caps.len() {
+                    let name = capture_names.get(i).and_then(|&name_opt| name_opt.map(|s| s.to_string()));
                     let capture = if let Some(m) = caps.get(i) {
                         CaptureGroup {
                             index: i,
-                            name: None, // Named groups aren't directly accessible by index
+                            name,
                             start: Some(m.start()),
                             end: Some(m.end()),
                             text: Some(m.as_str().to_string()),
@@ -178,7 +164,7 @@ pub fn find_captures(pattern: &str, text: &str, flags: JsValue) -> Result<JsValu
                     } else {
                         CaptureGroup {
                             index: i,
-                            name: None,
+                            name,
                             start: None,
                             end: None,
                             text: None,
