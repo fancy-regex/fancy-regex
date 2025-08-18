@@ -1921,9 +1921,9 @@ pub fn detect_possible_backref(re: &str) -> bool {
 pub mod internal {
     pub use crate::analyze::{analyze, can_compile_as_anchored};
     pub use crate::compile::compile;
+    pub use crate::flags::{FLAG_CASEI, FLAG_DOTNL, FLAG_IGNORE_SPACE, FLAG_MULTI, FLAG_UNICODE};
     pub use crate::optimize::optimize;
     pub use crate::vm::{run_default, run_trace, Insn, Prog};
-    pub use crate::flags::{FLAG_CASEI, FLAG_MULTI, FLAG_DOTNL, FLAG_IGNORE_SPACE, FLAG_UNICODE};
 }
 
 #[cfg(test)]

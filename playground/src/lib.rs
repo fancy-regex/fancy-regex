@@ -1,5 +1,5 @@
+use fancy_regex::internal::{FLAG_CASEI, FLAG_DOTNL, FLAG_IGNORE_SPACE, FLAG_MULTI, FLAG_UNICODE};
 use fancy_regex::{Regex, RegexBuilder};
-use fancy_regex::internal::{FLAG_CASEI, FLAG_MULTI, FLAG_DOTNL, FLAG_IGNORE_SPACE, FLAG_UNICODE};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
@@ -63,25 +63,24 @@ fn get_flags(flags: JsValue) -> Result<RegexFlags, JsValue> {
     if flags.is_undefined() {
         Ok(RegexFlags::default())
     } else {
-        serde_wasm_bindgen::from_value(flags).map_err(|e| {
-            JsValue::from_str(&format!("Invalid flags: {}", e))
-        })
+        serde_wasm_bindgen::from_value(flags)
+            .map_err(|e| JsValue::from_str(&format!("Invalid flags: {}", e)))
     }
 }
 
 // Helper function to build regex with flags
 fn build_regex(pattern: &str, flags: &RegexFlags) -> Result<Regex, JsValue> {
     let mut builder = RegexBuilder::new(pattern);
-    
+
     builder.case_insensitive(flags.case_insensitive);
     builder.multi_line(flags.multi_line);
     builder.dot_matches_new_line(flags.dot_matches_new_line);
     builder.ignore_whitespace(flags.ignore_whitespace);
     builder.unicode_mode(flags.unicode);
-    
-    builder.build().map_err(|e| {
-        JsValue::from_str(&format!("Regex compilation error: {}", e))
-    })
+
+    builder
+        .build()
+        .map_err(|e| JsValue::from_str(&format!("Regex compilation error: {}", e)))
 }
 
 // Helper function to compute regex flags for parse_tree_with_flags
@@ -105,8 +104,6 @@ fn compute_regex_flags(flags: &RegexFlags) -> u32 {
     result
 }
 
-
-
 #[wasm_bindgen]
 pub fn find_matches(pattern: &str, text: &str, flags: JsValue) -> Result<JsValue, JsValue> {
     let flags = get_flags(flags)?;
@@ -126,9 +123,8 @@ pub fn find_matches(pattern: &str, text: &str, flags: JsValue) -> Result<JsValue
         }
     }
 
-    serde_wasm_bindgen::to_value(&matches).map_err(|e| {
-        JsValue::from_str(&format!("Serialization error: {}", e))
-    })
+    serde_wasm_bindgen::to_value(&matches)
+        .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))
 }
 
 #[wasm_bindgen]
@@ -152,7 +148,9 @@ pub fn find_captures(pattern: &str, text: &str, flags: JsValue) -> Result<JsValu
 
                 let mut captures = Vec::new();
                 for i in 0..caps.len() {
-                    let name = capture_names.get(i).and_then(|&name_opt| name_opt.map(|s| s.to_string()));
+                    let name = capture_names
+                        .get(i)
+                        .and_then(|&name_opt| name_opt.map(|s| s.to_string()));
                     let capture = if let Some(m) = caps.get(i) {
                         CaptureGroup {
                             index: i,
@@ -182,16 +180,15 @@ pub fn find_captures(pattern: &str, text: &str, flags: JsValue) -> Result<JsValu
         }
     }
 
-    serde_wasm_bindgen::to_value(&all_captures).map_err(|e| {
-        JsValue::from_str(&format!("Serialization error: {}", e))
-    })
+    serde_wasm_bindgen::to_value(&all_captures)
+        .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))
 }
 
 #[wasm_bindgen]
 pub fn parse_regex(pattern: &str, flags: JsValue) -> Result<String, JsValue> {
     let flags = get_flags(flags)?;
     let regex_flags = compute_regex_flags(&flags);
-    
+
     match fancy_regex::Expr::parse_tree_with_flags(pattern, regex_flags) {
         Ok(tree) => Ok(format!("{:#?}", tree)),
         Err(e) => Err(JsValue::from_str(&format!("Parse error: {}", e))),
@@ -202,9 +199,9 @@ pub fn parse_regex(pattern: &str, flags: JsValue) -> Result<String, JsValue> {
 pub fn analyze_regex(pattern: &str, flags: JsValue) -> Result<String, JsValue> {
     let flags = get_flags(flags)?;
     let regex_flags = compute_regex_flags(&flags);
-    
+
     use fancy_regex::internal::{analyze, optimize};
-    
+
     match fancy_regex::Expr::parse_tree_with_flags(pattern, regex_flags) {
         Ok(mut tree) => {
             optimize(&mut tree);
