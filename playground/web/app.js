@@ -145,11 +145,15 @@ class FancyRegexPlayground {
             captures.forEach((captureSet, setIndex) => {
                 resultHtml += `<strong>Match ${setIndex + 1}:</strong><br>`;
                 captureSet.captures.forEach((capture, index) => {
-                    if (capture.text !== null) {
-                        resultHtml += `  Group ${index}: "${this.escapeHtml(capture.text)}" (${capture.start}-${capture.end})<br>`;
-                    } else {
-                        resultHtml += `  Group ${index}: <em>not captured</em><br>`;
-                    }
+                    let groupDisplay = `Group ${index}`;
+                    if (capture.name)
+                        groupDisplay += ` / ${capture.name}`;
+                    let captureResult;
+                    if (capture.text !== null)
+                        captureResult = `"${this.escapeHtml(capture.text)}" (${capture.start}-${capture.end})`;
+                    else
+                        captureResult = '<em>not captured</em>';
+                    resultHtml += `  ${groupDisplay}: ${captureResult}<br>`;
                 });
                 resultHtml += '<br>';
             });
