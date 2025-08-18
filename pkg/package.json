@@ -1,0 +1,21 @@
+{
+  "name": "fancy-regex-playground",
+  "type": "module",
+  "description": "WASM playground for fancy-regex",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fancy-regex/fancy-regex"
+  },
+  "files": [
+    "fancy_regex_playground_bg.wasm",
+    "fancy_regex_playground.js",
+    "fancy_regex_playground.d.ts"
+  ],
+  "main": "fancy_regex_playground.js",
+  "types": "fancy_regex_playground.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
