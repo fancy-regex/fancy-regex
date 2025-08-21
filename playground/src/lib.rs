@@ -105,29 +105,6 @@ fn compute_regex_flags(flags: &RegexFlags) -> u32 {
 }
 
 #[wasm_bindgen]
-pub fn find_matches(pattern: &str, text: &str, flags: JsValue) -> Result<JsValue, JsValue> {
-    let flags = get_flags(flags)?;
-    let regex = build_regex(pattern, &flags)?;
-
-    let mut matches = Vec::new();
-    for mat in regex.find_iter(text) {
-        match mat {
-            Ok(m) => {
-                matches.push(Match {
-                    start: m.start(),
-                    end: m.end(),
-                    text: m.as_str().to_string(),
-                });
-            }
-            Err(e) => return Err(JsValue::from_str(&format!("Match error: {}", e))),
-        }
-    }
-
-    serde_wasm_bindgen::to_value(&matches)
-        .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))
-}
-
-#[wasm_bindgen]
 pub fn find_captures(pattern: &str, text: &str, flags: JsValue) -> Result<JsValue, JsValue> {
     let flags = get_flags(flags)?;
     let regex = build_regex(pattern, &flags)?;

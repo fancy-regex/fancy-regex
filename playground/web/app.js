@@ -1,5 +1,4 @@
 import init, {
-    find_matches,
     find_captures,
     parse_regex,
     analyze_regex,
@@ -101,11 +100,11 @@ class FancyRegexPlayground {
             const isValid = await this.testRegexValidity(pattern, flags);
             if (!isValid) return;
 
-            // Find matches
-            const matches = find_matches(pattern, text, flags);
-            
-            // Find captures
+            // Find captures (which includes matches as full_match)
             const captures = find_captures(pattern, text, flags);
+            
+            // Extract matches from capture results
+            const matches = captures.map(capture => capture.full_match).filter(match => match !== null);
             
             this.displayResults(matches, captures, text);
             this.updateParseTreeIfVisible(pattern, flags);
