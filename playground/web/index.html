@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>fancy-regex Playground</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'SF Mono', 'Monaco', 'Consolas', 'Liberation Mono', 'Courier New', monospace;
+            line-height: 1.6;
+            color: #333;
+            background: #f5f5f5;
+        }
+
+        .header {
+            background: #2c3e50;
+            color: white;
+            padding: 1rem;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .header h1 {
+            margin-bottom: 0.5rem;
+            font-size: 2rem;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 1rem;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 1rem;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            min-height: calc(100vh - 120px);
+        }
+
+        .panel {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .panel-header {
+            background: #34495e;
+            color: white;
+            padding: 0.75rem 1rem;
+            font-weight: bold;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .panel-content {
+            flex: 1;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .input-group {
+            margin-bottom: 1rem;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: bold;
+            color: #2c3e50;
+            font-size: 0.9rem;
+        }
+
+        textarea, input[type="text"] {
+            width: 100%;
+            padding: 0.75rem;
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            font-family: inherit;
+            font-size: 0.9rem;
+            line-height: 1.4;
+            resize: vertical;
+            transition: border-color 0.2s;
+        }
+
+        textarea:focus, input[type="text"]:focus {
+            outline: none;
+            border-color: #3498db;
+        }
+
+        #regex-input {
+            height: 80px;
+            font-weight: bold;
+        }
+
+        #text-input {
+            height: 120px;
+        }
+
+        .flags-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .flag-group {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .flag-group input[type="checkbox"] {
+            width: auto;
+        }
+
+        .flag-group label {
+            margin: 0;
+            font-weight: normal;
+            font-size: 0.85rem;
+            cursor: pointer;
+        }
+
+        .output-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .output-section {
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .output-header {
+            background: #ecf0f1;
+            padding: 0.5rem 0.75rem;
+            font-weight: bold;
+            font-size: 0.85rem;
+            color: #2c3e50;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .output-content {
+            padding: 0.75rem;
+            background: #fafafa;
+            min-height: 60px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-size: 0.85rem;
+            line-height: 1.4;
+        }
+
+        .match-highlight {
+            background: #e74c3c;
+            color: white;
+            padding: 1px 2px;
+            border-radius: 2px;
+            font-weight: bold;
+        }
+
+        .capture-highlight {
+            background: #9b59b6;
+            color: white;
+            padding: 1px 2px;
+            border-radius: 2px;
+            font-weight: bold;
+        }
+
+        .error {
+            color: #e74c3c;
+            background: #fdf2f2;
+            padding: 0.75rem;
+            border-radius: 4px;
+            border: 1px solid #fecaca;
+            font-size: 0.85rem;
+        }
+
+        .success {
+            color: #27ae60;
+            font-weight: bold;
+        }
+
+        .info {
+            color: #7f8c8d;
+            font-style: italic;
+        }
+
+        .toggle-section {
+            margin-bottom: 1rem;
+        }
+
+        .toggle-btn {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: background-color 0.2s;
+        }
+
+        .toggle-btn:hover {
+            background: #2980b9;
+        }
+
+        .toggle-btn.active {
+            background: #27ae60;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .parse-tree {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 1rem;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            font-family: 'Courier New', monospace;
+            font-size: 0.8rem;
+            line-height: 1.3;
+            overflow-y: auto;
+        }
+
+        .loading {
+            opacity: 0.6;
+            pointer-events: none;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                grid-template-columns: 1fr;
+            }
+            
+            .flags-container {
+                grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            }
+        }
+
+        footer {
+            text-align: center;
+            padding: 1rem;
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            font-size: 0.9rem;
+            margin-top: 2rem;
+        }
+
+        footer a {
+            color: #ecf0f1;
+            text-decoration: none;
+        }
+
+        #highlighted-text {
+            white-space: pre-line;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🎯 fancy-regex Playground</h1>
+        <p>Test and explore regular expressions with advanced features like backreferences and lookaround</p>
+    </div>
+
+    <div class="container">
+        <!-- Input Panel -->
+        <div class="panel">
+            <div class="panel-header">Input</div>
+            <div class="panel-content">
+                <div class="input-group">
+                    <label for="regex-input">Regular Expression:</label>
+                    <textarea id="regex-input" placeholder="Enter your regex pattern here, e.g., (?&lt;word&gt;\w+)\s+\k&lt;word&gt;"></textarea>
+                </div>
+
+                <div class="input-group">
+                    <label>Flags:</label>
+                    <div class="flags-container">
+                        <div class="flag-group">
+                            <input type="checkbox" id="flag-case-insensitive">
+                            <label for="flag-case-insensitive">Case Insensitive</label>
+                        </div>
+                        <div class="flag-group">
+                            <input type="checkbox" id="flag-multi-line">
+                            <label for="flag-multi-line">Multi-line</label>
+                        </div>
+                        <div class="flag-group">
+                            <input type="checkbox" id="flag-dot-matches-newline">
+                            <label for="flag-dot-matches-newline">Dot matches newline</label>
+                        </div>
+                        <div class="flag-group">
+                            <input type="checkbox" id="flag-ignore-whitespace">
+                            <label for="flag-ignore-whitespace">Ignore whitespace</label>
+                        </div>
+                        <div class="flag-group" style="display: none;">
+                            <input type="checkbox" id="flag-unicode" checked>
+                            <label for="flag-unicode">Unicode</label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="input-group">
+                    <label for="debounce-delay">Update Delay (ms):</label>
+                    <input type="number" id="debounce-delay" value="300" min="100" max="2000" step="100" style="height: auto;">
+                </div>
+
+                <div class="input-group">
+                    <label for="text-input">Test Text:</label>
+                    <textarea id="text-input" placeholder="Enter the text you want to test the regex against..."></textarea>
+                </div>
+
+                <div class="toggle-section">
+                    <button id="show-parse-tree" class="toggle-btn">Show Parse Tree</button>
+                    <button id="show-analysis" class="toggle-btn">Show Analysis</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Output Panel -->
+        <div class="panel">
+            <div class="panel-header">Results</div>
+            <div class="panel-content">
+                <div class="output-container">
+                    <div class="output-section">
+                        <div class="output-header">Match Results</div>
+                        <div id="match-results" class="output-content">
+                            <div class="info">Enter a regex pattern and test text to see results</div>
+                        </div>
+                    </div>
+
+                    <div class="output-section">
+                        <div class="output-header">Highlighted Text</div>
+                        <div id="highlighted-text" class="output-content">
+                            <div class="info">Matches will be highlighted here</div>
+                        </div>
+                    </div>
+
+                    <div id="parse-tree-section" class="output-section hidden">
+                        <div class="output-header">Parse Tree</div>
+                        <div id="parse-tree-content" class="output-content">
+                            <div class="parse-tree" id="parse-tree-display"></div>
+                        </div>
+                    </div>
+
+                    <div id="analysis-section" class="output-section hidden">
+                        <div class="output-header">Analysis</div>
+                        <div id="analysis-content" class="output-content">
+                            <div class="parse-tree" id="analysis-display"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <span id="version">v0.16.1</span> | 
+        <a href="https://github.com/fancy-regex/fancy-regex" target="_blank">
+            📦 GitHub Repository
+        </a>
+    </footer>
+
+    <script type="module" src="app.js"></script>
+</body>
+</html>

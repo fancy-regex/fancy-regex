@@ -1,0 +1,19 @@
+# WASM build artifacts
+/pkg/
+/web/pkg/
+
+# Rust/Cargo
+target/
+Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local development
+node_modules/
+*.log
