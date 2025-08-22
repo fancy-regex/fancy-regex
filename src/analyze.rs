@@ -30,6 +30,11 @@ use crate::alloc::string::ToString;
 use crate::parse::ExprTree;
 use crate::{CompileError, Error, Expr, Result};
 
+#[cfg(not(feature = "std"))]
+use alloc::collections::BTreeMap as Map;
+#[cfg(feature = "std")]
+use std::collections::HashMap as Map;
+
 #[derive(Debug)]
 pub struct Info<'a> {
     pub(crate) start_group: usize,
@@ -67,6 +72,9 @@ impl<'a> Info<'a> {
 struct Analyzer<'a> {
     backrefs: &'a BitSet,
     group_ix: usize,
+    /// Stores the analysis info for each group by group number
+    // NOTE: uses a Map instead of a Vec because sometimes we start from capture group 1 othertimes 0
+    group_info: Map<usize, (usize, bool)>, // (min_size, const_size)
 }
 
 impl<'a> Analyzer<'a> {
@@ -123,6 +131,8 @@ impl<'a> Analyzer<'a> {
                 let child_info = self.visit(child)?;
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
+                // Store the group info for use by backrefs
+                self.group_info.insert(group, (min_size, const_size));
                 // If there's a backref to this group, we potentially have to backtrack within the
                 // group. E.g. with `(x|xy)\1` and input `xyxy`, `x` matches but then the backref
                 // doesn't, so we have to backtrack and try `xy`.
@@ -153,6 +163,11 @@ impl<'a> Analyzer<'a> {
             Expr::Backref { group, .. } => {
                 if group == 0 {
                     return Err(Error::CompileError(CompileError::InvalidBackref(group)));
+                }
+                // Look up the referenced group's size information
+                if let Some(&(group_min_size, group_const_size)) = self.group_info.get(&group) {
+                    min_size = group_min_size;
+                    const_size = group_const_size;
                 }
                 hard = true;
             }
@@ -239,6 +254,7 @@ pub fn analyze<'a>(tree: &'a ExprTree, start_group: usize) -> Result<Info<'a>> {
     let mut analyzer = Analyzer {
         backrefs: &tree.backrefs,
         group_ix: start_group,
+        group_info: Map::new(),
     };
 
     let analyzed = analyzer.visit(&tree.expr);
@@ -480,6 +496,50 @@ mod tests {
 
         let tree = Expr::parse_tree(r"^").unwrap();
         assert_eq!(can_compile_as_anchored(&tree.expr), true);
+    }
+
+    #[test]
+    fn backref_inherits_group_size_info() {
+        // Test that backrefs properly inherit min_size and const_size from referenced groups
+        let tree = Expr::parse_tree(r"(abc)\1").unwrap();
+        let info = analyze(&tree, 1).unwrap();
+        // The concatenation should have min_size = 3 + 3 = 6 (group + backref)
+        assert_eq!(info.min_size, 6);
+        assert!(info.const_size);
+
+        // Test with a variable-length group
+        let tree = Expr::parse_tree(r"(a+)\1").unwrap();
+        let info = analyze(&tree, 1).unwrap();
+        // The group has min_size = 1, but const_size = false due to the +
+        // So the total should be min_size = 2, const_size = false
+        assert_eq!(info.min_size, 2);
+        assert!(!info.const_size);
+
+        // Test with optional group
+        let tree = Expr::parse_tree(r"(a?)\1").unwrap();
+        let info = analyze(&tree, 1).unwrap();
+        // Both group and backref can be empty, so min_size = 0
+        assert_eq!(info.min_size, 0);
+        assert!(!info.const_size);
+    }
+
+    #[test]
+    fn backref_forward_reference() {
+        // Test forward references (backref before group definition)
+        // These should use conservative defaults but still work
+        let tree = Expr::parse_tree(r"\1(abc)").unwrap();
+        let info = analyze(&tree, 1).unwrap();
+        // Forward ref gets min_size=0, group gets min_size=3, total=3
+        assert_eq!(info.min_size, 3);
+        // Forward ref sets const_size=false, so overall is false
+        assert!(!info.const_size);
+    }
+
+    #[test]
+    fn backref_in_lookbehind() {
+        assert!(!analyze(&Expr::parse_tree(r"(hello)(?<=\b\1)").unwrap(), 1).is_err());
+        assert!(!analyze(&Expr::parse_tree(r"(..)(?<=\1\1)").unwrap(), 1).is_err());
+        assert!(!analyze(&Expr::parse_tree(r"(abc)(?<=\1)def").unwrap(), 1).is_err());
     }
 
     #[test]
