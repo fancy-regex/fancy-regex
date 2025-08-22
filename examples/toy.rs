@@ -129,8 +129,8 @@ fn graph(re: &str, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
 
 fn show_analysis(re: &str, writer: &mut Formatter<'_>) -> Result {
     let mut tree = Expr::parse_tree(&re).unwrap();
-    optimize(&mut tree);
-    let a = analyze(&tree, 1);
+    let requires_capture_group_fixup = optimize(&mut tree);
+    let a = analyze(&tree, if requires_capture_group_fixup { 0 } else { 1 });
     write!(writer, "{:#?}\n", a)
 }
 
@@ -245,7 +245,15 @@ digraph G {
 
     #[test]
     fn test_backref_analysis() {
-        assert_analysis_succeeds("a+(?<b>b*)(?=c)\\k<b>");
+        let output = assert_analysis_succeeds("a+(?<b>b*)(?=c)\\k<b>");
+        assert!(output.contains("start_group: 1,"));
+        assert!(!output.contains("start_group: 0,"));
+    }
+
+    #[test]
+    fn test_analysis_of_optimized_capture_group_0() {
+        let output = assert_analysis_succeeds("a+(?=b)");
+        assert!(output.contains("start_group: 0,"));
     }
 
     #[test]
@@ -312,7 +320,7 @@ digraph G {
         assert_eq!(&output, &expected);
     }
 
-    fn assert_analysis_succeeds(re: &str) {
+    fn assert_analysis_succeeds(re: &str) -> String {
         use crate::AnalyzeFormatterWrapper;
         let mut buf = Vec::new();
         write!(&mut buf, "{}", AnalyzeFormatterWrapper { regex: &re })
@@ -320,5 +328,7 @@ digraph G {
         let output = String::from_utf8(buf).expect("string not utf8");
         println!("{}", output);
         assert!(&output.starts_with("Ok(\n    Info {"));
+
+        output
     }
 }
