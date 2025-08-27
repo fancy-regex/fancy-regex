@@ -243,6 +243,7 @@ enum RegexImpl {
         options: RegexOptions,
         /// Some optimizations avoid the VM, but need to use an extra capture group to represent the match boundaries
         explicit_capture_group_0: bool,
+        debug_pattern: String,
     },
     Fancy {
         prog: Prog,
@@ -751,10 +752,11 @@ impl Regex {
                 inner: RegexImpl::Wrap {
                     inner,
                     options: RegexOptions {
-                        pattern: re_cooked.clone(),
+                        pattern: options.pattern,
                         ..options
                     },
                     explicit_capture_group_0: requires_capture_group_fixup,
+                    debug_pattern: re_cooked,
                 },
                 named_groups: Arc::new(tree.named_groups),
             });
@@ -1058,14 +1060,14 @@ impl Regex {
     pub fn debug_print(&self, writer: &mut Formatter<'_>) -> fmt::Result {
         match &self.inner {
             RegexImpl::Wrap {
-                options,
+                debug_pattern,
                 explicit_capture_group_0,
                 ..
             } => {
                 write!(
                     writer,
                     "wrapped Regex {:?}, explicit_capture_group_0: {:}",
-                    options.pattern, *explicit_capture_group_0
+                    debug_pattern, *explicit_capture_group_0
                 )
             }
             RegexImpl::Fancy { prog, .. } => prog.debug_print(writer),
@@ -2039,11 +2041,13 @@ mod tests {
 
     #[test]
     fn trailing_positive_lookahead_wrap_capture_group_fixup() {
-        let s = r"(a+)(?=c)";
+        let s = r"a+(?=c)";
         let regex = s.parse::<Regex>().unwrap();
         assert!(matches!(regex.inner,
             RegexImpl::Wrap { explicit_capture_group_0: true, .. }),
             "trailing positive lookahead for an otherwise easy pattern should avoid going through the VM");
+        assert_eq!(s, regex.as_str());
+        assert_eq!(s, format!("{:?}", regex));
     }
 
     #[test]
@@ -2054,6 +2058,9 @@ mod tests {
             matches!(regex.inner, RegexImpl::Wrap { explicit_capture_group_0: false, .. }),
             "easy pattern should avoid going through the VM, and capture group 0 should be implicit"
         );
+
+        assert_eq!(s, regex.as_str());
+        assert_eq!(s, format!("{:?}", regex));
     }
 
     #[test]
@@ -2064,6 +2071,8 @@ mod tests {
             matches!(regex.inner, RegexImpl::Fancy { .. }),
             "hard regex should be compiled into a VM"
         );
+        assert_eq!(s, regex.as_str());
+        assert_eq!(s, format!("{:?}", regex));
     }
 
     /*
