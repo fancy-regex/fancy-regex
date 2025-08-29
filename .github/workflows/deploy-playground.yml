@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -17,13 +17,10 @@ concurrency:
 
 jobs:
   build-and-deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         
       - name: Setup Rust
         uses: actions-rs/toolchain@v1
@@ -38,16 +35,14 @@ jobs:
         run: |
           cd playground
           wasm-pack build --target web --out-dir pkg --release
-          cp -r pkg web/
+          cp -r pkg/ web/
+          touch web/.nojekyll
+          rm web/pkg/.gitignore
+          ls -al web/*
           
-      - name: Setup Pages
-        uses: actions/configure-pages@v4
-        
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+      - name: Deploy to gh-pages
+        uses: JamesIves/github-pages-deploy-action@v4.6.9
         with:
-          path: './playground/web'
-          
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          branch: gh-pages
+          folder: playground/web
+          clean: true

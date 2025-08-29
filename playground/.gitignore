@@ -1,6 +1,5 @@
 # WASM build artifacts
 /pkg/
-/web/pkg/
 
 # Rust/Cargo
 target/
