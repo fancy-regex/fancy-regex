@@ -22,7 +22,6 @@ The playground includes:
 - Support for all fancy-regex features (backreferences, lookaround, etc.)
 - Visual parse tree and analysis output
 - Configurable regex flags
-- Mobile-friendly responsive design
 
 A goal is to be as efficient as possible. For a given regex, the NFA
 implementation has asymptotic running time linear in the length of the
