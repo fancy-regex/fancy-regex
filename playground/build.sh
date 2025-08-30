@@ -20,8 +20,12 @@ VERSION=$(grep '^version = ' ../Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
 echo "📝 Extracted version: $VERSION"
 
 # Update version in HTML file
-echo "🔧 Updating version in index.html..."
-sed -i.bak "s/<span id=\"version\">.*<\/span>/<span id=\"version\">v$VERSION<\/span>/" web/index.html
+if [ -z "$1" ]; then
+    echo "🛈 No argument supplied. Skipping updating version in index.html - leaving placeholder"
+else
+    echo "🔧 Updating version in index.html..."
+    sed -i "s/<span id=\"version\">.*<\/span>/<span id=\"version\">v$VERSION<\/span>/" web/index.html
+fi
 
 # Build the WASM module
 echo "🚀 Building WASM module..."

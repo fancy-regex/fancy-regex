@@ -28,14 +28,10 @@ jobs:
           toolchain: stable
           targets: wasm32-unknown-unknown
           
-      - name: Install wasm-pack
-        run: cargo install wasm-pack
-        
       - name: Build WASM
         run: |
           cd playground
-          wasm-pack build --target web --out-dir pkg --release
-          cp -r pkg/ web/
+          ./build.sh update-version
           touch web/.nojekyll
           rm web/pkg/.gitignore
           ls -al web/*

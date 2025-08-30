@@ -25,6 +25,7 @@ A browser-based interactive playground for testing and exploring the [fancy-rege
 1. **Prerequisites**: 
    - Rust (latest stable)
    - `wasm-pack` - Install with: `cargo install wasm-pack`
+     (will be installed by the `build.sh` script if not present)
    - Python 3 (for local server)
 
 2. **Clone and build**:
@@ -32,11 +33,7 @@ A browser-based interactive playground for testing and exploring the [fancy-rege
    git clone https://github.com/fancy-regex/fancy-regex.git
    cd fancy-regex/playground
    
-   # Build the WASM module
-   wasm-pack build --target web --out-dir pkg
-   
-   # Copy WASM files to web directory
-   cp -r pkg web/
+   ./build.sh
    
    # Start local server
    python3 serve.py
@@ -44,106 +41,6 @@ A browser-based interactive playground for testing and exploring the [fancy-rege
 
 3. **Open in browser**: Visit `http://localhost:8000`
 
-### Building for Production
-
-To build optimized WASM for production deployment:
-
-```bash
-cd playground
-wasm-pack build --target web --out-dir pkg --release
-cp -r pkg web/
-```
-
-## 📦 Publishing to GitHub Pages
-
-### Automatic Deployment (Recommended)
-
-1. **Create a GitHub Actions workflow** (`.github/workflows/deploy-playground.yml`):
-
-```yaml
-name: Deploy Playground to GitHub Pages
-
-on:
-  push:
-    branches: [ main ]
-    paths: [ 'playground/**' ]
-  workflow_dispatch:
-
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: "pages"
-  cancel-in-progress: false
-
-jobs:
-  build-and-deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        
-      - name: Setup Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          target: wasm32-unknown-unknown
-          
-      - name: Install wasm-pack
-        run: cargo install wasm-pack
-        
-      - name: Build WASM
-        run: |
-          cd playground
-          wasm-pack build --target web --out-dir pkg --release
-          cp -r pkg web/
-          
-      - name: Setup Pages
-        uses: actions/configure-pages@v4
-        
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: './playground/web'
-          
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
-```
-
-2. **Enable GitHub Pages**:
-   - Go to your repository settings
-   - Navigate to "Pages" section
-   - Set source to "GitHub Actions"
-   - The playground will be available at `https://yourusername.github.io/fancy-regex/`
-
-### Manual Deployment
-
-If you prefer manual deployment:
-
-1. **Build the playground**:
-   ```bash
-   cd playground
-   wasm-pack build --target web --out-dir pkg --release
-   cp -r pkg web/
-   ```
-
-2. **Create `gh-pages` branch**:
-   ```bash
-   git checkout --orphan gh-pages
-   git rm -rf .
-   cp -r playground/web/* .
-   git add .
-   git commit -m "Deploy playground to GitHub Pages"
-   git push origin gh-pages
-   ```
-
-3. **Configure GitHub Pages** to use the `gh-pages` branch
 
 ## 🎯 Usage Examples
 
@@ -218,8 +115,7 @@ playground/
 
 3. **Rebuild**:
    ```bash
-   wasm-pack build --target web --out-dir pkg
-   cp -r pkg web/
+   ./build.sh
    ```
 
 ### Testing
