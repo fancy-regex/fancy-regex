@@ -139,8 +139,10 @@ pub enum Insn {
     End,
     /// Match any character (including newline)
     Any,
-    /// Match any character (not including newline)
-    AnyNoNL,
+    /// Match any character excluding a Line Feed (`\n`) but not other newline characters
+    AnyExceptLF,
+    /// Match any character excluding a Line Feed (`\n`) or a Carriage Return (`\r`)
+    AnyExceptCRLF,
     /// Assertions
     Assertion(Assertion),
     /// Match the literal string at the current index
@@ -546,8 +548,15 @@ pub(crate) fn run(
                         break 'fail;
                     }
                 }
-                Insn::AnyNoNL => {
+                Insn::AnyExceptLF => {
                     if ix < s.len() && s.as_bytes()[ix] != b'\n' {
+                        ix += codepoint_len_at(s, ix);
+                    } else {
+                        break 'fail;
+                    }
+                }
+                Insn::AnyExceptCRLF => {
+                    if ix < s.len() && (s.as_bytes()[ix] != b'\r' || s.as_bytes()[ix] != b'\n') {
                         ix += codepoint_len_at(s, ix);
                     } else {
                         break 'fail;
