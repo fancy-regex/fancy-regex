@@ -37,7 +37,7 @@ pub struct MatchResult {
     pub captures: Vec<CaptureGroup>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct RegexFlags {
     pub case_insensitive: bool,
     pub multi_line: bool,
@@ -59,17 +59,16 @@ impl Default for RegexFlags {
 }
 
 // Helper function to deserialize flags or use default
-fn get_flags(flags: JsValue) -> Result<RegexFlags, JsValue> {
+fn get_flags(flags: JsValue) -> Result<RegexFlags, String> {
     if flags.is_undefined() {
         Ok(RegexFlags::default())
     } else {
-        serde_wasm_bindgen::from_value(flags)
-            .map_err(|e| JsValue::from_str(&format!("Invalid flags: {}", e)))
+        serde_wasm_bindgen::from_value(flags).map_err(|e| format!("Invalid flags: {}", e))
     }
 }
 
 // Helper function to build regex with flags
-fn build_regex(pattern: &str, flags: &RegexFlags) -> Result<Regex, JsValue> {
+fn build_regex(pattern: &str, flags: &RegexFlags) -> Result<Regex, String> {
     let mut builder = RegexBuilder::new(pattern);
 
     builder.case_insensitive(flags.case_insensitive);
@@ -80,7 +79,7 @@ fn build_regex(pattern: &str, flags: &RegexFlags) -> Result<Regex, JsValue> {
 
     builder
         .build()
-        .map_err(|e| JsValue::from_str(&format!("Regex compilation error: {}", e)))
+        .map_err(|e| format!("Regex compilation error: {}", e))
 }
 
 // Helper function to compute regex flags for parse_tree_with_flags
@@ -105,7 +104,7 @@ fn compute_regex_flags(flags: &RegexFlags) -> u32 {
 }
 
 #[wasm_bindgen]
-pub fn find_captures(pattern: &str, text: &str, flags: JsValue) -> Result<JsValue, JsValue> {
+pub fn find_captures(pattern: &str, text: &str, flags: JsValue) -> Result<JsValue, String> {
     let flags = get_flags(flags)?;
     let regex = build_regex(pattern, &flags)?;
 
@@ -153,27 +152,26 @@ pub fn find_captures(pattern: &str, text: &str, flags: JsValue) -> Result<JsValu
                     captures,
                 });
             }
-            Err(e) => return Err(JsValue::from_str(&format!("Capture error: {}", e))),
+            Err(e) => return Err(format!("Capture error: {}", e)),
         }
     }
 
-    serde_wasm_bindgen::to_value(&all_captures)
-        .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))
+    serde_wasm_bindgen::to_value(&all_captures).map_err(|e| format!("Serialization error: {}", e))
 }
 
 #[wasm_bindgen]
-pub fn parse_regex(pattern: &str, flags: JsValue) -> Result<String, JsValue> {
+pub fn parse_regex(pattern: &str, flags: JsValue) -> Result<String, String> {
     let flags = get_flags(flags)?;
     let regex_flags = compute_regex_flags(&flags);
 
     match fancy_regex::Expr::parse_tree_with_flags(pattern, regex_flags) {
         Ok(tree) => Ok(format!("{:#?}", tree)),
-        Err(e) => Err(JsValue::from_str(&format!("Parse error: {}", e))),
+        Err(e) => Err(format!("Parse error: {}", e)),
     }
 }
 
 #[wasm_bindgen]
-pub fn analyze_regex(pattern: &str, flags: JsValue) -> Result<String, JsValue> {
+pub fn analyze_regex(pattern: &str, flags: JsValue) -> Result<String, String> {
     let flags = get_flags(flags)?;
     let regex_flags = compute_regex_flags(&flags);
 
@@ -184,21 +182,21 @@ pub fn analyze_regex(pattern: &str, flags: JsValue) -> Result<String, JsValue> {
             let requires_capture_group_fixup = optimize(&mut tree);
             match analyze(&tree, requires_capture_group_fixup) {
                 Ok(info) => Ok(format!("{:#?}", info)),
-                Err(e) => Err(JsValue::from_str(&format!("Analysis error: {}", e))),
+                Err(e) => Err(format!("Analysis error: {}", e)),
             }
         }
-        Err(e) => Err(JsValue::from_str(&format!("Parse error: {}", e))),
+        Err(e) => Err(format!("Parse error: {}", e)),
     }
 }
 
 #[wasm_bindgen]
-pub fn is_match(pattern: &str, text: &str, flags: JsValue) -> Result<bool, JsValue> {
+pub fn is_match(pattern: &str, text: &str, flags: JsValue) -> Result<bool, String> {
     let flags = get_flags(flags)?;
     let regex = build_regex(pattern, &flags)?;
 
     match regex.is_match(text) {
         Ok(result) => Ok(result),
-        Err(e) => Err(JsValue::from_str(&format!("Match error: {}", e))),
+        Err(e) => Err(format!("Match error: {}", e)),
     }
 }
 
