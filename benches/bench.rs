@@ -56,13 +56,13 @@ fn analyze_literal_re(c: &mut Criterion) {
     let re = "^\\\\([!-/:-@\\[-`\\{-~aftnrv]|[0-7]{1,3}|x[0-9a-fA-F]{2}|x\\{[0-9a-fA-F]{1,6}\\})";
     let tree = Expr::parse_tree(re).unwrap();
     c.bench_function("analyze_literal_re", |b| {
-        b.iter(|| analyze(&tree, 1).unwrap())
+        b.iter(|| analyze(&tree, false).unwrap())
     });
 }
 
 fn run_backtrack(c: &mut Criterion) {
     let tree = Expr::parse_tree("^.*?(([ab]+)\\1b)").unwrap();
-    let a = analyze(&tree, 0).unwrap();
+    let a = analyze(&tree, true).unwrap();
     let p = compile(&a, true).unwrap();
     c.bench_function("run_backtrack", |b| {
         b.iter(|| {
@@ -77,7 +77,7 @@ fn run_backtrack(c: &mut Criterion) {
 // implementations, see README.md:
 fn run_tricky(c: &mut Criterion) {
     let tree = Expr::parse_tree("(a|b|ab)*bc").unwrap();
-    let a = analyze(&tree, 1).unwrap();
+    let a = analyze(&tree, false).unwrap();
     let p = compile(&a, false).unwrap();
     let mut s = String::new();
     for _ in 0..28 {
@@ -89,7 +89,7 @@ fn run_tricky(c: &mut Criterion) {
 
 fn run_backtrack_limit(c: &mut Criterion) {
     let tree = Expr::parse_tree("(?i)(a|b|ab)*(?>c)").unwrap();
-    let a = analyze(&tree, 1).unwrap();
+    let a = analyze(&tree, false).unwrap();
     let p = compile(&a, false).unwrap();
     let s = "abababababababababababababababababababababababababababab";
     c.bench_function("run_backtrack_limit", |b| {

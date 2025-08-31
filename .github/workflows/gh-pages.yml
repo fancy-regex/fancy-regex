@@ -1,0 +1,44 @@
+name: Deploy Playground to GitHub Pages
+
+on:
+  push:
+    branches: [ main ]
+    paths: [ 'playground/**' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+          
+      - name: Build WASM
+        run: |
+          cd playground
+          ./build.sh update-version
+          touch web/.nojekyll
+          rm web/pkg/.gitignore
+          ls -al web/*
+          
+      - name: Deploy to gh-pages
+        uses: JamesIves/github-pages-deploy-action@v4.7.3
+        with:
+          branch: gh-pages
+          folder: playground/web
+          clean: true
