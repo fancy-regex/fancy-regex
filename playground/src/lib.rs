@@ -182,7 +182,7 @@ pub fn analyze_regex(pattern: &str, flags: JsValue) -> Result<String, JsValue> {
     match fancy_regex::Expr::parse_tree_with_flags(pattern, regex_flags) {
         Ok(mut tree) => {
             let requires_capture_group_fixup = optimize(&mut tree);
-            match analyze(&tree, if requires_capture_group_fixup { 0 } else { 1 }) {
+            match analyze(&tree, requires_capture_group_fixup) {
                 Ok(info) => Ok(format!("{:#?}", info)),
                 Err(e) => Err(JsValue::from_str(&format!("Analysis error: {}", e))),
             }

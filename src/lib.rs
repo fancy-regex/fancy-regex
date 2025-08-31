@@ -737,7 +737,7 @@ impl Regex {
 
         // try to optimize the expression tree
         let requires_capture_group_fixup = optimize(&mut tree);
-        let info = analyze(&tree, if requires_capture_group_fixup { 0 } else { 1 })?;
+        let info = analyze(&tree, requires_capture_group_fixup)?;
 
         if !info.hard {
             // easy case, wrap regex
