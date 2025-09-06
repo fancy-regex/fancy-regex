@@ -4,3 +4,4 @@ pub const FLAG_DOTNL: u32 = 1 << 2;
 pub const FLAG_SWAP_GREED: u32 = 1 << 3;
 pub const FLAG_IGNORE_SPACE: u32 = 1 << 4;
 pub const FLAG_UNICODE: u32 = 1 << 5;
+pub const FLAG_ONIG_MODE: u32 = 1 << 6;
