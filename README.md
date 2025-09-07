@@ -92,22 +92,30 @@ When such features are present, the library performs an analysis to determine wh
 
 This analysis operates in two phases:
 
-1. **Bottom-Up Analysis**: Each subexpression is analyzed to determine three key properties:
+### Phase 1 - Bottom-Up Analysis
 
-  - *hard*: Whether the subexpression requires backtracking features (backreferences, look-around, atomic groups, conditionals)
-  - *minimum size*: The minimum number of characters this subexpression will match
-  - *constant size*: Whether the subexpression always matches the same number of characters
+Each subexpression is analyzed to determine three key properties:
 
-2. **Top-Down Compilation**: The compilation phase proceeds from the root of the expression, passing a "hard context" that flows from parent to child expressions. This context indicates whether match length variations will affect backtracking decisions.
+- *hard*: Whether the subexpression requires backtracking features (backreferences, look-around, atomic groups, conditionals)
+- *minimum size*: The minimum number of characters this subexpression will match
+- *constant size*: Whether the subexpression always matches the same number of characters
 
-  *Delegation Strategy*: If both the subexpression and context are "easy", the compiler generates a `Delegate` instruction to offload work to the high-performance NFA engine. Otherwise, it generates explicit VM instructions.
+### Phase 2 - Top-Down Compilation
 
-  *Concatenation Optimization*: For sequences of subexpressions, the compiler employs a sophisticated strategy:
-    1. Identify a prefix of constant-size, easy subexpressions that can be safely delegated (because they won't affect backtracking)
-    2. If the context is easy, identify a suffix of easy subexpressions for delegation
-    3. Compile the remaining "hard" middle section with explicit backtracking instructions
-    4. The hard context flows from right to left - only the rightmost hard subexpression gets an easy context
-  This ensures maximum delegation while preserving correct backtracking semantics.
+The compilation phase proceeds from the root of the expression, passing a "hard context" that flows from parent to child expressions. This context indicates whether match length variations will affect backtracking decisions.
+
+*Delegation Strategy*: If both the subexpression and context are "easy", the compiler generates a `Delegate` instruction to offload work to the high-performance NFA engine. Otherwise, it generates explicit VM instructions.
+
+*Concatenation Optimization*: For sequences of subexpressions, the compiler employs a sophisticated strategy:
+
+1. Identify a prefix of constant-size, easy subexpressions that can be safely delegated (because they won't affect backtracking)
+2. If the context is easy, identify a suffix of easy subexpressions for delegation
+3. Compile the remaining "hard" middle section with explicit backtracking instructions
+4. The hard context flows from right to left - only the rightmost hard subexpression gets an easy context
+
+This ensures maximum delegation while preserving correct backtracking semantics.
+
+### Summary
 
 In summary, the system efficiently combines backtracking and automaton-based matching by delegating as much work as possible to the underlying high-performance NFA engine, only resorting to backtracking where strictly necessary. This hybrid approach provides both expressive power and performance for advanced regular expression features.
 
