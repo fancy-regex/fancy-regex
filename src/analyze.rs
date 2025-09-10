@@ -69,12 +69,17 @@ impl<'a> Info<'a> {
     }
 }
 
+struct SizeInfo {
+    min_size: usize,
+    const_size: bool,
+}
+
 struct Analyzer<'a> {
     backrefs: &'a BitSet,
     group_ix: usize,
     /// Stores the analysis info for each group by group number
     // NOTE: uses a Map instead of a Vec because sometimes we start from capture group 1 othertimes 0
-    group_info: Map<usize, (usize, bool)>, // (min_size, const_size)
+    group_info: Map<usize, SizeInfo>,
 }
 
 impl<'a> Analyzer<'a> {
@@ -132,7 +137,13 @@ impl<'a> Analyzer<'a> {
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
                 // Store the group info for use by backrefs
-                self.group_info.insert(group, (min_size, const_size));
+                self.group_info.insert(
+                    group,
+                    SizeInfo {
+                        min_size,
+                        const_size,
+                    },
+                );
                 // If there's a backref to this group, we potentially have to backtrack within the
                 // group. E.g. with `(x|xy)\1` and input `xyxy`, `x` matches but then the backref
                 // doesn't, so we have to backtrack and try `xy`.
@@ -165,7 +176,11 @@ impl<'a> Analyzer<'a> {
                     return Err(Error::CompileError(CompileError::InvalidBackref(group)));
                 }
                 // Look up the referenced group's size information
-                if let Some(&(group_min_size, group_const_size)) = self.group_info.get(&group) {
+                if let Some(&SizeInfo {
+                    min_size: group_min_size,
+                    const_size: group_const_size,
+                }) = self.group_info.get(&group)
+                {
                     min_size = group_min_size;
                     const_size = group_const_size;
                 }
