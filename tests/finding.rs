@@ -75,6 +75,11 @@ fn negative_lookbehind_variable_sized_alt() {
 }
 
 #[test]
+fn lookbehind_containing_const_size_backref() {
+    assert_eq!(find(r"(..)(?<=\1\1)", "yyxxxx"), Some((4, 6)));
+}
+
+#[test]
 fn lookahead_looks_left() {
     assert_eq!(find(r"a(?=\b)", "ab"), None);
     assert_eq!(find(r"a(?=\b)", "a."), Some((0, 1)));
