@@ -82,14 +82,14 @@ fn main() {
             }
         } else if cmd == "trace" {
             let re = args.next().expect("expected regexp argument");
-            let prog = prog(&re, 1);
+            let prog = prog(&re);
             let text = args.next().expect("expected text argument");
             run_trace(&prog, &text, 0).unwrap();
         } else if cmd == "trace-inner" {
             let re = args.next().expect("expected regexp argument");
             let tree = Expr::parse_tree(&re).unwrap();
             let text = args.next().expect("expected text argument");
-            let a = analyze(&tree, 1).unwrap();
+            let a = analyze(&tree, false).unwrap();
             let p = compile(&a, true).unwrap();
             run_trace(&p, &text, 0).unwrap();
         } else if cmd == "graph" {
@@ -102,7 +102,7 @@ fn main() {
 }
 
 fn graph(re: &str, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
-    let prog = prog(re, 1);
+    let prog = prog(re);
     write!(writer, "digraph G {{\n")?;
     for (i, insn) in prog.body.iter().enumerate() {
         let label = format!("{:?}", insn)
@@ -129,8 +129,8 @@ fn graph(re: &str, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
 
 fn show_analysis(re: &str, writer: &mut Formatter<'_>) -> Result {
     let mut tree = Expr::parse_tree(&re).unwrap();
-    optimize(&mut tree);
-    let a = analyze(&tree, 1);
+    let requires_capture_group_fixup = optimize(&mut tree);
+    let a = analyze(&tree, requires_capture_group_fixup);
     write!(writer, "{:#?}\n", a)
 }
 
@@ -139,13 +139,13 @@ fn show_compiled_program(re: &str, writer: &mut Formatter<'_>) -> Result {
     r.debug_print(writer)
 }
 
-fn prog(re: &str, start_group: usize) -> Prog {
+fn prog(re: &str) -> Prog {
     // one thing to note here is that we want the prog, but in lib.rs,
     // constructing a regex might not produce a prog - it may be wrapped Regex instead,
     // which means that "toy" behaves differently to tests etc.
     let mut tree = Expr::parse_tree(re).expect("Expected parsing regex to work");
-    optimize(&mut tree);
-    let result = analyze(&tree, start_group).expect("Expected analyze to succeed");
+    let requires_capture_group_fixup = optimize(&mut tree);
+    let result = analyze(&tree, requires_capture_group_fixup).expect("Expected analyze to succeed");
     compile(&result, can_compile_as_anchored(&tree.expr)).expect("Expected compile to succeed")
 }
 
