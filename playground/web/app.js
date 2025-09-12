@@ -30,7 +30,6 @@ class FancyRegexPlayground {
             analysisDisplay: document.getElementById('analysis-display'),
             showParseTreeBtn: document.getElementById('show-parse-tree'),
             showAnalysisBtn: document.getElementById('show-analysis'),
-            debounceDelayInput: document.getElementById('debounce-delay'),
             flags: {
                 caseInsensitive: document.getElementById('flag-case-insensitive'),
                 multiLine: document.getElementById('flag-multi-line'),
@@ -54,12 +53,6 @@ class FancyRegexPlayground {
             flag.addEventListener('change', () => this.debounceUpdate());
         });
 
-        // Debounce delay change handler
-        this.elements.debounceDelayInput.addEventListener('input', () => {
-            // No need to debounce the debounce delay change itself
-            this.updateResults();
-        });
-
         // Toggle button handlers
         this.elements.showParseTreeBtn.addEventListener('click', () => this.toggleParseTree());
         this.elements.showAnalysisBtn.addEventListener('click', () => this.toggleAnalysis());
@@ -67,8 +60,8 @@ class FancyRegexPlayground {
 
     debounceUpdate() {
         clearTimeout(this.debounceTimer);
-        const delay = parseInt(this.elements.debounceDelayInput.value, 10) || 300;
-        this.debounceTimer = setTimeout(() => this.updateResults(), delay);
+        const delayMs = 300;
+        this.debounceTimer = setTimeout(() => this.updateResults(), delayMs);
     }
 
     getFlags() {
@@ -318,12 +311,12 @@ And and final test test case.`;
 // Initialize the playground when the page loads
 const playground = new FancyRegexPlayground();
 playground.init().then(() => {
-    console.log('Fancy Regex Playground initialized successfully!');
+    console.log('fancy-regex playground initialized successfully!');
 }).catch(error => {
     console.error('Failed to initialize playground:', error);
     document.body.innerHTML = `
         <div style="padding: 2rem; text-align: center; color: #e74c3c;">
-            <h1>Failed to load Fancy Regex Playground</h1>
+            <h1>Failed to load the fancy-regex playground</h1>
             <p>Error: ${error.message}</p>
             <p>Please check the browser console for more details.</p>
         </div>
