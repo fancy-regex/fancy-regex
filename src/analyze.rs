@@ -518,14 +518,14 @@ mod tests {
     fn backref_inherits_group_size_info() {
         // Test that backrefs properly inherit min_size and const_size from referenced groups
         let tree = Expr::parse_tree(r"(abc)\1").unwrap();
-        let info = analyze(&tree, 1).unwrap();
+        let info = analyze(&tree, false).unwrap();
         // The concatenation should have min_size = 3 + 3 = 6 (group + backref)
         assert_eq!(info.min_size, 6);
         assert!(info.const_size);
 
         // Test with a variable-length group
         let tree = Expr::parse_tree(r"(a+)\1").unwrap();
-        let info = analyze(&tree, 1).unwrap();
+        let info = analyze(&tree, false).unwrap();
         // The group has min_size = 1, but const_size = false due to the +
         // So the total should be min_size = 2, const_size = false
         assert_eq!(info.min_size, 2);
@@ -533,7 +533,7 @@ mod tests {
 
         // Test with optional group
         let tree = Expr::parse_tree(r"(a?)\1").unwrap();
-        let info = analyze(&tree, 1).unwrap();
+        let info = analyze(&tree, false).unwrap();
         // Both group and backref can be empty, so min_size = 0
         assert_eq!(info.min_size, 0);
         assert!(!info.const_size);
@@ -544,7 +544,7 @@ mod tests {
         // Test forward references (backref before group definition)
         // These should use conservative defaults but still work
         let tree = Expr::parse_tree(r"\1(abc)").unwrap();
-        let info = analyze(&tree, 1).unwrap();
+        let info = analyze(&tree, false).unwrap();
         // Forward ref gets min_size=0, group gets min_size=3, total=3
         assert_eq!(info.min_size, 3);
         // Forward ref sets const_size=false, so overall is false
@@ -553,9 +553,9 @@ mod tests {
 
     #[test]
     fn backref_in_lookbehind() {
-        assert!(!analyze(&Expr::parse_tree(r"(hello)(?<=\b\1)").unwrap(), 1).is_err());
-        assert!(!analyze(&Expr::parse_tree(r"(..)(?<=\1\1)").unwrap(), 1).is_err());
-        assert!(!analyze(&Expr::parse_tree(r"(abc)(?<=\1)def").unwrap(), 1).is_err());
+        assert!(!analyze(&Expr::parse_tree(r"(hello)(?<=\b\1)").unwrap(), false).is_err());
+        assert!(!analyze(&Expr::parse_tree(r"(..)(?<=\1\1)").unwrap(), false).is_err());
+        assert!(!analyze(&Expr::parse_tree(r"(abc)(?<=\1)def").unwrap(), false).is_err());
     }
 
     #[test]
