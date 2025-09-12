@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>/fancy-regex playground/</title>
     <style>
         * {
@@ -286,7 +286,7 @@
             <div class="panel-header">Input</div>
             <div class="panel-content">
                 <div class="input-group">
-                    <label for="regex-input">Regular Expression:</label>
+                    <label for="regex-input">Regular expression:</label>
                     <textarea id="regex-input" placeholder="Enter your regex pattern here, e.g., (?&lt;word&gt;\w+)\s+\k&lt;word&gt;"></textarea>
                 </div>
 
@@ -294,41 +294,41 @@
                     <label>Flags:</label>
                     <div class="flags-container">
                         <div class="flag-group">
-                            <input type="checkbox" id="flag-case-insensitive">
-                            <label for="flag-case-insensitive">Case Insensitive</label>
+                            <input type="checkbox" id="flag-case-insensitive" />
+                            <label for="flag-case-insensitive">Case insensitive</label>
                         </div>
                         <div class="flag-group">
-                            <input type="checkbox" id="flag-multi-line">
+                            <input type="checkbox" id="flag-multi-line" />
                             <label for="flag-multi-line">Multi-line</label>
                         </div>
                         <div class="flag-group">
-                            <input type="checkbox" id="flag-dot-matches-newline">
+                            <input type="checkbox" id="flag-dot-matches-newline" />
                             <label for="flag-dot-matches-newline">Dot matches newline</label>
                         </div>
                         <div class="flag-group">
-                            <input type="checkbox" id="flag-ignore-whitespace">
+                            <input type="checkbox" id="flag-ignore-whitespace" />
                             <label for="flag-ignore-whitespace">Ignore whitespace</label>
                         </div>
                         <div class="flag-group" style="display: none;">
-                            <input type="checkbox" id="flag-unicode" checked>
+                            <input type="checkbox" id="flag-unicode" checked="checked" />
                             <label for="flag-unicode">Unicode</label>
                         </div>
                     </div>
                 </div>
 
                 <div class="input-group">
-                    <label for="debounce-delay">Update Delay (ms):</label>
-                    <input type="number" id="debounce-delay" value="300" min="100" max="2000" step="100" style="height: auto;">
+                    <label for="debounce-delay">Update delay (ms):</label>
+                    <input type="number" id="debounce-delay" value="300" min="100" max="2000" step="100" style="height: auto;" />
                 </div>
 
                 <div class="input-group">
-                    <label for="text-input">Test Text:</label>
+                    <label for="text-input">Test text:</label>
                     <textarea id="text-input" placeholder="Enter the text you want to test the regex against..."></textarea>
                 </div>
 
                 <div class="toggle-section">
-                    <button id="show-parse-tree" class="toggle-btn">Show Parse Tree</button>
-                    <button id="show-analysis" class="toggle-btn">Show Analysis</button>
+                    <button id="show-parse-tree" class="toggle-btn">Show parse tree</button>
+                    <button id="show-analysis" class="toggle-btn">Show analysis</button>
                 </div>
             </div>
         </div>
@@ -339,21 +339,21 @@
             <div class="panel-content">
                 <div class="output-container">
                     <div class="output-section">
-                        <div class="output-header">Match Results</div>
+                        <div class="output-header">Match results</div>
                         <div id="match-results" class="output-content">
                             <div class="info">Enter a regex pattern and test text to see results</div>
                         </div>
                     </div>
 
                     <div class="output-section">
-                        <div class="output-header">Highlighted Text</div>
+                        <div class="output-header">Highlighted text</div>
                         <div id="highlighted-text" class="output-content">
                             <div class="info">Matches will be highlighted here</div>
                         </div>
                     </div>
 
                     <div id="parse-tree-section" class="output-section hidden">
-                        <div class="output-header">Parse Tree</div>
+                        <div class="output-header">Parse tree</div>
                         <div id="parse-tree-content" class="output-content">
                             <div class="parse-tree" id="parse-tree-display"></div>
                         </div>
