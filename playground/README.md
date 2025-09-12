@@ -10,7 +10,7 @@ A browser-based interactive playground for testing and exploring the [fancy-rege
   - Named capture groups (`(?<name>...)` and `\k<name>`)
   - Lookahead and lookbehind assertions
   - All other fancy-regex features
-- **Real-time Highlighting**: Visual highlighting of matches and capture groups in the test text
+- **Real-time Highlighting**: Visual highlighting of matches in the test text
 - **Regex Flags**: Support for case-insensitive, multi-line, dot-matches-newline, and ignore-whitespace flags
 - **Parse Tree Visualization**: View the internal parse tree structure of your regex
 - **Analysis Output**: See detailed analysis information about your regex pattern
