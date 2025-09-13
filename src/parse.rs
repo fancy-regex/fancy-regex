@@ -30,7 +30,7 @@ use bit_set::BitSet;
 use core::usize;
 use regex_syntax::escape_into;
 
-use crate::flags::*;
+use crate::parse_flags::*;
 use crate::{codepoint_len, CompileError, Error, Expr, ParseError, Result, MAX_RECURSION};
 use crate::{Assertion, LookAround::*};
 

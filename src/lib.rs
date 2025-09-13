@@ -201,18 +201,18 @@ mod analyze;
 mod compile;
 mod error;
 mod expand;
-mod flags;
 mod optimize;
 mod parse;
+mod parse_flags;
 mod replacer;
 mod vm;
 
 use crate::analyze::analyze;
 use crate::analyze::can_compile_as_anchored;
 use crate::compile::compile;
-use crate::flags::*;
 use crate::optimize::optimize;
 use crate::parse::{ExprTree, NamedGroups, Parser};
+use crate::parse_flags::*;
 use crate::vm::{Prog, OPTION_SKIPPED_EMPTY_MATCH};
 
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
