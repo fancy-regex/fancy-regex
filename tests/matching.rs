@@ -178,6 +178,8 @@ fn backrefs() {
     assert_match(r"(.)(?i:\1)", "įĮ");
     assert_no_match(r"(.)(?i:\1)", "įi");
     assert_no_match(r"(.)(?i:\1)", "įĖ");
+
+    assert_match(r"(?i)(?<word>\w+)\s+\k<word>", "Greek : δ Δ");
 }
 
 #[test]

@@ -113,6 +113,18 @@ fn backref_with_multibyte() {
 }
 
 #[test]
+fn case_insensitive_backref_with_non_ascii() {
+    assert_eq!(
+        find(r"(?i)(?<word>\w+)\s+\k<word>", "Greek : δ Δ"),
+        Some((8, 13))
+    );
+    assert_eq!(
+        find(r"(?i)(?<word>\w+)\s+\k<word>", "foo 🎯 test bar BaR"),
+        Some((14, 21))
+    );
+}
+
+#[test]
 fn repeat_non_greedy() {
     // (?=a) to make it fancy and use VM
     assert_eq!(find(r"(a(?=a)){2,}?", "aaa"), Some((0, 2)));
