@@ -201,18 +201,18 @@ mod analyze;
 mod compile;
 mod error;
 mod expand;
-mod flags;
 mod optimize;
 mod parse;
+mod parse_flags;
 mod replacer;
 mod vm;
 
 use crate::analyze::analyze;
 use crate::analyze::can_compile_as_anchored;
 use crate::compile::compile;
-use crate::flags::*;
 use crate::optimize::optimize;
 use crate::parse::{ExprTree, NamedGroups, Parser};
+use crate::parse_flags::*;
 use crate::vm::{Prog, OPTION_SKIPPED_EMPTY_MATCH};
 
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
@@ -549,6 +549,7 @@ struct RegexOptions {
     backtrack_limit: usize,
     delegate_size_limit: Option<usize>,
     delegate_dfa_size_limit: Option<usize>,
+    oniguruma_mode: bool,
 }
 
 impl RegexOptions {
@@ -567,8 +568,10 @@ impl RegexOptions {
             Self::get_flag_value(self.syntaxc.get_ignore_whitespace(), FLAG_IGNORE_SPACE);
         let dotnl = Self::get_flag_value(self.syntaxc.get_dot_matches_new_line(), FLAG_DOTNL);
         let unicode = Self::get_flag_value(self.syntaxc.get_unicode(), FLAG_UNICODE);
+        let oniguruma_mode = Self::get_flag_value(self.oniguruma_mode, FLAG_ONIGURUMA_MODE);
 
-        let all_flags = insensitive | multiline | whitespace | dotnl | unicode | unicode;
+        let all_flags =
+            insensitive | multiline | whitespace | dotnl | unicode | unicode | oniguruma_mode;
         all_flags
     }
 }
@@ -581,6 +584,7 @@ impl Default for RegexOptions {
             backtrack_limit: 1_000_000,
             delegate_size_limit: None,
             delegate_dfa_size_limit: None,
+            oniguruma_mode: false,
         }
     }
 }
@@ -694,6 +698,41 @@ impl RegexBuilder {
     /// delegate_dfa_size_limit`.
     pub fn delegate_dfa_size_limit(&mut self, limit: usize) -> &mut Self {
         self.0.delegate_dfa_size_limit = Some(limit);
+        self
+    }
+
+    /// Attempts to better match [Oniguruma](https://github.com/kkos/oniguruma)'s default behavior
+    ///
+    /// Currently this amounts to changing behavior with:
+    ///
+    /// # Left and right word bounds
+    ///
+    /// `fancy-regex` follows the default of other regex engines such as the `regex` crate itself
+    /// where `\<` and `\>` correspond to a _left_ and _right_ word-bound respectively. This
+    /// differs from Oniguruma's defaults which treat them as matching the literals `<` and `>`.
+    /// When this option is set using `\<` and `\>` in the pattern will match the literals
+    /// `<` and `>` instead of word bounds.
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// use fancy_regex::{Regex, RegexBuilder};
+    ///
+    /// let haystack = "turbo::<Fish>";
+    /// let regex = r"\<\w*\>";
+    ///
+    /// // By default `\<` and `\>` will match the start and end of a word boundary
+    /// let word_bounds_regex = Regex::new(regex).unwrap();
+    /// let word_bounds = word_bounds_regex.find(haystack).unwrap().unwrap();
+    /// assert_eq!(word_bounds.as_str(), "turbo");
+    ///
+    /// // With the option set they instead match the literal `<` and `>` characters
+    /// let literals_regex = RegexBuilder::new(regex).oniguruma_mode(true).build().unwrap();
+    /// let literals = literals_regex.find(haystack).unwrap().unwrap();
+    /// assert_eq!(literals.as_str(), "<Fish>");
+    /// ```
+    pub fn oniguruma_mode(&mut self, yes: bool) -> &mut Self {
+        self.0.oniguruma_mode = yes;
         self
     }
 }
@@ -1923,8 +1962,10 @@ pub fn detect_possible_backref(re: &str) -> bool {
 pub mod internal {
     pub use crate::analyze::{analyze, can_compile_as_anchored};
     pub use crate::compile::compile;
-    pub use crate::flags::{FLAG_CASEI, FLAG_DOTNL, FLAG_IGNORE_SPACE, FLAG_MULTI, FLAG_UNICODE};
     pub use crate::optimize::optimize;
+    pub use crate::parse_flags::{
+        FLAG_CASEI, FLAG_DOTNL, FLAG_IGNORE_SPACE, FLAG_MULTI, FLAG_UNICODE,
+    };
     pub use crate::vm::{run_default, run_trace, Insn, Prog};
 }
 

@@ -30,7 +30,7 @@ use bit_set::BitSet;
 use core::usize;
 use regex_syntax::escape_into;
 
-use crate::flags::*;
+use crate::parse_flags::*;
 use crate::{codepoint_len, CompileError, Error, Expr, ParseError, Result, MAX_RECURSION};
 use crate::{Assertion, LookAround::*};
 
@@ -517,9 +517,19 @@ impl<'a> Parser<'a> {
             }
             (end, Expr::Assertion(Assertion::NotWordBoundary))
         } else if b == b'<' && !in_class {
-            (end, Expr::Assertion(Assertion::LeftWordBoundary))
+            let expr = if self.flag(FLAG_ONIGURUMA_MODE) {
+                make_literal("<")
+            } else {
+                Expr::Assertion(Assertion::LeftWordBoundary)
+            };
+            (end, expr)
         } else if b == b'>' && !in_class {
-            (end, Expr::Assertion(Assertion::RightWordBoundary))
+            let expr = if self.flag(FLAG_ONIGURUMA_MODE) {
+                make_literal(">")
+            } else {
+                Expr::Assertion(Assertion::RightWordBoundary)
+            };
+            (end, expr)
         } else if matches!(b | 32, b'd' | b's' | b'w') {
             (
                 end,

@@ -112,3 +112,25 @@ fn issue_163_fancy_email_test() {
     let test_text = "VALID@domain.com";
     assert!(regex.is_match(test_text).unwrap());
 }
+
+#[test]
+fn check_oniguruma_mode_changes_wordbounds() {
+    fn find_all_matches(regex: &Regex, text: &'static str) -> Vec<&'static str> {
+        regex.find_iter(text).map(|m| m.unwrap().as_str()).collect()
+    }
+
+    let pattern = r"\<prefix_\w*\>";
+    let test_text = "not_prefix_oops prefix_with_suffix <prefix_>";
+
+    // By default the pattern is interpretted as a left word-bound followed by the literal "prefix_"
+    // followed by any number of word characters ending on a right word-bound
+    let default_mode = Regex::new(pattern).unwrap();
+    let default_matches = find_all_matches(&default_mode, test_text);
+    assert_eq!(default_matches, ["prefix_with_suffix", "prefix_"]);
+
+    // When Oniguruma-mode is used the pattern is instead a literal "<prefix_" followed by any
+    // number of word characters followed by a literal ">"
+    let oniguruma_mode = build_regex(RegexBuilder::new(pattern).oniguruma_mode(true));
+    let oniguruma_matches = find_all_matches(&oniguruma_mode, test_text);
+    assert_eq!(oniguruma_matches, ["<prefix_>"]);
+}
