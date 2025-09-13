@@ -8,20 +8,12 @@ NFA-based implementations (exemplified by
 [RE2](https://github.com/google/re2), and implemented in Rust in the
 [regex](https://crates.io/crates/regex) crate).
 
+Try it online in the **[fancy-regex playground](https://fancy-regex.github.io/fancy-regex/)** - test and explore regular expressions with advanced features in your browser.
+
 [![docs](https://docs.rs/fancy-regex/badge.svg)](https://docs.rs/fancy-regex)
 [![crate](https://img.shields.io/crates/v/fancy-regex.svg)](https://crates.io/crates/fancy-regex)
 [![ci](https://github.com/fancy-regex/fancy-regex/workflows/ci/badge.svg)](https://github.com/fancy-regex/fancy-regex/actions?query=workflow%3Aci)
 [![codecov](https://codecov.io/gh/fancy-regex/fancy-regex/branch/main/graph/badge.svg)](https://codecov.io/gh/fancy-regex/fancy-regex)
-
-## 🎯 Try it Online!
-
-**[fancy-regex Playground](https://fancy-regex.github.io/fancy-regex/)** - Test and explore regular expressions with advanced features in your browser.
-
-The playground includes:
-- Real-time regex testing with highlighting
-- Support for all fancy-regex features (backreferences, lookaround, etc.)
-- Visual parse tree and analysis output
-- Configurable regex flags
 
 A goal is to be as efficient as possible. For a given regex, the NFA
 implementation has asymptotic running time linear in the length of the
