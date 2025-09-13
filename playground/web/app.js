@@ -170,17 +170,20 @@ class FancyRegexPlayground {
         // Sort matches by start position (descending) to avoid position shifts during insertion
         const sortedMatches = [...matches].sort((a, b) => b.start - a.start);
         
-        let highlightedText = text;
+        const originalText = new Utf8String(text);
+        let highlightedTextChunks = [];
+        let latestOffset = originalText.buffer.length;
         
         sortedMatches.forEach((match, index) => {
-            const before = highlightedText.substring(0, match.start);
-            const matchText = highlightedText.substring(match.start, match.end);
-            const after = highlightedText.substring(match.end);
-            
-            highlightedText = before + 
-                `<span class="match-highlight" title="Match ${sortedMatches.length - index}: ${match.start}-${match.end}">${this.escapeHtml(matchText)}</span>` + 
-                after;
+            const matchText = originalText.substr(match.start, match.end);
+            highlightedTextChunks.push(originalText.substr(match.end, latestOffset));
+            highlightedTextChunks.push(
+                /*html*/`<span class="match-highlight" title="Match ${sortedMatches.length - index}: ${match.start}-${match.end}">${this.escapeHtml(matchText)}</span>`
+            );
+            latestOffset = match.start;
         });
+        highlightedTextChunks.push(originalText.substr(0, latestOffset));
+        const highlightedText = highlightedTextChunks.reverse().join('');
 
         this.elements.highlightedText.innerHTML = highlightedText;
     }
@@ -300,6 +303,7 @@ class FancyRegexPlayground {
         this.elements.textInput.value = `This is a test test with some some repeated words.
 Another line line with more more examples.
 Single words here.
+Here are some Greek letters and an emoji: δ Δ 🎯
 And and final test test case.`;
         
         // Trigger initial update
