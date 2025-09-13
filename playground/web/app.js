@@ -88,7 +88,10 @@ class FancyRegexPlayground {
             this.setLoading(true);
             const flags = this.getFlags();
 
-            // Test if pattern is valid by checking if it matches anything
+            this.updateParseTreeIfVisible(pattern, flags);
+            this.updateAnalysisIfVisible(pattern, flags);
+
+            // Test if pattern is valid
             const isValid = await this.testRegexValidity(pattern, flags);
             if (!isValid) return;
 
@@ -99,8 +102,6 @@ class FancyRegexPlayground {
             const matches = captures.map(capture => capture.full_match).filter(match => match !== null);
             
             this.displayResults(matches, captures, text);
-            this.updateParseTreeIfVisible(pattern, flags);
-            this.updateAnalysisIfVisible(pattern, flags);
 
         } catch (error) {
             this.displayError(error.toString());
@@ -115,7 +116,7 @@ class FancyRegexPlayground {
             parse_regex(pattern, flags);
             return true;
         } catch (error) {
-            this.displayError(`Pattern error: ${error.toString()}`);
+            this.displayError(error.toString());
             return false;
         }
     }
@@ -242,7 +243,7 @@ class FancyRegexPlayground {
             const parseTree = parse_regex(pattern, flags);
             this.elements.parseTreeDisplay.textContent = parseTree;
         } catch (error) {
-            this.elements.parseTreeDisplay.textContent = `Parse error: ${error.toString()}`;
+            this.elements.parseTreeDisplay.textContent = error.toString();
         }
     }
 
@@ -258,7 +259,7 @@ class FancyRegexPlayground {
             const analysis = analyze_regex(pattern, flags);
             this.elements.analysisDisplay.textContent = analysis;
         } catch (error) {
-            this.elements.analysisDisplay.textContent = `Analysis error: ${error.toString()}`;
+            this.elements.analysisDisplay.textContent = error.toString();
         }
     }
 
