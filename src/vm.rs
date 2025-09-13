@@ -450,7 +450,10 @@ fn matches_literal_casei(s: &str, ix: usize, end: usize, literal: &str) -> bool 
     if matches_literal(s, ix, end, literal) {
         return true;
     }
-    if s.is_char_boundary(ix) && s.is_char_boundary(end) && s.is_ascii() {
+    if !s.is_char_boundary(ix) || !s.is_char_boundary(end) {
+        return false;
+    }
+    if s[ix..end].is_ascii() {
         return s[ix..end].eq_ignore_ascii_case(literal);
     }
 

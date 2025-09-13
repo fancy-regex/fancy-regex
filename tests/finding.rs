@@ -75,6 +75,11 @@ fn negative_lookbehind_variable_sized_alt() {
 }
 
 #[test]
+fn lookbehind_containing_const_size_backref() {
+    assert_eq!(find(r"(..)(?<=\1\1)", "yyxxxx"), Some((4, 6)));
+}
+
+#[test]
 fn lookahead_looks_left() {
     assert_eq!(find(r"a(?=\b)", "ab"), None);
     assert_eq!(find(r"a(?=\b)", "a."), Some((0, 1)));
@@ -104,6 +109,18 @@ fn backref_with_multibyte() {
     assert_eq!(
         find(r"(.+)\1+", "x\u{1F431}\u{1F436}\u{1F431}\u{1F436}"),
         Some((1, 17))
+    );
+}
+
+#[test]
+fn case_insensitive_backref_with_non_ascii() {
+    assert_eq!(
+        find(r"(?i)(?<word>\w+)\s+\k<word>", "Greek : δ Δ"),
+        Some((8, 13))
+    );
+    assert_eq!(
+        find(r"(?i)(?<word>\w+)\s+\k<word>", "foo 🎯 test bar BaR"),
+        Some((14, 21))
     );
 }
 

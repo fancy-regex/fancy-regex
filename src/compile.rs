@@ -639,7 +639,7 @@ mod tests {
             contains_subroutines: false,
             self_recursive: false,
         };
-        let info = analyze(&tree, 1).unwrap();
+        let info = analyze(&tree, false).unwrap();
 
         let mut c = Compiler::new(0);
         // Force "hard" so that compiler doesn't just delegate
@@ -751,7 +751,7 @@ mod tests {
 
     fn compile_prog(re: &str) -> Vec<Insn> {
         let tree = Expr::parse_tree(re).unwrap();
-        let info = analyze(&tree, 0).unwrap();
+        let info = analyze(&tree, true).unwrap();
         let prog = compile(&info, true).unwrap();
         prog.body
     }
