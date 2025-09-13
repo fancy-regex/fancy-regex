@@ -238,11 +238,6 @@ class FancyRegexPlayground {
             flags = this.getFlags();
         }
 
-        if (!pattern) {
-            this.elements.parseTreeDisplay.textContent = 'Enter a regex pattern to see its parse tree';
-            return;
-        }
-
         try {
             const parseTree = parse_regex(pattern, flags);
             this.elements.parseTreeDisplay.textContent = parseTree;
@@ -257,11 +252,6 @@ class FancyRegexPlayground {
         }
         if (flags === null) {
             flags = this.getFlags();
-        }
-
-        if (!pattern) {
-            this.elements.analysisDisplay.textContent = 'Enter a regex pattern to see its analysis';
-            return;
         }
 
         try {
