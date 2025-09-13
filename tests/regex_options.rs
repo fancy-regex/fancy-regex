@@ -130,7 +130,7 @@ fn check_oniguruma_mode_changes_wordbounds() {
 
     // When Oniguruma-mode is used the pattern is instead a literal "<prefix_" followed by any
     // number of word characters followed by a literal ">"
-    let onig_mode = build_regex(RegexBuilder::new(pattern).oniguruma_mode(true));
-    let onig_matches = find_all_matches(&onig_mode, test_text);
-    assert_eq!(onig_matches, ["<prefix_>"]);
+    let oniguruma_mode = build_regex(RegexBuilder::new(pattern).oniguruma_mode(true));
+    let oniguruma_matches = find_all_matches(&oniguruma_mode, test_text);
+    assert_eq!(oniguruma_matches, ["<prefix_>"]);
 }

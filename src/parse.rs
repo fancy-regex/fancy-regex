@@ -517,14 +517,14 @@ impl<'a> Parser<'a> {
             }
             (end, Expr::Assertion(Assertion::NotWordBoundary))
         } else if b == b'<' && !in_class {
-            let expr = if self.flag(FLAG_ONIG_MODE) {
+            let expr = if self.flag(FLAG_ONIGURUMA_MODE) {
                 make_literal("<")
             } else {
                 Expr::Assertion(Assertion::LeftWordBoundary)
             };
             (end, expr)
         } else if b == b'>' && !in_class {
-            let expr = if self.flag(FLAG_ONIG_MODE) {
+            let expr = if self.flag(FLAG_ONIGURUMA_MODE) {
                 make_literal(">")
             } else {
                 Expr::Assertion(Assertion::RightWordBoundary)

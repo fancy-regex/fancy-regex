@@ -549,7 +549,7 @@ struct RegexOptions {
     backtrack_limit: usize,
     delegate_size_limit: Option<usize>,
     delegate_dfa_size_limit: Option<usize>,
-    onig_mode: bool,
+    oniguruma_mode: bool,
 }
 
 impl RegexOptions {
@@ -568,10 +568,10 @@ impl RegexOptions {
             Self::get_flag_value(self.syntaxc.get_ignore_whitespace(), FLAG_IGNORE_SPACE);
         let dotnl = Self::get_flag_value(self.syntaxc.get_dot_matches_new_line(), FLAG_DOTNL);
         let unicode = Self::get_flag_value(self.syntaxc.get_unicode(), FLAG_UNICODE);
-        let onig_mode = Self::get_flag_value(self.onig_mode, FLAG_ONIG_MODE);
+        let oniguruma_mode = Self::get_flag_value(self.oniguruma_mode, FLAG_ONIGURUMA_MODE);
 
         let all_flags =
-            insensitive | multiline | whitespace | dotnl | unicode | unicode | onig_mode;
+            insensitive | multiline | whitespace | dotnl | unicode | unicode | oniguruma_mode;
         all_flags
     }
 }
@@ -584,7 +584,7 @@ impl Default for RegexOptions {
             backtrack_limit: 1_000_000,
             delegate_size_limit: None,
             delegate_dfa_size_limit: None,
-            onig_mode: false,
+            oniguruma_mode: false,
         }
     }
 }
@@ -732,7 +732,7 @@ impl RegexBuilder {
     /// assert_eq!(literals.as_str(), "<Fish>");
     /// ```
     pub fn oniguruma_mode(&mut self, yes: bool) -> &mut Self {
-        self.0.onig_mode = yes;
+        self.0.oniguruma_mode = yes;
         self
     }
 }
