@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
+## [Unreleased]
+### Added
+- Add an "oniguruma mode" flag to control whether `\<` and `\>` are treated as literals or word-boundary assertions. (#186)
+- Add support for const-size backrefs in lookbehinds. (#182)
+### Changed
+- A few small internal changes which allowed us to expose a web-based playground for fancy-regex. (#181)
+### Fixed
+- Fix behavior of repetition on an empty match. (#179)
+- Always return the original input pattern when `as_str` is called. (#185)
+- Fix panic when matching non-ascii text as part of a case insensitive backref. (#189)
+- The `toy` example wasn't always showing the correct analysis or compiled program when optimizations were applied. (#181)
+
 ## [0.16.1] - 2025-08-02
 ### Fixed
 - Fixed a bug whereby sometimes a backreference to a non-existing capture group would compile successfully
@@ -216,6 +228,7 @@ with the exception that 0.x versions can break between minor versions.
 - Initial release
 
 
+[Unreleased]: https://github.com/fancy-regex/fancy-regex/compare/0.16.1...main
 [0.16.1]: https://github.com/fancy-regex/fancy-regex/compare/0.16.0...0.16.1
 [0.16.0]: https://github.com/fancy-regex/fancy-regex/compare/0.15.0...0.16.0
 [0.15.0]: https://github.com/fancy-regex/fancy-regex/compare/0.14.0...0.15.0
