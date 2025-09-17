@@ -85,7 +85,7 @@ delegates as much as possible to the NFA engine.
 ## Theory
 
 The core concept behind this library is to implement a backtracking virtual machine (VM) for regular expression matching, similar to PCRE.
-However, whenever possible, this VM delegates work to an underlying regular expression engine - the Rust regex crate - which does not otherwise support "fancy" features like lookarounds and backreferences.
+However, whenever possible, this VM delegates work to an underlying regular expression engine - the Rust regex crate - which does not otherwise support "fancy" features like lookarounds and backreferences, but has other desirable design goals - specifically, the regex crate has runtime linear to input length.
 
 For regular expressions that do not use "fancy" features, the library acts primarily as a lightweight wrapper around the underlying engine.
 When such features are present, the library performs an analysis to determine which parts of the expression must be handled by the backtracking engine and which can be safely delegated.
