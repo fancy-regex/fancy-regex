@@ -27,7 +27,6 @@ use alloc::vec::Vec;
 use alloc::{format, vec};
 
 use bit_set::BitSet;
-use core::usize;
 use regex_syntax::escape_into;
 
 use crate::parse_flags::*;
@@ -1071,7 +1070,7 @@ pub(crate) fn parse_decimal(s: &str, ix: usize) -> Option<(usize, usize)> {
     while end < s.len() && is_digit(s.as_bytes()[end]) {
         end += 1;
     }
-    usize::from_str_radix(&s[ix..end], 10)
+    s[ix..end].parse::<usize>()
         .ok()
         .map(|val| (end, val))
 }

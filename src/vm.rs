@@ -73,7 +73,6 @@ use alloc::collections::BTreeSet;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
-use core::usize;
 use regex_automata::meta::Regex;
 use regex_automata::util::look::LookMatcher;
 use regex_automata::util::primitives::NonMaxUsize;
