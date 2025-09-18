@@ -191,7 +191,7 @@ use core::convert::TryFrom;
 use core::fmt::{Debug, Formatter};
 use core::ops::{Index, Range};
 use core::str::FromStr;
-use core::{fmt, usize};
+use core::{fmt};
 use regex_automata::meta::Regex as RaRegex;
 use regex_automata::util::captures::Captures as RaCaptures;
 use regex_automata::util::syntax::Config as SyntaxConfig;
@@ -1085,7 +1085,7 @@ impl Regex {
     }
 
     /// Returns an iterator over the capture names.
-    pub fn capture_names(&self) -> CaptureNames {
+    pub fn capture_names(&self) -> CaptureNames<'_> {
         let mut names = Vec::new();
         names.resize(self.captures_len(), None);
         for (name, &i) in self.named_groups.iter() {
@@ -1349,7 +1349,7 @@ impl Regex {
     pub fn splitn<'r, 'h>(&'r self, target: &'h str, limit: usize) -> SplitN<'r, 'h> {
         SplitN {
             splits: self.split(target),
-            limit: limit,
+            limit,
         }
     }
 }
@@ -1724,7 +1724,7 @@ fn push_quoted(buf: &mut String, s: &str) {
 
 /// Escapes special characters in `text` with '\\'.  Returns a string which, when interpreted
 /// as a regex, matches exactly `text`.
-pub fn escape(text: &str) -> Cow<str> {
+pub fn escape(text: &str) -> Cow<'_, str> {
     // Using bytes() is OK because all special characters are single bytes.
     match text.bytes().filter(|&b| is_special(b as char)).count() {
         0 => Cow::Borrowed(text),

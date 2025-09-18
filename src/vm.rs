@@ -982,8 +982,8 @@ mod tests {
             // Remember state of saves for checking later
             expected.push(saves.clone());
             let mut actual_saves = vec![usize::MAX; slots];
-            for i in 0..slots {
-                actual_saves[i] = state.get(i);
+            for (i, item) in actual_saves.iter_mut().enumerate().take(slots) {
+                *item = state.get(i);
             }
             actual.push(actual_saves);
         }

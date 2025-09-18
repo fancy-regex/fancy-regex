@@ -131,11 +131,11 @@ fn show_analysis(re: &str, writer: &mut Formatter<'_>) -> Result {
     let mut tree = Expr::parse_tree(&re).unwrap();
     let requires_capture_group_fixup = optimize(&mut tree);
     let a = analyze(&tree, requires_capture_group_fixup);
-    write!(writer, "{:#?}\n", a)
+    writeln!(writer, "{:#?}", a)
 }
 
 fn show_compiled_program(re: &str, writer: &mut Formatter<'_>) -> Result {
-    let r = Regex::new(&re).unwrap();
+    let r = Regex::new(re).unwrap();
     r.debug_print(writer)
 }
 

@@ -26,7 +26,7 @@ pub trait Replacer {
     /// be beneficial to avoid finding sub-captures.
     ///
     /// In general, this is called once for every call to `replacen`.
-    fn no_expansion(&mut self) -> Option<Cow<str>> {
+    fn no_expansion(&mut self) -> Option<Cow<'_, str>> {
         None
     }
 
@@ -51,7 +51,7 @@ pub trait Replacer {
     ///     dst.into_owned()
     /// }
     /// ```
-    fn by_ref(&mut self) -> ReplacerRef<Self> {
+    fn by_ref(&mut self) -> ReplacerRef<'_, Self> {
         ReplacerRef(self)
     }
 }

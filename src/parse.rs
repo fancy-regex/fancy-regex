@@ -386,7 +386,7 @@ impl<'a> Parser<'a> {
         open: &str,
         close: &str,
         allow_relative: bool,
-    ) -> Result<NamedBackrefOrSubroutine> {
+    ) -> Result<NamedBackrefOrSubroutine<'_>> {
         if let Some(ParsedId {
             id,
             mut relative,
@@ -1248,7 +1248,7 @@ mod tests {
     #[test]
     fn parse_id_test() {
         use crate::parse::ParsedId;
-        fn create_id(id: &str, relative: Option<isize>, skip: usize) -> Option<ParsedId> {
+        fn create_id(id: &str, relative: Option<isize>, skip: usize) -> Option<ParsedId<'_>> {
             Some(ParsedId { id, relative, skip })
         }
         assert_eq!(parse_id("foo.", "", "", true), create_id("foo", None, 3));
@@ -2488,25 +2488,25 @@ mod tests {
     #[test]
     fn self_recursive_subroutine_call() {
         let tree = Expr::parse_tree(r"hello\g<0>?world").unwrap();
-        assert_eq!(tree.self_recursive, true);
+        assert!(tree.self_recursive);
 
         let tree = Expr::parse_tree(r"hello\g0?world").unwrap();
-        assert_eq!(tree.self_recursive, true);
+        assert!(tree.self_recursive);
 
         let tree = Expr::parse_tree(r"hello world").unwrap();
-        assert_eq!(tree.self_recursive, false);
+        assert!(!tree.self_recursive);
 
         let tree = Expr::parse_tree(r"hello\g1world").unwrap();
-        assert_eq!(tree.self_recursive, false);
+        assert!(!tree.self_recursive);
 
         let tree = Expr::parse_tree(r"hello\g<1>world").unwrap();
-        assert_eq!(tree.self_recursive, false);
+        assert!(!tree.self_recursive);
 
         let tree = Expr::parse_tree(r"(hello\g1?world)").unwrap();
-        assert_eq!(tree.self_recursive, false);
+        assert!(!tree.self_recursive);
 
         let tree = Expr::parse_tree(r"(?<a>hello\g<a>world)").unwrap();
-        assert_eq!(tree.self_recursive, false);
+        assert!(!tree.self_recursive);
     }
 
     #[test]
