@@ -1146,7 +1146,7 @@ fn is_id_char(c: char) -> bool {
 }
 
 fn is_digit(b: u8) -> bool {
-    (b'0'..=b'9').contains(&b)
+    b.is_ascii_digit()
 }
 
 fn is_hex_digit(b: u8) -> bool {
