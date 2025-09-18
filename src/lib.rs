@@ -188,10 +188,10 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use core::convert::TryFrom;
+use core::fmt;
 use core::fmt::{Debug, Formatter};
 use core::ops::{Index, Range};
 use core::str::FromStr;
-use core::{fmt};
 use regex_automata::meta::Regex as RaRegex;
 use regex_automata::util::captures::Captures as RaCaptures;
 use regex_automata::util::syntax::Config as SyntaxConfig;
@@ -570,7 +570,6 @@ impl RegexOptions {
         let unicode = Self::get_flag_value(self.syntaxc.get_unicode(), FLAG_UNICODE);
         let oniguruma_mode = Self::get_flag_value(self.oniguruma_mode, FLAG_ONIGURUMA_MODE);
 
-        
         insensitive | multiline | whitespace | dotnl | unicode | unicode | oniguruma_mode
     }
 }

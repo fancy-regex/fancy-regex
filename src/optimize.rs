@@ -33,7 +33,6 @@ use core::mem;
 pub fn optimize(tree: &mut ExprTree) -> bool {
     // self recursion prevents us from moving the trailing lookahead out of group 0
     if !tree.self_recursive {
-        
         optimize_trailing_lookahead(tree)
     } else {
         false

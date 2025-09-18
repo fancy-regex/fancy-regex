@@ -1070,9 +1070,7 @@ pub(crate) fn parse_decimal(s: &str, ix: usize) -> Option<(usize, usize)> {
     while end < s.len() && is_digit(s.as_bytes()[end]) {
         end += 1;
     }
-    s[ix..end].parse::<usize>()
-        .ok()
-        .map(|val| (end, val))
+    s[ix..end].parse::<usize>().ok().map(|val| (end, val))
 }
 
 #[derive(Debug, PartialEq)]

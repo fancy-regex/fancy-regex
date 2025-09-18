@@ -197,7 +197,7 @@ impl Expander {
             Step::Char(c) => {
                 dst.extend(c.to_string().as_bytes());
                 Ok(())
-            },
+            }
             Step::GroupName(name) => {
                 if let Some(m) = captures.name(name) {
                     dst.extend(m.as_str().as_bytes());
