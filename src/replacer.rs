@@ -71,9 +71,9 @@ impl<'a, R: Replacer + ?Sized + 'a> Replacer for ReplacerRef<'a, R> {
     }
 }
 
-impl<'a> Replacer for &'a str {
+impl Replacer for &str {
     fn replace_append(&mut self, caps: &Captures<'_>, dst: &mut String) {
-        caps.expand(*self, dst);
+        caps.expand(self, dst);
     }
 
     fn no_expansion(&mut self) -> Option<Cow<'_, str>> {
@@ -81,7 +81,7 @@ impl<'a> Replacer for &'a str {
     }
 }
 
-impl<'a> Replacer for &'a String {
+impl Replacer for &String {
     fn replace_append(&mut self, caps: &Captures<'_>, dst: &mut String) {
         self.as_str().replace_append(caps, dst)
     }

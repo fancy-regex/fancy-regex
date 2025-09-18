@@ -357,7 +357,7 @@ impl<'a> Parser<'a> {
             group_name,
             recursion_level,
         } = self.parse_named_backref_or_subroutine(ix, open, close, allow_relative)?;
-        if let Some(_) = recursion_level {
+        if recursion_level.is_some() {
             return Err(Error::ParseError(ix, ParseError::InvalidGroupName));
         }
         if let Some(group) = group_ix {
@@ -463,7 +463,7 @@ impl<'a> Parser<'a> {
                 return Ok((end, group));
             }
         }
-        return Err(Error::ParseError(ix, ParseError::InvalidBackref));
+        Err(Error::ParseError(ix, ParseError::InvalidBackref))
     }
 
     // ix points to \ character
@@ -1120,7 +1120,7 @@ pub(crate) fn parse_id<'a>(
     }
     let relative_sign = s.as_bytes()[id_end];
     if relative_sign == b'+' || relative_sign == b'-' {
-        if let Some((end, relative_amount)) = parse_decimal(&s, id_end + 1) {
+        if let Some((end, relative_amount)) = parse_decimal(s, id_end + 1) {
             if s[end..].starts_with(close) {
                 if relative_amount == 0 && id_len == 0 {
                     return None;
@@ -1146,7 +1146,7 @@ fn is_id_char(c: char) -> bool {
 }
 
 fn is_digit(b: u8) -> bool {
-    b'0' <= b && b <= b'9'
+    (b'0'..=b'9').contains(&b)
 }
 
 fn is_hex_digit(b: u8) -> bool {

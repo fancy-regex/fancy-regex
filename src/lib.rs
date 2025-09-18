@@ -283,7 +283,7 @@ impl<'r, 't> Matches<'r, 't> {
 
     /// Return the underlying regex.
     pub fn regex(&self) -> &'r Regex {
-        &self.re
+        self.re
     }
 }
 
@@ -359,7 +359,7 @@ impl<'r, 't> CaptureMatches<'r, 't> {
 
     /// Return the underlying regex.
     pub fn regex(&self) -> &'r Regex {
-        &self.0.re
+        self.0.re
     }
 }
 
@@ -526,12 +526,12 @@ impl<'r, 'h> Iterator for SplitN<'r, 'h> {
         let len = self.splits.target.len();
         if self.splits.next_start > len {
             // No more substrings available.
-            return None;
+            None
         } else {
             // Return the remaining part of the target
             let start = self.splits.next_start;
             self.splits.next_start = len + 1;
-            return Some(Ok(&self.splits.target[start..len]));
+            Some(Ok(&self.splits.target[start..len]))
         }
     }
 
@@ -570,9 +570,8 @@ impl RegexOptions {
         let unicode = Self::get_flag_value(self.syntaxc.get_unicode(), FLAG_UNICODE);
         let oniguruma_mode = Self::get_flag_value(self.oniguruma_mode, FLAG_ONIGURUMA_MODE);
 
-        let all_flags =
-            insensitive | multiline | whitespace | dotnl | unicode | unicode | oniguruma_mode;
-        all_flags
+        
+        insensitive | multiline | whitespace | dotnl | unicode | unicode | oniguruma_mode
     }
 }
 
@@ -865,7 +864,7 @@ impl Regex {
     /// ```
     pub fn find_iter<'r, 't>(&'r self, text: &'t str) -> Matches<'r, 't> {
         Matches {
-            re: &self,
+            re: self,
             text,
             last_end: 0,
             last_match: None,
@@ -1045,7 +1044,7 @@ impl Regex {
             } => {
                 let mut locations = inner.create_captures();
                 inner.captures(RaInput::new(text).span(pos..text.len()), &mut locations);
-                Ok(locations.is_match().then(|| Captures {
+                Ok(locations.is_match().then_some(Captures {
                     inner: CapturesImpl::Wrap {
                         text,
                         locations,
@@ -1803,7 +1802,7 @@ impl Expr {
                 }
                 push_quoted(buf, val);
                 if casei {
-                    buf.push_str(")");
+                    buf.push(')');
                 }
             }
             Expr::Assertion(Assertion::StartText) => buf.push('^'),
@@ -1884,7 +1883,7 @@ impl Expr {
                 }
                 buf.push_str(inner);
                 if casei {
-                    buf.push_str(")");
+                    buf.push(')');
                 }
             }
             _ => panic!("attempting to format hard expr {:?}", self),

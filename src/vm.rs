@@ -239,7 +239,7 @@ impl Prog {
     #[doc(hidden)]
     pub(crate) fn debug_print(&self, writer: &mut Formatter<'_>) -> core::fmt::Result {
         for (i, insn) in self.body.iter().enumerate() {
-            write!(writer, "{:3}: {:?}\n", i, insn)?;
+            writeln!(writer, "{:3}: {:?}", i, insn)?;
         }
         Ok(())
     }
