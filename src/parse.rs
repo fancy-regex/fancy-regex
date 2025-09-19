@@ -27,7 +27,6 @@ use alloc::vec::Vec;
 use alloc::{format, vec};
 
 use bit_set::BitSet;
-use core::usize;
 use regex_syntax::escape_into;
 
 use crate::parse_flags::*;
@@ -357,7 +356,7 @@ impl<'a> Parser<'a> {
             group_name,
             recursion_level,
         } = self.parse_named_backref_or_subroutine(ix, open, close, allow_relative)?;
-        if let Some(_) = recursion_level {
+        if recursion_level.is_some() {
             return Err(Error::ParseError(ix, ParseError::InvalidGroupName));
         }
         if let Some(group) = group_ix {
@@ -386,7 +385,7 @@ impl<'a> Parser<'a> {
         open: &str,
         close: &str,
         allow_relative: bool,
-    ) -> Result<NamedBackrefOrSubroutine> {
+    ) -> Result<NamedBackrefOrSubroutine<'_>> {
         if let Some(ParsedId {
             id,
             mut relative,
@@ -463,7 +462,7 @@ impl<'a> Parser<'a> {
                 return Ok((end, group));
             }
         }
-        return Err(Error::ParseError(ix, ParseError::InvalidBackref));
+        Err(Error::ParseError(ix, ParseError::InvalidBackref))
     }
 
     // ix points to \ character
@@ -473,7 +472,7 @@ impl<'a> Parser<'a> {
             return Err(Error::ParseError(ix, ParseError::TrailingBackslash));
         };
         let end = ix + 1 + codepoint_len(b);
-        Ok(if is_digit(b) {
+        Ok(if b.is_ascii_digit() {
             return self.parse_numbered_backref(ix + 1);
         } else if matches!(b, b'k') && !in_class {
             // Named backref: \k<name>
@@ -598,7 +597,7 @@ impl<'a> Parser<'a> {
                 ));
             }
             let b = bytes[end];
-            if is_digit(b) {
+            if b.is_ascii_digit() {
                 self.parse_numbered_subroutine_call(end)?
             } else if b == b'\'' {
                 self.parse_named_subroutine_call(end, "'", "'", true)?
@@ -924,7 +923,7 @@ impl<'a> Parser<'a> {
             self.parse_named_backref(ix, "'", "')", true)?
         } else if b == b'<' {
             self.parse_named_backref(ix, "<", ">)", true)?
-        } else if b == b'+' || b == b'-' || is_digit(b) {
+        } else if b == b'+' || b == b'-' || b.is_ascii_digit() {
             self.parse_named_backref(ix, "", ")", true)?
         } else {
             let (next, condition) = self.parse_re(ix, depth)?;
@@ -1068,12 +1067,10 @@ impl<'a> Parser<'a> {
 // return (ix, value)
 pub(crate) fn parse_decimal(s: &str, ix: usize) -> Option<(usize, usize)> {
     let mut end = ix;
-    while end < s.len() && is_digit(s.as_bytes()[end]) {
+    while end < s.len() && s.as_bytes()[end].is_ascii_digit() {
         end += 1;
     }
-    usize::from_str_radix(&s[ix..end], 10)
-        .ok()
-        .map(|val| (end, val))
+    s[ix..end].parse::<usize>().ok().map(|val| (end, val))
 }
 
 #[derive(Debug, PartialEq)]
@@ -1120,7 +1117,7 @@ pub(crate) fn parse_id<'a>(
     }
     let relative_sign = s.as_bytes()[id_end];
     if relative_sign == b'+' || relative_sign == b'-' {
-        if let Some((end, relative_amount)) = parse_decimal(&s, id_end + 1) {
+        if let Some((end, relative_amount)) = parse_decimal(s, id_end + 1) {
             if s[end..].starts_with(close) {
                 if relative_amount == 0 && id_len == 0 {
                     return None;
@@ -1145,12 +1142,8 @@ fn is_id_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
-fn is_digit(b: u8) -> bool {
-    b'0' <= b && b <= b'9'
-}
-
 fn is_hex_digit(b: u8) -> bool {
-    is_digit(b) || (b'a' <= (b | 32) && (b | 32) <= b'f')
+    b.is_ascii_digit() || (b'a' <= (b | 32) && (b | 32) <= b'f')
 }
 
 pub(crate) fn make_literal(s: &str) -> Expr {
@@ -1248,7 +1241,7 @@ mod tests {
     #[test]
     fn parse_id_test() {
         use crate::parse::ParsedId;
-        fn create_id(id: &str, relative: Option<isize>, skip: usize) -> Option<ParsedId> {
+        fn create_id(id: &str, relative: Option<isize>, skip: usize) -> Option<ParsedId<'_>> {
             Some(ParsedId { id, relative, skip })
         }
         assert_eq!(parse_id("foo.", "", "", true), create_id("foo", None, 3));
@@ -2488,25 +2481,25 @@ mod tests {
     #[test]
     fn self_recursive_subroutine_call() {
         let tree = Expr::parse_tree(r"hello\g<0>?world").unwrap();
-        assert_eq!(tree.self_recursive, true);
+        assert!(tree.self_recursive);
 
         let tree = Expr::parse_tree(r"hello\g0?world").unwrap();
-        assert_eq!(tree.self_recursive, true);
+        assert!(tree.self_recursive);
 
         let tree = Expr::parse_tree(r"hello world").unwrap();
-        assert_eq!(tree.self_recursive, false);
+        assert!(!tree.self_recursive);
 
         let tree = Expr::parse_tree(r"hello\g1world").unwrap();
-        assert_eq!(tree.self_recursive, false);
+        assert!(!tree.self_recursive);
 
         let tree = Expr::parse_tree(r"hello\g<1>world").unwrap();
-        assert_eq!(tree.self_recursive, false);
+        assert!(!tree.self_recursive);
 
         let tree = Expr::parse_tree(r"(hello\g1?world)").unwrap();
-        assert_eq!(tree.self_recursive, false);
+        assert!(!tree.self_recursive);
 
         let tree = Expr::parse_tree(r"(?<a>hello\g<a>world)").unwrap();
-        assert_eq!(tree.self_recursive, false);
+        assert!(!tree.self_recursive);
     }
 
     #[test]

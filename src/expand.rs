@@ -194,22 +194,23 @@ impl Expander {
         captures: &Captures<'_>,
     ) -> core::fmt::Result {
         self.exec(template, |step| match step {
-            Step::Char(c) => Ok(dst.extend(c.to_string().as_bytes())),
+            Step::Char(c) => {
+                dst.extend(c.to_string().as_bytes());
+                Ok(())
+            }
             Step::GroupName(name) => {
                 if let Some(m) = captures.name(name) {
-                    Ok(dst.extend(m.as_str().as_bytes()))
+                    dst.extend(m.as_str().as_bytes());
                 } else if let Some(m) = name.parse().ok().and_then(|num| captures.get(num)) {
-                    Ok(dst.extend(m.as_str().as_bytes()))
-                } else {
-                    Ok(())
+                    dst.extend(m.as_str().as_bytes());
                 }
+                Ok(())
             }
             Step::GroupNum(num) => {
                 if let Some(m) = captures.get(num) {
-                    Ok(dst.extend(m.as_str().as_bytes()))
-                } else {
-                    Ok(())
+                    dst.extend(m.as_str().as_bytes());
                 }
+                Ok(())
             }
             Step::Error => Ok(()),
         })

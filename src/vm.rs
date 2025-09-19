@@ -73,7 +73,6 @@ use alloc::collections::BTreeSet;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
-use core::usize;
 use regex_automata::meta::Regex;
 use regex_automata::util::look::LookMatcher;
 use regex_automata::util::primitives::NonMaxUsize;
@@ -239,7 +238,7 @@ impl Prog {
     #[doc(hidden)]
     pub(crate) fn debug_print(&self, writer: &mut Formatter<'_>) -> core::fmt::Result {
         for (i, insn) in self.body.iter().enumerate() {
-            write!(writer, "{:3}: {:?}\n", i, insn)?;
+            writeln!(writer, "{:3}: {:?}", i, insn)?;
         }
         Ok(())
     }
@@ -982,8 +981,8 @@ mod tests {
             // Remember state of saves for checking later
             expected.push(saves.clone());
             let mut actual_saves = vec![usize::MAX; slots];
-            for i in 0..slots {
-                actual_saves[i] = state.get(i);
+            for (i, item) in actual_saves.iter_mut().enumerate().take(slots) {
+                *item = state.get(i);
             }
             actual.push(actual_saves);
         }

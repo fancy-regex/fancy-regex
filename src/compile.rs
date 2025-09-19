@@ -22,7 +22,6 @@
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use core::usize;
 use regex_automata::meta::Regex as RaRegex;
 use regex_automata::meta::{Builder as RaBuilder, Config as RaConfig};
 #[cfg(all(test, feature = "std"))]

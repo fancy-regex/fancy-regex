@@ -188,10 +188,10 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use core::convert::TryFrom;
+use core::fmt;
 use core::fmt::{Debug, Formatter};
 use core::ops::{Index, Range};
 use core::str::FromStr;
-use core::{fmt, usize};
 use regex_automata::meta::Regex as RaRegex;
 use regex_automata::util::captures::Captures as RaCaptures;
 use regex_automata::util::syntax::Config as SyntaxConfig;
@@ -283,7 +283,7 @@ impl<'r, 't> Matches<'r, 't> {
 
     /// Return the underlying regex.
     pub fn regex(&self) -> &'r Regex {
-        &self.re
+        self.re
     }
 }
 
@@ -359,7 +359,7 @@ impl<'r, 't> CaptureMatches<'r, 't> {
 
     /// Return the underlying regex.
     pub fn regex(&self) -> &'r Regex {
-        &self.0.re
+        self.0.re
     }
 }
 
@@ -526,12 +526,12 @@ impl<'r, 'h> Iterator for SplitN<'r, 'h> {
         let len = self.splits.target.len();
         if self.splits.next_start > len {
             // No more substrings available.
-            return None;
+            None
         } else {
             // Return the remaining part of the target
             let start = self.splits.next_start;
             self.splits.next_start = len + 1;
-            return Some(Ok(&self.splits.target[start..len]));
+            Some(Ok(&self.splits.target[start..len]))
         }
     }
 
@@ -570,9 +570,7 @@ impl RegexOptions {
         let unicode = Self::get_flag_value(self.syntaxc.get_unicode(), FLAG_UNICODE);
         let oniguruma_mode = Self::get_flag_value(self.oniguruma_mode, FLAG_ONIGURUMA_MODE);
 
-        let all_flags =
-            insensitive | multiline | whitespace | dotnl | unicode | unicode | oniguruma_mode;
-        all_flags
+        insensitive | multiline | whitespace | dotnl | unicode | unicode | oniguruma_mode
     }
 }
 
@@ -865,7 +863,7 @@ impl Regex {
     /// ```
     pub fn find_iter<'r, 't>(&'r self, text: &'t str) -> Matches<'r, 't> {
         Matches {
-            re: &self,
+            re: self,
             text,
             last_end: 0,
             last_match: None,
@@ -1045,14 +1043,18 @@ impl Regex {
             } => {
                 let mut locations = inner.create_captures();
                 inner.captures(RaInput::new(text).span(pos..text.len()), &mut locations);
-                Ok(locations.is_match().then(|| Captures {
-                    inner: CapturesImpl::Wrap {
-                        text,
-                        locations,
-                        explicit_capture_group_0: *explicit_capture_group_0,
-                    },
-                    named_groups,
-                }))
+                if locations.is_match() {
+                    Ok(Some(Captures {
+                        inner: CapturesImpl::Wrap {
+                            text,
+                            locations,
+                            explicit_capture_group_0: *explicit_capture_group_0,
+                        },
+                        named_groups,
+                    }))
+                } else {
+                    Ok(None)
+                }
             }
             RegexImpl::Fancy {
                 prog,
@@ -1085,7 +1087,7 @@ impl Regex {
     }
 
     /// Returns an iterator over the capture names.
-    pub fn capture_names(&self) -> CaptureNames {
+    pub fn capture_names(&self) -> CaptureNames<'_> {
         let mut names = Vec::new();
         names.resize(self.captures_len(), None);
         for (name, &i) in self.named_groups.iter() {
@@ -1349,7 +1351,7 @@ impl Regex {
     pub fn splitn<'r, 'h>(&'r self, target: &'h str, limit: usize) -> SplitN<'r, 'h> {
         SplitN {
             splits: self.split(target),
-            limit: limit,
+            limit,
         }
     }
 }
@@ -1724,7 +1726,7 @@ fn push_quoted(buf: &mut String, s: &str) {
 
 /// Escapes special characters in `text` with '\\'.  Returns a string which, when interpreted
 /// as a regex, matches exactly `text`.
-pub fn escape(text: &str) -> Cow<str> {
+pub fn escape(text: &str) -> Cow<'_, str> {
     // Using bytes() is OK because all special characters are single bytes.
     match text.bytes().filter(|&b| is_special(b as char)).count() {
         0 => Cow::Borrowed(text),
@@ -1803,7 +1805,7 @@ impl Expr {
                 }
                 push_quoted(buf, val);
                 if casei {
-                    buf.push_str(")");
+                    buf.push(')');
                 }
             }
             Expr::Assertion(Assertion::StartText) => buf.push('^'),
@@ -1884,7 +1886,7 @@ impl Expr {
                 }
                 buf.push_str(inner);
                 if casei {
-                    buf.push_str(")");
+                    buf.push(')');
                 }
             }
             _ => panic!("attempting to format hard expr {:?}", self),
