@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
-## [Unreleased]
+## [0.16.2] - 2025-09-19
 ### Added
 - Add an "oniguruma mode" flag to control whether `\<` and `\>` are treated as literals or word-boundary assertions. (#186)
 - Add support for const-size backrefs in lookbehinds. (#182)
@@ -228,7 +228,7 @@ with the exception that 0.x versions can break between minor versions.
 - Initial release
 
 
-[Unreleased]: https://github.com/fancy-regex/fancy-regex/compare/0.16.1...main
+[0.16.2]: https://github.com/fancy-regex/fancy-regex/compare/0.16.1...0.16.2
 [0.16.1]: https://github.com/fancy-regex/fancy-regex/compare/0.16.0...0.16.1
 [0.16.0]: https://github.com/fancy-regex/fancy-regex/compare/0.15.0...0.16.0
 [0.15.0]: https://github.com/fancy-regex/fancy-regex/compare/0.14.0...0.15.0
