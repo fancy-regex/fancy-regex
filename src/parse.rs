@@ -472,7 +472,7 @@ impl<'a> Parser<'a> {
             return Err(Error::ParseError(ix, ParseError::TrailingBackslash));
         };
         let end = ix + 1 + codepoint_len(b);
-        Ok(if is_digit(b) {
+        Ok(if b.is_ascii_digit() {
             return self.parse_numbered_backref(ix + 1);
         } else if matches!(b, b'k') && !in_class {
             // Named backref: \k<name>
@@ -597,7 +597,7 @@ impl<'a> Parser<'a> {
                 ));
             }
             let b = bytes[end];
-            if is_digit(b) {
+            if b.is_ascii_digit() {
                 self.parse_numbered_subroutine_call(end)?
             } else if b == b'\'' {
                 self.parse_named_subroutine_call(end, "'", "'", true)?
@@ -923,7 +923,7 @@ impl<'a> Parser<'a> {
             self.parse_named_backref(ix, "'", "')", true)?
         } else if b == b'<' {
             self.parse_named_backref(ix, "<", ">)", true)?
-        } else if b == b'+' || b == b'-' || is_digit(b) {
+        } else if b == b'+' || b == b'-' || b.is_ascii_digit() {
             self.parse_named_backref(ix, "", ")", true)?
         } else {
             let (next, condition) = self.parse_re(ix, depth)?;
@@ -1067,7 +1067,7 @@ impl<'a> Parser<'a> {
 // return (ix, value)
 pub(crate) fn parse_decimal(s: &str, ix: usize) -> Option<(usize, usize)> {
     let mut end = ix;
-    while end < s.len() && is_digit(s.as_bytes()[end]) {
+    while end < s.len() && s.as_bytes()[end].is_ascii_digit() {
         end += 1;
     }
     s[ix..end].parse::<usize>().ok().map(|val| (end, val))
@@ -1142,12 +1142,8 @@ fn is_id_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
-fn is_digit(b: u8) -> bool {
-    b.is_ascii_digit()
-}
-
 fn is_hex_digit(b: u8) -> bool {
-    is_digit(b) || (b'a' <= (b | 32) && (b | 32) <= b'f')
+    b.is_ascii_digit() || (b'a' <= (b | 32) && (b | 32) <= b'f')
 }
 
 pub(crate) fn make_literal(s: &str) -> Expr {

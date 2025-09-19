@@ -1043,14 +1043,18 @@ impl Regex {
             } => {
                 let mut locations = inner.create_captures();
                 inner.captures(RaInput::new(text).span(pos..text.len()), &mut locations);
-                Ok(locations.is_match().then_some(Captures {
-                    inner: CapturesImpl::Wrap {
-                        text,
-                        locations,
-                        explicit_capture_group_0: *explicit_capture_group_0,
-                    },
-                    named_groups,
-                }))
+                if locations.is_match() {
+                    Ok(Some(Captures {
+                        inner: CapturesImpl::Wrap {
+                            text,
+                            locations,
+                            explicit_capture_group_0: *explicit_capture_group_0,
+                        },
+                        named_groups,
+                    }))
+                } else {
+                    Ok(None)
+                }
             }
             RegexImpl::Fancy {
                 prog,
