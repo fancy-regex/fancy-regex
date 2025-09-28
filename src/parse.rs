@@ -499,20 +499,12 @@ impl<'a> Parser<'a> {
             )
         } else if b == b'b' && !in_class {
             if bytes.get(end) == Some(&b'{') {
-                // Support for \b{...} is not implemented yet
-                return Err(Error::ParseError(
-                    ix,
-                    ParseError::InvalidEscape(format!("\\{}", &self.re[ix + 1..end])),
-                ));
+                return self.parse_word_boundary_brace(ix);
             }
             (end, Expr::Assertion(Assertion::WordBoundary))
         } else if b == b'B' && !in_class {
             if bytes.get(end) == Some(&b'{') {
-                // Support for \b{...} is not implemented yet
-                return Err(Error::ParseError(
-                    ix,
-                    ParseError::InvalidEscape(format!("\\{}", &self.re[ix + 1..end])),
-                ));
+                return self.parse_word_boundary_brace(ix);
             }
             (end, Expr::Assertion(Assertion::NotWordBoundary))
         } else if b == b'<' && !in_class {
@@ -687,6 +679,72 @@ impl<'a> Parser<'a> {
         } else {
             Err(Error::ParseError(ix, ParseError::InvalidCodepointValue))
         }
+    }
+
+    fn parse_word_boundary_brace(&self, ix: usize) -> Result<(usize, Expr)> {
+        let bytes = self.re.as_bytes();
+
+        // Find the opening brace (should be at ix + 2, after \b or \B)
+        let start_brace = ix + 2;
+        if bytes.get(start_brace) != Some(&b'{') {
+            return Err(Error::ParseError(
+                ix,
+                ParseError::InvalidEscape("\\b{...}".to_string()),
+            ));
+        }
+
+        // Find the closing brace
+        let mut end_brace = start_brace + 1;
+        while end_brace < self.re.len() && bytes[end_brace] != b'}' {
+            end_brace += 1;
+        }
+
+        if end_brace >= self.re.len() {
+            return Err(Error::ParseError(
+                ix,
+                ParseError::InvalidEscape("\\b{...}".to_string()),
+            ));
+        }
+
+        // Extract the content between braces
+        let content = &self.re[start_brace + 1..end_brace];
+        let is_negated = bytes[ix + 1] == b'B'; // \B: True, \b: false
+
+        let expr = match content {
+            "start" => {
+                if is_negated {
+                    // Support \b{start} but not \B{start}
+                    return Err(Error::ParseError(
+                        ix,
+                        ParseError::InvalidEscape("\\B{start}".to_string()),
+                    ));
+                } else {
+                    Expr::Assertion(Assertion::LeftWordBoundary)
+                }
+            }
+            "end" => {
+                if is_negated {
+                    // Support \b{end} but not \B{end}
+                    return Err(Error::ParseError(
+                        ix,
+                        ParseError::InvalidEscape("\\B{end}".to_string()),
+                    ));
+                } else {
+                    Expr::Assertion(Assertion::RightWordBoundary)
+                }
+            }
+            _ => {
+                return Err(Error::ParseError(
+                    ix,
+                    ParseError::InvalidEscape(format!(
+                        "\\{}{{...}}",
+                        if is_negated { "B" } else { "b" }
+                    )),
+                ));
+            }
+        };
+
+        Ok((end_brace + 1, expr))
     }
 
     fn parse_class(&mut self, ix: usize) -> Result<(usize, Expr)> {

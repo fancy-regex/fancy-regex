@@ -199,6 +199,44 @@ fn hard_trailing_positive_lookaheads() {
     assert_no_match(r"(abc|def)(?=a(?!b))", "abcabc");
 }
 
+#[test]
+fn word_boundary_brace_syntax() {
+    // \b{start}
+    assert_match(r"\b{start}world", "hello world");
+    assert_no_match(r"\b{start}world", "helloworld");
+    assert_match(r"\b{start}test", "test case");
+    assert_no_match(r"\b{start}test", "contest");
+
+    // \b{end}
+    assert_match(r"world\b{end}", "hello world");
+    assert_no_match(r"world\b{end}", "worldhello");
+    assert_match(r"test\b{end}", "run test");
+    assert_no_match(r"test\b{end}", "testing");
+
+    // \b{start} and \b{end}
+    assert_match(r"\b{start}world\b{end}", "hello world there");
+    assert_no_match(r"\b{start}world\b{end}", "helloworld");
+    assert_no_match(r"\b{start}world\b{end}", "worldhello");
+    assert_no_match(r"\b{start}world\b{end}", "helloworldhello");
+
+    // \b{start} <=> \< and \b{end} <=> \<
+    let test_cases = [
+        ("hello world", r"\b{start}world", r"\<world"),
+        ("hello world", r"world\b{end}", r"world\>"),
+        ("hello world there", r"\b{start}world\b{end}", r"\<world\>"),
+    ];
+
+    for (text, b_pattern, angle_pattern) in test_cases {
+        let b_result = match_text(b_pattern, text);
+        let angle_result = match_text(angle_pattern, text);
+        assert_eq!(
+            b_result, angle_result,
+            "Pattern '{}' and '{}' should match '{}' equivalently",
+            b_pattern, angle_pattern, text
+        );
+    }
+}
+
 #[cfg_attr(feature = "track_caller", track_caller)]
 fn assert_match(re: &str, text: &str) {
     let result = match_text(re, text);
