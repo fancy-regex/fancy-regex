@@ -449,3 +449,26 @@ fn incomplete_escape_sequences() {
     assert!(Regex::new("\\U").is_err());
     assert!(Regex::new("\\x").is_err());
 }
+
+#[test]
+fn word_boundary_brace_parsing() {
+    assert!(Regex::new(r"\b{start}").is_ok());
+    assert!(Regex::new(r"\b{end}").is_ok());
+    assert!(Regex::new(r"\b{start-half}").is_ok());
+    assert!(Regex::new(r"\b{end-half}").is_ok());
+
+    assert!(Regex::new(r"\b{invalid}").is_err());
+    assert!(Regex::new(r"\b{start ").is_err());
+    assert!(Regex::new(r"\b{end ").is_err());
+    assert!(Regex::new(r"\b{}").is_err());
+    assert!(Regex::new(r"\b{").is_err());
+    assert!(Regex::new(r"\b{ }").is_err());
+    assert!(Regex::new(r"\b{START}").is_err());
+    assert!(Regex::new(r"\b{END}").is_err());
+
+    // \B{...} -> Fail
+    assert!(Regex::new(r"\B{start}").is_err());
+    assert!(Regex::new(r"\B{end}").is_err());
+    assert!(Regex::new(r"\B{start-half}").is_err());
+    assert!(Regex::new(r"\B{end-half}").is_err());
+}
