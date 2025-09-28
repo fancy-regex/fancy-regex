@@ -733,6 +733,26 @@ impl<'a> Parser<'a> {
                     Expr::Assertion(Assertion::RightWordBoundary)
                 }
             }
+            "start-half" => {
+                if is_negated {
+                    return Err(Error::ParseError(
+                        ix,
+                        ParseError::InvalidEscape("\\B{start-half}".to_string()),
+                    ));
+                } else {
+                    Expr::Assertion(Assertion::LeftWordHalfBoundary)
+                }
+            }
+            "end-half" => {
+                if is_negated {
+                    return Err(Error::ParseError(
+                        ix,
+                        ParseError::InvalidEscape("\\B{end-half}".to_string()),
+                    ));
+                } else {
+                    Expr::Assertion(Assertion::RightWordHalfBoundary)
+                }
+            }
             _ => {
                 return Err(Error::ParseError(
                     ix,

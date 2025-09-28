@@ -206,18 +206,28 @@ fn word_boundary_brace_syntax() {
     assert_no_match(r"\b{start}world", "helloworld");
     assert_match(r"\b{start}test", "test case");
     assert_no_match(r"\b{start}test", "contest");
+    assert_no_match(r"\b{start}-test", "run --test");
+
+    // \b{start-half}
+    assert_match(r"\b{start-half}world", "hello world");
+    assert_no_match(r"\b{start-half}world", "helloworld");
+    assert_match(r"\b{start-half}test", "test case");
+    assert_no_match(r"\b{start-half}test", "contest");
+    assert_match(r"\b{start-half}-test", "run --test"); // diferent from \b{start}
 
     // \b{end}
     assert_match(r"world\b{end}", "hello world");
     assert_no_match(r"world\b{end}", "worldhello");
     assert_match(r"test\b{end}", "run test");
     assert_no_match(r"test\b{end}", "testing");
+    assert_no_match(r"-1-\b{end}", "chapter -1-");
 
-    // \b{start} and \b{end}
-    assert_match(r"\b{start}world\b{end}", "hello world there");
-    assert_no_match(r"\b{start}world\b{end}", "helloworld");
-    assert_no_match(r"\b{start}world\b{end}", "worldhello");
-    assert_no_match(r"\b{start}world\b{end}", "helloworldhello");
+    // \b{end-half}
+    assert_match(r"world\b{end-half}", "hello world");
+    assert_no_match(r"world\b{end-half}", "worldhello");
+    assert_match(r"test\b{end-half}", "run test");
+    assert_no_match(r"test\b{end-half}", "testing");
+    assert_match(r"-1-\b{end-half}", "chapter -1-");
 
     // \b{start} <=> \< and \b{end} <=> \<
     let test_cases = [
