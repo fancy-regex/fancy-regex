@@ -695,8 +695,12 @@ impl<'a> Parser<'a> {
 
         // Find the closing brace
         let mut end_brace = start_brace + 1;
-        while end_brace < self.re.len() && bytes[end_brace] != b'}' {
-            end_brace += 1;
+        while end_brace < self.re.len() {
+            let b = bytes[end_brace];
+            if b == b'}' {
+                break;
+            }
+            end_brace += codepoint_len(b);
         }
 
         if end_brace >= self.re.len() {
@@ -708,58 +712,24 @@ impl<'a> Parser<'a> {
 
         // Extract the content between braces
         let content = &self.re[start_brace + 1..end_brace];
-        let is_negated = bytes[ix + 1] == b'B'; // \B: True, \b: false
+
+        // \B{...} is not supported
+        if bytes[ix + 1] == b'B' {
+            return Err(Error::ParseError(
+                ix,
+                ParseError::InvalidEscape(format!("\\B{{{}}}", content)),
+            ));
+        }
 
         let expr = match content {
-            "start" => {
-                if is_negated {
-                    // Support \b{start} but not \B{start}
-                    return Err(Error::ParseError(
-                        ix,
-                        ParseError::InvalidEscape("\\B{start}".to_string()),
-                    ));
-                } else {
-                    Expr::Assertion(Assertion::LeftWordBoundary)
-                }
-            }
-            "end" => {
-                if is_negated {
-                    // Support \b{end} but not \B{end}
-                    return Err(Error::ParseError(
-                        ix,
-                        ParseError::InvalidEscape("\\B{end}".to_string()),
-                    ));
-                } else {
-                    Expr::Assertion(Assertion::RightWordBoundary)
-                }
-            }
-            "start-half" => {
-                if is_negated {
-                    return Err(Error::ParseError(
-                        ix,
-                        ParseError::InvalidEscape("\\B{start-half}".to_string()),
-                    ));
-                } else {
-                    Expr::Assertion(Assertion::LeftWordHalfBoundary)
-                }
-            }
-            "end-half" => {
-                if is_negated {
-                    return Err(Error::ParseError(
-                        ix,
-                        ParseError::InvalidEscape("\\B{end-half}".to_string()),
-                    ));
-                } else {
-                    Expr::Assertion(Assertion::RightWordHalfBoundary)
-                }
-            }
+            "start" => Expr::Assertion(Assertion::LeftWordBoundary),
+            "end" => Expr::Assertion(Assertion::RightWordBoundary),
+            "start-half" => Expr::Assertion(Assertion::LeftWordHalfBoundary),
+            "end-half" => Expr::Assertion(Assertion::RightWordHalfBoundary),
             _ => {
                 return Err(Error::ParseError(
                     ix,
-                    ParseError::InvalidEscape(format!(
-                        "\\{}{{...}}",
-                        if is_negated { "B" } else { "b" }
-                    )),
+                    ParseError::InvalidEscape(format!("\\b{{{}}}", content)),
                 ));
             }
         };
