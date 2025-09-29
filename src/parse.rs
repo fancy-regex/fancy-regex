@@ -685,9 +685,8 @@ impl<'a> Parser<'a> {
     fn parse_word_boundary_brace(&self, ix: usize) -> Result<(usize, Expr)> {
         let bytes = self.re.as_bytes();
 
-        // Find the opening brace (should be at ix + 2, after \b or \B)
-        let start_brace = ix + 2;
-        if bytes.get(start_brace) != Some(&b'{') {
+        // Verify that bytes[ix..ix+3] are '\b{' or '\B{'
+        if !matches!(bytes.get(ix..ix + 3), Some([b'\\', b'b' | b'B', b'{'])) {
             return Err(Error::ParseError(
                 ix,
                 ParseError::InvalidEscape("\\b{...}".to_string()),
@@ -695,7 +694,7 @@ impl<'a> Parser<'a> {
         }
 
         // Find the closing brace
-        let mut end_brace = start_brace + 1;
+        let mut end_brace = ix + 3;
         while end_brace < self.re.len() {
             let b = bytes[end_brace];
             if b == b'}' {
@@ -712,7 +711,7 @@ impl<'a> Parser<'a> {
         }
 
         // Extract the content between braces
-        let content = &self.re[start_brace + 1..end_brace];
+        let content = &self.re[ix + 3..end_brace];
 
         // \B{...} is not supported
         if bytes[ix + 1] == b'B' {
