@@ -681,6 +681,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    // ix points before '\b' or '\B'
     fn parse_word_boundary_brace(&self, ix: usize) -> Result<(usize, Expr)> {
         let bytes = self.re.as_bytes();
 
