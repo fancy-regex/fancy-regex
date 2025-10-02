@@ -1411,6 +1411,9 @@ mod tests {
             "Parsing error at position 0: Backslash without following character",
         );
         assert_error("\\q", "Parsing error at position 0: Invalid escape: \\q");
+        assert_error("\\u", "Parsing error at position 2: Invalid hex escape");
+        assert_error("\\U", "Parsing error at position 2: Invalid hex escape");
+        assert_error("\\x", "Parsing error at position 2: Invalid hex escape");
         assert_error("\\xAG", "Parsing error at position 2: Invalid hex escape");
         assert_error("\\xA", "Parsing error at position 2: Invalid hex escape");
         assert_error("\\x{}", "Parsing error at position 2: Invalid hex escape");
