@@ -2586,6 +2586,51 @@ mod tests {
         fail(r"\u{2}(?(2)");
     }
 
+    #[test]
+    fn word_boundary_brace_syntax() {
+        // Valid patterns produce correct assertions
+        assert_eq!(
+            p(r"\b{start}"),
+            Expr::Assertion(Assertion::LeftWordBoundary)
+        );
+        assert_eq!(p(r"\b{end}"), Expr::Assertion(Assertion::RightWordBoundary));
+        assert_eq!(
+            p(r"\b{start-half}"),
+            Expr::Assertion(Assertion::LeftWordHalfBoundary)
+        );
+        assert_eq!(
+            p(r"\b{end-half}"),
+            Expr::Assertion(Assertion::RightWordHalfBoundary)
+        );
+    }
+
+    #[test]
+    fn word_boundary_brace_parsing_errors() {
+        // Invalid patterns produce expected errors
+        let test_cases = [
+            (r"\b{invalid}", "Invalid escape: \\b{invalid}"),
+            (r"\b{start ", "Invalid escape: \\b{...}"),
+            (r"\b{end ", "Invalid escape: \\b{...}"),
+            (r"\b{}", "Invalid escape: \\b{}"),
+            (r"\b{", "Invalid escape: \\b{...}"),
+            (r"\b{ }", "Invalid escape: \\b{ }"),
+            (r"\b{START}", "Invalid escape: \\b{START}"),
+            (r"\b{END}", "Invalid escape: \\b{END}"),
+            // \B{...} patterns should fail
+            (r"\B{start}", "Invalid escape: \\B{start}"),
+            (r"\B{end}", "Invalid escape: \\B{end}"),
+            (r"\B{start-half}", "Invalid escape: \\B{start-half}"),
+            (r"\B{end-half}", "Invalid escape: \\B{end-half}"),
+        ];
+
+        for (pattern, expected_error) in test_cases {
+            assert_error(
+                pattern,
+                &format!("Parsing error at position 0: {}", expected_error),
+            );
+        }
+    }
+
     fn get_options(pattern: &str, func: impl Fn(SyntaxConfig) -> SyntaxConfig) -> RegexOptions {
         let mut options = RegexOptions::default();
         options.syntaxc = func(options.syntaxc);
