@@ -29,7 +29,11 @@ fn word_boundary_brace_parsing_err() {
     for (pattern, expected_message_pattern) in test_cases {
         assert_parse_error(
             pattern,
-            &format!("Parsing error at position 0: Invalid escape: {}", expected_message_pattern));
+            &format!(
+                "Parsing error at position 0: Invalid escape: {}",
+                expected_message_pattern
+            ),
+        );
     }
 }
 
@@ -52,10 +56,8 @@ fn assert_parse_error(pattern: &str, expected_message: &str) {
     );
     let error_message = result.unwrap_err().to_string();
     assert_eq!(
-        error_message,
-        expected_message,
+        error_message, expected_message,
         "Expected error message to contain '{}', but got: '{}'",
-        expected_message,
-        error_message
+        expected_message, error_message
     );
 }
