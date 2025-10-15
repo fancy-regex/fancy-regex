@@ -444,12 +444,30 @@ impl Compiler {
 
     fn compile_lookaround_inner(&mut self, inner: &Info<'_>, la: LookAround) -> Result<()> {
         if la == LookBehind || la == LookBehindNeg {
-            if !inner.const_size {
-                return Err(Error::CompileError(CompileError::LookBehindNotConst));
+            if inner.const_size {
+                self.b.add(Insn::GoBack(inner.min_size));
+                self.visit(inner, false)
+            } else if !inner.hard && inner.start_group == inner.end_group {
+                // Use reverse matching for variable-sized lookbehinds without fancy features
+                use regex_automata::nfa::thompson;
+                // Build a reverse DFA for the pattern
+                let dfa = match regex_automata::hybrid::dfa::DFA::builder()
+                    .thompson(thompson::Config::new().reverse(true))
+                    .build(&DelegateBuilder::new().push(inner).re)
+                {
+                    Ok(dfa) => dfa,
+                    Err(_) => return Err(Error::CompileError(CompileError::LookBehindNotConst)), // TODO: feature unsupported/surface error?
+                };
+
+                self.b.add(Insn::ReverseLookbehind { dfa });
+                Ok(())
+            } else {
+                // variable sized lookbehinds with fancy features are currently unsupported
+                Err(Error::CompileError(CompileError::LookBehindNotConst))
             }
-            self.b.add(Insn::GoBack(inner.min_size));
+        } else {
+            self.visit(inner, false)
         }
-        self.visit(inner, false)
     }
 
     fn compile_delegates(&mut self, infos: &[Info<'_>]) -> Result<()> {

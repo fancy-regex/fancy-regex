@@ -220,6 +220,11 @@ pub enum Insn {
     ContinueFromPreviousMatchEnd,
     /// Continue only if the specified capture group has already been populated as part of the match
     BackrefExistsCondition(usize),
+    /// Reverse lookbehind using regex-automata for variable-sized patterns
+    ReverseLookbehind {
+        /// The delegate regex to match backwards
+        dfa: regex_automata::hybrid::dfa::DFA,
+    },
 }
 
 /// Sequence of instructions for the VM to execute.
@@ -730,6 +735,20 @@ pub(crate) fn run(
                     let lo = state.get(group * 2);
                     if lo == usize::MAX {
                         // Referenced group hasn't matched, so the backref doesn't match either
+                        break 'fail;
+                    }
+                }
+                Insn::ReverseLookbehind { ref dfa } => {
+                    // Use regex-automata to search backwards from current position
+                    let mut cache = dfa.create_cache();
+                    let input = Input::new(s).anchored(Anchored::Yes).range(0..ix);
+
+                    let found_match = match dfa.try_search_rev(&mut cache, &input) {
+                        Ok(Some(_)) => true,
+                        _ => false,
+                    };
+
+                    if !found_match {
                         break 'fail;
                     }
                 }
