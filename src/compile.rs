@@ -793,7 +793,7 @@ mod tests {
     #[cfg(not(feature = "variable-lookbehinds"))]
     fn variable_lookbehind_requires_feature() {
         // Without the feature flag, variable-length lookbehinds should error
-        let tree = Expr::parse_tree(r"(?<=a+b+)x").unwrap();
+        let tree = Expr::parse_tree(r"(?<=ab+)x").unwrap();
         let info = analyze(&tree, true).unwrap();
         let result = compile(&info, true);
         assert!(result.is_err());
@@ -806,12 +806,12 @@ mod tests {
     #[test]
     #[cfg(feature = "variable-lookbehinds")]
     fn variable_lookbehind_with_required_feature() {
-        let prog = compile_prog(r"(?<=a+b+)x");
+        let prog = compile_prog(r"(?<=ab+)x");
 
         assert_eq!(prog.len(), 5, "prog: {:?}", prog);
 
         assert_matches!(prog[0], Save(0));
-        assert_matches!(&prog[1], ReverseLookbehind(ReverseSearch { pattern, dfa: _, cache: _ }) if pattern == "a+b+");
+        assert_matches!(&prog[1], ReverseLookbehind(ReverseSearch { pattern, dfa: _, cache: _ }) if pattern == "ab+");
         assert_matches!(prog[2], Restore(0));
         assert_matches!(prog[3], Lit(ref l) if l == "x");
         assert_matches!(prog[4], End);

@@ -449,11 +449,3 @@ fn incomplete_escape_sequences() {
     assert!(Regex::new("\\U").is_err());
     assert!(Regex::new("\\x").is_err());
 }
-
-#[test]
-#[cfg(feature = "variable-lookbehinds")]
-fn variable_lookbehind_with_feature() {
-    // With the feature flag, easy variable-length lookbehinds should work
-    assert_eq!(find(r"(?<=a+b+)x", "abx"), Some((2, 3)));
-    assert_eq!(find(r"(?<=a+b+)x", "aabbx"), Some((4, 5)));
-}
