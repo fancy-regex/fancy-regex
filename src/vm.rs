@@ -220,10 +220,13 @@ pub enum Insn {
     ContinueFromPreviousMatchEnd,
     /// Continue only if the specified capture group has already been populated as part of the match
     BackrefExistsCondition(usize),
+    #[cfg(feature = "variable-lookbehinds")]
     /// Reverse lookbehind using regex-automata for variable-sized patterns
     ReverseLookbehind {
         /// The delegate regex to match backwards
         dfa: regex_automata::hybrid::dfa::DFA,
+        /// Cache for DFA searches
+        cache: core::cell::RefCell<regex_automata::hybrid::dfa::Cache>,
     },
 }
 
@@ -738,9 +741,10 @@ pub(crate) fn run(
                         break 'fail;
                     }
                 }
-                Insn::ReverseLookbehind { ref dfa } => {
+                #[cfg(feature = "variable-lookbehinds")]
+                Insn::ReverseLookbehind { ref dfa, ref cache } => {
                     // Use regex-automata to search backwards from current position
-                    let mut cache = dfa.create_cache();
+                    let mut cache = cache.borrow_mut();
                     let input = Input::new(s).anchored(Anchored::Yes).range(0..ix);
 
                     let found_match = match dfa.try_search_rev(&mut cache, &input) {

@@ -448,19 +448,27 @@ impl Compiler {
                 self.b.add(Insn::GoBack(inner.min_size));
                 self.visit(inner, false)
             } else if !inner.hard && inner.start_group == inner.end_group {
-                // Use reverse matching for variable-sized lookbehinds without fancy features
-                use regex_automata::nfa::thompson;
-                // Build a reverse DFA for the pattern
-                let dfa = match regex_automata::hybrid::dfa::DFA::builder()
-                    .thompson(thompson::Config::new().reverse(true))
-                    .build(&DelegateBuilder::new().push(inner).re)
+                #[cfg(feature = "variable-lookbehinds")]
                 {
-                    Ok(dfa) => dfa,
-                    Err(_) => return Err(Error::CompileError(CompileError::LookBehindNotConst)), // TODO: feature unsupported/surface error?
-                };
-
-                self.b.add(Insn::ReverseLookbehind { dfa });
-                Ok(())
+                    // Use reverse matching for variable-sized lookbehinds without fancy features
+                    use regex_automata::nfa::thompson;
+                    // Build a reverse DFA for the pattern
+                    let dfa = match regex_automata::hybrid::dfa::DFA::builder()
+                        .thompson(thompson::Config::new().reverse(true))
+                        .build(&DelegateBuilder::new().push(inner).re)
+                    {
+                        Ok(dfa) => dfa,
+                        Err(e) => return Err(Error::CompileError(CompileError::DfaBuildError(e.to_string()))),
+                    };
+                    
+                    let cache = core::cell::RefCell::new(dfa.create_cache());
+                    self.b.add(Insn::ReverseLookbehind { dfa, cache });
+                    Ok(())
+                }
+                #[cfg(not(feature = "variable-lookbehinds"))]
+                {
+                    Err(Error::CompileError(CompileError::VariableLookBehindRequiresFeature))
+                }
             } else {
                 // variable sized lookbehinds with fancy features are currently unsupported
                 Err(Error::CompileError(CompileError::LookBehindNotConst))
@@ -764,6 +772,17 @@ mod tests {
         assert_matches!(prog[6], FailNegativeLookAround);
         assert_matches!(prog[7], Save(1));
         assert_matches!(prog[8], End);
+    }
+
+    #[test]
+    #[cfg(not(feature = "variable-lookbehinds"))]
+    fn variable_lookbehind_requires_feature() {
+        // Without the feature flag, variable-length lookbehinds should error
+        let tree = Expr::parse_tree(r"(?<=a+b+)x").unwrap();
+        let info = analyze(&tree, true).unwrap();
+        let result = compile(&info, true);
+        assert!(result.is_err());
+        assert_matches!(result.err().unwrap(), Error::CompileError(CompileError::VariableLookBehindRequiresFeature));
     }
 
     fn compile_prog(re: &str) -> Vec<Insn> {

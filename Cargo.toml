@@ -13,17 +13,19 @@ exclude = ["/.github/*", "/Cargo.lock.msrv"]
 rust-version = "1.66"
 
 [features]
-default = ["unicode", "perf", "std"]
+default = ["unicode", "perf", "std", "variable-lookbehinds"]
 # Enable #[track_caller] in unit tests.
 track_caller = []
 perf = ["regex-automata/perf"]
 unicode = ["regex-automata/unicode", "regex-syntax/unicode"]
 std = ["regex-automata/std", "regex-syntax/std", "bit-set/std"]
+# Enable variable-length lookbehinds using reverse DFA search
+variable-lookbehinds = ["regex-automata/dfa-search"]
 
 [dependencies.regex-automata]
 version = "0.4"
 default-features = false
-features = ["alloc", "syntax", "meta", "nfa", "dfa", "hybrid", "dfa-search"]
+features = ["alloc", "syntax", "meta", "nfa", "dfa", "hybrid"]
 
 [dependencies.regex-syntax]
 version = "0.8"
