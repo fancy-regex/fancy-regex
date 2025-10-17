@@ -131,6 +131,34 @@ impl core::fmt::Debug for Delegate {
     }
 }
 
+#[cfg(feature = "variable-lookbehinds")]
+#[derive(Clone)]
+/// Delegate matching in reverse to regex-automata
+pub struct ReverseSearch {
+    /// The regex pattern as a string which will be searched for in reverse
+    pub pattern: String,
+    /// The delegate regex to match backwards
+    pub(crate) dfa: regex_automata::hybrid::dfa::DFA,
+    /// Cache for DFA searches
+    pub(crate) cache: core::cell::RefCell<regex_automata::hybrid::dfa::Cache>,
+}
+
+#[cfg(feature = "variable-lookbehinds")]
+impl core::fmt::Debug for ReverseSearch {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        // Ensures it fails to compile if the struct changes
+        let Self {
+            pattern,
+            dfa: _,
+            cache: _,
+        } = self;
+
+        f.debug_struct("ReverseSearch")
+            .field("pattern", pattern)
+            .finish()
+    }
+}
+
 /// Instruction of the VM.
 #[derive(Clone, Debug)]
 pub enum Insn {
@@ -222,12 +250,7 @@ pub enum Insn {
     BackrefExistsCondition(usize),
     #[cfg(feature = "variable-lookbehinds")]
     /// Reverse lookbehind using regex-automata for variable-sized patterns
-    ReverseLookbehind {
-        /// The delegate regex to match backwards
-        dfa: regex_automata::hybrid::dfa::DFA,
-        /// Cache for DFA searches
-        cache: core::cell::RefCell<regex_automata::hybrid::dfa::Cache>,
-    },
+    ReverseLookbehind(ReverseSearch),
 }
 
 /// Sequence of instructions for the VM to execute.
@@ -742,7 +765,11 @@ pub(crate) fn run(
                     }
                 }
                 #[cfg(feature = "variable-lookbehinds")]
-                Insn::ReverseLookbehind { ref dfa, ref cache } => {
+                Insn::ReverseLookbehind(ReverseSearch {
+                    ref dfa,
+                    ref cache,
+                    pattern: _,
+                }) => {
                     // Use regex-automata to search backwards from current position
                     let mut cache = cache.borrow_mut();
                     let input = Input::new(s).anchored(Anchored::Yes).range(0..ix);

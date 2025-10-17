@@ -28,6 +28,8 @@ use regex_automata::meta::{Builder as RaBuilder, Config as RaConfig};
 use std::{collections::BTreeMap, sync::RwLock};
 
 use crate::analyze::Info;
+#[cfg(feature = "variable-lookbehinds")]
+use crate::vm::ReverseSearch;
 use crate::vm::{Delegate, Insn, Prog};
 use crate::LookAround::*;
 use crate::{CompileError, Error, Expr, LookAround, RegexOptions, Result};
@@ -450,24 +452,37 @@ impl Compiler {
             } else if !inner.hard && inner.start_group == inner.end_group {
                 #[cfg(feature = "variable-lookbehinds")]
                 {
+                    let mut delegate_builder = DelegateBuilder::new();
+                    delegate_builder.push(inner);
+                    let pattern = &delegate_builder.re;
                     // Use reverse matching for variable-sized lookbehinds without fancy features
                     use regex_automata::nfa::thompson;
                     // Build a reverse DFA for the pattern
                     let dfa = match regex_automata::hybrid::dfa::DFA::builder()
                         .thompson(thompson::Config::new().reverse(true))
-                        .build(&DelegateBuilder::new().push(inner).re)
+                        .build(&pattern)
                     {
                         Ok(dfa) => dfa,
-                        Err(e) => return Err(Error::CompileError(CompileError::DfaBuildError(e.to_string()))),
+                        Err(e) => {
+                            return Err(Error::CompileError(CompileError::DfaBuildError(
+                                e.to_string(),
+                            )))
+                        }
                     };
-                    
+
                     let cache = core::cell::RefCell::new(dfa.create_cache());
-                    self.b.add(Insn::ReverseLookbehind { dfa, cache });
+                    self.b.add(Insn::ReverseLookbehind(ReverseSearch {
+                        dfa,
+                        cache,
+                        pattern: pattern.to_string(),
+                    }));
                     Ok(())
                 }
                 #[cfg(not(feature = "variable-lookbehinds"))]
                 {
-                    Err(Error::CompileError(CompileError::VariableLookBehindRequiresFeature))
+                    Err(Error::CompileError(
+                        CompileError::VariableLookBehindRequiresFeature,
+                    ))
                 }
             } else {
                 // variable sized lookbehinds with fancy features are currently unsupported
@@ -782,7 +797,24 @@ mod tests {
         let info = analyze(&tree, true).unwrap();
         let result = compile(&info, true);
         assert!(result.is_err());
-        assert_matches!(result.err().unwrap(), Error::CompileError(CompileError::VariableLookBehindRequiresFeature));
+        assert_matches!(
+            result.err().unwrap(),
+            Error::CompileError(CompileError::VariableLookBehindRequiresFeature)
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn variable_lookbehind_with_required_feature() {
+        let prog = compile_prog(r"(?<=a+b+)x");
+
+        assert_eq!(prog.len(), 5, "prog: {:?}", prog);
+
+        assert_matches!(prog[0], Save(0));
+        assert_matches!(&prog[1], ReverseLookbehind(ReverseSearch { pattern, dfa: _, cache: _ }) if pattern == "a+b+");
+        assert_matches!(prog[2], Restore(0));
+        assert_matches!(prog[3], Lit(ref l) if l == "x");
+        assert_matches!(prog[4], End);
     }
 
     fn compile_prog(re: &str) -> Vec<Insn> {
