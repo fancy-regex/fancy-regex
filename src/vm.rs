@@ -134,8 +134,8 @@ impl core::fmt::Debug for Delegate {
 #[cfg(feature = "variable-lookbehinds")]
 #[derive(Clone)]
 /// Delegate matching in reverse to regex-automata
-pub struct ReverseSearch {
-    /// The regex pattern as a string which will be searched for in reverse
+pub struct ReverseBackwardsDelegate {
+    /// The regex pattern as a string which will be matched in reverse, in a backwards direction
     pub pattern: String,
     /// The delegate regex to match backwards
     pub(crate) dfa: regex_automata::hybrid::dfa::DFA,
@@ -144,7 +144,7 @@ pub struct ReverseSearch {
 }
 
 #[cfg(feature = "variable-lookbehinds")]
-impl core::fmt::Debug for ReverseSearch {
+impl core::fmt::Debug for ReverseBackwardsDelegate {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         // Ensures it fails to compile if the struct changes
         let Self {
@@ -153,7 +153,7 @@ impl core::fmt::Debug for ReverseSearch {
             cache: _,
         } = self;
 
-        f.debug_struct("ReverseSearch")
+        f.debug_struct("ReverseBackwardsDelegate")
             .field("pattern", pattern)
             .finish()
     }
@@ -250,7 +250,7 @@ pub enum Insn {
     BackrefExistsCondition(usize),
     #[cfg(feature = "variable-lookbehinds")]
     /// Reverse lookbehind using regex-automata for variable-sized patterns
-    ReverseLookbehind(ReverseSearch),
+    BackwardsDelegate(ReverseBackwardsDelegate),
 }
 
 /// Sequence of instructions for the VM to execute.
@@ -765,7 +765,7 @@ pub(crate) fn run(
                     }
                 }
                 #[cfg(feature = "variable-lookbehinds")]
-                Insn::ReverseLookbehind(ReverseSearch {
+                Insn::BackwardsDelegate(ReverseBackwardsDelegate {
                     ref dfa,
                     ref cache,
                     pattern: _,

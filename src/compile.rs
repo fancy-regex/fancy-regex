@@ -29,7 +29,7 @@ use std::{collections::BTreeMap, sync::RwLock};
 
 use crate::analyze::Info;
 #[cfg(feature = "variable-lookbehinds")]
-use crate::vm::ReverseSearch;
+use crate::vm::ReverseBackwardsDelegate;
 use crate::vm::{Delegate, Insn, Prog};
 use crate::LookAround::*;
 use crate::{CompileError, Error, Expr, LookAround, RegexOptions, Result};
@@ -471,11 +471,12 @@ impl Compiler {
                     };
 
                     let cache = core::cell::RefCell::new(dfa.create_cache());
-                    self.b.add(Insn::ReverseLookbehind(ReverseSearch {
-                        dfa,
-                        cache,
-                        pattern: pattern.to_string(),
-                    }));
+                    self.b
+                        .add(Insn::BackwardsDelegate(ReverseBackwardsDelegate {
+                            dfa,
+                            cache,
+                            pattern: pattern.to_string(),
+                        }));
                     Ok(())
                 }
                 #[cfg(not(feature = "variable-lookbehinds"))]
@@ -811,7 +812,7 @@ mod tests {
         assert_eq!(prog.len(), 5, "prog: {:?}", prog);
 
         assert_matches!(prog[0], Save(0));
-        assert_matches!(&prog[1], ReverseLookbehind(ReverseSearch { pattern, dfa: _, cache: _ }) if pattern == "ab+");
+        assert_matches!(&prog[1], BackwardsDelegate(ReverseBackwardsDelegate { pattern, dfa: _, cache: _ }) if pattern == "ab+");
         assert_matches!(prog[2], Restore(0));
         assert_matches!(prog[3], Lit(ref l) if l == "x");
         assert_matches!(prog[4], End);
