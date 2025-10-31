@@ -24,6 +24,8 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use regex_automata::meta::Regex as RaRegex;
 use regex_automata::meta::{Builder as RaBuilder, Config as RaConfig};
+#[cfg(all(feature = "variable-lookbehinds", feature = "std"))]
+use std::sync::Mutex;
 #[cfg(all(test, feature = "std"))]
 use std::{collections::BTreeMap, sync::RwLock};
 
@@ -470,6 +472,9 @@ impl Compiler {
                         }
                     };
 
+                    #[cfg(feature = "std")]
+                    let cache = Mutex::new(dfa.create_cache());
+                    #[cfg(not(feature = "std"))]
                     let cache = core::cell::RefCell::new(dfa.create_cache());
                     self.b
                         .add(Insn::BackwardsDelegate(ReverseBackwardsDelegate {
