@@ -774,10 +774,7 @@ pub(crate) fn run(
                     let mut cache = cache.borrow_mut();
                     let input = Input::new(s).anchored(Anchored::Yes).range(0..ix);
 
-                    let found_match = match dfa.try_search_rev(&mut cache, &input) {
-                        Ok(Some(_)) => true,
-                        _ => false,
-                    };
+                    let found_match = matches!(dfa.try_search_rev(&mut cache, &input), Ok(Some(_)));
 
                     if !found_match {
                         break 'fail;
