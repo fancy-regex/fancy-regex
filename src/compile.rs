@@ -28,6 +28,8 @@ use regex_automata::meta::{Builder as RaBuilder, Config as RaConfig};
 use std::{collections::BTreeMap, sync::RwLock};
 
 use crate::analyze::Info;
+#[cfg(feature = "variable-lookbehinds")]
+use crate::vm::ReverseBackwardsDelegate;
 use crate::vm::{Delegate, Insn, Prog};
 use crate::LookAround::*;
 use crate::{CompileError, Error, Expr, LookAround, RegexOptions, Result};
@@ -444,12 +446,52 @@ impl Compiler {
 
     fn compile_lookaround_inner(&mut self, inner: &Info<'_>, la: LookAround) -> Result<()> {
         if la == LookBehind || la == LookBehindNeg {
-            if !inner.const_size {
-                return Err(Error::CompileError(CompileError::LookBehindNotConst));
+            if inner.const_size {
+                self.b.add(Insn::GoBack(inner.min_size));
+                self.visit(inner, false)
+            } else if !inner.hard && inner.start_group == inner.end_group {
+                #[cfg(feature = "variable-lookbehinds")]
+                {
+                    let mut delegate_builder = DelegateBuilder::new();
+                    delegate_builder.push(inner);
+                    let pattern = &delegate_builder.re;
+                    // Use reverse matching for variable-sized lookbehinds without fancy features
+                    use regex_automata::nfa::thompson;
+                    // Build a reverse DFA for the pattern
+                    let dfa = match regex_automata::hybrid::dfa::DFA::builder()
+                        .thompson(thompson::Config::new().reverse(true))
+                        .build(&pattern)
+                    {
+                        Ok(dfa) => dfa,
+                        Err(e) => {
+                            return Err(Error::CompileError(CompileError::DfaBuildError(
+                                e.to_string(),
+                            )))
+                        }
+                    };
+
+                    let cache = core::cell::RefCell::new(dfa.create_cache());
+                    self.b
+                        .add(Insn::BackwardsDelegate(ReverseBackwardsDelegate {
+                            dfa,
+                            cache,
+                            pattern: pattern.to_string(),
+                        }));
+                    Ok(())
+                }
+                #[cfg(not(feature = "variable-lookbehinds"))]
+                {
+                    Err(Error::CompileError(
+                        CompileError::VariableLookBehindRequiresFeature,
+                    ))
+                }
+            } else {
+                // variable sized lookbehinds with fancy features are currently unsupported
+                Err(Error::CompileError(CompileError::LookBehindNotConst))
             }
-            self.b.add(Insn::GoBack(inner.min_size));
+        } else {
+            self.visit(inner, false)
         }
-        self.visit(inner, false)
     }
 
     fn compile_delegates(&mut self, infos: &[Info<'_>]) -> Result<()> {
@@ -746,6 +788,34 @@ mod tests {
         assert_matches!(prog[6], FailNegativeLookAround);
         assert_matches!(prog[7], Save(1));
         assert_matches!(prog[8], End);
+    }
+
+    #[test]
+    #[cfg(not(feature = "variable-lookbehinds"))]
+    fn variable_lookbehind_requires_feature() {
+        // Without the feature flag, variable-length lookbehinds should error
+        let tree = Expr::parse_tree(r"(?<=ab+)x").unwrap();
+        let info = analyze(&tree, true).unwrap();
+        let result = compile(&info, true);
+        assert!(result.is_err());
+        assert_matches!(
+            result.err().unwrap(),
+            Error::CompileError(CompileError::VariableLookBehindRequiresFeature)
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn variable_lookbehind_with_required_feature() {
+        let prog = compile_prog(r"(?<=ab+)x");
+
+        assert_eq!(prog.len(), 5, "prog: {:?}", prog);
+
+        assert_matches!(prog[0], Save(0));
+        assert_matches!(&prog[1], BackwardsDelegate(ReverseBackwardsDelegate { pattern, dfa: _, cache: _ }) if pattern == "ab+");
+        assert_matches!(prog[2], Restore(0));
+        assert_matches!(prog[3], Lit(ref l) if l == "x");
+        assert_matches!(prog[4], End);
     }
 
     fn compile_prog(re: &str) -> Vec<Insn> {

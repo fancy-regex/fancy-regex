@@ -275,6 +275,26 @@ digraph G {
     }
 
     #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn test_compilation_variable_lookbehind_debug_output() {
+        let expected = "  ".to_owned()
+            + "\
+  0: Split(3, 1)
+  1: Any
+  2: Jmp(0)
+  3: Save(0)
+  4: Save(2)
+  5: BackwardsDelegate(ReverseBackwardsDelegate { pattern: \"ab+\" })
+  6: Restore(2)
+  7: Lit(\"x\")
+  8: Save(1)
+  9: End
+";
+
+        assert_compiled_prog("(?<=ab+)x", &expected);
+    }
+
+    #[test]
     fn test_compilation_wrapped_debug_output() {
         let expected = "wrapped Regex \"a+bc?\", explicit_capture_group_0: false";
 

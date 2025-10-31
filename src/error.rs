@@ -65,6 +65,10 @@ pub enum CompileError {
     InnerError(RaBuildError),
     /// Look-behind assertion without constant size
     LookBehindNotConst,
+    /// Variable-length lookbehind requires feature flag
+    VariableLookBehindRequiresFeature,
+    /// Error building reverse DFA for variable-length lookbehind
+    DfaBuildError(String),
     /// Couldn't parse group name
     InvalidGroupName,
     /// Invalid group id in escape sequence
@@ -129,6 +133,12 @@ impl fmt::Display for CompileError {
             CompileError::InnerError(e) => write!(f, "Regex error: {}", e),
             CompileError::LookBehindNotConst => {
                 write!(f, "Look-behind assertion without constant size")
+            },
+            CompileError::VariableLookBehindRequiresFeature => {
+                write!(f, "Variable-length lookbehind requires the 'variable-lookbehinds' feature")
+            },
+            CompileError::DfaBuildError(s) => {
+                write!(f, "Failed to build reverse DFA for variable-length lookbehind: {}", s)
             },
             CompileError::InvalidGroupName => write!(f, "Could not parse group name"),
             CompileError::InvalidGroupNameBackref(s) => write!(f, "Invalid group name in back reference: {}", s),

@@ -97,6 +97,51 @@ fn run_backtrack_limit(c: &mut Criterion) {
     });
 }
 
+#[cfg(feature = "variable-lookbehinds")]
+fn const_size_lookbehind(c: &mut Criterion) {
+    // Benchmark const-size lookbehind (should use simple GoBack)
+    let tree = Expr::parse_tree(r"(?<=ab)x").unwrap();
+    let a = analyze(&tree, false).unwrap();
+    let p = compile(&a, false).unwrap();
+    let input = "abx";
+    c.bench_function("const_size_lookbehind", |b| {
+        b.iter(|| run_default(&p, input, 0).unwrap())
+    });
+}
+
+#[cfg(feature = "variable-lookbehinds")]
+fn variable_size_lookbehind(c: &mut Criterion) {
+    // Benchmark variable-size lookbehind (uses reverse DFA)
+    let tree = Expr::parse_tree(r"(?<=a+b+)x").unwrap();
+    let a = analyze(&tree, false).unwrap();
+    let p = compile(&a, false).unwrap();
+    let input = "aaabbbbx";
+    c.bench_function("variable_size_lookbehind", |b| {
+        b.iter(|| run_default(&p, input, 0).unwrap())
+    });
+}
+
+#[cfg(feature = "variable-lookbehinds")]
+fn variable_size_alt_lookbehind(c: &mut Criterion) {
+    // Benchmark variable-size lookbehind with alternation
+    let tree = Expr::parse_tree(r"(?<=a|bc)x").unwrap();
+    let a = analyze(&tree, false).unwrap();
+    let p = compile(&a, false).unwrap();
+    let input = "bcx";
+    c.bench_function("variable_size_alt_lookbehind", |b| {
+        b.iter(|| run_default(&p, input, 0).unwrap())
+    });
+}
+
+#[cfg(feature = "variable-lookbehinds")]
+criterion_group!(
+    name = lookbehind_benches;
+    config = Criterion::default();
+    targets = const_size_lookbehind,
+    variable_size_lookbehind,
+    variable_size_alt_lookbehind,
+);
+
 criterion_group!(
     name = benches;
     config = Criterion::default().warm_up_time(Duration::from_secs(10));
@@ -114,4 +159,8 @@ criterion_group!(
     targets = run_backtrack_limit,
 );
 
+#[cfg(feature = "variable-lookbehinds")]
+criterion_main!(benches, slow_benches, lookbehind_benches);
+
+#[cfg(not(feature = "variable-lookbehinds"))]
 criterion_main!(benches, slow_benches);

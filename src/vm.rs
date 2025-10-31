@@ -131,6 +131,34 @@ impl core::fmt::Debug for Delegate {
     }
 }
 
+#[cfg(feature = "variable-lookbehinds")]
+#[derive(Clone)]
+/// Delegate matching in reverse to regex-automata
+pub struct ReverseBackwardsDelegate {
+    /// The regex pattern as a string which will be matched in reverse, in a backwards direction
+    pub pattern: String,
+    /// The delegate regex to match backwards
+    pub(crate) dfa: regex_automata::hybrid::dfa::DFA,
+    /// Cache for DFA searches
+    pub(crate) cache: core::cell::RefCell<regex_automata::hybrid::dfa::Cache>,
+}
+
+#[cfg(feature = "variable-lookbehinds")]
+impl core::fmt::Debug for ReverseBackwardsDelegate {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        // Ensures it fails to compile if the struct changes
+        let Self {
+            pattern,
+            dfa: _,
+            cache: _,
+        } = self;
+
+        f.debug_struct("ReverseBackwardsDelegate")
+            .field("pattern", pattern)
+            .finish()
+    }
+}
+
 /// Instruction of the VM.
 #[derive(Clone, Debug)]
 pub enum Insn {
@@ -220,6 +248,9 @@ pub enum Insn {
     ContinueFromPreviousMatchEnd,
     /// Continue only if the specified capture group has already been populated as part of the match
     BackrefExistsCondition(usize),
+    #[cfg(feature = "variable-lookbehinds")]
+    /// Reverse lookbehind using regex-automata for variable-sized patterns
+    BackwardsDelegate(ReverseBackwardsDelegate),
 }
 
 /// Sequence of instructions for the VM to execute.
@@ -730,6 +761,22 @@ pub(crate) fn run(
                     let lo = state.get(group * 2);
                     if lo == usize::MAX {
                         // Referenced group hasn't matched, so the backref doesn't match either
+                        break 'fail;
+                    }
+                }
+                #[cfg(feature = "variable-lookbehinds")]
+                Insn::BackwardsDelegate(ReverseBackwardsDelegate {
+                    ref dfa,
+                    ref cache,
+                    pattern: _,
+                }) => {
+                    // Use regex-automata to search backwards from current position
+                    let mut cache = cache.borrow_mut();
+                    let input = Input::new(s).anchored(Anchored::Yes).range(0..ix);
+
+                    let found_match = matches!(dfa.try_search_rev(&mut cache, &input), Ok(Some(_)));
+
+                    if !found_match {
                         break 'fail;
                     }
                 }

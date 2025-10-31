@@ -100,6 +100,18 @@ let fields: Vec<&str> = re.splitn(target, 3).map(|x| x.unwrap()).collect();
 assert_eq!(fields, vec!["a", "b", "c\td    e"]);
 ```
 
+# Features
+
+This crate supports several optional features that can be enabled or disabled:
+
+- **`std`** (enabled by default): Enables standard library support. Disable for `no_std` environments.
+- **`unicode`** (enabled by default): Enables Unicode support for character classes and word boundaries.
+- **`perf`** (enabled by default): Enables performance optimizations in the underlying regex engine.
+- **`variable-lookbehinds`** (enabled by default): Enables support for variable-length lookbehind
+  assertions (e.g., `(?<=a+)`). Without this feature, only constant-length lookbehinds are supported.
+  This feature uses reverse DFA matching from the `regex-automata` crate to efficiently handle
+  variable-length patterns that don't use backreferences or other fancy features.
+
 # Syntax
 
 The regex syntax is based on the [regex] crate's, with some additional supported syntax.
@@ -149,6 +161,11 @@ Look-around assertions for matching without changing the current position:
 : look-behind, succeeds if *exp* matches to the left of the current position \
 `(?<!exp)`
 : negative look-behind, succeeds if *exp* doesn't match to the left
+
+**Note**: Look-behind assertions with variable length (e.g., `(?<=a+)`) are supported with the
+`variable-lookbehinds` feature (enabled by default). Without this feature, only constant-length
+look-behinds are supported. Variable-length look-behinds with backreferences or other "fancy"
+features are not currently supported.
 
 Atomic groups using `(?>exp)` to prevent backtracking within `exp`, e.g.:
 
