@@ -205,7 +205,8 @@ impl<'a> Parser<'a> {
         match child {
             Expr::LookAround(_, _) => false,
             Expr::Empty => false,
-            Expr::Assertion(_) => false,
+            // In Oniguruma mode, repetition after assertions is not allowed
+            Expr::Assertion(_) => !self.flag(FLAG_ONIGURUMA_MODE),
             Expr::KeepOut => false,
             Expr::ContinueFromPreviousMatchEnd => false,
             Expr::BackrefExistsCondition(_) => false,
@@ -497,16 +498,22 @@ impl<'a> Parser<'a> {
                     LookAhead,
                 ),
             )
-        } else if b == b'b' && !in_class {
+        } else if (b == b'b' || b == b'B') && !in_class {
             if bytes.get(end) == Some(&b'{') {
-                return self.parse_word_boundary_brace(ix);
+                let is_repetition = matches!(
+                    bytes.get(end + 1),
+                    Some(&ch) if ch.is_ascii_digit() || ch == b','
+                );
+                if !is_repetition {
+                    return self.parse_word_boundary_brace(ix);
+                }
             }
-            (end, Expr::Assertion(Assertion::WordBoundary))
-        } else if b == b'B' && !in_class {
-            if bytes.get(end) == Some(&b'{') {
-                return self.parse_word_boundary_brace(ix);
-            }
-            (end, Expr::Assertion(Assertion::NotWordBoundary))
+            let expr = if b == b'b' {
+                Expr::Assertion(Assertion::WordBoundary)
+            } else {
+                Expr::Assertion(Assertion::NotWordBoundary)
+            };
+            (end, expr)
         } else if b == b'<' && !in_class {
             let expr = if self.flag(FLAG_ONIGURUMA_MODE) {
                 make_literal("<")
@@ -1219,12 +1226,28 @@ mod tests {
         Expr::parse_tree(s).unwrap().expr
     }
 
+    fn parse_oniguruma(s: &str) -> crate::Result<Expr> {
+        let mut options = RegexOptions::default();
+        options.oniguruma_mode = true;
+        options.pattern = String::from(s);
+        Expr::parse_tree_with_flags(&options.pattern, options.compute_flags()).map(|tree| tree.expr)
+    }
+
     #[cfg_attr(feature = "track_caller", track_caller)]
     fn fail(s: &str) {
         assert!(
             Expr::parse_tree(s).is_err(),
             "Expected parse error, but was: {:?}",
             Expr::parse_tree(s)
+        );
+    }
+
+    #[cfg_attr(feature = "track_caller", track_caller)]
+    fn fail_oniguruma(s: &str) {
+        assert!(
+            parse_oniguruma(s).is_err(),
+            "Expected parse error in Oniguruma mode, but was: {:?}",
+            parse_oniguruma(s)
         );
     }
 
@@ -1601,6 +1624,74 @@ mod tests {
                 make_literal("}"),
             ])
         );
+    }
+
+    #[test]
+    fn repeat_after_assertion_not_oniguruma_mode() {
+        assert_eq!(
+            p(r"\b{1}"),
+            Expr::Repeat {
+                child: Box::new(Expr::Assertion(Assertion::WordBoundary)),
+                lo: 1,
+                hi: 1,
+                greedy: true
+            }
+        );
+        assert_eq!(
+            p(r"\B{2}"),
+            Expr::Repeat {
+                child: Box::new(Expr::Assertion(Assertion::NotWordBoundary)),
+                lo: 2,
+                hi: 2,
+                greedy: true
+            }
+        );
+        assert_eq!(
+            p(r"^{3}"),
+            Expr::Repeat {
+                child: Box::new(Expr::Assertion(Assertion::StartText)),
+                lo: 3,
+                hi: 3,
+                greedy: true
+            }
+        );
+        assert_eq!(
+            p(r"${1,5}"),
+            Expr::Repeat {
+                child: Box::new(Expr::Assertion(Assertion::EndText)),
+                lo: 1,
+                hi: 5,
+                greedy: true
+            }
+        );
+        assert_eq!(
+            p(r"\A*"),
+            Expr::Repeat {
+                child: Box::new(Expr::Assertion(Assertion::StartText)),
+                lo: 0,
+                hi: usize::MAX,
+                greedy: true
+            }
+        );
+        assert_eq!(
+            p(r"\z+"),
+            Expr::Repeat {
+                child: Box::new(Expr::Assertion(Assertion::EndText)),
+                lo: 1,
+                hi: usize::MAX,
+                greedy: true
+            }
+        );
+    }
+
+    #[test]
+    fn repeat_after_assertion_oniguruma_mode() {
+        fail_oniguruma(r"\b{1}");
+        fail_oniguruma(r"\B{2}");
+        fail_oniguruma(r"^{3}");
+        fail_oniguruma(r"${1,5}");
+        fail_oniguruma(r"\A*");
+        fail_oniguruma(r"\z+");
     }
 
     #[test]
@@ -2098,22 +2189,6 @@ mod tests {
             "Parsing error at position 9: Target of repeat operator is invalid",
         );
         assert_error(
-            "^?",
-            "Parsing error at position 1: Target of repeat operator is invalid",
-        );
-        assert_error(
-            "${2}",
-            "Parsing error at position 3: Target of repeat operator is invalid",
-        );
-        assert_error(
-            "(?m)^?",
-            "Parsing error at position 5: Target of repeat operator is invalid",
-        );
-        assert_error(
-            "(?m)${2}",
-            "Parsing error at position 7: Target of repeat operator is invalid",
-        );
-        assert_error(
             "(a|b|?)",
             "Parsing error at position 5: Target of repeat operator is invalid",
         );
@@ -2135,10 +2210,6 @@ mod tests {
         );
         assert_error(
             r"\G*",
-            "Parsing error at position 2: Target of repeat operator is invalid",
-        );
-        assert_error(
-            r"\b+",
             "Parsing error at position 2: Target of repeat operator is invalid",
         );
     }
