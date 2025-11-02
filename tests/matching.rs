@@ -229,6 +229,14 @@ fn word_boundary_brace_syntax() {
     assert_no_match(r"test\b{end-half}", "testing");
     assert_match(r"-1-\b{end-half}", "chapter -1-");
 
+    // repetition
+    assert_match(r"\b\bworld", "hello world");
+    assert_match(r"\b{2}world", "hello world");
+    assert_no_match(r"\b{2}orld", "hello world");
+    assert_match(r"world\b{,3}", "hello world");
+    assert_match(r"\B{5}est", "run test");
+    assert_no_match(r"\B{2}test", "run test");
+
     // `\b{start}` <=> `\<` and `\b{end}` <=> `\>`
     let test_cases = [
         ("hello world", r"\b{start}world", r"\<world"),
