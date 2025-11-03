@@ -615,6 +615,12 @@ pub(crate) fn run(
                         Assertion::RightWordBoundary => {
                             look_matcher.is_word_end_unicode(s.as_bytes(), ix).unwrap()
                         }
+                        Assertion::LeftWordHalfBoundary => look_matcher
+                            .is_word_start_half_unicode(s.as_bytes(), ix)
+                            .unwrap(),
+                        Assertion::RightWordHalfBoundary => look_matcher
+                            .is_word_end_half_unicode(s.as_bytes(), ix)
+                            .unwrap(),
                         Assertion::WordBoundary => {
                             look_matcher.is_word_unicode(s.as_bytes(), ix).unwrap()
                         }

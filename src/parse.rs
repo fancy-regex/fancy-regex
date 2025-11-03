@@ -205,7 +205,8 @@ impl<'a> Parser<'a> {
         match child {
             Expr::LookAround(_, _) => false,
             Expr::Empty => false,
-            Expr::Assertion(_) => false,
+            // In Oniguruma mode, repetition after assertions is not allowed
+            Expr::Assertion(_) => !self.flag(FLAG_ONIGURUMA_MODE),
             Expr::KeepOut => false,
             Expr::ContinueFromPreviousMatchEnd => false,
             Expr::BackrefExistsCondition(_) => false,
@@ -497,24 +498,24 @@ impl<'a> Parser<'a> {
                     LookAhead,
                 ),
             )
-        } else if b == b'b' && !in_class {
-            if bytes.get(end) == Some(&b'{') {
-                // Support for \b{...} is not implemented yet
-                return Err(Error::ParseError(
-                    ix,
-                    ParseError::InvalidEscape(format!("\\{}", &self.re[ix + 1..end])),
-                ));
+        } else if (b == b'b' || b == b'B') && !in_class {
+            let check_pos = self.optional_whitespace(end)?;
+            if bytes.get(check_pos) == Some(&b'{') {
+                let next_open_brace_pos = self.optional_whitespace(check_pos + 1)?;
+                let is_repetition = matches!(
+                    bytes.get(next_open_brace_pos),
+                    Some(&ch) if ch.is_ascii_digit() || ch == b','
+                );
+                if !is_repetition {
+                    return self.parse_word_boundary_brace(ix);
+                }
             }
-            (end, Expr::Assertion(Assertion::WordBoundary))
-        } else if b == b'B' && !in_class {
-            if bytes.get(end) == Some(&b'{') {
-                // Support for \b{...} is not implemented yet
-                return Err(Error::ParseError(
-                    ix,
-                    ParseError::InvalidEscape(format!("\\{}", &self.re[ix + 1..end])),
-                ));
-            }
-            (end, Expr::Assertion(Assertion::NotWordBoundary))
+            let expr = if b == b'b' {
+                Expr::Assertion(Assertion::WordBoundary)
+            } else {
+                Expr::Assertion(Assertion::NotWordBoundary)
+            };
+            (end, expr)
         } else if b == b'<' && !in_class {
             let expr = if self.flag(FLAG_ONIGURUMA_MODE) {
                 make_literal("<")
@@ -553,10 +554,13 @@ impl<'a> Parser<'a> {
                 },
             )
         } else if b == b'x' {
+            let end = self.optional_whitespace(end)?;
             return self.parse_hex(end, 2);
         } else if b == b'u' {
+            let end = self.optional_whitespace(end)?;
             return self.parse_hex(end, 4);
         } else if b == b'U' {
+            let end = self.optional_whitespace(end)?;
             return self.parse_hex(end, 8);
         } else if (b | 32) == b'p' && end != bytes.len() {
             let mut end = end;
@@ -647,46 +651,126 @@ impl<'a> Parser<'a> {
         }
         let bytes = self.re.as_bytes();
         let b = bytes[ix];
-        let (end, s) = if ix + digits <= self.re.len()
-            && bytes[ix..ix + digits].iter().all(|&b| is_hex_digit(b))
-        {
-            let end = ix + digits;
-            (end, &self.re[ix..end])
-        } else if b == b'{' {
-            let starthex = ix + 1;
-            let mut endhex = starthex;
-            loop {
-                if endhex == self.re.len() {
+        // Parse fixed-width hex (e.g., \xAB)
+        if ix + digits <= self.re.len() && bytes[ix..ix + digits].iter().all(|&b| is_hex_digit(b)) {
+            let hex_str = &self.re[ix..ix + digits];
+            return self.hex_to_literal(ix, ix + digits, hex_str);
+        }
+        // Parse brace-enclosed hex (e.g., \u{00AB})
+        if b == b'{' {
+            let mut pos = ix + 1;
+            let mut hex_chars = String::new();
+            while pos < self.re.len() {
+                // Skip whitespace/comments if FLAG_IGNORE_SPACE is set
+                pos = self.optional_whitespace(pos)?;
+                if pos >= self.re.len() {
                     return Err(Error::ParseError(ix, ParseError::InvalidHex));
                 }
-                let b = bytes[endhex];
-                if endhex > starthex && b == b'}' {
-                    break;
+                let b = bytes[pos];
+                if b == b'}' && !hex_chars.is_empty() {
+                    return self.hex_to_literal(ix, pos + 1, &hex_chars);
                 }
-                if is_hex_digit(b) && endhex < starthex + 8 {
-                    endhex += 1;
+                if is_hex_digit(b) && hex_chars.len() < 8 {
+                    hex_chars.push(b as char);
+                    pos += 1;
                 } else {
                     return Err(Error::ParseError(ix, ParseError::InvalidHex));
                 }
             }
-            (endhex + 1, &self.re[starthex..endhex])
-        } else {
-            return Err(Error::ParseError(ix, ParseError::InvalidHex));
-        };
-        let codepoint = u32::from_str_radix(s, 16).unwrap();
+        }
+        Err(Error::ParseError(ix, ParseError::InvalidHex))
+    }
+
+    fn hex_to_literal(&self, ix: usize, end: usize, hex_str: &str) -> Result<(usize, Expr)> {
+        let codepoint = u32::from_str_radix(hex_str, 16).unwrap();
         if let Some(c) = char::from_u32(codepoint) {
-            let mut inner = String::with_capacity(4);
-            inner.push(c);
             Ok((
                 end,
                 Expr::Literal {
-                    val: inner,
+                    val: c.to_string(),
                     casei: self.flag(FLAG_CASEI),
                 },
             ))
         } else {
             Err(Error::ParseError(ix, ParseError::InvalidCodepointValue))
         }
+    }
+
+    // ix points before '\b' or '\B'
+    fn parse_word_boundary_brace(&self, ix: usize) -> Result<(usize, Expr)> {
+        let bytes = self.re.as_bytes();
+
+        // Verify that we have '\b' or '\B'
+        if !matches!(bytes.get(ix..ix + 2), Some([b'\\', b'b' | b'B'])) {
+            return Err(Error::ParseError(
+                ix,
+                ParseError::InvalidEscape("\\b{...}".to_string()),
+            ));
+        }
+        // Skip whitespace/comments after \b or \B if FLAG_IGNORE_SPACE is set
+        let brace_start = self.optional_whitespace(ix + 2)?;
+        // Verify we have '{'
+        if bytes.get(brace_start) != Some(&b'{') {
+            return Err(Error::ParseError(
+                ix,
+                ParseError::InvalidEscape("\\b{...}".to_string()),
+            ));
+        }
+        // Extract content between braces
+        let mut pos = brace_start + 1;
+        let mut content = String::new();
+        while pos < self.re.len() {
+            let b = bytes[pos];
+            if b == b'}' {
+                break;
+            }
+            // Skip whitespace/comments if FLAG_IGNORE_SPACE is set
+            let next_pos = self.optional_whitespace(pos)?;
+            if next_pos > pos {
+                // Whitespace was skipped
+                pos = next_pos;
+                if pos >= self.re.len() || bytes[pos] == b'}' {
+                    break;
+                }
+            }
+            // Add non-whitespace character to content
+            let b = bytes[pos];
+            if b != b'}' {
+                content.push(b as char);
+                pos += codepoint_len(b);
+            }
+        }
+
+        let end_brace = pos;
+        if end_brace >= self.re.len() || bytes[end_brace] != b'}' {
+            return Err(Error::ParseError(
+                ix,
+                ParseError::InvalidEscape("\\b{...}".to_string()),
+            ));
+        }
+
+        // \B{...} is not supported
+        if bytes[ix + 1] == b'B' {
+            return Err(Error::ParseError(
+                ix,
+                ParseError::InvalidEscape(format!("\\B{{{}}}", content)),
+            ));
+        }
+
+        let expr = match content.as_str() {
+            "start" => Expr::Assertion(Assertion::LeftWordBoundary),
+            "end" => Expr::Assertion(Assertion::RightWordBoundary),
+            "start-half" => Expr::Assertion(Assertion::LeftWordHalfBoundary),
+            "end-half" => Expr::Assertion(Assertion::RightWordHalfBoundary),
+            _ => {
+                return Err(Error::ParseError(
+                    ix,
+                    ParseError::InvalidEscape(format!("\\b{{{}}}", content)),
+                ));
+            }
+        };
+
+        Ok((end_brace + 1, expr))
     }
 
     fn parse_class(&mut self, ix: usize) -> Result<(usize, Expr)> {
@@ -1171,6 +1255,13 @@ mod tests {
         Expr::parse_tree(s).unwrap().expr
     }
 
+    fn parse_oniguruma(s: &str) -> crate::Result<Expr> {
+        let mut options = RegexOptions::default();
+        options.oniguruma_mode = true;
+        options.pattern = String::from(s);
+        Expr::parse_tree_with_flags(&options.pattern, options.compute_flags()).map(|tree| tree.expr)
+    }
+
     #[cfg_attr(feature = "track_caller", track_caller)]
     fn fail(s: &str) {
         assert!(
@@ -1186,6 +1277,17 @@ mod tests {
         assert!(
             result.is_err(),
             "Expected parse error, but was: {:?}",
+            result
+        );
+        assert_eq!(&format!("{}", result.err().unwrap()), expected_error);
+    }
+
+    #[cfg_attr(feature = "track_caller", track_caller)]
+    fn assert_error_oniguruma(re: &str, expected_error: &str) {
+        let result = parse_oniguruma(re);
+        assert!(
+            result.is_err(),
+            "Expected parse error in Oniguruma mode, but was: {:?}",
             result
         );
         assert_eq!(&format!("{}", result.err().unwrap()), expected_error);
@@ -1363,6 +1465,9 @@ mod tests {
             "Parsing error at position 0: Backslash without following character",
         );
         assert_error("\\q", "Parsing error at position 0: Invalid escape: \\q");
+        assert_error("\\u", "Parsing error at position 2: Invalid hex escape");
+        assert_error("\\U", "Parsing error at position 2: Invalid hex escape");
+        assert_error("\\x", "Parsing error at position 2: Invalid hex escape");
         assert_error("\\xAG", "Parsing error at position 2: Invalid hex escape");
         assert_error("\\xA", "Parsing error at position 2: Invalid hex escape");
         assert_error("\\x{}", "Parsing error at position 2: Invalid hex escape");
@@ -1549,6 +1654,109 @@ mod tests {
                 make_literal("A"),
                 make_literal("}"),
             ])
+        );
+    }
+
+    #[test]
+    fn quantifiers_on_assertions_in_regex_mode() {
+        assert_eq!(
+            p(r"\b{1}"),
+            Expr::Repeat {
+                child: Box::new(Expr::Assertion(Assertion::WordBoundary)),
+                lo: 1,
+                hi: 1,
+                greedy: true
+            }
+        );
+        assert_eq!(
+            p(r"\B{2}"),
+            Expr::Repeat {
+                child: Box::new(Expr::Assertion(Assertion::NotWordBoundary)),
+                lo: 2,
+                hi: 2,
+                greedy: true
+            }
+        );
+        assert_eq!(
+            p(r"^{3}"),
+            Expr::Repeat {
+                child: Box::new(Expr::Assertion(Assertion::StartText)),
+                lo: 3,
+                hi: 3,
+                greedy: true
+            }
+        );
+        assert_eq!(
+            p(r"${1,5}"),
+            Expr::Repeat {
+                child: Box::new(Expr::Assertion(Assertion::EndText)),
+                lo: 1,
+                hi: 5,
+                greedy: true
+            }
+        );
+        assert_eq!(
+            p(r"\A*"),
+            Expr::Repeat {
+                child: Box::new(Expr::Assertion(Assertion::StartText)),
+                lo: 0,
+                hi: usize::MAX,
+                greedy: true
+            }
+        );
+        assert_eq!(
+            p(r"\z+"),
+            Expr::Repeat {
+                child: Box::new(Expr::Assertion(Assertion::EndText)),
+                lo: 1,
+                hi: usize::MAX,
+                greedy: true
+            }
+        );
+        assert_eq!(
+            p(r"^?"),
+            Expr::Repeat {
+                child: Box::new(Expr::Assertion(Assertion::StartText)),
+                lo: 0,
+                hi: 1,
+                greedy: true
+            }
+        );
+        assert_eq!(
+            p(r"${2}"),
+            Expr::Repeat {
+                child: Box::new(Expr::Assertion(Assertion::EndText)),
+                lo: 2,
+                hi: 2,
+                greedy: true
+            }
+        );
+        assert_eq!(
+            p(r"(?m)^?"),
+            Expr::Repeat {
+                child: Box::new(Expr::Assertion(Assertion::StartLine { crlf: false })),
+                lo: 0,
+                hi: 1,
+                greedy: true
+            }
+        );
+        assert_eq!(
+            p(r"(?m)${2}"),
+            Expr::Repeat {
+                child: Box::new(Expr::Assertion(Assertion::EndLine { crlf: false })),
+                lo: 2,
+                hi: 2,
+                greedy: true
+            }
+        );
+        assert_eq!(
+            p(r"\b+"),
+            Expr::Repeat {
+                child: Box::new(Expr::Assertion(Assertion::WordBoundary)),
+                lo: 1,
+                hi: usize::MAX,
+                greedy: true
+            }
         );
     }
 
@@ -1894,6 +2102,19 @@ mod tests {
         assert_eq!(p("(?x: [ \\] \\\\] )"), p("[ \\] \\\\]"));
         assert_eq!(p("(?x: a\\ b )"), p("a b"));
         assert_eq!(p("(?x: a (?-x:#) b )"), p("a#b"));
+        assert_eq!(p("(?x: a (?# b))c"), p("ac"));
+        assert_eq!(p("(?x: \\b { s t a r t} a )"), p("\\b{start}a"));
+        assert_eq!(p("(?x: \\b {end} )"), p("\\b{end}"));
+        assert_eq!(p("(?x: \\b { start-half } )"), p("\\b{start-half}"));
+        assert_eq!(p("(?x: \\b { e n d - h a l f } )"), p("\\b{end-half}"));
+        assert_eq!(p("(?x: \\b{s\nt\ra\trt} a)"), p("\\b{start}a"));
+        assert_eq!(p("(?x: \\u { 0 0 3 2} a)"), p("\\u{0032}a"));
+        assert_eq!(p("(?x: \\U { 0001 F600 } a)"), p("\\U{0001F600}a"));
+        assert_eq!(p("(?x: \\x { 3 2} a)"), p("\\x{32}a"));
+        assert_eq!(p("(?x: \\b { s t a # x\nr t} a )"), p("\\b{start}a"));
+        assert_eq!(p("(?x: \\b { s t a (?# x)r t} a )"), p("\\b{start}a"));
+        assert_eq!(p("(?x: \\u { 0 0 # x\n3 2} a)"), p("\\u{0032}a"));
+        assert_eq!(p("(?x: \\u { 0 0 (?# x)3 2} a)"), p("\\u{0032}a"));
     }
 
     #[test]
@@ -2047,24 +2268,56 @@ mod tests {
             "Parsing error at position 9: Target of repeat operator is invalid",
         );
         assert_error(
-            "^?",
-            "Parsing error at position 1: Target of repeat operator is invalid",
-        );
-        assert_error(
-            "${2}",
-            "Parsing error at position 3: Target of repeat operator is invalid",
-        );
-        assert_error(
-            "(?m)^?",
-            "Parsing error at position 5: Target of repeat operator is invalid",
-        );
-        assert_error(
-            "(?m)${2}",
-            "Parsing error at position 7: Target of repeat operator is invalid",
-        );
-        assert_error(
             "(a|b|?)",
             "Parsing error at position 5: Target of repeat operator is invalid",
+        );
+    }
+
+    #[test]
+    fn no_quantifiers_on_assertions_in_oniguruma_mode() {
+        assert_error_oniguruma(
+            r"\b{1}",
+            "Parsing error at position 4: Target of repeat operator is invalid",
+        );
+        assert_error_oniguruma(
+            r"\B{2}",
+            "Parsing error at position 4: Target of repeat operator is invalid",
+        );
+        assert_error_oniguruma(
+            r"^{3}",
+            "Parsing error at position 3: Target of repeat operator is invalid",
+        );
+        assert_error_oniguruma(
+            r"${1,5}",
+            "Parsing error at position 5: Target of repeat operator is invalid",
+        );
+        assert_error_oniguruma(
+            r"\A*",
+            "Parsing error at position 2: Target of repeat operator is invalid",
+        );
+        assert_error_oniguruma(
+            r"\z+",
+            "Parsing error at position 2: Target of repeat operator is invalid",
+        );
+        assert_error_oniguruma(
+            r"^?",
+            "Parsing error at position 1: Target of repeat operator is invalid",
+        );
+        assert_error_oniguruma(
+            r"${2}",
+            "Parsing error at position 3: Target of repeat operator is invalid",
+        );
+        assert_error_oniguruma(
+            r"(?m)^?",
+            "Parsing error at position 5: Target of repeat operator is invalid",
+        );
+        assert_error_oniguruma(
+            r"(?m)${2}",
+            "Parsing error at position 7: Target of repeat operator is invalid",
+        );
+        assert_error_oniguruma(
+            r"\b+",
+            "Parsing error at position 2: Target of repeat operator is invalid",
         );
     }
 
@@ -2084,10 +2337,6 @@ mod tests {
         );
         assert_error(
             r"\G*",
-            "Parsing error at position 2: Target of repeat operator is invalid",
-        );
-        assert_error(
-            r"\b+",
             "Parsing error at position 2: Target of repeat operator is invalid",
         );
     }
@@ -2536,6 +2785,53 @@ mod tests {
     #[test]
     fn fuzz_4() {
         fail(r"\u{2}(?(2)");
+    }
+
+    #[test]
+    fn word_boundary_brace_syntax() {
+        // Valid patterns produce correct assertions
+        assert_eq!(
+            p(r"\b{start}"),
+            Expr::Assertion(Assertion::LeftWordBoundary)
+        );
+        assert_eq!(p(r"\b{end}"), Expr::Assertion(Assertion::RightWordBoundary));
+        assert_eq!(
+            p(r"\b{start-half}"),
+            Expr::Assertion(Assertion::LeftWordHalfBoundary)
+        );
+        assert_eq!(
+            p(r"\b{end-half}"),
+            Expr::Assertion(Assertion::RightWordHalfBoundary)
+        );
+    }
+
+    #[test]
+    fn word_boundary_brace_parsing_errors() {
+        // Invalid patterns produce expected errors
+        let test_cases = [
+            (r"\b{invalid}", "Invalid escape: \\b{invalid}"),
+            (r"\b{start ", "Invalid escape: \\b{...}"),
+            (r"\b{end ", "Invalid escape: \\b{...}"),
+            (r"\b{}", "Invalid escape: \\b{}"),
+            (r"\b{", "Invalid escape: \\b{...}"),
+            (r"\b{ }", "Invalid escape: \\b{ }"),
+            (r"\b{START}", "Invalid escape: \\b{START}"),
+            (r"\b{END}", "Invalid escape: \\b{END}"),
+            (r"\b{ s t a r t }", "Invalid escape: \\b{ s t a r t }"),
+            // \B{...} patterns should fail
+            (r"\B{start}", "Invalid escape: \\B{start}"),
+            (r"\B{end}", "Invalid escape: \\B{end}"),
+            (r"\B{start-half}", "Invalid escape: \\B{start-half}"),
+            (r"\B{end-half}", "Invalid escape: \\B{end-half}"),
+            (r"\c{start}", "Invalid escape: \\c"),
+        ];
+
+        for (pattern, expected_error) in test_cases {
+            assert_error(
+                pattern,
+                &format!("Parsing error at position 0: {}", expected_error),
+            );
+        }
     }
 
     fn get_options(pattern: &str, func: impl Fn(SyntaxConfig) -> SyntaxConfig) -> RegexOptions {

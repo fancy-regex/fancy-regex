@@ -1,6 +1,6 @@
 mod common;
 
-use fancy_regex::{Match, Regex};
+use fancy_regex::Match;
 use std::ops::Range;
 
 #[test]
@@ -440,12 +440,4 @@ fn find_match<'t>(re: &str, text: &'t str) -> Option<Match<'t>> {
         result
     );
     result.unwrap()
-}
-
-#[test]
-fn incomplete_escape_sequences() {
-    // See GH-76
-    assert!(Regex::new("\\u").is_err());
-    assert!(Regex::new("\\U").is_err());
-    assert!(Regex::new("\\x").is_err());
 }

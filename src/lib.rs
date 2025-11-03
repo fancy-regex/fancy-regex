@@ -1775,8 +1775,12 @@ pub enum Assertion {
     },
     /// Left word boundary
     LeftWordBoundary,
+    /// Left word half boundary
+    LeftWordHalfBoundary,
     /// Right word boundary
     RightWordBoundary,
+    /// Right word half boundary
+    RightWordHalfBoundary,
     /// Both word boundaries
     WordBoundary,
     /// Not word boundary
@@ -1789,7 +1793,12 @@ impl Assertion {
         matches!(
             self,
             // these will make regex-automata use PikeVM
-            LeftWordBoundary | RightWordBoundary | WordBoundary | NotWordBoundary
+            LeftWordBoundary
+                | LeftWordHalfBoundary
+                | RightWordBoundary
+                | RightWordHalfBoundary
+                | WordBoundary
+                | NotWordBoundary
         )
     }
 }
