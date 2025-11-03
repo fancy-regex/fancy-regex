@@ -1243,20 +1243,22 @@ mod tests {
     }
 
     #[cfg_attr(feature = "track_caller", track_caller)]
-    fn fail_oniguruma(s: &str) {
-        assert!(
-            parse_oniguruma(s).is_err(),
-            "Expected parse error in Oniguruma mode, but was: {:?}",
-            parse_oniguruma(s)
-        );
-    }
-
-    #[cfg_attr(feature = "track_caller", track_caller)]
     fn assert_error(re: &str, expected_error: &str) {
         let result = Expr::parse_tree(re);
         assert!(
             result.is_err(),
             "Expected parse error, but was: {:?}",
+            result
+        );
+        assert_eq!(&format!("{}", result.err().unwrap()), expected_error);
+    }
+
+    #[cfg_attr(feature = "track_caller", track_caller)]
+    fn assert_error_oniguruma(re: &str, expected_error: &str) {
+        let result = parse_oniguruma(re);
+        assert!(
+            result.is_err(),
+            "Expected parse error in Oniguruma mode, but was: {:?}",
             result
         );
         assert_eq!(&format!("{}", result.err().unwrap()), expected_error);
@@ -1627,7 +1629,7 @@ mod tests {
     }
 
     #[test]
-    fn repeat_after_assertion_not_oniguruma_mode() {
+    fn quantifiers_on_assertions_in_regex_mode() {
         assert_eq!(
             p(r"\b{1}"),
             Expr::Repeat {
@@ -1682,16 +1684,51 @@ mod tests {
                 greedy: true
             }
         );
-    }
-
-    #[test]
-    fn repeat_after_assertion_oniguruma_mode() {
-        fail_oniguruma(r"\b{1}");
-        fail_oniguruma(r"\B{2}");
-        fail_oniguruma(r"^{3}");
-        fail_oniguruma(r"${1,5}");
-        fail_oniguruma(r"\A*");
-        fail_oniguruma(r"\z+");
+        assert_eq!(
+            p(r"^?"),
+            Expr::Repeat {
+                child: Box::new(Expr::Assertion(Assertion::StartText)),
+                lo: 0,
+                hi: 1,
+                greedy: true
+            }
+        );
+        assert_eq!(
+            p(r"${2}"),
+            Expr::Repeat {
+                child: Box::new(Expr::Assertion(Assertion::EndText)),
+                lo: 2,
+                hi: 2,
+                greedy: true
+            }
+        );
+        assert_eq!(
+            p(r"(?m)^?"),
+            Expr::Repeat {
+                child: Box::new(Expr::Assertion(Assertion::StartLine { crlf: false })),
+                lo: 0,
+                hi: 1,
+                greedy: true
+            }
+        );
+        assert_eq!(
+            p(r"(?m)${2}"),
+            Expr::Repeat {
+                child: Box::new(Expr::Assertion(Assertion::EndLine { crlf: false })),
+                lo: 2,
+                hi: 2,
+                greedy: true
+            }
+        );
+        assert_eq!(
+            p(r"\b+"),
+            Expr::Repeat {
+                child: Box::new(Expr::Assertion(Assertion::WordBoundary)),
+                lo: 1,
+                hi: usize::MAX,
+                greedy: true
+            }
+        );
     }
 
     #[test]
@@ -2191,6 +2228,54 @@ mod tests {
         assert_error(
             "(a|b|?)",
             "Parsing error at position 5: Target of repeat operator is invalid",
+        );
+    }
+
+    #[test]
+    fn no_quantifiers_on_assertions_in_oniguruma_mode() {
+        assert_error_oniguruma(
+            r"\b{1}",
+            "Parsing error at position 4: Target of repeat operator is invalid",
+        );
+        assert_error_oniguruma(
+            r"\B{2}",
+            "Parsing error at position 4: Target of repeat operator is invalid",
+        );
+        assert_error_oniguruma(
+            r"^{3}",
+            "Parsing error at position 3: Target of repeat operator is invalid",
+        );
+        assert_error_oniguruma(
+            r"${1,5}",
+            "Parsing error at position 5: Target of repeat operator is invalid",
+        );
+        assert_error_oniguruma(
+            r"\A*",
+            "Parsing error at position 2: Target of repeat operator is invalid",
+        );
+        assert_error_oniguruma(
+            r"\z+",
+            "Parsing error at position 2: Target of repeat operator is invalid",
+        );
+        assert_error_oniguruma(
+            r"^?",
+            "Parsing error at position 1: Target of repeat operator is invalid",
+        );
+        assert_error_oniguruma(
+            r"${2}",
+            "Parsing error at position 3: Target of repeat operator is invalid",
+        );
+        assert_error_oniguruma(
+            r"(?m)^?",
+            "Parsing error at position 5: Target of repeat operator is invalid",
+        );
+        assert_error_oniguruma(
+            r"(?m)${2}",
+            "Parsing error at position 7: Target of repeat operator is invalid",
+        );
+        assert_error_oniguruma(
+            r"\b+",
+            "Parsing error at position 2: Target of repeat operator is invalid",
         );
     }
 
@@ -2695,6 +2780,7 @@ mod tests {
             (r"\B{end}", "Invalid escape: \\B{end}"),
             (r"\B{start-half}", "Invalid escape: \\B{start-half}"),
             (r"\B{end-half}", "Invalid escape: \\B{end-half}"),
+            (r"\c{start}", "Invalid escape: \\c"),
         ];
 
         for (pattern, expected_error) in test_cases {
