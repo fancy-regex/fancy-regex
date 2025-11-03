@@ -1,6 +1,6 @@
 mod common;
 
-use fancy_regex::{Match, Regex};
+use fancy_regex::Match;
 use std::ops::Range;
 
 #[test]

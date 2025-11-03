@@ -499,9 +499,11 @@ impl<'a> Parser<'a> {
                 ),
             )
         } else if (b == b'b' || b == b'B') && !in_class {
-            if bytes.get(end) == Some(&b'{') {
+            let check_pos = self.optional_whitespace(end)?;
+            if bytes.get(check_pos) == Some(&b'{') {
+                let next_open_brace_pos = self.optional_whitespace(check_pos + 1)?;
                 let is_repetition = matches!(
-                    bytes.get(end + 1),
+                    bytes.get(next_open_brace_pos),
                     Some(&ch) if ch.is_ascii_digit() || ch == b','
                 );
                 if !is_repetition {
@@ -552,10 +554,13 @@ impl<'a> Parser<'a> {
                 },
             )
         } else if b == b'x' {
+            let end = self.optional_whitespace(end)?;
             return self.parse_hex(end, 2);
         } else if b == b'u' {
+            let end = self.optional_whitespace(end)?;
             return self.parse_hex(end, 4);
         } else if b == b'U' {
+            let end = self.optional_whitespace(end)?;
             return self.parse_hex(end, 8);
         } else if (b | 32) == b'p' && end != bytes.len() {
             let mut end = end;
@@ -646,40 +651,43 @@ impl<'a> Parser<'a> {
         }
         let bytes = self.re.as_bytes();
         let b = bytes[ix];
-        let (end, s) = if ix + digits <= self.re.len()
-            && bytes[ix..ix + digits].iter().all(|&b| is_hex_digit(b))
-        {
-            let end = ix + digits;
-            (end, &self.re[ix..end])
-        } else if b == b'{' {
-            let starthex = ix + 1;
-            let mut endhex = starthex;
-            loop {
-                if endhex == self.re.len() {
+        // Parse fixed-width hex (e.g., \xAB)
+        if ix + digits <= self.re.len() && bytes[ix..ix + digits].iter().all(|&b| is_hex_digit(b)) {
+            let hex_str = &self.re[ix..ix + digits];
+            return self.hex_to_literal(ix, ix + digits, hex_str);
+        }
+        // Parse brace-enclosed hex (e.g., \u{00AB})
+        if b == b'{' {
+            let mut pos = ix + 1;
+            let mut hex_chars = String::new();
+            while pos < self.re.len() {
+                // Skip whitespace/comments if FLAG_IGNORE_SPACE is set
+                pos = self.optional_whitespace(pos)?;
+                if pos >= self.re.len() {
                     return Err(Error::ParseError(ix, ParseError::InvalidHex));
                 }
-                let b = bytes[endhex];
-                if endhex > starthex && b == b'}' {
-                    break;
+                let b = bytes[pos];
+                if b == b'}' && !hex_chars.is_empty() {
+                    return self.hex_to_literal(ix, pos + 1, &hex_chars);
                 }
-                if is_hex_digit(b) && endhex < starthex + 8 {
-                    endhex += 1;
+                if is_hex_digit(b) && hex_chars.len() < 8 {
+                    hex_chars.push(b as char);
+                    pos += 1;
                 } else {
                     return Err(Error::ParseError(ix, ParseError::InvalidHex));
                 }
             }
-            (endhex + 1, &self.re[starthex..endhex])
-        } else {
-            return Err(Error::ParseError(ix, ParseError::InvalidHex));
-        };
-        let codepoint = u32::from_str_radix(s, 16).unwrap();
+        }
+        Err(Error::ParseError(ix, ParseError::InvalidHex))
+    }
+
+    fn hex_to_literal(&self, ix: usize, end: usize, hex_str: &str) -> Result<(usize, Expr)> {
+        let codepoint = u32::from_str_radix(hex_str, 16).unwrap();
         if let Some(c) = char::from_u32(codepoint) {
-            let mut inner = String::with_capacity(4);
-            inner.push(c);
             Ok((
                 end,
                 Expr::Literal {
-                    val: inner,
+                    val: c.to_string(),
                     casei: self.flag(FLAG_CASEI),
                 },
             ))
@@ -692,33 +700,54 @@ impl<'a> Parser<'a> {
     fn parse_word_boundary_brace(&self, ix: usize) -> Result<(usize, Expr)> {
         let bytes = self.re.as_bytes();
 
-        // Verify that bytes[ix..ix+3] are '\b{' or '\B{'
-        if !matches!(bytes.get(ix..ix + 3), Some([b'\\', b'b' | b'B', b'{'])) {
+        // Verify that we have '\b' or '\B'
+        if !matches!(bytes.get(ix..ix + 2), Some([b'\\', b'b' | b'B'])) {
             return Err(Error::ParseError(
                 ix,
                 ParseError::InvalidEscape("\\b{...}".to_string()),
             ));
         }
-
-        // Find the closing brace
-        let mut end_brace = ix + 3;
-        while end_brace < self.re.len() {
-            let b = bytes[end_brace];
+        // Skip whitespace/comments after \b or \B if FLAG_IGNORE_SPACE is set
+        let brace_start = self.optional_whitespace(ix + 2)?;
+        // Verify we have '{'
+        if bytes.get(brace_start) != Some(&b'{') {
+            return Err(Error::ParseError(
+                ix,
+                ParseError::InvalidEscape("\\b{...}".to_string()),
+            ));
+        }
+        // Extract content between braces
+        let mut pos = brace_start + 1;
+        let mut content = String::new();
+        while pos < self.re.len() {
+            let b = bytes[pos];
             if b == b'}' {
                 break;
             }
-            end_brace += codepoint_len(b);
+            // Skip whitespace/comments if FLAG_IGNORE_SPACE is set
+            let next_pos = self.optional_whitespace(pos)?;
+            if next_pos > pos {
+                // Whitespace was skipped
+                pos = next_pos;
+                if pos >= self.re.len() || bytes[pos] == b'}' {
+                    break;
+                }
+            }
+            // Add non-whitespace character to content
+            let b = bytes[pos];
+            if b != b'}' {
+                content.push(b as char);
+                pos += codepoint_len(b);
+            }
         }
 
-        if end_brace >= self.re.len() {
+        let end_brace = pos;
+        if end_brace >= self.re.len() || bytes[end_brace] != b'}' {
             return Err(Error::ParseError(
                 ix,
                 ParseError::InvalidEscape("\\b{...}".to_string()),
             ));
         }
-
-        // Extract the content between braces
-        let content = &self.re[ix + 3..end_brace];
 
         // \B{...} is not supported
         if bytes[ix + 1] == b'B' {
@@ -728,7 +757,7 @@ impl<'a> Parser<'a> {
             ));
         }
 
-        let expr = match content {
+        let expr = match content.as_str() {
             "start" => Expr::Assertion(Assertion::LeftWordBoundary),
             "end" => Expr::Assertion(Assertion::RightWordBoundary),
             "start-half" => Expr::Assertion(Assertion::LeftWordHalfBoundary),
@@ -2073,6 +2102,19 @@ mod tests {
         assert_eq!(p("(?x: [ \\] \\\\] )"), p("[ \\] \\\\]"));
         assert_eq!(p("(?x: a\\ b )"), p("a b"));
         assert_eq!(p("(?x: a (?-x:#) b )"), p("a#b"));
+        assert_eq!(p("(?x: a (?# b))c"), p("ac"));
+        assert_eq!(p("(?x: \\b { s t a r t} a )"), p("\\b{start}a"));
+        assert_eq!(p("(?x: \\b {end} )"), p("\\b{end}"));
+        assert_eq!(p("(?x: \\b { start-half } )"), p("\\b{start-half}"));
+        assert_eq!(p("(?x: \\b { e n d - h a l f } )"), p("\\b{end-half}"));
+        assert_eq!(p("(?x: \\b{s\nt\ra\trt} a)"), p("\\b{start}a"));
+        assert_eq!(p("(?x: \\u { 0 0 3 2} a)"), p("\\u{0032}a"));
+        assert_eq!(p("(?x: \\U { 0001 F600 } a)"), p("\\U{0001F600}a"));
+        assert_eq!(p("(?x: \\x { 3 2} a)"), p("\\x{32}a"));
+        assert_eq!(p("(?x: \\b { s t a # x\nr t} a )"), p("\\b{start}a"));
+        assert_eq!(p("(?x: \\b { s t a (?# x)r t} a )"), p("\\b{start}a"));
+        assert_eq!(p("(?x: \\u { 0 0 # x\n3 2} a)"), p("\\u{0032}a"));
+        assert_eq!(p("(?x: \\u { 0 0 (?# x)3 2} a)"), p("\\u{0032}a"));
     }
 
     #[test]
@@ -2775,6 +2817,7 @@ mod tests {
             (r"\b{ }", "Invalid escape: \\b{ }"),
             (r"\b{START}", "Invalid escape: \\b{START}"),
             (r"\b{END}", "Invalid escape: \\b{END}"),
+            (r"\b{ s t a r t }", "Invalid escape: \\b{ s t a r t }"),
             // \B{...} patterns should fail
             (r"\B{start}", "Invalid escape: \\B{start}"),
             (r"\B{end}", "Invalid escape: \\B{end}"),
