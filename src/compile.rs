@@ -24,14 +24,14 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use regex_automata::meta::Regex as RaRegex;
 use regex_automata::meta::{Builder as RaBuilder, Config as RaConfig};
-#[cfg(all(feature = "variable-lookbehinds", feature = "std"))]
-use std::sync::Mutex;
+#[cfg(feature = "variable-lookbehinds")]
+use regex_automata::util::pool::Pool;
 #[cfg(all(test, feature = "std"))]
 use std::{collections::BTreeMap, sync::RwLock};
 
 use crate::analyze::Info;
 #[cfg(feature = "variable-lookbehinds")]
-use crate::vm::ReverseBackwardsDelegate;
+use crate::vm::{CachePoolFn, ReverseBackwardsDelegate};
 use crate::vm::{Delegate, Insn, Prog};
 use crate::LookAround::*;
 use crate::{CompileError, Error, Expr, LookAround, RegexOptions, Result};
@@ -472,14 +472,15 @@ impl Compiler {
                         }
                     };
 
-                    #[cfg(feature = "std")]
-                    let cache = Mutex::new(dfa.create_cache());
-                    #[cfg(not(feature = "std"))]
-                    let cache = core::cell::RefCell::new(dfa.create_cache());
+                    let create: CachePoolFn = alloc::boxed::Box::new({
+                        let dfa = dfa.clone();
+                        move || dfa.create_cache()
+                    });
+                    let cache_pool = Pool::new(create);
                     self.b
                         .add(Insn::BackwardsDelegate(ReverseBackwardsDelegate {
                             dfa,
-                            cache,
+                            cache_pool,
                             pattern: pattern.to_string(),
                         }));
                     Ok(())
@@ -817,7 +818,7 @@ mod tests {
         assert_eq!(prog.len(), 5, "prog: {:?}", prog);
 
         assert_matches!(prog[0], Save(0));
-        assert_matches!(&prog[1], BackwardsDelegate(ReverseBackwardsDelegate { pattern, dfa: _, cache: _ }) if pattern == "ab+");
+        assert_matches!(&prog[1], BackwardsDelegate(ReverseBackwardsDelegate { pattern, dfa: _, cache_pool: _ }) if pattern == "ab+");
         assert_matches!(prog[2], Restore(0));
         assert_matches!(prog[3], Lit(ref l) if l == "x");
         assert_matches!(prog[4], End);

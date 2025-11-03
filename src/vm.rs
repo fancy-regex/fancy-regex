@@ -79,8 +79,17 @@ use regex_automata::util::primitives::NonMaxUsize;
 use regex_automata::Anchored;
 use regex_automata::Input;
 
-#[cfg(feature = "std")]
-use std::sync::Mutex;
+#[cfg(feature = "variable-lookbehinds")]
+use regex_automata::util::pool::Pool;
+
+#[cfg(feature = "variable-lookbehinds")]
+pub(crate) type CachePoolFn = alloc::boxed::Box<
+    dyn Fn() -> regex_automata::hybrid::dfa::Cache
+        + Send
+        + Sync
+        + core::panic::UnwindSafe
+        + core::panic::RefUnwindSafe,
+>;
 
 use crate::error::RuntimeError;
 use crate::prev_codepoint_ix;
@@ -141,24 +150,19 @@ pub struct ReverseBackwardsDelegate {
     pub pattern: String,
     /// The delegate regex to match backwards
     pub(crate) dfa: regex_automata::hybrid::dfa::DFA,
-    /// Cache for DFA searches
-    #[cfg(feature = "std")]
-    pub(crate) cache: Mutex<regex_automata::hybrid::dfa::Cache>,
-    #[cfg(not(feature = "std"))]
-    pub(crate) cache: core::cell::RefCell<regex_automata::hybrid::dfa::Cache>,
+    /// Cache pool for DFA searches
+    pub(crate) cache_pool: Pool<regex_automata::hybrid::dfa::Cache, CachePoolFn>,
 }
 
 #[cfg(feature = "variable-lookbehinds")]
 impl Clone for ReverseBackwardsDelegate {
     fn clone(&self) -> Self {
+        let dfa_for_closure = self.dfa.clone();
+        let create: CachePoolFn = alloc::boxed::Box::new(move || dfa_for_closure.create_cache());
         Self {
             pattern: self.pattern.clone(),
+            cache_pool: Pool::new(create),
             dfa: self.dfa.clone(),
-            // Create a new cache for the clone
-            #[cfg(feature = "std")]
-            cache: Mutex::new(self.dfa.create_cache()),
-            #[cfg(not(feature = "std"))]
-            cache: core::cell::RefCell::new(self.dfa.create_cache()),
         }
     }
 }
@@ -170,7 +174,7 @@ impl core::fmt::Debug for ReverseBackwardsDelegate {
         let Self {
             pattern,
             dfa: _,
-            cache: _,
+            cache_pool: _,
         } = self;
 
         f.debug_struct("ReverseBackwardsDelegate")
@@ -787,14 +791,11 @@ pub(crate) fn run(
                 #[cfg(feature = "variable-lookbehinds")]
                 Insn::BackwardsDelegate(ReverseBackwardsDelegate {
                     ref dfa,
-                    ref cache,
+                    ref cache_pool,
                     pattern: _,
                 }) => {
                     // Use regex-automata to search backwards from current position
-                    #[cfg(feature = "std")]
-                    let mut cache_guard = cache.lock().unwrap();
-                    #[cfg(not(feature = "std"))]
-                    let mut cache_guard = cache.borrow_mut();
+                    let mut cache_guard = cache_pool.get();
                     let input = Input::new(s).anchored(Anchored::Yes).range(0..ix);
 
                     let found_match =
