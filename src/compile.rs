@@ -21,6 +21,8 @@
 //! Compilation of regexes to VM.
 
 use alloc::string::{String, ToString};
+#[cfg(feature = "variable-lookbehinds")]
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use regex_automata::meta::Regex as RaRegex;
 use regex_automata::meta::{Builder as RaBuilder, Config as RaConfig};
@@ -464,7 +466,7 @@ impl Compiler {
                         .thompson(thompson::Config::new().reverse(true))
                         .build(&pattern)
                     {
-                        Ok(dfa) => dfa,
+                        Ok(dfa) => Arc::new(dfa),
                         Err(e) => {
                             return Err(Error::CompileError(CompileError::DfaBuildError(
                                 e.to_string(),
@@ -473,7 +475,7 @@ impl Compiler {
                     };
 
                     let create: CachePoolFn = alloc::boxed::Box::new({
-                        let dfa = dfa.clone();
+                        let dfa = Arc::clone(&dfa);
                         move || dfa.create_cache()
                     });
                     let cache_pool = Pool::new(create);

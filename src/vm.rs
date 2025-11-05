@@ -71,6 +71,7 @@
 
 use alloc::collections::BTreeSet;
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 use regex_automata::meta::Regex;
@@ -148,8 +149,8 @@ impl core::fmt::Debug for Delegate {
 pub struct ReverseBackwardsDelegate {
     /// The regex pattern as a string which will be matched in reverse, in a backwards direction
     pub pattern: String,
-    /// The delegate regex to match backwards
-    pub(crate) dfa: regex_automata::hybrid::dfa::DFA,
+    /// The delegate regex to match backwards (wrapped in Arc for efficient cloning)
+    pub(crate) dfa: Arc<regex_automata::hybrid::dfa::DFA>,
     /// Cache pool for DFA searches
     pub(crate) cache_pool: Pool<regex_automata::hybrid::dfa::Cache, CachePoolFn>,
 }
@@ -157,12 +158,12 @@ pub struct ReverseBackwardsDelegate {
 #[cfg(feature = "variable-lookbehinds")]
 impl Clone for ReverseBackwardsDelegate {
     fn clone(&self) -> Self {
-        let dfa_for_closure = self.dfa.clone();
+        let dfa_for_closure = Arc::clone(&self.dfa);
         let create: CachePoolFn = alloc::boxed::Box::new(move || dfa_for_closure.create_cache());
         Self {
             pattern: self.pattern.clone(),
             cache_pool: Pool::new(create),
-            dfa: self.dfa.clone(),
+            dfa: Arc::clone(&self.dfa),
         }
     }
 }
