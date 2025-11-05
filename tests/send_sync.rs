@@ -21,25 +21,42 @@ fn test_matches_is_send() {
 
 #[cfg(feature = "std")]
 #[test]
-fn test_threading() {
+fn test_threading_with_arc() {
+    use std::sync::Arc;
     use std::thread;
 
-    // Create a regex with variable-length lookbehind
-    let re = Regex::new(r"(?<=ab+)x").unwrap();
+    // Create a single regex with variable-length lookbehind wrapped in Arc
+    let re = Arc::new(Regex::new(r"(?<=ab+)x").unwrap());
 
-    // Clone it to move into thread
-    let re_clone = re.clone();
+    // Create multiple threads that share the same regex instance
+    let mut handles = vec![];
 
-    // Spawn a thread - this requires Send
-    let handle = thread::spawn(move || {
-        // Use the regex in the thread
-        re_clone.is_match("abbbx").unwrap()
-    });
+    // Test data: different haystacks to match against
+    let test_cases = vec![
+        ("abbx", true),
+        ("abbbx", true),
+        ("ax", false),
+        ("x", false),
+        ("abbbbbbx", true),
+    ];
 
-    // Use the original regex in the main thread - this requires Sync
-    let result1 = re.is_match("abbx").unwrap();
-    let result2 = handle.join().unwrap();
+    for (haystack, expected) in test_cases {
+        let re_clone = Arc::clone(&re);
+        let handle = thread::spawn(move || {
+            // Use the same regex instance in each thread
+            let result = re_clone.is_match(haystack).unwrap();
+            (haystack, result)
+        });
+        handles.push((handle, expected));
+    }
 
-    assert!(result1);
-    assert!(result2);
+    // Collect results from all threads
+    for (handle, expected) in handles {
+        let (haystack, result) = handle.join().unwrap();
+        assert_eq!(
+            result, expected,
+            "Failed for haystack '{}': expected {}, got {}",
+            haystack, expected, result
+        );
+    }
 }
