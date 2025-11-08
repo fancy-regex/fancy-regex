@@ -153,6 +153,12 @@ pub struct ReverseBackwardsDelegate {
     pub(crate) dfa: Arc<regex_automata::hybrid::dfa::DFA>,
     /// Cache pool for DFA searches
     pub(crate) cache_pool: Pool<regex_automata::hybrid::dfa::Cache, CachePoolFn>,
+    /// The forward regex for capture group extraction
+    pub(crate) capture_group_extraction_inner: Option<Regex>,
+    /// The first group number that this regex captures (if it contains groups)
+    pub(crate) start_group: usize,
+    /// The last group number
+    pub(crate) end_group: usize,
 }
 
 #[cfg(feature = "variable-lookbehinds")]
@@ -164,6 +170,9 @@ impl Clone for ReverseBackwardsDelegate {
             pattern: self.pattern.clone(),
             cache_pool: Pool::new(create),
             dfa: Arc::clone(&self.dfa),
+            capture_group_extraction_inner: self.capture_group_extraction_inner.clone(),
+            start_group: self.start_group,
+            end_group: self.end_group,
         }
     }
 }
@@ -176,10 +185,15 @@ impl core::fmt::Debug for ReverseBackwardsDelegate {
             pattern,
             dfa: _,
             cache_pool: _,
+            capture_group_extraction_inner: _,
+            start_group,
+            end_group,
         } = self;
 
         f.debug_struct("ReverseBackwardsDelegate")
             .field("pattern", pattern)
+            .field("start_group", start_group)
+            .field("end_group", end_group)
             .finish()
     }
 }
@@ -542,6 +556,28 @@ fn matches_literal_casei(s: &str, ix: usize, end: usize, literal: &str) -> bool 
     re.find(&s[ix..end]).is_some()
 }
 
+/// Helper function to store capture group positions from inner_slots into state.
+/// This is used by both Delegate and BackwardsDelegate instructions.
+#[inline]
+fn store_capture_groups(
+    state: &mut State,
+    inner_slots: &[Option<NonMaxUsize>],
+    start_group: usize,
+    end_group: usize,
+) {
+    for i in 0..(end_group - start_group) {
+        let slot = (start_group + i) * 2;
+        if let Some(start) = inner_slots[(i + 1) * 2] {
+            let end = inner_slots[(i + 1) * 2 + 1].unwrap();
+            state.save(slot, start.get());
+            state.save(slot + 1, end.get());
+        } else {
+            state.save(slot, usize::MAX);
+            state.save(slot + 1, usize::MAX);
+        }
+    }
+}
+
 /// Run the program with trace printing for debugging.
 pub fn run_trace(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
     run(prog, s, pos, OPTION_TRACE, &RegexOptions::default())
@@ -800,16 +836,45 @@ pub(crate) fn run(
                     ref dfa,
                     ref cache_pool,
                     pattern: _,
+                    ref capture_group_extraction_inner,
+                    start_group,
+                    end_group,
                 }) => {
                     // Use regex-automata to search backwards from current position
                     let mut cache_guard = cache_pool.get();
                     let input = Input::new(s).anchored(Anchored::Yes).range(0..ix);
 
-                    let found_match =
-                        matches!(dfa.try_search_rev(&mut cache_guard, &input), Ok(Some(_)));
+                    match dfa.try_search_rev(&mut cache_guard, &input) {
+                        Ok(Some(match_result)) => {
+                            // Update ix to the start position of the match
+                            let match_start = match_result.offset();
 
-                    if !found_match {
-                        break 'fail;
+                            if let Some(inner) = capture_group_extraction_inner {
+                                // There are capture groups, need to search forward to populate them
+                                let forward_input =
+                                    Input::new(s).span(match_start..ix).anchored(Anchored::Yes);
+                                inner_slots.resize((end_group - start_group + 1) * 2, None);
+
+                                if inner
+                                    .search_slots(&forward_input, &mut inner_slots)
+                                    .is_some()
+                                {
+                                    // Store capture group positions
+                                    store_capture_groups(
+                                        &mut state,
+                                        &inner_slots,
+                                        start_group,
+                                        end_group,
+                                    );
+                                } else {
+                                    break 'fail;
+                                }
+                            } else {
+                                // No groups, just update ix to the match start
+                                ix = match_start;
+                            }
+                        }
+                        _ => break 'fail,
                     }
                 }
                 Insn::BeginAtomic => {
@@ -836,17 +901,7 @@ pub(crate) fn run(
                     } else {
                         inner_slots.resize((end_group - start_group + 1) * 2, None);
                         if inner.search_slots(&input, &mut inner_slots).is_some() {
-                            for i in 0..(end_group - start_group) {
-                                let slot = (start_group + i) * 2;
-                                if let Some(start) = inner_slots[(i + 1) * 2] {
-                                    let end = inner_slots[(i + 1) * 2 + 1].unwrap();
-                                    state.save(slot, start.get());
-                                    state.save(slot + 1, end.get());
-                                } else {
-                                    state.save(slot, usize::MAX);
-                                    state.save(slot + 1, usize::MAX);
-                                }
-                            }
+                            store_capture_groups(&mut state, &inner_slots, start_group, end_group);
                             ix = inner_slots[1].unwrap().get();
                         } else {
                             break 'fail;
