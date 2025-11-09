@@ -852,6 +852,21 @@ mod tests {
         assert_matches!(prog[4], End);
     }
 
+    #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn variable_lookbehind_with_required_feature_backref_captures() {
+        // currently hard variable lookbehinds are unsupported.
+        // the backref to a capture group inside the variable lookbehind makes the capture group hard
+        let tree = Expr::parse_tree(r"(?<=a(b+))\1").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        let result = compile(&info, true);
+        assert!(result.is_err());
+        assert_matches!(
+            result.err().unwrap(),
+            Error::CompileError(CompileError::LookBehindNotConst)
+        );
+    }
+
     fn compile_prog(re: &str) -> Vec<Insn> {
         let tree = Expr::parse_tree(re).unwrap();
         let info = analyze(&tree, true).unwrap();
