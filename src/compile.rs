@@ -453,18 +453,19 @@ impl Compiler {
             if inner.const_size {
                 self.b.add(Insn::GoBack(inner.min_size));
                 self.visit(inner, false)
-            } else if !inner.hard && inner.start_group == inner.end_group {
+            } else if !inner.hard {
                 #[cfg(feature = "variable-lookbehinds")]
                 {
                     let mut delegate_builder = DelegateBuilder::new();
                     delegate_builder.push(inner);
                     let pattern = &delegate_builder.re;
+
                     // Use reverse matching for variable-sized lookbehinds without fancy features
                     use regex_automata::nfa::thompson;
                     // Build a reverse DFA for the pattern
                     let dfa = match regex_automata::hybrid::dfa::DFA::builder()
                         .thompson(thompson::Config::new().reverse(true))
-                        .build(&pattern)
+                        .build(pattern)
                     {
                         Ok(dfa) => Arc::new(dfa),
                         Err(e) => {
@@ -479,11 +480,22 @@ impl Compiler {
                         move || dfa.create_cache()
                     });
                     let cache_pool = Pool::new(create);
+
+                    // Build the forward regex for capture group extraction
+                    let forward_regex = if inner.start_group != inner.end_group {
+                        Some(compile_inner(&pattern, &self.options)?)
+                    } else {
+                        None
+                    };
+
                     self.b
                         .add(Insn::BackwardsDelegate(ReverseBackwardsDelegate {
                             dfa,
                             cache_pool,
                             pattern: pattern.to_string(),
+                            capture_group_extraction_inner: forward_regex,
+                            start_group: inner.start_group,
+                            end_group: inner.end_group,
                         }));
                     Ok(())
                 }
@@ -814,16 +826,45 @@ mod tests {
 
     #[test]
     #[cfg(feature = "variable-lookbehinds")]
-    fn variable_lookbehind_with_required_feature() {
+    fn variable_lookbehind_with_required_feature_no_captures() {
         let prog = compile_prog(r"(?<=ab+)x");
 
         assert_eq!(prog.len(), 5, "prog: {:?}", prog);
 
         assert_matches!(prog[0], Save(0));
-        assert_matches!(&prog[1], BackwardsDelegate(ReverseBackwardsDelegate { pattern, dfa: _, cache_pool: _ }) if pattern == "ab+");
+        assert_matches!(&prog[1], BackwardsDelegate(ReverseBackwardsDelegate { pattern, dfa: _, cache_pool: _, capture_group_extraction_inner: None, start_group: _, end_group: _ }) if pattern == "ab+");
         assert_matches!(prog[2], Restore(0));
         assert_matches!(prog[3], Lit(ref l) if l == "x");
         assert_matches!(prog[4], End);
+    }
+
+    #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn variable_lookbehind_with_required_feature_captures() {
+        let prog = compile_prog(r"(?<=a(b+))x");
+
+        assert_eq!(prog.len(), 5, "prog: {:?}", prog);
+
+        assert_matches!(prog[0], Save(2));
+        assert_matches!(&prog[1], BackwardsDelegate(ReverseBackwardsDelegate { pattern, dfa: _, cache_pool: _, capture_group_extraction_inner: ref inner, start_group: 0, end_group: 1 }) if pattern == "a(b+)" && inner.is_some());
+        assert_matches!(prog[2], Restore(2));
+        assert_matches!(prog[3], Lit(ref l) if l == "x");
+        assert_matches!(prog[4], End);
+    }
+
+    #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn variable_lookbehind_with_required_feature_backref_captures() {
+        // currently hard variable lookbehinds are unsupported.
+        // the backref to a capture group inside the variable lookbehind makes the capture group hard
+        let tree = Expr::parse_tree(r"(?<=a(b+))\1").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        let result = compile(&info, true);
+        assert!(result.is_err());
+        assert_matches!(
+            result.err().unwrap(),
+            Error::CompileError(CompileError::LookBehindNotConst)
+        );
     }
 
     fn compile_prog(re: &str) -> Vec<Insn> {

@@ -51,6 +51,49 @@ fn captures_after_lookbehind() {
 }
 
 #[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn non_empty_captures_inside_variable_lookbehind() {
+    let captures = captures(r"(?<=(a+)(b+))x", "aaabbbx");
+    assert_eq!(captures.len(), 3);
+    assert_match(captures.get(0), "x", 6, 7);
+    assert_match(captures.get(1), "aaa", 0, 3);
+    assert_match(captures.get(2), "bbb", 3, 6);
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn empty_capture_inside_variable_lookbehind() {
+    let captures = captures(r"(?<=(a+)(b*))c", "aaac");
+    assert_eq!(captures.len(), 3);
+    assert_match(captures.get(0), "c", 3, 4);
+    assert_match(captures.get(1), "aaa", 0, 3);
+    // Empty match for b* since there are no b's
+    assert_match(captures.get(2), "", 3, 3);
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn named_captures_inside_variable_lookbehind() {
+    let captures = captures(r"(?<=(?<first>a+)(?<second>b+))x", "aaabbbx");
+    assert_eq!(captures.len(), 3);
+    assert_match(captures.get(0), "x", 6, 7);
+    assert_match(captures.name("first"), "aaa", 0, 3);
+    assert_match(captures.name("second"), "bbb", 3, 6);
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn captures_both_inside_and_outside_variable_lookbehind() {
+    let captures = captures(r"(?<=(a+)(b+))(c+)(d+)", "aaabbbcccddd");
+    assert_eq!(captures.len(), 5);
+    assert_match(captures.get(0), "cccddd", 6, 12);
+    assert_match(captures.get(1), "aaa", 0, 3);
+    assert_match(captures.get(2), "bbb", 3, 6);
+    assert_match(captures.get(3), "ccc", 6, 9);
+    assert_match(captures.get(4), "ddd", 9, 12);
+}
+
+#[test]
 fn captures_with_keepout_inside_at_end() {
     let captures = captures(r"\s*(\w+\K)(?=\.)", "foo bar.");
     assert_eq!(captures.len(), 2);

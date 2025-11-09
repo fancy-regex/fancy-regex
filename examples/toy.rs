@@ -284,7 +284,7 @@ digraph G {
   2: Jmp(0)
   3: Save(0)
   4: Save(2)
-  5: BackwardsDelegate(ReverseBackwardsDelegate { pattern: \"ab+\" })
+  5: BackwardsDelegate(ReverseBackwardsDelegate { pattern: \"ab+\", start_group: 1, end_group: 1 })
   6: Restore(2)
   7: Lit(\"x\")
   8: Save(1)
