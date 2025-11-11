@@ -159,8 +159,51 @@ criterion_group!(
     targets = run_backtrack_limit,
 );
 
+fn continue_from_end_of_prev_match_short_haystack(c: &mut Criterion) {
+    // Benchmark \G with a short haystack that doesn't match
+    let tree = Expr::parse_tree(r"\Gfoo").unwrap();
+    let a = analyze(&tree, false).unwrap();
+    let p = compile(&a, false).unwrap();
+    let input = "bar"; // 3 bytes, doesn't match
+    c.bench_function("continue_from_end_of_prev_match_short_haystack", |b| {
+        b.iter(|| run_default(&p, input, 0).unwrap())
+    });
+}
+
+fn continue_from_end_of_prev_match_long_haystack(c: &mut Criterion) {
+    // Benchmark \G with a long haystack that doesn't match
+    // Currently this is slow because it checks at every position
+    // After optimization, this should be as fast as the short haystack
+    let tree = Expr::parse_tree(r"\Gfoo").unwrap();
+    let a = analyze(&tree, false).unwrap();
+    let p = compile(&a, false).unwrap();
+    let mut input = String::new();
+    for _ in 0..10000 {
+        input.push('x');
+    }
+    c.bench_function("continue_from_end_of_prev_match_long_haystack", |b| {
+        b.iter(|| run_default(&p, &input, 0).unwrap())
+    });
+}
+
+criterion_group!(
+    name = continue_from_end_of_prev_match_benches;
+    config = Criterion::default();
+    targets = continue_from_end_of_prev_match_short_haystack,
+    continue_from_end_of_prev_match_long_haystack,
+);
+
 #[cfg(feature = "variable-lookbehinds")]
-criterion_main!(benches, slow_benches, lookbehind_benches);
+criterion_main!(
+    benches,
+    slow_benches,
+    lookbehind_benches,
+    continue_from_end_of_prev_match_benches
+);
 
 #[cfg(not(feature = "variable-lookbehinds"))]
-criterion_main!(benches, slow_benches);
+criterion_main!(
+    benches,
+    slow_benches,
+    continue_from_end_of_prev_match_benches
+);
