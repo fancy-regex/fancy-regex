@@ -1,4 +1,4 @@
-use fancy_regex::internal::{FLAG_CASEI, FLAG_DOTNL, FLAG_IGNORE_SPACE, FLAG_MULTI, FLAG_UNICODE};
+use fancy_regex::internal::{FLAG_CASEI, FLAG_DOTNL, FLAG_IGNORE_SPACE, FLAG_MULTI, FLAG_ONIGURUMA_MODE, FLAG_UNICODE};
 use fancy_regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -44,6 +44,7 @@ pub struct RegexFlags {
     pub dot_matches_new_line: bool,
     pub ignore_whitespace: bool,
     pub unicode: bool,
+    pub oniguruma_mode: bool,
 }
 
 impl Default for RegexFlags {
@@ -54,6 +55,7 @@ impl Default for RegexFlags {
             dot_matches_new_line: false,
             ignore_whitespace: false,
             unicode: true,
+            oniguruma_mode: true,
         }
     }
 }
@@ -76,6 +78,7 @@ fn build_regex(pattern: &str, flags: &RegexFlags) -> Result<Regex, String> {
     builder.dot_matches_new_line(flags.dot_matches_new_line);
     builder.ignore_whitespace(flags.ignore_whitespace);
     builder.unicode_mode(flags.unicode);
+    builder.oniguruma_mode(flags.oniguruma_mode);
 
     builder
         .build()
@@ -99,6 +102,9 @@ fn compute_regex_flags(flags: &RegexFlags) -> u32 {
     }
     if flags.unicode {
         result |= FLAG_UNICODE;
+    }
+    if flags.oniguruma_mode {
+        result |= FLAG_ONIGURUMA_MODE;
     }
     result
 }

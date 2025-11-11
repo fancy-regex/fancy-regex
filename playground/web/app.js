@@ -35,6 +35,7 @@ class FancyRegexPlayground {
                 multiLine: document.getElementById('flag-multi-line'),
                 dotMatchesNewline: document.getElementById('flag-dot-matches-newline'),
                 ignoreWhitespace: document.getElementById('flag-ignore-whitespace'),
+                onigurumaMode: document.getElementById('flag-oniguruma-mode'),
             }
         };
 
@@ -70,6 +71,7 @@ class FancyRegexPlayground {
             dot_matches_new_line: this.elements.flags.dotMatchesNewline.checked,
             ignore_whitespace: this.elements.flags.ignoreWhitespace.checked,
             unicode: true,
+            oniguruma_mode: this.elements.flags.onigurumaMode.checked,
         };
     }
 
