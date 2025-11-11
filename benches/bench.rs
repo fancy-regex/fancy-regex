@@ -172,8 +172,6 @@ fn continue_from_end_of_prev_match_short_haystack(c: &mut Criterion) {
 
 fn continue_from_end_of_prev_match_long_haystack(c: &mut Criterion) {
     // Benchmark \G with a long haystack that doesn't match
-    // Currently this is slow because it checks at every position
-    // After optimization, this should be as fast as the short haystack
     let tree = Expr::parse_tree(r"\Gfoo").unwrap();
     let a = analyze(&tree, false).unwrap();
     let p = compile(&a, false).unwrap();
