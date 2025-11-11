@@ -102,6 +102,7 @@ impl VMBuilder {
 struct Compiler {
     b: VMBuilder,
     options: RegexOptions,
+    inside_alternation: bool,
 }
 
 impl Compiler {
@@ -109,6 +110,7 @@ impl Compiler {
         Compiler {
             b: VMBuilder::new(max_group),
             options: Default::default(),
+            inside_alternation: false,
         }
     }
 
@@ -137,7 +139,10 @@ impl Compiler {
             }
             Expr::Alt(_) => {
                 let count = info.children.len();
+                let inside_alternation = self.inside_alternation;
+                self.inside_alternation = true;
                 self.compile_alt(count, |compiler, i| compiler.visit(&info.children[i], hard))?;
+                self.inside_alternation = inside_alternation;
             }
             Expr::Group(_) => {
                 let group = info.start_group();
@@ -179,7 +184,9 @@ impl Compiler {
             }
             Expr::ContinueFromPreviousMatchEnd => {
                 self.b.add(Insn::ContinueFromPreviousMatchEnd {
-                    at_start: info.start_group() == 1 && info.min_pos_in_group == 0,
+                    at_start: info.start_group() == 1
+                        && info.min_pos_in_group == 0
+                        && !self.inside_alternation,
                 });
             }
             Expr::Conditional { .. } => {
