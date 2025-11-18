@@ -86,40 +86,40 @@ delegates as much as possible to the NFA engine.
 
 ## Theory
 
-**(This section is written in a somewhat informal style; I hope to
-expand on it)**
+The core concept behind this library is to implement a backtracking virtual machine (VM) for regular expression matching, similar to PCRE.
+However, whenever possible, this VM delegates work to an underlying regular expression engine - the Rust regex crate - which does not otherwise support "fancy" features like lookarounds and backreferences, but has other desirable design goals - specifically, the regex crate has runtime linear to input length.
 
-The fundamental idea is that it's a backtracking VM like PCRE, but as
-much as possible it delegates to an "inner" RE engine like RE2 (in
-this case, the Rust one). For the sublanguage not using fancy
-features, the library becomes a thin wrapper.
+For regular expressions that do not use "fancy" features, the library acts primarily as a lightweight wrapper around the underlying engine.
+When such features are present, the library performs an analysis to determine which parts of the expression must be handled by the backtracking engine and which can be safely delegated.
 
-Otherwise, you do an analysis to figure out what you can delegate and
-what you have to backtrack. I was thinking it might be tricky, but
-it's actually quite simple. The first phase, you just label each
-subexpression as "hard" (groups that get referenced in a backref,
-look-around, etc), and bubble that up. You also do a little extra
-analysis, mostly determining whether an expression has constant match
-length, and the minimum length.
+This analysis operates in two phases:
 
-The second phase is top down, and you carry a context, also a boolean
-indicating whether it's "hard" or not. Intuitively, a hard context is
-one in which the match length will affect future backtracking.
+### Phase 1 - Bottom-Up Analysis
 
-If the subexpression is easy and the context is easy, generate an
-instruction in the VM that delegates to the inner NFA implementation.
-Otherwise, generate VM code as in a backtracking engine. Most
-expression nodes are pretty straightforward; the only interesting case
-is concat (a sequence of subexpressions).
+Each subexpression is analyzed to determine three key properties:
 
-Even that one is not terribly complex. First, determine a prefix of
-easy nodes of constant match length (this won't affect backtracking,
-so safe to delegate to NFA). Then, if your context is easy, determine
-a suffix of easy nodes. Both of these delegate to NFA. For the ones in
-between, recursively compile. In an easy context, the last of these
-also gets an easy context; everything else is generated in a hard
-context. So, conceptually, hard context flows from right to left, and
-from parents to children.
+- *hard*: Whether the subexpression requires backtracking features (backreferences, look-around, atomic groups, conditionals)
+- *minimum size*: The minimum number of characters this subexpression will match
+- *constant size*: Whether the subexpression always matches the same number of characters
+
+### Phase 2 - Top-Down Compilation
+
+The compilation phase proceeds from the root of the expression, passing a "hard context" that flows from parent to child expressions. This context indicates whether match length variations will affect backtracking decisions.
+
+*Delegation Strategy*: If both the subexpression and context are "easy", the compiler generates a `Delegate` instruction to offload work to the high-performance NFA engine. Otherwise, it generates explicit VM instructions.
+
+*Concatenation Optimization*: For sequences of subexpressions, the compiler employs a sophisticated strategy:
+
+1. Identify a prefix of constant-size, easy subexpressions that can be safely delegated (because they won't affect backtracking)
+2. If the context is easy, identify a suffix of easy subexpressions for delegation
+3. Compile the remaining "hard" middle section with explicit backtracking instructions
+4. The hard context flows from right to left - only the rightmost hard subexpression gets an easy context
+
+This ensures maximum delegation while preserving correct backtracking semantics.
+
+### Summary
+
+In summary, the system efficiently combines backtracking and automaton-based matching by delegating as much work as possible to the underlying high-performance NFA engine, only resorting to backtracking where strictly necessary. This hybrid approach provides both expressive power and performance for advanced regular expression features.
 
 ## Current status
 
