@@ -17,6 +17,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo check
       - run: cargo check --no-default-features
+      - run: cargo check --no-default-features --features "unicode,perf,variable-lookbehinds"
       - run: cargo check --examples
       - run: cargo check --benches
 
@@ -50,6 +51,7 @@ jobs:
 
       - run: cargo test
       - run: cargo test --no-default-features
+      - run: cargo test --no-default-features --features "unicode,perf,variable-lookbehinds"
 
   example:
     name: example
