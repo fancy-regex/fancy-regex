@@ -181,7 +181,7 @@ mod tests {
 digraph G {
   0 [label=\"0: Save(0)\"];
   0 -> 1;
-  1 [label=\"1: Delegate(Delegate { pattern: \\\"^a+bc?\\\", start_group: 1, end_group: 1 })\"];
+  1 [label=\"1: Delegate(Delegate { pattern: \\\"^a+bc?\\\", capture_groups: None })\"];
   1 -> 2;
   2 [label=\"2: Save(1)\"];
   2 -> 3;
@@ -284,7 +284,7 @@ digraph G {
   2: Jmp(0)
   3: Save(0)
   4: Save(2)
-  5: BackwardsDelegate(ReverseBackwardsDelegate { pattern: \"ab+\", start_group: 1, end_group: 1 })
+  5: BackwardsDelegate(ReverseBackwardsDelegate { pattern: \"ab+\", capture_groups: None })
   6: Restore(2)
   7: Lit(\"x\")
   8: Save(1)

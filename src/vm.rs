@@ -113,6 +113,31 @@ pub(crate) const OPTION_SKIPPED_EMPTY_MATCH: u32 = 1 << 1;
 // TODO: make configurable
 const MAX_STACK: usize = 1_000_000;
 
+/// Represents a range of capture groups by storing the first and last group numbers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CaptureGroupRange(pub usize, pub usize);
+
+impl CaptureGroupRange {
+    /// Returns the start (first) group number.
+    pub fn start(&self) -> usize {
+        self.0
+    }
+
+    /// Returns the end (last) group number.
+    pub fn end(&self) -> usize {
+        self.1
+    }
+
+    /// Converts this range to an Option, returning None if start equals end (no capture groups).
+    pub fn to_option_if_non_empty(self) -> Option<Self> {
+        if self.start() == self.end() {
+            None
+        } else {
+            Some(self)
+        }
+    }
+}
+
 #[derive(Clone)]
 /// Delegate matching to the regex crate
 pub struct Delegate {
@@ -120,10 +145,8 @@ pub struct Delegate {
     pub inner: Regex,
     /// The regex pattern as a string
     pub pattern: String,
-    /// The first group number that this regex captures (if it contains groups)
-    pub start_group: usize,
-    /// The last group number
-    pub end_group: usize,
+    /// The range of capture groups. None if there are no capture groups.
+    pub capture_groups: Option<CaptureGroupRange>,
 }
 
 impl core::fmt::Debug for Delegate {
@@ -132,14 +155,12 @@ impl core::fmt::Debug for Delegate {
         let Self {
             inner: _,
             pattern,
-            start_group,
-            end_group,
+            capture_groups,
         } = self;
 
         f.debug_struct("Delegate")
             .field("pattern", pattern)
-            .field("start_group", start_group)
-            .field("end_group", end_group)
+            .field("capture_groups", capture_groups)
             .finish()
     }
 }
@@ -155,10 +176,8 @@ pub struct ReverseBackwardsDelegate {
     pub(crate) cache_pool: Pool<regex_automata::hybrid::dfa::Cache, CachePoolFn>,
     /// The forward regex for capture group extraction
     pub(crate) capture_group_extraction_inner: Option<Regex>,
-    /// The first group number that this regex captures (if it contains groups)
-    pub(crate) start_group: usize,
-    /// The last group number
-    pub(crate) end_group: usize,
+    /// The range of capture groups. None if there are no capture groups.
+    pub capture_groups: Option<CaptureGroupRange>,
 }
 
 #[cfg(feature = "variable-lookbehinds")]
@@ -171,8 +190,7 @@ impl Clone for ReverseBackwardsDelegate {
             cache_pool: Pool::new(create),
             dfa: Arc::clone(&self.dfa),
             capture_group_extraction_inner: self.capture_group_extraction_inner.clone(),
-            start_group: self.start_group,
-            end_group: self.end_group,
+            capture_groups: self.capture_groups,
         }
     }
 }
@@ -186,14 +204,12 @@ impl core::fmt::Debug for ReverseBackwardsDelegate {
             dfa: _,
             cache_pool: _,
             capture_group_extraction_inner: _,
-            start_group,
-            end_group,
+            capture_groups,
         } = self;
 
         f.debug_struct("ReverseBackwardsDelegate")
             .field("pattern", pattern)
-            .field("start_group", start_group)
-            .field("end_group", end_group)
+            .field("capture_groups", capture_groups)
             .finish()
     }
 }
@@ -562,9 +578,10 @@ fn matches_literal_casei(s: &str, ix: usize, end: usize, literal: &str) -> bool 
 fn store_capture_groups(
     state: &mut State,
     inner_slots: &[Option<NonMaxUsize>],
-    start_group: usize,
-    end_group: usize,
+    range: CaptureGroupRange,
 ) {
+    let start_group = range.start();
+    let end_group = range.end();
     for i in 0..(end_group - start_group) {
         let slot = (start_group + i) * 2;
         if let Some(start) = inner_slots[(i + 1) * 2] {
@@ -837,8 +854,7 @@ pub(crate) fn run(
                     ref cache_pool,
                     pattern: _,
                     ref capture_group_extraction_inner,
-                    start_group,
-                    end_group,
+                    capture_groups,
                 }) => {
                     // Use regex-automata to search backwards from current position
                     let mut cache_guard = cache_pool.get();
@@ -850,24 +866,24 @@ pub(crate) fn run(
                             let match_start = match_result.offset();
 
                             if let Some(inner) = capture_group_extraction_inner {
-                                // There are capture groups, need to search forward to populate them
-                                let forward_input =
-                                    Input::new(s).span(match_start..ix).anchored(Anchored::Yes);
-                                inner_slots.resize((end_group - start_group + 1) * 2, None);
+                                if let Some(range) = capture_groups {
+                                    // There are capture groups, need to search forward to populate them
+                                    let forward_input =
+                                        Input::new(s).span(match_start..ix).anchored(Anchored::Yes);
+                                    inner_slots.resize((range.end() - range.start() + 1) * 2, None);
 
-                                if inner
-                                    .search_slots(&forward_input, &mut inner_slots)
-                                    .is_some()
-                                {
-                                    // Store capture group positions
-                                    store_capture_groups(
-                                        &mut state,
-                                        &inner_slots,
-                                        start_group,
-                                        end_group,
-                                    );
+                                    if inner
+                                        .search_slots(&forward_input, &mut inner_slots)
+                                        .is_some()
+                                    {
+                                        // Store capture group positions
+                                        store_capture_groups(&mut state, &inner_slots, range);
+                                    } else {
+                                        break 'fail;
+                                    }
                                 } else {
-                                    break 'fail;
+                                    // No groups, just update ix to the match start
+                                    ix = match_start;
                                 }
                             } else {
                                 // No groups, just update ix to the match start
@@ -888,23 +904,23 @@ pub(crate) fn run(
                 Insn::Delegate(Delegate {
                     ref inner,
                     pattern: _,
-                    start_group,
-                    end_group,
+                    capture_groups,
                 }) => {
                     let input = Input::new(s).span(ix..s.len()).anchored(Anchored::Yes);
-                    if start_group == end_group {
+                    if let Some(range) = capture_groups {
+                        // Has capture groups, need to extract them
+                        inner_slots.resize((range.end() - range.start() + 1) * 2, None);
+                        if inner.search_slots(&input, &mut inner_slots).is_some() {
+                            store_capture_groups(&mut state, &inner_slots, range);
+                            ix = inner_slots[1].unwrap().get();
+                        } else {
+                            break 'fail;
+                        }
+                    } else {
                         // No groups, so we can use faster methods
                         match inner.search_half(&input) {
                             Some(m) => ix = m.offset(),
                             _ => break 'fail,
-                        }
-                    } else {
-                        inner_slots.resize((end_group - start_group + 1) * 2, None);
-                        if inner.search_slots(&input, &mut inner_slots).is_some() {
-                            store_capture_groups(&mut state, &inner_slots, start_group, end_group);
-                            ix = inner_slots[1].unwrap().get();
-                        } else {
-                            break 'fail;
                         }
                     }
                 }
