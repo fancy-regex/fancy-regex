@@ -1,6 +1,6 @@
 use alloc::borrow::Cow;
-use alloc::string::{String, ToString};
 use alloc::boxed::Box;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use crate::parse::{parse_decimal, parse_id, ParsedId};
