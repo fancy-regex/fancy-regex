@@ -820,7 +820,7 @@ impl Regex {
         Ok(Regex {
             inner: RegexImpl::Fancy {
                 prog,
-                n_groups: info.end_group,
+                n_groups: info.end_group(),
                 options,
             },
             named_groups: Arc::new(tree.named_groups),

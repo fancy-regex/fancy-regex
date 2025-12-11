@@ -28,6 +28,7 @@ use bit_set::BitSet;
 
 use crate::alloc::string::ToString;
 use crate::parse::ExprTree;
+use crate::vm::CaptureGroupRange;
 use crate::{CompileError, Error, Expr, Result};
 
 #[cfg(not(feature = "std"))]
@@ -37,8 +38,7 @@ use std::collections::HashMap as Map;
 
 #[derive(Debug)]
 pub struct Info<'a> {
-    pub(crate) start_group: usize,
-    pub(crate) end_group: usize,
+    pub(crate) capture_groups: CaptureGroupRange,
     pub(crate) min_size: usize,
     pub(crate) const_size: bool,
     pub(crate) hard: bool,
@@ -47,6 +47,16 @@ pub struct Info<'a> {
 }
 
 impl<'a> Info<'a> {
+    /// Returns the start (first) group number for this expression.
+    pub(crate) fn start_group(&self) -> usize {
+        self.capture_groups.start()
+    }
+
+    /// Returns the end (last) group number for this expression.
+    pub(crate) fn end_group(&self) -> usize {
+        self.capture_groups.end()
+    }
+
     pub(crate) fn is_literal(&self) -> bool {
         match *self.expr {
             Expr::Literal { casei, .. } => !casei,
@@ -248,8 +258,7 @@ impl<'a> Analyzer<'a> {
         Ok(Info {
             expr,
             children,
-            start_group,
-            end_group: self.group_ix,
+            capture_groups: CaptureGroupRange(start_group, self.group_ix),
             min_size,
             const_size,
             hard,
