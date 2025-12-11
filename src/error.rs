@@ -1,3 +1,4 @@
+use alloc::boxed::Box;
 use alloc::string::String;
 use core::fmt;
 use regex_automata::meta::BuildError as RaBuildError;
@@ -14,7 +15,7 @@ pub enum Error {
     /// An error as a result of parsing a regex pattern, with the position where the error occurred
     ParseError(ParseErrorPosition, ParseError),
     /// An error as a result of compiling a regex
-    CompileError(CompileError),
+    CompileError(Box<CompileError>),
     /// An error as a result of running a regex
     RuntimeError(RuntimeError),
 }
@@ -181,6 +182,6 @@ impl fmt::Display for Error {
 
 impl From<CompileError> for Error {
     fn from(compile_error: CompileError) -> Self {
-        Error::CompileError(compile_error)
+        Error::CompileError(Box::new(compile_error))
     }
 }
