@@ -849,10 +849,8 @@ impl Regex {
     /// ```
     pub fn is_match(&self, text: &str) -> Result<bool> {
         match &self.inner {
-            RegexImpl::Wrap { ref inner, .. } => Ok(inner.is_match(text)),
-            RegexImpl::Fancy {
-                ref prog, options, ..
-            } => {
+            RegexImpl::Wrap { inner, .. } => Ok(inner.is_match(text)),
+            RegexImpl::Fancy { prog, options, .. } => {
                 let result = vm::run(prog, text, 0, 0, options)?;
                 Ok(result.is_some())
             }
@@ -1453,7 +1451,7 @@ impl<'t> Captures<'t> {
                     start: span.start,
                     end: span.end,
                 }),
-            CapturesImpl::Fancy { text, ref saves } => {
+            CapturesImpl::Fancy { text, saves } => {
                 let slot = i * 2;
                 if slot >= saves.len() {
                     return None;
@@ -1725,11 +1723,10 @@ fn push_usize(s: &mut String, x: usize) {
 }
 
 fn is_special(c: char) -> bool {
-    match c {
-        '\\' | '.' | '+' | '*' | '?' | '(' | ')' | '|' | '[' | ']' | '{' | '}' | '^' | '$'
-        | '#' => true,
-        _ => false,
-    }
+    matches!(
+        c,
+        '\\' | '.' | '+' | '*' | '?' | '(' | ')' | '|' | '[' | ']' | '{' | '}' | '^' | '$' | '#'
+    )
 }
 
 fn push_quoted(buf: &mut String, s: &str) {

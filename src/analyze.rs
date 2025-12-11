@@ -314,11 +314,11 @@ pub fn can_compile_as_anchored(root_expr: &Expr) -> bool {
     use crate::Assertion;
 
     match root_expr {
-        Expr::Concat(ref children) => match children[0] {
-            Expr::Assertion(ref assertion) => *assertion == Assertion::StartText,
+        Expr::Concat(children) => match children[0] {
+            Expr::Assertion(assertion) => assertion == Assertion::StartText,
             _ => false,
         },
-        Expr::Assertion(ref assertion) => *assertion == Assertion::StartText,
+        Expr::Assertion(assertion) => *assertion == Assertion::StartText,
         _ => false,
     }
 }

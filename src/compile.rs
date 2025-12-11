@@ -393,7 +393,7 @@ impl Compiler {
         let inner = &info.children[0];
         match la {
             LookBehind => {
-                if let Info {
+                if let &Info {
                     const_size: false,
                     expr: &Expr::Alt(_),
                     ..
@@ -410,7 +410,7 @@ impl Compiler {
                 }
             }
             LookBehindNeg => {
-                if let Info {
+                if let &Info {
                     const_size: false,
                     expr: &Expr::Alt(_),
                     ..
@@ -487,7 +487,7 @@ impl Compiler {
 
                     // Build the forward regex for capture group extraction
                     let forward_regex = if inner.start_group() != inner.end_group() {
-                        Some(compile_inner(&pattern, &self.options)?)
+                        Some(compile_inner(pattern, &self.options)?)
                     } else {
                         None
                     };

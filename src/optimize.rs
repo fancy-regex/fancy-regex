@@ -68,7 +68,7 @@ fn optimize_trailing_lookahead(tree: &mut ExprTree) -> bool {
                 unreachable!("already checked it is a lookahead");
             }
         }
-    } else if let Expr::LookAround(ref mut inner, LookAround::LookAhead) = &mut tree.expr {
+    } else if let Expr::LookAround(inner, LookAround::LookAhead) = &mut tree.expr {
         let group0 = Expr::Group(Box::new(Expr::Empty));
         let mut swap = Expr::Empty;
         mem::swap(&mut swap, inner);
