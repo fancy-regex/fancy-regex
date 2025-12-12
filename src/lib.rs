@@ -263,7 +263,7 @@ enum RegexImpl {
         debug_pattern: String,
     },
     Fancy {
-        prog: Prog,
+        prog: Arc<Prog>,
         n_groups: usize,
         options: RegexOptions,
     },
@@ -819,7 +819,7 @@ impl Regex {
         let prog = compile(&info, can_compile_as_anchored(&tree.expr))?;
         Ok(Regex {
             inner: RegexImpl::Fancy {
-                prog,
+                prog: Arc::new(prog),
                 n_groups: info.end_group(),
                 options,
             },

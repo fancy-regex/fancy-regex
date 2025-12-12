@@ -216,7 +216,7 @@ impl core::fmt::Debug for ReverseBackwardsDelegate {
 }
 
 /// Instruction of the VM.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum Insn {
     /// Successful end of program
     End,
@@ -310,7 +310,7 @@ pub enum Insn {
 }
 
 /// Sequence of instructions for the VM to execute.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Prog {
     /// Instructions of the program
     pub body: Vec<Insn>,
