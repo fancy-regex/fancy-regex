@@ -1,4 +1,5 @@
 use alloc::borrow::Cow;
+use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
@@ -72,11 +73,15 @@ impl Expander {
             if num == 0 {
                 Ok(())
             } else if !regex.named_groups.is_empty() {
-                Err(Error::CompileError(CompileError::NamedBackrefOnly))
+                Err(Error::CompileError(Box::new(
+                    CompileError::NamedBackrefOnly,
+                )))
             } else if num < regex.captures_len() {
                 Ok(())
             } else {
-                Err(Error::CompileError(CompileError::InvalidBackref(num)))
+                Err(Error::CompileError(Box::new(CompileError::InvalidBackref(
+                    num,
+                ))))
             }
         };
         self.exec(template, |step| match step {
@@ -87,8 +92,8 @@ impl Expander {
                 } else if let Ok(num) = name.parse() {
                     on_group_num(num)
                 } else {
-                    Err(Error::CompileError(CompileError::InvalidGroupNameBackref(
-                        name.to_string(),
+                    Err(Error::CompileError(Box::new(
+                        CompileError::InvalidGroupNameBackref(name.to_string()),
                     )))
                 }
             }

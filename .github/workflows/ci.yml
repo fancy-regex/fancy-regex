@@ -18,6 +18,7 @@ jobs:
       - run: cargo check
       - run: cargo check --no-default-features
       - run: cargo check --no-default-features --features "unicode,perf,variable-lookbehinds"
+      - run: cargo check --no-default-features --features "std"
       - run: cargo check --examples
       - run: cargo check --benches
 

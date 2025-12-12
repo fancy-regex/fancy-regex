@@ -20,6 +20,7 @@
 
 //! Compilation of regexes to VM.
 
+use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 #[cfg(feature = "variable-lookbehinds")]
 use alloc::sync::Arc;
@@ -183,8 +184,8 @@ impl Compiler {
                 self.compile_conditional(|compiler, i| compiler.visit(&info.children[i], hard))?;
             }
             Expr::SubroutineCall(_) => {
-                return Err(Error::CompileError(CompileError::FeatureNotYetSupported(
-                    "Subroutine Call".to_string(),
+                return Err(Error::CompileError(Box::new(
+                    CompileError::FeatureNotYetSupported("Subroutine Call".to_string()),
                 )));
             }
             Expr::UnresolvedNamedSubroutineCall { .. } => unreachable!(),
@@ -392,7 +393,7 @@ impl Compiler {
         let inner = &info.children[0];
         match la {
             LookBehind => {
-                if let Info {
+                if let &Info {
                     const_size: false,
                     expr: &Expr::Alt(_),
                     ..
@@ -409,7 +410,7 @@ impl Compiler {
                 }
             }
             LookBehindNeg => {
-                if let Info {
+                if let &Info {
                     const_size: false,
                     expr: &Expr::Alt(_),
                     ..
@@ -472,9 +473,9 @@ impl Compiler {
                     {
                         Ok(dfa) => Arc::new(dfa),
                         Err(e) => {
-                            return Err(Error::CompileError(CompileError::DfaBuildError(
+                            return Err(Error::CompileError(Box::new(CompileError::DfaBuildError(
                                 e.to_string(),
-                            )))
+                            ))))
                         }
                     };
 
@@ -486,7 +487,7 @@ impl Compiler {
 
                     // Build the forward regex for capture group extraction
                     let forward_regex = if inner.start_group() != inner.end_group() {
-                        Some(compile_inner(&pattern, &self.options)?)
+                        Some(compile_inner(pattern, &self.options)?)
                     } else {
                         None
                     };
@@ -503,13 +504,15 @@ impl Compiler {
                 }
                 #[cfg(not(feature = "variable-lookbehinds"))]
                 {
-                    Err(Error::CompileError(
+                    Err(Error::CompileError(Box::new(
                         CompileError::VariableLookBehindRequiresFeature,
-                    ))
+                    )))
                 }
             } else {
                 // variable sized lookbehinds with fancy features are currently unsupported
-                Err(Error::CompileError(CompileError::LookBehindNotConst))
+                Err(Error::CompileError(Box::new(
+                    CompileError::LookBehindNotConst,
+                )))
             }
         } else {
             self.visit(inner, false)
@@ -575,7 +578,7 @@ pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<Ra
         .syntax(options.syntaxc)
         .build(inner_re)
         .map_err(CompileError::InnerError)
-        .map_err(Error::CompileError)?;
+        .map_err(|e| Error::CompileError(Box::new(e)))?;
 
     #[cfg(all(test, feature = "std"))]
     PATTERN_MAPPING
@@ -824,7 +827,7 @@ mod tests {
         assert!(result.is_err());
         assert_matches!(
             result.err().unwrap(),
-            Error::CompileError(CompileError::VariableLookBehindRequiresFeature)
+            Error::CompileError(box_err) if matches!(*box_err, CompileError::VariableLookBehindRequiresFeature)
         );
     }
 
@@ -867,7 +870,7 @@ mod tests {
         assert!(result.is_err());
         assert_matches!(
             result.err().unwrap(),
-            Error::CompileError(CompileError::LookBehindNotConst)
+            Error::CompileError(box_err) if matches!(*box_err, CompileError::LookBehindNotConst)
         );
     }
 

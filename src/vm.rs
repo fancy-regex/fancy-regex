@@ -71,6 +71,7 @@
 
 use alloc::collections::BTreeSet;
 use alloc::string::String;
+#[cfg(feature = "variable-lookbehinds")]
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;

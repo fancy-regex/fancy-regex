@@ -43,6 +43,7 @@ pub struct ExprTree {
     pub expr: Expr,
     pub backrefs: BitSet,
     pub named_groups: NamedGroups,
+    #[allow(dead_code)]
     pub(crate) contains_subroutines: bool,
     pub(crate) self_recursive: bool,
 }
@@ -127,7 +128,9 @@ impl<'a> Parser<'a> {
         }
         // can't have numeric backrefs and named backrefs
         if self.numeric_backrefs && !self.named_groups.is_empty() {
-            return Err(Error::CompileError(CompileError::NamedBackrefOnly));
+            return Err(Error::CompileError(Box::new(
+                CompileError::NamedBackrefOnly,
+            )));
         }
         Ok((ix, child))
     }

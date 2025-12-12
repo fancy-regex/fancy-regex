@@ -396,30 +396,30 @@ fn expander_errors() {
     assert!(exp.check("$0", &without_names).is_ok());
 
     // Can't use numbers with named groups.
-    assert_err!(
+    assert!(matches!(
         exp.check("$1", &with_names),
-        Error::CompileError(CompileError::NamedBackrefOnly)
-    );
-    assert_err!(
+        Err(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::NamedBackrefOnly)
+    ));
+    assert!(matches!(
         exp.check("${1}", &with_names),
-        Error::CompileError(CompileError::NamedBackrefOnly)
-    );
+        Err(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::NamedBackrefOnly)
+    ));
 
     // Unmatched group number.
-    assert_err!(
+    assert!(matches!(
         exp.check("$2", &without_names),
-        Error::CompileError(CompileError::InvalidBackref(2))
-    );
-    assert_err!(
+        Err(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(2))
+    ));
+    assert!(matches!(
         exp.check("${2}", &without_names),
-        Error::CompileError(CompileError::InvalidBackref(2))
-    );
+        Err(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(2))
+    ));
 
     // Unmatched group name.
     assert!(
-        matches!(exp.check("$xx", &with_names), Err(Error::CompileError(CompileError::InvalidGroupNameBackref(ref name))) if name == "xx"),
+        matches!(exp.check("$xx", &with_names), Err(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidGroupNameBackref(ref name) if name == "xx")),
     );
     assert!(matches!(
         exp.check("${xx}", &with_names),
-        Err(Error::CompileError(CompileError::InvalidGroupNameBackref(ref name))) if name == "xx"));
+        Err(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidGroupNameBackref(ref name) if name == "xx")));
 }
