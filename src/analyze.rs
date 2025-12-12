@@ -583,4 +583,66 @@ mod tests {
         let tree = Expr::parse_tree(r"(?m)^(\w+)\1").unwrap();
         assert_eq!(can_compile_as_anchored(&tree.expr), false);
     }
+
+    #[test]
+    fn min_pos_in_group_calculated_correctly_with_no_groups() {
+        let tree = Expr::parse_tree(r"\G").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        assert_eq!(info.min_size, 0);
+        assert_eq!(info.min_pos_in_group, 0);
+        assert!(info.const_size);
+
+        let tree = Expr::parse_tree(r"\G(?=abc)\w+").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        // the lookahead itself has min size 0
+        assert_eq!(info.children[1].min_size, 0);
+        assert!(info.children[1].const_size);
+        // the children of the lookahead have min_size 3 from the literal
+        assert_eq!(info.children[1].children[0].min_size, 3);
+        assert!(info.children[1].children[0].const_size);
+        // after lookahead, the position is reset
+        assert_eq!(info.children[2].min_pos_in_group, 0);
+        assert_eq!(info.children[2].min_size, 1);
+        assert_eq!(info.min_pos_in_group, 0);
+        assert!(!info.const_size);
+
+        let tree = Expr::parse_tree(r"(?:ab*|cd){2}(?=bar)\w").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        // the whole expression has min size 3 (a times 2 plus \w)
+        assert_eq!(info.min_size, 3);
+        // the min pos of the lookahead is 2
+        assert_eq!(info.children[1].min_pos_in_group, 2);
+        // after lookahead, the position is reset
+        assert_eq!(info.children[2].min_pos_in_group, 2);
+        assert_eq!(info.children[2].min_size, 1);
+        assert!(!info.const_size);
+    }
+
+    #[test]
+    fn min_pos_in_group_calculated_correctly_with_capture_groups() {
+        use matches::assert_matches;
+
+        let tree = Expr::parse_tree(r"a(bc)d(e(f)g)").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        assert_eq!(info.min_pos_in_group, 0);
+        // before the capture begins, the min pos in group 0 is 1
+        assert_eq!(info.children[1].min_pos_in_group, 1);
+        // inside capture group 1, the min pos of the Concat inside the group is 0
+        assert_matches!(info.children[1].children[0].expr, Expr::Concat(_));
+        assert_eq!(info.children[1].children[0].min_pos_in_group, 0);
+        assert!(info.children[1].children[0].const_size);
+        // inside capture group 1, the min pos of the c inside the group is 1
+        assert_matches!(info.children[1].children[0].children[1].expr, Expr::Literal { val, casei: false } if val == "c");
+        assert_eq!(info.children[1].children[0].children[1].min_pos_in_group, 1);
+
+        // prove we are looking at the position of the d after capture group 1
+        assert_matches!(info.children[2].expr, Expr::Literal { val, casei: false } if val == "d");
+        assert_eq!(info.children[2].min_pos_in_group, 3);
+        assert_eq!(info.children[2].start_group(), 2);
+        assert_eq!(info.children[2].min_size, 1);
+
+        // prove we are looking at the position of the e in capture group 2
+        assert_matches!(info.children[3].children[0].children[0].expr, Expr::Literal { val, casei: false } if val == "e");
+        assert_eq!(info.children[3].children[0].children[0].min_pos_in_group, 0);
+    }
 }

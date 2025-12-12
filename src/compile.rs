@@ -178,7 +178,9 @@ impl Compiler {
                 self.b.add(Insn::Save(0));
             }
             Expr::ContinueFromPreviousMatchEnd => {
-                self.b.add(Insn::ContinueFromPreviousMatchEnd);
+                self.b.add(Insn::ContinueFromPreviousMatchEnd {
+                    at_start: info.start_group() == 1 && info.min_pos_in_group == 0,
+                });
             }
             Expr::Conditional { .. } => {
                 self.compile_conditional(|compiler, i| compiler.visit(&info.children[i], hard))?;
