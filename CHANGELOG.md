@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
+## [0.17.0] - 2025-12-13
+### Added
+- Add support for "easy" variable-length lookbehinds (enabled via new feature flag)
+- Add support for more word boundaries: `\b{start}`, `\b{end}`, `\b{start-half}`, `\b{end-half}`
+- Allow `{...}` repetition syntax after assertions (except in Oniguruma mode)
+- Add Oniguruma mode flag to playground
+### Changed
+- Rewrite Theory section of Readme in a more formal style
+- Box `CompileError` in `Error` enum to reduce size
+- Bail out early when `\G` fails to match for increased performance
+- Handle `ignore_whitespace` case in parsing escape sequences
+- Add tests to ensure that `Regex` is `Send` and `Sync`
+### Fixed
+- Fix clippy lint warnings
+
 ## [0.16.2] - 2025-09-19
 ### Added
 - Add an "oniguruma mode" flag to control whether `\<` and `\>` are treated as literals or word-boundary assertions. (#186)
