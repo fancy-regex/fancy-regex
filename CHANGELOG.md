@@ -8,18 +8,18 @@ with the exception that 0.x versions can break between minor versions.
 
 ## [0.17.0] - 2025-12-13
 ### Added
-- Add support for "easy" variable-length lookbehinds (enabled via new feature flag)
-- Add support for more word boundaries: `\b{start}`, `\b{end}`, `\b{start-half}`, `\b{end-half}`
-- Allow `{...}` repetition syntax after assertions (except in Oniguruma mode)
-- Add Oniguruma mode flag to playground
+- Add support for "easy" variable-length lookbehinds (enabled via new feature flag) (#194, #196)
+- Add support for more word boundaries: `\b{start}`, `\b{end}`, `\b{start-half}`, `\b{end-half}` (#193)
+- Allow `{...}` repetition syntax after assertions (except in Oniguruma mode) (#193)
+- Add Oniguruma mode flag to playground (#199)
 ### Changed
-- Rewrite Theory section of Readme in a more formal style
-- Box `CompileError` in `Error` enum to reduce size
-- Bail out early when `\G` fails to match for increased performance
-- Handle `ignore_whitespace` case in parsing escape sequences
-- Add tests to ensure that `Regex` is `Send` and `Sync`
+- Rewrite Theory section of Readme in a more formal style (#187)
+- Box `CompileError` in `Error` enum to reduce size (#204)
+- Bail out early when `\G` fails to match for increased performance (#198)
+- Handle `ignore_whitespace` case in parsing escape sequences (#193)
+- Add tests to ensure that `Regex` is `Send` and `Sync` (#195)
 ### Fixed
-- Fix clippy lint warnings
+- Fix clippy lint warnings (#204)
 
 ## [0.16.2] - 2025-09-19
 ### Added
