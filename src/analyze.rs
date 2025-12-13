@@ -42,6 +42,9 @@ pub struct Info<'a> {
     pub(crate) capture_groups: CaptureGroupRange,
     pub(crate) min_size: usize,
     pub(crate) const_size: bool,
+    /// Tracks the minimum number of characters that would be consumed in the innermost capture group
+    /// before this expression is matched.
+    pub(crate) min_pos_in_group: usize,
     pub(crate) hard: bool,
     pub(crate) expr: &'a Expr,
     pub(crate) children: Vec<Info<'a>>,
@@ -94,7 +97,7 @@ struct Analyzer<'a> {
 }
 
 impl<'a> Analyzer<'a> {
-    fn visit(&mut self, expr: &'a Expr) -> Result<Info<'a>> {
+    fn visit(&mut self, expr: &'a Expr, min_pos_in_group: usize) -> Result<Info<'a>> {
         let start_group = self.group_ix;
         let mut children = Vec::new();
         let mut min_size = 0;
@@ -119,22 +122,24 @@ impl<'a> Analyzer<'a> {
             }
             Expr::Concat(ref v) => {
                 const_size = true;
+                let mut pos_in_group = min_pos_in_group;
                 for child in v {
-                    let child_info = self.visit(child)?;
+                    let child_info = self.visit(child, pos_in_group)?;
                     min_size += child_info.min_size;
                     const_size &= child_info.const_size;
                     hard |= child_info.hard;
+                    pos_in_group += child_info.min_size;
                     children.push(child_info);
                 }
             }
             Expr::Alt(ref v) => {
-                let child_info = self.visit(&v[0])?;
+                let child_info = self.visit(&v[0], min_pos_in_group)?;
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
                 hard = child_info.hard;
                 children.push(child_info);
                 for child in &v[1..] {
-                    let child_info = self.visit(child)?;
+                    let child_info = self.visit(child, min_pos_in_group)?;
                     const_size &= child_info.const_size && min_size == child_info.min_size;
                     min_size = min(min_size, child_info.min_size);
                     hard |= child_info.hard;
@@ -144,7 +149,7 @@ impl<'a> Analyzer<'a> {
             Expr::Group(ref child) => {
                 let group = self.group_ix;
                 self.group_ix += 1;
-                let child_info = self.visit(child)?;
+                let child_info = self.visit(child, 0)?;
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
                 // Store the group info for use by backrefs
@@ -162,7 +167,8 @@ impl<'a> Analyzer<'a> {
                 children.push(child_info);
             }
             Expr::LookAround(ref child, _) => {
-                let child_info = self.visit(child)?;
+                // NOTE: min_pos_in_group might seem weird for lookbehinds
+                let child_info = self.visit(child, min_pos_in_group)?;
                 // min_size = 0
                 const_size = true;
                 hard = true;
@@ -171,7 +177,7 @@ impl<'a> Analyzer<'a> {
             Expr::Repeat {
                 ref child, lo, hi, ..
             } => {
-                let child_info = self.visit(child)?;
+                let child_info = self.visit(child, min_pos_in_group)?;
                 min_size = child_info.min_size * lo;
                 const_size = child_info.const_size && lo == hi;
                 hard = child_info.hard;
@@ -200,7 +206,7 @@ impl<'a> Analyzer<'a> {
                 hard = true;
             }
             Expr::AtomicGroup(ref child) => {
-                let child_info = self.visit(child)?;
+                let child_info = self.visit(child, min_pos_in_group)?;
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
                 hard = true; // TODO: possibly could weaken
@@ -225,9 +231,12 @@ impl<'a> Analyzer<'a> {
             } => {
                 hard = true;
 
-                let child_info_condition = self.visit(condition)?;
-                let child_info_truth = self.visit(true_branch)?;
-                let child_info_false = self.visit(false_branch)?;
+                let child_info_condition = self.visit(condition, min_pos_in_group)?;
+                let child_info_truth = self.visit(
+                    true_branch,
+                    min_pos_in_group + child_info_condition.min_size,
+                )?;
+                let child_info_false = self.visit(false_branch, min_pos_in_group)?;
 
                 min_size = child_info_condition.min_size
                     + min(child_info_truth.min_size, child_info_false.min_size);
@@ -265,6 +274,7 @@ impl<'a> Analyzer<'a> {
             min_size,
             const_size,
             hard,
+            min_pos_in_group,
         })
     }
 }
@@ -285,7 +295,7 @@ pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result
         group_info: Map::new(),
     };
 
-    let analyzed = analyzer.visit(&tree.expr);
+    let analyzed = analyzer.visit(&tree.expr, 0);
     if analyzer.backrefs.contains(0) {
         return Err(Error::CompileError(Box::new(CompileError::InvalidBackref(
             0,
@@ -574,5 +584,67 @@ mod tests {
     fn not_anchored_for_startline_assertions() {
         let tree = Expr::parse_tree(r"(?m)^(\w+)\1").unwrap();
         assert_eq!(can_compile_as_anchored(&tree.expr), false);
+    }
+
+    #[test]
+    fn min_pos_in_group_calculated_correctly_with_no_groups() {
+        let tree = Expr::parse_tree(r"\G").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        assert_eq!(info.min_size, 0);
+        assert_eq!(info.min_pos_in_group, 0);
+        assert!(info.const_size);
+
+        let tree = Expr::parse_tree(r"\G(?=abc)\w+").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        // the lookahead itself has min size 0
+        assert_eq!(info.children[1].min_size, 0);
+        assert!(info.children[1].const_size);
+        // the children of the lookahead have min_size 3 from the literal
+        assert_eq!(info.children[1].children[0].min_size, 3);
+        assert!(info.children[1].children[0].const_size);
+        // after lookahead, the position is reset
+        assert_eq!(info.children[2].min_pos_in_group, 0);
+        assert_eq!(info.children[2].min_size, 1);
+        assert_eq!(info.min_pos_in_group, 0);
+        assert!(!info.const_size);
+
+        let tree = Expr::parse_tree(r"(?:ab*|cd){2}(?=bar)\w").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        // the whole expression has min size 3 (a times 2 plus \w)
+        assert_eq!(info.min_size, 3);
+        // the min pos of the lookahead is 2
+        assert_eq!(info.children[1].min_pos_in_group, 2);
+        // after lookahead, the position is reset
+        assert_eq!(info.children[2].min_pos_in_group, 2);
+        assert_eq!(info.children[2].min_size, 1);
+        assert!(!info.const_size);
+    }
+
+    #[test]
+    fn min_pos_in_group_calculated_correctly_with_capture_groups() {
+        use matches::assert_matches;
+
+        let tree = Expr::parse_tree(r"a(bc)d(e(f)g)").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        assert_eq!(info.min_pos_in_group, 0);
+        // before the capture begins, the min pos in group 0 is 1
+        assert_eq!(info.children[1].min_pos_in_group, 1);
+        // inside capture group 1, the min pos of the Concat inside the group is 0
+        assert_matches!(info.children[1].children[0].expr, Expr::Concat(_));
+        assert_eq!(info.children[1].children[0].min_pos_in_group, 0);
+        assert!(info.children[1].children[0].const_size);
+        // inside capture group 1, the min pos of the c inside the group is 1
+        assert_matches!(info.children[1].children[0].children[1].expr, Expr::Literal { val, casei: false } if val == "c");
+        assert_eq!(info.children[1].children[0].children[1].min_pos_in_group, 1);
+
+        // prove we are looking at the position of the d after capture group 1
+        assert_matches!(info.children[2].expr, Expr::Literal { val, casei: false } if val == "d");
+        assert_eq!(info.children[2].min_pos_in_group, 3);
+        assert_eq!(info.children[2].start_group(), 2);
+        assert_eq!(info.children[2].min_size, 1);
+
+        // prove we are looking at the position of the e in capture group 2
+        assert_matches!(info.children[3].children[0].children[0].expr, Expr::Literal { val, casei: false } if val == "e");
+        assert_eq!(info.children[3].children[0].children[0].min_pos_in_group, 0);
     }
 }

@@ -300,8 +300,11 @@ pub enum Insn {
     EndAtomic,
     /// Delegate matching to the regex crate
     Delegate(Delegate),
-    /// Anchor to match at the position where the previous match ended
-    ContinueFromPreviousMatchEnd,
+    /// Anchor to match at the position where the previous match ended.
+    ContinueFromPreviousMatchEnd {
+        /// Whether this is at the start of the pattern (allowing early exit on failure)
+        at_start: bool,
+    },
     /// Continue only if the specified capture group has already been populated as part of the match
     BackrefExistsCondition(usize),
     #[cfg(feature = "variable-lookbehinds")]
@@ -925,8 +928,16 @@ pub(crate) fn run(
                         }
                     }
                 }
-                Insn::ContinueFromPreviousMatchEnd => {
+                Insn::ContinueFromPreviousMatchEnd { at_start } => {
                     if ix > pos || option_flags & OPTION_SKIPPED_EMPTY_MATCH != 0 {
+                        // If \G is at the start of the pattern, we can fail early
+                        // instead of checking at each position in the haystack
+                        // because \G will never match at any other position
+                        if at_start && state.stack.len() == 1 {
+                            // The only item on the stack is from the Split instruction for non-anchored search
+                            // We can safely return None immediately
+                            return Ok(None);
+                        }
                         break 'fail;
                     }
                 }

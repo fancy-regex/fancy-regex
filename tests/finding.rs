@@ -305,6 +305,68 @@ fn find_iter_continue_from_previous_match_end_with_zero_width_match() {
 }
 
 #[test]
+fn find_iter_continue_from_previous_match_end_inside_alternation_continue_last() {
+    // Test that \G in alternation doesn't cause overzealous early bailout
+    // Pattern: abc|\G1
+    // The alternation allows matching "abc" at any position,
+    // while \G1 only matches "1" at the continuation position
+    let text = "1hello1 abc1";
+
+    for (i, mat) in common::regex(r"abc|\G1").find_iter(text).enumerate() {
+        let mat = mat.unwrap();
+
+        // Expected matches:
+        // 1. "1" at position 0 (via \G1 branch at start)
+        // 2. "abc" at position 8 (via abc branch)
+        // 3. "1" at position 11 (via \G1 branch continuing from previous match end)
+        match i {
+            0 => assert_eq!((mat.start(), mat.end()), (0, 1)),
+            1 => assert_eq!((mat.start(), mat.end()), (8, 11)),
+            2 => assert_eq!((mat.start(), mat.end()), (11, 12)),
+            i => panic!("Expected 3 results, got {}", i + 1),
+        }
+    }
+}
+
+#[test]
+fn find_iter_continue_from_previous_match_end_inside_alternation_continue_first() {
+    // Test with \G branch first in alternation: \G\d+|abc
+    // This ensures the optimization doesn't incorrectly bail out
+    let text = "123abc456";
+
+    for (i, mat) in common::regex(r"\G\d+|abc").find_iter(text).enumerate() {
+        let mat = mat.unwrap();
+
+        // Expected matches:
+        // 1. "123" at position 0 (via \G\d+ branch at start)
+        // 2. "abc" at position 3 (via abc branch continuing from previous match end)
+        // 3. "456" at position 6 (via \G\d+ branch continuing from previous match end)
+        match i {
+            0 => assert_eq!((mat.start(), mat.end()), (0, 3)),
+            1 => assert_eq!((mat.start(), mat.end()), (3, 6)),
+            2 => assert_eq!((mat.start(), mat.end()), (6, 9)),
+            i => panic!("Expected 3 results, got {}", i + 1),
+        }
+    }
+}
+
+#[test]
+fn find_iter_continue_from_previous_match_end_single_match() {
+    // Test basic \G behavior with find_iter - should only match at start
+    let text = "123 456 789";
+
+    // Should only match at position 0
+    for (i, mat) in common::regex(r"\G\d+").find_iter(text).enumerate() {
+        let mat = mat.unwrap();
+
+        match i {
+            0 => assert_eq!((mat.start(), mat.end()), (0, 3)),
+            i => panic!("Expected 1 result, got {}", i + 1),
+        }
+    }
+}
+
+#[test]
 fn find_iter_attributes() {
     let text = "ab1c2";
     let regex = common::regex(r"\d*(?=[a-z])");
@@ -385,7 +447,7 @@ fn find_iter_empty_repeat_anchored_non_greedy_issue70() {
                 0 => assert_eq!((mat.start(), mat.end()), (0, 1)),
                 1 => assert_eq!((mat.start(), mat.end()), (2, 5)),
                 2 => assert_eq!((mat.start(), mat.end()), (6, 6)),
-                i => panic!("Expected 4 results, got {}", i + 1),
+                i => panic!("Expected 3 results, got {}", i + 1),
             }
         }
     }
@@ -425,6 +487,58 @@ fn find_conditional() {
 #[test]
 fn find_endtext_before_newlines() {
     assert_eq!(find(r"\Z", "hello\nworld\n\n\n"), Some((11, 11)));
+}
+
+#[test]
+fn continue_from_previous_match_with_lookahead_before() {
+    let text = "123abc";
+
+    // Lookahead doesn't consume, so \G should still be at position 0
+    assert_eq!(find(r"(?=\d)\G\d+", text), Some((0, 3)));
+
+    // Lookahead fails, so whole match fails
+    assert_eq!(find(r"(?=[a-z])\G\d+", text), None);
+
+    // Negative lookahead passes (not a letter), \G continues
+    assert_eq!(find(r"(?![a-z])\G\d+", text), Some((0, 3)));
+
+    // Negative lookahead fails (is a digit), match fails
+    assert_eq!(find(r"(?!\d)\G\d+", text), None);
+}
+
+#[test]
+fn continue_from_previous_match_in_alternation() {
+    // Pattern: \G in alternation - tests whether \G behaves correctly in branches
+    let text = "123abc";
+
+    // First branch with \G should match
+    assert_eq!(find(r"\G\d+|xyz", text), Some((0, 3)));
+
+    // Second branch should also work when first fails
+    assert_eq!(find(r"\Gxyz|\d+", text), Some((0, 3)));
+    assert_eq!(find(r"\D+|\G123", text), Some((0, 3)));
+}
+
+#[test]
+fn continue_from_previous_match_fails_when_not_at_continue_position() {
+    // \G should fail when we're not at the position where the last match ended
+    let text = " 123";
+
+    // Starting match at position 0, but there's a space, so \G at position 0 followed by \d
+    // should not match because we'd need to skip the space
+    assert_eq!(find(r"\G\d+", text), None);
+}
+
+#[test]
+fn continue_from_previous_match_at_min_position_zero() {
+    let text = "123abc";
+
+    assert_eq!(find(r"^x?\b(\G\d+)", text), Some((0, 3)));
+    assert_eq!(find(r"(?:^|\b)x?(\G\d+)", text), Some((0, 3)));
+    assert_eq!(find(r"(?:\G\d+|xyz)|abc", text), Some((0, 3)));
+    assert_eq!(find(r"(?=\d)(?=1)\G\d+", text), Some((0, 3)));
+    // Atomic group doesn't affect \G position checking
+    assert_eq!(find(r"(?>\G)\d+", "123abc"), Some((0, 3)));
 }
 
 fn find(re: &str, text: &str) -> Option<(usize, usize)> {
