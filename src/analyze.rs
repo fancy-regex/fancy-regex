@@ -42,6 +42,8 @@ pub struct Info<'a> {
     pub(crate) capture_groups: CaptureGroupRange,
     pub(crate) min_size: usize,
     pub(crate) const_size: bool,
+    /// Tracks the minimum number of characters that would be consumed in the innermost capture group
+    /// before this expression is matched.
     pub(crate) min_pos_in_group: usize,
     pub(crate) hard: bool,
     pub(crate) expr: &'a Expr,
