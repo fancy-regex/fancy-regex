@@ -1,10 +1,15 @@
 /* tslint:disable */
 /* eslint-disable */
-export function is_match(pattern: string, text: string, flags: any): boolean;
-export function find_captures(pattern: string, text: string, flags: any): any;
-export function parse_regex(pattern: string, flags: any): string;
+
 export function analyze_regex(pattern: string, flags: any): string;
+
+export function find_captures(pattern: string, text: string, flags: any): any;
+
+export function is_match(pattern: string, text: string, flags: any): boolean;
+
 export function main(): void;
+
+export function parse_regex(pattern: string, flags: any): string;
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
@@ -24,6 +29,7 @@ export interface InitOutput {
 }
 
 export type SyncInitInput = BufferSource | WebAssembly.Module;
+
 /**
 * Instantiates the given `module`, which can either be bytes or
 * a precompiled `WebAssembly.Module`.
