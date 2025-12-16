@@ -275,6 +275,36 @@ fn assert_no_match(re: &str, text: &str) {
     );
 }
 
+#[test]
+fn unicode_property_remapping() {
+    // Test \p{alnum} - should match alphanumeric characters
+    assert_match(r"\p{alnum}", "a");
+    assert_match(r"\p{alnum}", "1");
+    assert_match(r"\p{alnum}", "š");
+    assert_no_match(r"\p{alnum}", " ");
+
+    // Test \p{blank} - should match space and tab
+    assert_match(r"\p{blank}", " ");
+    assert_match(r"\p{blank}", "\t");
+    assert_no_match(r"\p{blank}", "a");
+    assert_no_match(r"\p{blank}", "\n");
+
+    // Test \p{word} - should match word characters
+    assert_match(r"\p{word}", "a");
+    assert_match(r"\p{word}", "_");
+    assert_no_match(r"\p{word}", " ");
+    assert_no_match(r"\p{word}", "-");
+
+    // Test non-remapped properties still work. L matches letters if unnegated.
+    assert_match(r"\p{L}", "a");
+    assert_no_match(r"\p{L}", "1");
+    assert_no_match(r"\p{L}", " ");
+
+    assert_no_match(r"\P{L}", "a");
+    assert_match(r"\P{L}", "1");
+    assert_match(r"\P{L}", " ");
+}
+
 #[cfg_attr(feature = "track_caller", track_caller)]
 fn match_text(re: &str, text: &str) -> bool {
     let regex = common::regex(re);
