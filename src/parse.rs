@@ -21,6 +21,7 @@
 //! A regex parser yielding an AST.
 
 use crate::RegexOptions;
+use alloc::borrow::ToOwned;
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -586,7 +587,10 @@ impl<'a> Parser<'a> {
             (
                 end,
                 Expr::Delegate {
-                    inner: String::from(&self.re[ix..end]),
+                    inner: remap_unicode_property_if_necessary(
+                        &self.re[ix..end],
+                        self.flag(FLAG_UNICODE),
+                    ),
                     size: 1,
                     casei: self.flag(FLAG_CASEI),
                 },
@@ -1288,13 +1292,68 @@ pub(crate) fn make_literal_case_insensitive(s: &str, case_insensitive: bool) -> 
     }
 }
 
+fn remap_unicode_property_if_necessary(property_name: &str, unicode_flag: bool) -> String {
+    let (p_case, prop) = if let Some(p) = property_name.strip_prefix(r"\p{") {
+        (r"\p", p)
+    } else if let Some(p) = property_name.strip_prefix(r"\P{") {
+        (r"\P", p)
+    } else {
+        return String::from(property_name);
+    };
+    if let Some(p) = prop.strip_suffix('}') {
+        match p {
+            r"alnum" => {
+                if unicode_flag {
+                    r"(?:".to_owned() + p_case + r"{alpha}|" + p_case + "{digit})"
+                } else {
+                    if p_case == r"\p" {
+                        r"[[:alpha:]]"
+                    } else {
+                        r"[^[[:alpha:]]]"
+                    }
+                    .to_string()
+                }
+            }
+            r"blank" => if p_case == r"\p" {
+                if unicode_flag {
+                    r"(?:\p{Zs}|\x09)"
+                } else {
+                    r"[\t ]"
+                }
+            } else if unicode_flag {
+                r"[^\P{Zs}\x09]"
+            } else {
+                r"[^\t ]"
+            }
+            .to_string(),
+            r"word" => if p_case == r"\p" {
+                if unicode_flag {
+                    r"\w"
+                } else {
+                    r"(?-u:\w)"
+                }
+            } else if unicode_flag {
+                r"\W"
+            } else {
+                r"(?-u:\W)"
+            }
+            .to_string(),
+            _ => String::from(property_name),
+        }
+    } else {
+        String::from(property_name)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::boxed::Box;
     use alloc::string::{String, ToString};
     use alloc::{format, vec};
 
-    use crate::parse::{make_literal, make_literal_case_insensitive, parse_id};
+    use crate::parse::{
+        make_literal, make_literal_case_insensitive, parse_id, remap_unicode_property_if_necessary,
+    };
     use crate::{Assertion, BacktrackingControlVerb, Expr};
     use crate::{LookAround::*, RegexOptions, SyntaxConfig};
 
@@ -3118,6 +3177,81 @@ mod tests {
         assert_error(
             "(*RANDOM)",
             "Parsing error at position 1: Target of repeat operator is invalid",
+        );
+    }
+
+    #[test]
+    fn remap_unicode_property_if_necessary_tests() {
+        // Test \p with unicode flag
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\p{alnum}", true),
+            r"(?:\p{alpha}|\p{digit})"
+        );
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\p{blank}", true),
+            r"(?:\p{Zs}|\x09)"
+        );
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\p{word}", true),
+            r"\w"
+        );
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\p{Greek}", true),
+            r"\p{Greek}"
+        );
+
+        // Test \p without unicode flag
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\p{alnum}", false),
+            r"[[:alpha:]]"
+        );
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\p{blank}", false),
+            r"[\t ]"
+        );
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\p{word}", false),
+            r"(?-u:\w)"
+        );
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\p{Greek}", false),
+            r"\p{Greek}"
+        );
+
+        // Test \P with unicode flag
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\P{alnum}", true),
+            r"(?:\P{alpha}|\P{digit})"
+        );
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\P{blank}", true),
+            r"[^\P{Zs}\x09]"
+        );
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\P{word}", true),
+            r"\W"
+        );
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\P{Greek}", true),
+            r"\P{Greek}"
+        );
+
+        // Test \P without unicode flag
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\P{alnum}", false),
+            r"[^[[:alpha:]]]"
+        );
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\P{blank}", false),
+            r"[^\t ]"
+        );
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\P{word}", false),
+            r"(?-u:\W)"
+        );
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\P{Greek}", false),
+            r"\P{Greek}"
         );
     }
 }
