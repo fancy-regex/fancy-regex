@@ -90,6 +90,7 @@ fn lookbehind_positive_variable_sized_functionality() {
         find(r"\b(?<=\|\s{0,9})(?:[gG]pu)\b", "|  gpu"),
         Some((3, 6))
     );
+    assert_eq!(find(r"(?=fuly)(?<=\b(?:[A-Z][a-z]*|[a-z]+))fuly\b", "Carefuly"), Some((7, 8)));
 }
 
 #[test]
