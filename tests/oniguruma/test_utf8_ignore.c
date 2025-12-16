@@ -202,9 +202,6 @@
   // Compile failed: ParseError(0, InvalidEscape("\\R"))
   x2("\\R", "\xc2\x85", 0, 2);
 
-  // Compile failed: ParseError(0, InvalidEscape("\\N"))
-  x2("\\N", "a", 0, 1);
-
   // No match found
   x2("(?:()|()|())*\\3\\1", "abc", 0, 0);
 
