@@ -131,7 +131,9 @@ Escapes:
 `\Z`
 : anchor to the end of the text before any trailing newlines\
 `\O`
-: any character including newline
+: any character including newline\
+`\N`
+: any character except newline
 
 Backreferences:
 

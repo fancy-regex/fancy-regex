@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
+## [Unreleased]
+### Added
+- Add support `\N` to mean any character except newline, for Oniguruma compatibility (#206)
+### Changed
+### Fixed
+
 ## [0.17.0] - 2025-12-13
 ### Added
 - Add support for "easy" variable-length lookbehinds (enabled via new feature flag) (#194, #196)
