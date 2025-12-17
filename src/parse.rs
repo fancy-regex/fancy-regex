@@ -1250,7 +1250,11 @@ pub(crate) fn make_literal_case_insensitive(s: &str, case_insensitive: bool) -> 
     }
 }
 
-fn remap_unicode_property_if_necessary(property_name: &str, unicode_flag: bool, in_class: bool) -> String {
+fn remap_unicode_property_if_necessary(
+    property_name: &str,
+    unicode_flag: bool,
+    in_class: bool,
+) -> String {
     let (neg, prop) = if let Some(p) = property_name.strip_prefix(r"\p{") {
         (false, p)
     } else if let Some(p) = property_name.strip_prefix(r"\P{") {
