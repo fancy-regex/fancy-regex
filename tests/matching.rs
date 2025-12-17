@@ -213,7 +213,7 @@ fn word_boundary_brace_syntax() {
     assert_no_match(r"\b{start-half}world", "helloworld");
     assert_match(r"\b{start-half}test", "test case");
     assert_no_match(r"\b{start-half}test", "contest");
-    assert_match(r"\b{start-half}-test", "run --test"); // diferent from \b{start}
+    assert_match(r"\b{start-half}-test", "run --test"); // different from \b{start}
 
     // \b{end}
     assert_match(r"world\b{end}", "hello world");
@@ -276,33 +276,214 @@ fn assert_no_match(re: &str, text: &str) {
 }
 
 #[test]
-fn unicode_property_remapping() {
+fn unicode_property_remapping_outside_char_class() {
     // Test \p{alnum} - should match alphanumeric characters
     assert_match(r"\p{alnum}", "a");
     assert_match(r"\p{alnum}", "1");
     assert_match(r"\p{alnum}", "š");
     assert_no_match(r"\p{alnum}", " ");
+    assert_no_match(r"\p{alnum}", "_");
+    assert_no_match(r"\p{alnum}", "-");
 
     // Test \p{blank} - should match space and tab
     assert_match(r"\p{blank}", " ");
     assert_match(r"\p{blank}", "\t");
     assert_no_match(r"\p{blank}", "a");
     assert_no_match(r"\p{blank}", "\n");
+    assert_no_match(r"\p{blank}", "1");
+    assert_no_match(r"\p{blank}", "_");
+    assert_no_match(r"\p{blank}", "-");
 
     // Test \p{word} - should match word characters
     assert_match(r"\p{word}", "a");
     assert_match(r"\p{word}", "_");
+    assert_match(r"\p{alnum}", "1");
+    assert_match(r"\p{alnum}", "š");
     assert_no_match(r"\p{word}", " ");
     assert_no_match(r"\p{word}", "-");
 
     // Test non-remapped properties still work. L matches letters if unnegated.
     assert_match(r"\p{L}", "a");
+    assert_match(r"\p{L}", "š");
     assert_no_match(r"\p{L}", "1");
+    assert_no_match(r"\p{L}", "_");
+    assert_no_match(r"\p{L}", "-");
     assert_no_match(r"\p{L}", " ");
 
     assert_no_match(r"\P{L}", "a");
+    assert_no_match(r"\P{L}", "š");
     assert_match(r"\P{L}", "1");
     assert_match(r"\P{L}", " ");
+    assert_match(r"\P{L}", "-");
+}
+
+#[test]
+fn unicode_property_remapping_inside_char_class() {
+    // Test \p{alnum} - should match alphanumeric characters
+    let alnum_pattern = r"[\p{alnum}]";
+    assert_match(alnum_pattern, "a");
+    assert_match(alnum_pattern, "1");
+    assert_match(alnum_pattern, "š");
+    assert_no_match(alnum_pattern, " ");
+    assert_no_match(alnum_pattern, "]");
+
+    // Test \p{blank} - should match space and tab
+    let blank_pattern = r"[\p{blank}]";
+    assert_match(blank_pattern, " ");
+    assert_match(blank_pattern, "\t");
+    assert_no_match(blank_pattern, "a");
+    assert_no_match(blank_pattern, "\n");
+    assert_no_match(blank_pattern, "]");
+
+    let bang_dash_hash_blank_pattern = r"[!-#\p{blank}]";
+    assert_match(bang_dash_hash_blank_pattern, "!");
+    assert_match(bang_dash_hash_blank_pattern, " ");
+    assert_match(bang_dash_hash_blank_pattern, "\t");
+    assert_no_match(bang_dash_hash_blank_pattern, "a");
+
+    // Test \p{word} - should match word characters
+    let word_pattern = r"[\p{word}]";
+    assert_match(word_pattern, "a");
+    assert_match(word_pattern, "_");
+    assert_no_match(word_pattern, " ");
+    assert_no_match(word_pattern, "-");
+    assert_no_match(word_pattern, "]");
+
+    // Test non-remapped properties still work. L matches letters if unnegated.
+    let l_pattern = r"[\p{L}]";
+    assert_match(l_pattern, "a");
+    assert_no_match(l_pattern, "1");
+    assert_no_match(l_pattern, " ");
+
+    let not_l_pattern = r"[\P{L}]";
+    assert_no_match(not_l_pattern, "a");
+    assert_match(not_l_pattern, "1");
+    assert_match(not_l_pattern, " ");
+
+    let slash_not_alnum_pattern = r"[/\P{alnum}]";
+    assert_no_match(slash_not_alnum_pattern, "a");
+    assert_match(slash_not_alnum_pattern, "/");
+}
+
+#[test]
+fn char_class_negated_property_as_only_item() {
+    // Test negated properties as the first (and only) item in a char class
+
+    // \P{alnum} as only content - should match non-alphanumeric characters
+    let not_alnum_pattern = r"[\P{alnum}]";
+    assert_no_match(not_alnum_pattern, "a");
+    assert_no_match(not_alnum_pattern, "Z");
+    assert_no_match(not_alnum_pattern, "š");
+    assert_no_match(not_alnum_pattern, "0");
+    assert_no_match(not_alnum_pattern, "9");
+    assert_match(not_alnum_pattern, " ");
+    assert_match(not_alnum_pattern, "!");
+    assert_match(not_alnum_pattern, "-");
+    assert_match(not_alnum_pattern, "_");
+
+    // \P{blank} as only content - should match non-blank characters
+    let not_blank_pattern = r"[\P{blank}]";
+    assert_match(not_blank_pattern, "a");
+    assert_match(not_blank_pattern, "!");
+    assert_no_match(not_blank_pattern, " ");
+    assert_no_match(not_blank_pattern, "\t");
+
+    // \P{word} as only content - should match non-word characters
+    let not_word_pattern = r"[\P{word}]";
+    assert_no_match(not_word_pattern, "a");
+    assert_no_match(not_word_pattern, "š");
+    assert_no_match(not_word_pattern, "_");
+    assert_no_match(not_word_pattern, "0");
+    assert_match(not_word_pattern, " ");
+    assert_match(not_word_pattern, "-");
+}
+
+#[test]
+fn char_class_negated_property_after_range() {
+    // Test negated properties after ranges
+
+    // Range followed by negated property
+    let a_z_not_alnum_pattern = r"[a-z\P{alnum}]";
+    assert_match(a_z_not_alnum_pattern, "a");
+    assert_match(a_z_not_alnum_pattern, "z");
+    assert_match(a_z_not_alnum_pattern, "!"); // non-alphanumeric
+    assert_no_match(a_z_not_alnum_pattern, "A");
+    assert_no_match(a_z_not_alnum_pattern, "0");
+
+    // Another test
+    let zero_nine_not_blank_pattern = r"[0-9\P{blank}]";
+    assert_match(zero_nine_not_blank_pattern, "5");
+    assert_match(zero_nine_not_blank_pattern, "a"); // non-blank
+    assert_no_match(zero_nine_not_blank_pattern, " ");
+    assert_no_match(zero_nine_not_blank_pattern, "\t");
+}
+
+#[test]
+fn char_class_negated_property_after_intersection() {
+    // Test negated properties after && operator
+
+    // \w intersected with negated blank - should match word chars as usual
+    let word_and_not_blank_pattern = r"[\w&&\P{blank}]";
+    assert_match(word_and_not_blank_pattern, "a");
+    assert_match(word_and_not_blank_pattern, "š");
+    assert_match(word_and_not_blank_pattern, "0");
+    assert_match(word_and_not_blank_pattern, "_");
+    assert_no_match(word_and_not_blank_pattern, " ");
+    assert_no_match(word_and_not_blank_pattern, "\t");
+    assert_no_match(word_and_not_blank_pattern, "-");
+}
+
+#[test]
+fn char_class_negated_in_negated_class() {
+    // Test negated properties in a negated char class
+    // [^\P{alnum}] should match alphanumeric (double negation)
+
+    let not_not_alnum_pattern = r"[^\P{alnum}]";
+    assert_match(not_not_alnum_pattern, "a");
+    assert_match(not_not_alnum_pattern, "š");
+    assert_match(not_not_alnum_pattern, "Z");
+    assert_match(not_not_alnum_pattern, "0");
+    assert_match(not_not_alnum_pattern, "9");
+    assert_no_match(not_not_alnum_pattern, " ");
+    assert_no_match(not_not_alnum_pattern, "!");
+    assert_no_match(not_not_alnum_pattern, "_");
+
+    // [^\P{word}] should match word characters
+    let not_not_word_pattern = r"[^\P{word}]";
+    assert_match(not_not_word_pattern, "a");
+    assert_match(not_not_word_pattern, "š");
+    assert_match(not_not_word_pattern, "_");
+    assert_match(not_not_word_pattern, "0");
+    assert_no_match(not_not_word_pattern, " ");
+    assert_no_match(not_not_word_pattern, "-");
+}
+
+#[test]
+fn char_class_negated_property_mixed() {
+    // Test various combinations
+
+    // Multiple items with negated property in the middle
+    let mixed_pattern = r"[a-z0-9\P{blank}_\n]";
+    assert_match(mixed_pattern, "a");
+    assert_match(mixed_pattern, "5");
+    assert_match(mixed_pattern, "_");
+    assert_match(mixed_pattern, "!"); // non-blank
+    assert_match(mixed_pattern, "A"); // non-blank (even though not in a-z or 0-9)
+    assert_match(mixed_pattern, "š"); // non-blank (even though not in a-z or 0-9)
+    assert_no_match(mixed_pattern, " "); // blank
+    assert_no_match(mixed_pattern, "\t"); // blank
+
+    // Multiple negated properties
+    // [\P{alnum}\P{blank}] - matches non-alphanumeric intersected with non-blank
+    let not_alnum_and_not_blank_pattern = r"[\P{alnum}\P{blank}]";
+    assert_match(not_alnum_and_not_blank_pattern, "!");
+    assert_match(not_alnum_and_not_blank_pattern, "-");
+    assert_match(not_alnum_and_not_blank_pattern, "_");
+    assert_no_match(not_alnum_and_not_blank_pattern, "a");
+    assert_no_match(not_alnum_and_not_blank_pattern, "š");
+    assert_no_match(not_alnum_and_not_blank_pattern, "0");
+    assert_no_match(not_alnum_and_not_blank_pattern, " "); // blank
+    assert_no_match(not_alnum_and_not_blank_pattern, "\t"); // blank
 }
 
 #[cfg_attr(feature = "track_caller", track_caller)]

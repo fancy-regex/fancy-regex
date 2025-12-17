@@ -21,7 +21,6 @@
 //! A regex parser yielding an AST.
 
 use crate::RegexOptions;
-use alloc::borrow::ToOwned;
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -590,6 +589,7 @@ impl<'a> Parser<'a> {
                     inner: remap_unicode_property_if_necessary(
                         &self.re[ix..end],
                         self.flag(FLAG_UNICODE),
+                        in_class,
                     ),
                     size: 1,
                     casei: self.flag(FLAG_CASEI),
@@ -788,6 +788,7 @@ impl<'a> Parser<'a> {
         let mut ix = ix + 1; // skip opening '['
         let mut class = String::new();
         let mut nest = 1;
+        let mut seen_negated_property = false;
         class.push('[');
 
         // Negated character class
@@ -816,6 +817,21 @@ impl<'a> Parser<'a> {
                             escape_into(&val, &mut class);
                         }
                         Expr::Delegate { inner, .. } => {
+                            // Check if this is a negated property that needs && prefix
+                            // A negated property is a nested character class that starts with [^ and contains
+                            // Unicode property patterns or POSIX classes
+                            let is_negated_prop = inner.starts_with("[^")
+                                && (inner.contains(r"\p{")
+                                    || inner.contains(r"\P{")
+                                    || inner.contains("[:"));
+                            if is_negated_prop {
+                                if seen_negated_property {
+                                    // This is not the first negated property, add &&
+                                    class.push_str("&&");
+                                }
+                                // Mark that we've seen a negated property
+                                seen_negated_property = true;
+                            }
                             class.push_str(&inner);
                         }
                         _ => {
@@ -1292,52 +1308,42 @@ pub(crate) fn make_literal_case_insensitive(s: &str, case_insensitive: bool) -> 
     }
 }
 
-fn remap_unicode_property_if_necessary(property_name: &str, unicode_flag: bool) -> String {
-    let (p_case, prop) = if let Some(p) = property_name.strip_prefix(r"\p{") {
-        (r"\p", p)
+fn remap_unicode_property_if_necessary(
+    property_name: &str,
+    unicode_flag: bool,
+    in_class: bool,
+) -> String {
+    let (neg, prop) = if let Some(p) = property_name.strip_prefix(r"\p{") {
+        (false, p)
     } else if let Some(p) = property_name.strip_prefix(r"\P{") {
-        (r"\P", p)
+        (true, p)
     } else {
         return String::from(property_name);
     };
     if let Some(p) = prop.strip_suffix('}') {
-        match p {
-            r"alnum" => {
-                if unicode_flag {
-                    r"(?:".to_owned() + p_case + r"{alpha}|" + p_case + "{digit})"
-                } else {
-                    if p_case == r"\p" {
-                        r"[[:alpha:]]"
-                    } else {
-                        r"[^[[:alpha:]]]"
-                    }
-                    .to_string()
-                }
-            }
-            r"blank" => if p_case == r"\p" {
-                if unicode_flag {
-                    r"(?:\p{Zs}|\x09)"
-                } else {
-                    r"[\t ]"
-                }
-            } else if unicode_flag {
-                r"[^\P{Zs}\x09]"
-            } else {
-                r"[^\t ]"
-            }
-            .to_string(),
-            r"word" => if p_case == r"\p" {
-                if unicode_flag {
-                    r"\w"
-                } else {
-                    r"(?-u:\w)"
-                }
-            } else if unicode_flag {
-                r"\W"
-            } else {
-                r"(?-u:\W)"
-            }
-            .to_string(),
+        match (p, unicode_flag, in_class, neg) {
+            (r"alnum", true, false, false) => r"[\p{alpha}\p{digit}]".to_string(),
+            (r"alnum", true, false, true) => r"[^\p{alpha}\p{digit}]".to_string(),
+            (r"alnum", true, true, false) => r"\p{alpha}\p{digit}".to_string(),
+            (r"alnum", true, true, true) => r"[^\p{alpha}\p{digit}]".to_string(),
+            (r"alnum", false, false, false) => r"[[:alnum:]]".to_string(),
+            (r"alnum", false, false, true) => r"[^[:alnum:]]".to_string(),
+            (r"alnum", false, true, false) => r"[:alnum:]".to_string(),
+            (r"alnum", false, true, true) => r"[^[:alnum:]]".to_string(),
+            (r"blank", true, false, false) => r"[\p{Zs}\x09]".to_string(),
+            (r"blank", false, false, false) => r"[\t ]".to_string(),
+            (r"blank", true, false, true) => r"[^\p{Zs}\x09]".to_string(),
+            (r"blank", false, false, true) => r"[^\t ]".to_string(),
+            (r"blank", true, true, false) => r"\p{Zs}\x09".to_string(),
+            (r"blank", false, true, false) => r"\t ".to_string(),
+            (r"blank", true, true, true) => r"[^\p{Zs}\x09]".to_string(),
+            (r"blank", false, true, true) => r"[^\t ]".to_string(),
+            (r"word", true, _, false) => r"\w".to_string(),
+            (r"word", true, _, true) => r"\W".to_string(),
+            (r"word", false, false, false) => r"[_[:alnum:]]".to_string(),
+            (r"word", false, false, true) => r"[^_[:alnum:]]".to_string(),
+            (r"word", false, true, false) => r"_[:alnum:]".to_string(),
+            (r"word", false, true, true) => r"[^_[:alnum:]]".to_string(),
             _ => String::from(property_name),
         }
     } else {
@@ -3181,76 +3187,151 @@ mod tests {
     }
 
     #[test]
-    fn remap_unicode_property_if_necessary_tests() {
+    fn remap_unicode_property_if_necessary_outside_class_tests() {
         // Test \p with unicode flag
         assert_eq!(
-            remap_unicode_property_if_necessary(r"\p{alnum}", true),
-            r"(?:\p{alpha}|\p{digit})"
+            remap_unicode_property_if_necessary(r"\p{alnum}", true, false),
+            r"[\p{alpha}\p{digit}]"
         );
         assert_eq!(
-            remap_unicode_property_if_necessary(r"\p{blank}", true),
-            r"(?:\p{Zs}|\x09)"
+            remap_unicode_property_if_necessary(r"\p{blank}", true, false),
+            r"[\p{Zs}\x09]"
         );
         assert_eq!(
-            remap_unicode_property_if_necessary(r"\p{word}", true),
+            remap_unicode_property_if_necessary(r"\p{word}", true, false),
             r"\w"
         );
         assert_eq!(
-            remap_unicode_property_if_necessary(r"\p{Greek}", true),
+            remap_unicode_property_if_necessary(r"\p{Greek}", true, false),
             r"\p{Greek}"
         );
 
         // Test \p without unicode flag
         assert_eq!(
-            remap_unicode_property_if_necessary(r"\p{alnum}", false),
-            r"[[:alpha:]]"
+            remap_unicode_property_if_necessary(r"\p{alnum}", false, false),
+            r"[[:alnum:]]"
         );
         assert_eq!(
-            remap_unicode_property_if_necessary(r"\p{blank}", false),
+            remap_unicode_property_if_necessary(r"\p{blank}", false, false),
             r"[\t ]"
         );
         assert_eq!(
-            remap_unicode_property_if_necessary(r"\p{word}", false),
-            r"(?-u:\w)"
+            remap_unicode_property_if_necessary(r"\p{word}", false, false),
+            r"[_[:alnum:]]"
         );
         assert_eq!(
-            remap_unicode_property_if_necessary(r"\p{Greek}", false),
+            remap_unicode_property_if_necessary(r"\p{Greek}", false, false),
             r"\p{Greek}"
         );
 
         // Test \P with unicode flag
         assert_eq!(
-            remap_unicode_property_if_necessary(r"\P{alnum}", true),
-            r"(?:\P{alpha}|\P{digit})"
+            remap_unicode_property_if_necessary(r"\P{alnum}", true, false),
+            r"[^\p{alpha}\p{digit}]"
         );
         assert_eq!(
-            remap_unicode_property_if_necessary(r"\P{blank}", true),
-            r"[^\P{Zs}\x09]"
+            remap_unicode_property_if_necessary(r"\P{blank}", true, false),
+            r"[^\p{Zs}\x09]"
         );
         assert_eq!(
-            remap_unicode_property_if_necessary(r"\P{word}", true),
+            remap_unicode_property_if_necessary(r"\P{word}", true, false),
             r"\W"
         );
         assert_eq!(
-            remap_unicode_property_if_necessary(r"\P{Greek}", true),
+            remap_unicode_property_if_necessary(r"\P{Greek}", true, false),
             r"\P{Greek}"
         );
 
         // Test \P without unicode flag
         assert_eq!(
-            remap_unicode_property_if_necessary(r"\P{alnum}", false),
-            r"[^[[:alpha:]]]"
+            remap_unicode_property_if_necessary(r"\P{alnum}", false, false),
+            r"[^[:alnum:]]"
         );
         assert_eq!(
-            remap_unicode_property_if_necessary(r"\P{blank}", false),
+            remap_unicode_property_if_necessary(r"\P{blank}", false, false),
             r"[^\t ]"
         );
         assert_eq!(
-            remap_unicode_property_if_necessary(r"\P{word}", false),
-            r"(?-u:\W)"
+            remap_unicode_property_if_necessary(r"\P{word}", false, false),
+            r"[^_[:alnum:]]"
         );
         assert_eq!(
-            remap_unicode_property_if_necessary(r"\P{Greek}", false),
+            remap_unicode_property_if_necessary(r"\P{Greek}", false, false),
+            r"\P{Greek}"
+        );
+    }
+
+    #[test]
+    fn remap_unicode_property_if_necessary_inside_class_tests() {
+        // Test \p with unicode flag
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\p{alnum}", true, true),
+            r"\p{alpha}\p{digit}"
+        );
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\p{blank}", true, true),
+            r"\p{Zs}\x09"
+        );
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\p{word}", true, true),
+            r"\w"
+        );
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\p{Greek}", true, true),
+            r"\p{Greek}"
+        );
+
+        // Test \p without unicode flag
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\p{alnum}", false, true),
+            r"[:alnum:]"
+        );
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\p{blank}", false, true),
+            r"\t "
+        );
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\p{word}", false, true),
+            r"_[:alnum:]"
+        );
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\p{Greek}", false, true),
+            r"\p{Greek}"
+        );
+
+        // Test \P with unicode flag
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\P{alnum}", true, true),
+            r"[^\p{alpha}\p{digit}]"
+        );
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\P{blank}", true, true),
+            r"[^\p{Zs}\x09]"
+        );
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\P{word}", true, true),
+            r"\W"
+        );
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\P{Greek}", true, true),
+            r"\P{Greek}"
+        );
+
+        // Test \P without unicode flag
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\P{alnum}", false, true),
+            r"[^[:alnum:]]"
+        );
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\P{blank}", false, true),
+            r"[^\t ]"
+        );
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\P{word}", false, true),
+            r"[^_[:alnum:]]"
+        );
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\P{Greek}", false, true),
             r"\P{Greek}"
         );
     }
