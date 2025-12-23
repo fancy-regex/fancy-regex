@@ -474,9 +474,14 @@ impl Compiler {
                         .expect("Expected at least one expression");
 
                     // Use reverse matching for variable-sized lookbehinds without fancy features
+                    use regex_automata::hybrid::dfa;
                     use regex_automata::nfa::thompson;
                     // Build a reverse DFA for the pattern
-                    let dfa = match regex_automata::hybrid::dfa::DFA::builder()
+                    let config = dfa::Config::new()
+                        .unicode_word_boundary(true)
+                        .starts_for_each_pattern(true);
+                    let dfa = match dfa::DFA::builder()
+                        .configure(config)
                         .thompson(thompson::Config::new().reverse(true))
                         .build(pattern)
                     {
