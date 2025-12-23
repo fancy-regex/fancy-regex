@@ -224,6 +224,10 @@ impl<'a> Analyzer<'a> {
                 hard = true;
                 const_size = true;
             }
+            Expr::BacktrackingControlVerb(_) => {
+                hard = true;
+                const_size = true;
+            }
             Expr::Conditional {
                 ref condition,
                 ref true_branch,
@@ -618,6 +622,15 @@ mod tests {
         assert_eq!(info.children[2].min_pos_in_group, 2);
         assert_eq!(info.children[2].min_size, 1);
         assert!(!info.const_size);
+    }
+
+    #[test]
+    fn backtracking_control_verb_is_hard_and_const_size() {
+        let tree = Expr::parse_tree(r"(*FAIL)").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        assert_eq!(info.min_size, 0);
+        assert_eq!(info.min_pos_in_group, 0);
+        assert!(info.const_size);
     }
 
     #[test]
