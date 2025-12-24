@@ -12,6 +12,7 @@ with the exception that 0.x versions can break between minor versions.
 - Add support for `(*FAIL)` backtracking control verb (#210)
 ### Changed
 ### Fixed
+- Fixed bug with parsing nested character classes containing unescaped `]` (#211)
 
 ## [0.17.0] - 2025-12-13
 ### Added
