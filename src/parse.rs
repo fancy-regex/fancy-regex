@@ -31,7 +31,7 @@ use regex_syntax::escape_into;
 
 use crate::parse_flags::*;
 use crate::{codepoint_len, CompileError, Error, Expr, ParseError, Result, MAX_RECURSION};
-use crate::{Assertion, LookAround::*};
+use crate::{Assertion, BacktrackingControlVerb, LookAround::*};
 
 #[cfg(not(feature = "std"))]
 pub(crate) type NamedGroups = alloc::collections::BTreeMap<String, usize>;
@@ -213,6 +213,7 @@ impl<'a> Parser<'a> {
             Expr::KeepOut => false,
             Expr::ContinueFromPreviousMatchEnd => false,
             Expr::BackrefExistsCondition(_) => false,
+            Expr::BacktrackingControlVerb(_) => false,
             _ => true,
         }
     }
@@ -905,6 +906,8 @@ impl<'a> Parser<'a> {
             return self.parse_conditional(ix + 2, depth);
         } else if self.re[ix..].starts_with("?P>") {
             return self.parse_named_subroutine_call(ix + 3, "", ")", false);
+        } else if self.re[ix..].starts_with("*") {
+            return self.parse_backtracking_control_verb(ix);
         } else if self.re[ix..].starts_with('?') {
             return self.parse_flags(ix, depth);
         } else {
@@ -1014,6 +1017,8 @@ impl<'a> Parser<'a> {
             self.parse_named_backref(ix, "<", ">)", true)?
         } else if b == b'+' || b == b'-' || b.is_ascii_digit() {
             self.parse_named_backref(ix, "", ")", true)?
+        } else if b == b'*' {
+            self.parse_backtracking_control_verb(ix)?
         } else {
             let (next, condition) = self.parse_re(ix, depth)?;
             (self.check_for_close_paren(next)?, condition)
@@ -1068,6 +1073,43 @@ impl<'a> Parser<'a> {
                 }
             },
         ))
+    }
+
+    // ix points to * after (
+    fn parse_backtracking_control_verb(&mut self, ix: usize) -> Result<(usize, Expr)> {
+        if self.re[ix..].starts_with("*FAIL)") {
+            Ok((
+                ix + "*FAIL)".len(),
+                Expr::BacktrackingControlVerb(BacktrackingControlVerb::Fail),
+            ))
+        } else if self.re[ix..].starts_with("*F)") {
+            Ok((
+                ix + "*F)".len(),
+                Expr::BacktrackingControlVerb(BacktrackingControlVerb::Fail),
+            ))
+        } else if self.re[ix..].starts_with("*ACCEPT)") {
+            Ok((
+                ix + "*ACCEPT)".len(),
+                Expr::BacktrackingControlVerb(BacktrackingControlVerb::Accept),
+            ))
+        } else if self.re[ix..].starts_with("*COMMIT)") {
+            Ok((
+                ix + "*COMMIT)".len(),
+                Expr::BacktrackingControlVerb(BacktrackingControlVerb::Commit),
+            ))
+        } else if self.re[ix..].starts_with("*SKIP)") {
+            Ok((
+                ix + "*SKIP)".len(),
+                Expr::BacktrackingControlVerb(BacktrackingControlVerb::Skip),
+            ))
+        } else if self.re[ix..].starts_with("*PRUNE)") {
+            Ok((
+                ix + "*PRUNE)".len(),
+                Expr::BacktrackingControlVerb(BacktrackingControlVerb::Prune),
+            ))
+        } else {
+            Err(Error::ParseError(ix, ParseError::TargetNotRepeatable))
+        }
     }
 
     fn flag(&self, flag: u32) -> bool {
@@ -1253,7 +1295,7 @@ mod tests {
     use alloc::{format, vec};
 
     use crate::parse::{make_literal, make_literal_case_insensitive, parse_id};
-    use crate::{Assertion, Expr};
+    use crate::{Assertion, BacktrackingControlVerb, Expr};
     use crate::{LookAround::*, RegexOptions, SyntaxConfig};
 
     fn p(s: &str) -> Expr {
@@ -3029,6 +3071,55 @@ mod tests {
                 make_literal_case_insensitive("o", true),
                 Expr::Assertion(Assertion::EndLine { crlf: false })
             ])
+        );
+    }
+
+    #[test]
+    fn parse_backtracking_control_verbs() {
+        assert_eq!(
+            p(r"(*FAIL)"),
+            Expr::BacktrackingControlVerb(BacktrackingControlVerb::Fail)
+        );
+        assert_eq!(
+            p(r"(*F)"),
+            Expr::BacktrackingControlVerb(BacktrackingControlVerb::Fail)
+        );
+        assert_eq!(
+            p(r"a(*FAIL)"),
+            Expr::Concat(vec![
+                make_literal("a"),
+                Expr::BacktrackingControlVerb(BacktrackingControlVerb::Fail)
+            ])
+        );
+        assert_eq!(
+            p(r"(?(*FAIL)a|b)"),
+            Expr::Conditional {
+                condition: Box::new(Expr::BacktrackingControlVerb(BacktrackingControlVerb::Fail)),
+                true_branch: Box::new(make_literal("a")),
+                false_branch: Box::new(make_literal("b"))
+            }
+        );
+
+        assert_eq!(
+            p(r"(*ACCEPT)"),
+            Expr::BacktrackingControlVerb(BacktrackingControlVerb::Accept)
+        );
+        assert_eq!(
+            p(r"(*COMMIT)"),
+            Expr::BacktrackingControlVerb(BacktrackingControlVerb::Commit)
+        );
+        assert_eq!(
+            p(r"(*SKIP)"),
+            Expr::BacktrackingControlVerb(BacktrackingControlVerb::Skip)
+        );
+        assert_eq!(
+            p(r"(*PRUNE)"),
+            Expr::BacktrackingControlVerb(BacktrackingControlVerb::Prune)
+        );
+
+        assert_error(
+            "(*RANDOM)",
+            "Parsing error at position 1: Target of repeat operator is invalid",
         );
     }
 }

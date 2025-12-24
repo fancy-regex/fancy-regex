@@ -300,13 +300,16 @@ pub enum Insn {
     EndAtomic,
     /// Delegate matching to the regex crate
     Delegate(Delegate),
-    /// Anchor to match at the position where the previous match ended.
+    /// Anchor to match at the position where the previous match ended
     ContinueFromPreviousMatchEnd {
         /// Whether this is at the start of the pattern (allowing early exit on failure)
         at_start: bool,
     },
     /// Continue only if the specified capture group has already been populated as part of the match
     BackrefExistsCondition(usize),
+    /// Immediately fail the current match attempt and trigger backtracking.
+    /// This is used for backtracking control verbs like `(*FAIL)`.
+    Fail,
     #[cfg(feature = "variable-lookbehinds")]
     /// Reverse lookbehind using regex-automata for variable-sized patterns
     BackwardsDelegate(ReverseBackwardsDelegate),
@@ -851,6 +854,10 @@ pub(crate) fn run(
                         // Referenced group hasn't matched, so the backref doesn't match either
                         break 'fail;
                     }
+                }
+                Insn::Fail => {
+                    // Immediately fail and trigger backtracking
+                    break 'fail;
                 }
                 #[cfg(feature = "variable-lookbehinds")]
                 Insn::BackwardsDelegate(ReverseBackwardsDelegate {

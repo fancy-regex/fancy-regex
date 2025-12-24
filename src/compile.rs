@@ -37,7 +37,7 @@ use crate::analyze::Info;
 use crate::vm::{CachePoolFn, ReverseBackwardsDelegate};
 use crate::vm::{CaptureGroupRange, Delegate, Insn, Prog};
 use crate::LookAround::*;
-use crate::{CompileError, Error, Expr, LookAround, RegexOptions, Result};
+use crate::{BacktrackingControlVerb, CompileError, Error, Expr, LookAround, RegexOptions, Result};
 
 // I'm thinking it probably doesn't make a lot of sense having this split
 // out from Compiler.
@@ -164,6 +164,16 @@ impl Compiler {
             }
             Expr::BackrefExistsCondition(group) => {
                 self.b.add(Insn::BackrefExistsCondition(group));
+            }
+            Expr::BacktrackingControlVerb(BacktrackingControlVerb::Fail) => {
+                self.b.add(Insn::Fail);
+            }
+            Expr::BacktrackingControlVerb(_) => {
+                return Err(Error::CompileError(Box::new(
+                    CompileError::FeatureNotYetSupported(
+                        "Backtracking control verbs other than 'fail'".to_string(),
+                    ),
+                )));
             }
             Expr::AtomicGroup(_) => {
                 // TODO optimization: atomic insns are not needed if the
@@ -824,6 +834,55 @@ mod tests {
         assert_matches!(prog[6], FailNegativeLookAround);
         assert_matches!(prog[7], Save(1));
         assert_matches!(prog[8], End);
+    }
+
+    #[test]
+    fn backtracking_control_verb_fail_can_be_compiled() {
+        let prog = compile_prog(r"(*FAIL)");
+
+        assert_eq!(prog.len(), 2, "prog: {:?}", prog);
+
+        assert_matches!(prog[0], Fail);
+        assert_matches!(prog[1], End);
+    }
+
+    #[test]
+    fn other_backtracking_control_verbs_error() {
+        let tree = Expr::parse_tree(r"(*ACCEPT)").unwrap();
+        let info = analyze(&tree, true).unwrap();
+        let result = compile(&info, true);
+        assert!(result.is_err());
+        assert_matches!(
+            result.err().unwrap(),
+            Error::CompileError(box_err) if matches!(*box_err, CompileError::FeatureNotYetSupported(_))
+        );
+
+        let tree = Expr::parse_tree(r"(*COMMIT)").unwrap();
+        let info = analyze(&tree, true).unwrap();
+        let result = compile(&info, true);
+        assert!(result.is_err());
+        assert_matches!(
+            result.err().unwrap(),
+            Error::CompileError(box_err) if matches!(*box_err, CompileError::FeatureNotYetSupported(_))
+        );
+
+        let tree = Expr::parse_tree(r"(*SKIP)").unwrap();
+        let info = analyze(&tree, true).unwrap();
+        let result = compile(&info, true);
+        assert!(result.is_err());
+        assert_matches!(
+            result.err().unwrap(),
+            Error::CompileError(box_err) if matches!(*box_err, CompileError::FeatureNotYetSupported(_))
+        );
+
+        let tree = Expr::parse_tree(r"(*PRUNE)").unwrap();
+        let info = analyze(&tree, true).unwrap();
+        let result = compile(&info, true);
+        assert!(result.is_err());
+        assert_matches!(
+            result.err().unwrap(),
+            Error::CompileError(box_err) if matches!(*box_err, CompileError::FeatureNotYetSupported(_))
+        );
     }
 
     #[test]

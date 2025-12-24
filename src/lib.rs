@@ -190,6 +190,11 @@ Conditionals - if/then/else:
 `(?(condition)true_branch|false_branch)`
 : if the condition matches then execute the true_branch regex expression, else execute false_branch from the point just before the condition was evaluated
 
+Backtracking control verbs:
+
+`(*FAIL)`
+: fail the current backtracking branch
+
 [regex]: https://crates.io/crates/regex
 */
 
@@ -1678,6 +1683,8 @@ pub enum Expr {
         /// The position in the original regex pattern where the subroutine call is made
         ix: usize,
     },
+    /// Backtracking control verb
+    BacktrackingControlVerb(BacktrackingControlVerb),
 }
 
 /// Type of look-around assertion as used for a look-around expression.
@@ -1691,6 +1698,22 @@ pub enum LookAround {
     LookBehind,
     /// Negative look-behind assertion, e.g. `(?<!a)`
     LookBehindNeg,
+}
+
+/// Type of backtracking control verb which affects how backtracking will behave.
+/// See https://www.regular-expressions.info/verb.html
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum BacktrackingControlVerb {
+    /// Fail this branch immediately
+    Fail,
+    /// Treat match so far as successful overall match
+    Accept,
+    /// Abort the entire match on failure
+    Commit,
+    /// Restart the entire match attempt at the current position
+    Skip,
+    /// Prune all backtracking states and restart the entire match attempt at the next position
+    Prune,
 }
 
 /// An iterator over capture names in a [Regex].  The iterator

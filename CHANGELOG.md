@@ -8,7 +8,8 @@ with the exception that 0.x versions can break between minor versions.
 
 ## [Unreleased]
 ### Added
-- Add support `\N` to mean any character except newline, for Oniguruma compatibility (#206)
+- Add support for `\N` to mean any character except newline, for Oniguruma compatibility (#206)
+- Add support for `(*FAIL)` backtracking control verb (#210)
 ### Changed
 ### Fixed
 

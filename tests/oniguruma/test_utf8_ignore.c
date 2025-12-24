@@ -632,9 +632,6 @@
   // Compile failed: ParseError(3, TargetNotRepeatable)
   x2("(?(?{....})123|456)", "123", 0, 3);
 
-  // Compile failed: ParseError(3, TargetNotRepeatable)
-  x2("(?(*FAIL)123|456)", "456", 0, 3);
-
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
   x2("\\g'0'++{,0}",   "abcdefgh", 0, 0);
 
