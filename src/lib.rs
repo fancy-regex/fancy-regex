@@ -1815,12 +1815,7 @@ impl Assertion {
         matches!(
             self,
             // these will make regex-automata use PikeVM
-            LeftWordBoundary
-                | LeftWordHalfBoundary
-                | RightWordBoundary
-                | RightWordHalfBoundary
-                | WordBoundary
-                | NotWordBoundary
+            LeftWordBoundary | LeftWordHalfBoundary | RightWordBoundary | RightWordHalfBoundary
         )
     }
 }
@@ -1862,6 +1857,8 @@ impl Expr {
             Expr::Assertion(Assertion::EndLine { crlf: false }) => buf.push_str("(?m:$)"),
             Expr::Assertion(Assertion::StartLine { crlf: true }) => buf.push_str("(?Rm:^)"),
             Expr::Assertion(Assertion::EndLine { crlf: true }) => buf.push_str("(?Rm:$)"),
+            Expr::Assertion(Assertion::WordBoundary) => buf.push_str(r"\b"),
+            Expr::Assertion(Assertion::NotWordBoundary) => buf.push_str(r"\B"),
             Expr::Concat(ref children) => {
                 if precedence > 1 {
                     buf.push_str("(?:");
