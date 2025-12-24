@@ -351,6 +351,46 @@ fn find_iter_continue_from_previous_match_end_inside_alternation_continue_first(
 }
 
 #[test]
+fn find_iter_continue_from_previous_match_end_inside_conditional_lookahead() {
+    let text = "1a23ba456a";
+
+    for (i, mat) in common::regex(r"(?((?=\G))a|b)").find_iter(text).enumerate() {
+        let mat = mat.unwrap();
+
+        // Expected matches:
+        // 1. "b" at position 4 (because \G didn't match)
+        // 2. "a" at position 5 (because \G matches)
+        match i {
+            0 => assert_eq!((mat.start(), mat.end()), (4, 5)),
+            1 => assert_eq!((mat.start(), mat.end()), (5, 6)),
+            i => panic!("Expected 2 results, got {}", i + 1),
+        }
+    }
+}
+
+#[test]
+fn find_iter_continue_from_previous_match_end_inside_conditional_lookbehind() {
+    let text = "1a23bab456a";
+
+    for (i, mat) in common::regex(r"(?((?!\G))a|b)").find_iter(text).enumerate() {
+        let mat = mat.unwrap();
+
+        // Expected matches:
+        // 1. "a" at position 1 (because \G didn't match)
+        // 2. "a" at position 5 (because \G didn't match)
+        // 3. "b" at position 6 (because \G did match)
+        // 4. "a" at position 10 (because \G didn't match)
+        match i {
+            0 => assert_eq!((mat.start(), mat.end()), (1, 2)),
+            1 => assert_eq!((mat.start(), mat.end()), (5, 6)),
+            2 => assert_eq!((mat.start(), mat.end()), (6, 7)),
+            3 => assert_eq!((mat.start(), mat.end()), (10, 11)),
+            i => panic!("Expected 4 results, got {}", i + 1),
+        }
+    }
+}
+
+#[test]
 fn find_iter_continue_from_previous_match_end_single_match() {
     // Test basic \G behavior with find_iter - should only match at start
     let text = "123 456 789";
