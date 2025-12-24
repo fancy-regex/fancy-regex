@@ -46,11 +46,30 @@ fn character_class_nested() {
 
 #[test]
 fn character_class_intersection() {
-    assert_match(r"[\w&&a-c]", "c");
-    assert_no_match(r"[\w&&a-c]", "d");
+    let pattern = r"[\w&&a-c]";
+    assert_match(pattern, "c");
+    assert_no_match(pattern, "d");
 
-    assert_match(r"[[0-9]&&[^4]]", "1");
-    assert_no_match(r"[[0-9]&&[^4]]", "4");
+    let pattern = r"[[0-9]&&[^4]]";
+    assert_match(pattern, "1");
+    assert_no_match(pattern, "4");
+
+    // Test nested classes with [^]...] pattern where the first ] is a literal character
+    let pattern = r"[[a]&&[^]b]]";
+    assert_match(pattern, "a");
+    assert_no_match(pattern, "]");
+    assert_no_match(pattern, "b");
+
+    // Test with unicode properties and intersection
+    let pattern = r#"[[\p{L}]&&[^]abc]]"#;
+    assert_match(pattern, "x");
+    assert_no_match(pattern, "]");
+    assert_no_match(pattern, "a");
+
+    let pattern = r#"[[\p{S}\p{P}]&&[^]"'(),;\[_`{}]]"#;
+    assert_match(pattern, "!");
+    assert_no_match(pattern, "]");
+    assert_no_match(pattern, ",");
 }
 
 #[test]
