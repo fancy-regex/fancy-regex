@@ -478,8 +478,7 @@ impl Compiler {
                     use regex_automata::nfa::thompson;
                     // Build a reverse DFA for the pattern
                     let config = dfa::Config::new()
-                        .unicode_word_boundary(true)
-                        .starts_for_each_pattern(true);
+                        .unicode_word_boundary(true); // enable word boundary support
                     let dfa = match dfa::DFA::builder()
                         .configure(config)
                         .thompson(thompson::Config::new().reverse(true))
