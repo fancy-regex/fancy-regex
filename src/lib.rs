@@ -111,6 +111,8 @@ This crate supports several optional features that can be enabled or disabled:
   assertions (e.g., `(?<=a+)`). Without this feature, only constant-length lookbehinds are supported.
   This feature uses reverse DFA matching from the `regex-automata` crate to efficiently handle
   variable-length patterns that don't use backreferences or other fancy features.
+- **`regex-set`** (disabled by default): Enables RegexSet for more performant matching of multiple
+  patterns against the same haystack.
 
 # Syntax
 
@@ -228,6 +230,8 @@ mod expand;
 mod optimize;
 mod parse;
 mod parse_flags;
+#[cfg(feature = "regex-set")]
+mod regexset;
 mod replacer;
 mod vm;
 
@@ -241,6 +245,8 @@ use crate::vm::{Prog, OPTION_SKIPPED_EMPTY_MATCH};
 
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
 pub use crate::expand::Expander;
+#[cfg(feature = "regex-set")]
+pub use crate::regexset::{RegexSet, RegexSetBuilder, RegexSetMatch, RegexSetMatches};
 pub use crate::replacer::{NoExpand, Replacer, ReplacerRef};
 
 const MAX_RECURSION: usize = 64;
@@ -434,13 +440,13 @@ impl<'r, 't> Iterator for CaptureMatches<'r, 't> {
 }
 
 /// A set of capture groups found for a regex.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Captures<'t> {
     inner: CapturesImpl<'t>,
     named_groups: Arc<NamedGroups>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum CapturesImpl<'t> {
     Wrap {
         text: &'t str,
@@ -1967,7 +1973,7 @@ fn codepoint_len(b: u8) -> usize {
 /// Returns the smallest possible index of the next valid UTF-8 sequence
 /// starting after `i`.
 /// Adapted from a function with the same name in the `regex` crate.
-fn next_utf8(text: &str, i: usize) -> usize {
+pub(crate) fn next_utf8(text: &str, i: usize) -> usize {
     let b = match text.as_bytes().get(i) {
         None => return i + 1,
         Some(&b) => b,
