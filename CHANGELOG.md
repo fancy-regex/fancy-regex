@@ -10,6 +10,7 @@ with the exception that 0.x versions can break between minor versions.
 ### Added
 - Add support for `\N` to mean any character except newline, for Oniguruma compatibility (#206)
 - Add support for `(*FAIL)` backtracking control verb (#210)
+- Add `RegexSet` API for efficiently retrieving the first match in a set of patterns
 ### Changed
 ### Fixed
 
