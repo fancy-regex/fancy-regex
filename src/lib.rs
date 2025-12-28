@@ -249,7 +249,10 @@ const MAX_RECURSION: usize = 64;
 
 /// A builder for a `Regex` to allow configuring options.
 #[derive(Debug)]
-pub struct RegexBuilder(RegexPatternOptions);
+pub struct RegexBuilder {
+    pattern: String,
+    options: RegexOptions,
+}
 
 /// A compiled regular expression.
 #[derive(Clone)]
@@ -264,15 +267,19 @@ enum RegexImpl {
     // Do we want to box this? It's pretty big...
     Wrap {
         inner: RaRegex,
-        options: RegexPatternOptions,
+        /// The original pattern which the regex was constructed from
+        pattern: String,
         /// Some optimizations avoid the VM, but need to use an extra capture group to represent the match boundaries
         explicit_capture_group_0: bool,
+        /// The actual pattern passed to regex-automata
         debug_pattern: String,
     },
     Fancy {
         prog: Arc<Prog>,
         n_groups: usize,
-        options: RegexPatternOptions,
+        /// The original pattern which the regex was constructed from
+        pattern: String,
+        options: RegexOptions,
     },
 }
 
@@ -567,12 +574,6 @@ impl<'r, 'h> Iterator for SplitN<'r, 'h> {
 impl<'r, 'h> core::iter::FusedIterator for SplitN<'r, 'h> {}
 
 #[derive(Clone, Debug)]
-struct RegexPatternOptions {
-    pattern: String,
-    options: RegexOptions,
-}
-
-#[derive(Clone, Debug)]
 struct RegexOptions {
     syntaxc: SyntaxConfig,
     backtrack_limit: usize,
@@ -620,21 +621,21 @@ impl RegexBuilder {
     ///
     /// If the pattern is invalid, the call to `build` will fail later.
     pub fn new(pattern: &str) -> Self {
-        RegexBuilder(RegexPatternOptions {
+        RegexBuilder {
             pattern: pattern.to_string(),
             options: RegexOptions::default(),
-        })
+        }
     }
 
     /// Build the `Regex`.
     ///
     /// Returns an [`Error`](enum.Error.html) if the pattern could not be parsed.
     pub fn build(&self) -> Result<Regex> {
-        Regex::new_options(self.0.pattern.clone(), self.0.options.clone())
+        Regex::new_options(self.pattern.clone(), self.options.clone())
     }
 
     fn set_config(&mut self, func: impl Fn(SyntaxConfig) -> SyntaxConfig) -> &mut Self {
-        self.0.options.syntaxc = func(self.0.options.syntaxc);
+        self.options.syntaxc = func(self.options.syntaxc);
         self
     }
 
@@ -703,7 +704,7 @@ impl RegexBuilder {
     ///
     /// Default is `1_000_000` (1 million).
     pub fn backtrack_limit(&mut self, limit: usize) -> &mut Self {
-        self.0.options.backtrack_limit = limit;
+        self.options.backtrack_limit = limit;
         self
     }
 
@@ -713,7 +714,7 @@ impl RegexBuilder {
     /// regex features there may be multiple delegated sub-regexes fed to the `regex` crate. As
     /// such the actual limit is closer to `<number of delegated regexes> * delegate_size_limit`.
     pub fn delegate_size_limit(&mut self, limit: usize) -> &mut Self {
-        self.0.options.delegate_size_limit = Some(limit);
+        self.options.delegate_size_limit = Some(limit);
         self
     }
 
@@ -724,7 +725,7 @@ impl RegexBuilder {
     /// such the actual limit is closer to `<number of delegated regexes> *
     /// delegate_dfa_size_limit`.
     pub fn delegate_dfa_size_limit(&mut self, limit: usize) -> &mut Self {
-        self.0.options.delegate_dfa_size_limit = Some(limit);
+        self.options.delegate_dfa_size_limit = Some(limit);
         self
     }
 
@@ -759,7 +760,7 @@ impl RegexBuilder {
     /// assert_eq!(literals.as_str(), "<Fish>");
     /// ```
     pub fn oniguruma_mode(&mut self, yes: bool) -> &mut Self {
-        self.0.options.oniguruma_mode = yes;
+        self.options.oniguruma_mode = yes;
         self
     }
 }
@@ -813,7 +814,7 @@ impl Regex {
             return Ok(Regex {
                 inner: RegexImpl::Wrap {
                     inner,
-                    options: RegexPatternOptions { pattern, options },
+                    pattern,
                     explicit_capture_group_0: requires_capture_group_fixup,
                     debug_pattern: re_cooked,
                 },
@@ -826,7 +827,8 @@ impl Regex {
             inner: RegexImpl::Fancy {
                 prog: Arc::new(prog),
                 n_groups: info.end_group(),
-                options: RegexPatternOptions { pattern, options },
+                options,
+                pattern,
             },
             named_groups: Arc::new(tree.named_groups),
         })
@@ -835,8 +837,8 @@ impl Regex {
     /// Returns the original string of this regex.
     pub fn as_str(&self) -> &str {
         match &self.inner {
-            RegexImpl::Wrap { options, .. } => &options.pattern,
-            RegexImpl::Fancy { options, .. } => &options.pattern,
+            RegexImpl::Wrap { pattern, .. } => pattern,
+            RegexImpl::Fancy { pattern, .. } => pattern,
         }
     }
 
@@ -856,7 +858,7 @@ impl Regex {
         match &self.inner {
             RegexImpl::Wrap { inner, .. } => Ok(inner.is_match(text)),
             RegexImpl::Fancy { prog, options, .. } => {
-                let result = vm::run(prog, text, 0, 0, &options.options)?;
+                let result = vm::run(prog, text, 0, 0, options)?;
                 Ok(result.is_some())
             }
         }
@@ -960,7 +962,7 @@ impl Regex {
                 }
             }
             RegexImpl::Fancy { prog, options, .. } => {
-                let result = vm::run(prog, text, pos, option_flags, &options.options)?;
+                let result = vm::run(prog, text, pos, option_flags, options)?;
                 Ok(result.map(|saves| Match::new(text, saves[0], saves[1])))
             }
         }
@@ -1082,7 +1084,7 @@ impl Regex {
                 options,
                 ..
             } => {
-                let result = vm::run(prog, text, pos, 0, &options.options)?;
+                let result = vm::run(prog, text, pos, 0, options)?;
                 Ok(result.map(|mut saves| {
                     saves.truncate(n_groups * 2);
                     Captures {
