@@ -9,6 +9,20 @@ on:
   schedule:
     - cron: '17 01 * * 0'
 jobs:
+  get-msrv:
+    name: Get MSRV from Cargo.toml
+    runs-on: ubuntu-latest
+    outputs:
+      msrv: ${{ steps.get-msrv.outputs.msrv }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Get MSRV
+        id: get-msrv
+        run: |
+          msrv=$(grep '^rust-version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          echo "msrv=$msrv" >> $GITHUB_OUTPUT
+          echo "MSRV is $msrv"
+
   check:
     name: check
     runs-on: ubuntu-latest
@@ -24,15 +38,16 @@ jobs:
 
   test:
     name: test
+    needs: get-msrv
     runs-on: ubuntu-latest
     strategy:
       matrix:
         rust:
-          - 1.66.1 # MSRV (minimum supported Rust version)
+          - ${{ needs.get-msrv.outputs.msrv }} # MSRV (minimum supported Rust version)
           - stable
           - beta
         include:
-          - rust: 1.66.1
+          - rust: ${{ needs.get-msrv.outputs.msrv }}
             msrv: true
     steps:
       - uses: actions/checkout@v4
@@ -44,7 +59,8 @@ jobs:
 
       # See https://github.com/matklad/once_cell/issues/201
       # To test locally, enable the lock file and then run:
-      # $ docker run --rm --user "$(id -u)":"$(id -g)" -v "$PWD":/usr/src/myapp -w /usr/src/myapp rust:1.66.1 cargo test
+      # $ docker run --rm --user "$(id -u)":"$(id -g)" -v "$PWD":/usr/src/myapp -w /usr/src/myapp rust:<MSRV> cargo test
+      # where <MSRV> is the rust-version from Cargo.toml
       # To update, use `cargo +nightly update -Z minimal-versions` and then `cargo update -p bit-vec -p serde`
       - name: Use Cargo.lock for MSRV
         if: ${{ matrix.msrv }}
