@@ -111,7 +111,7 @@ This crate supports several optional features that can be enabled or disabled:
   assertions (e.g., `(?<=a+)`). Without this feature, only constant-length lookbehinds are supported.
   This feature uses reverse DFA matching from the `regex-automata` crate to efficiently handle
   variable-length patterns that don't use backreferences or other fancy features.
-- **`regex-set`** (disabled by default): Enables RegexSet for more performant matching of multiple
+- **`regex-set`** (disabled by default): Enables [RegexSet] for more performant matching of multiple
   patterns against the same haystack.
 
 # Syntax

@@ -25,6 +25,10 @@
 //! useful for applications like syntax highlighting, where many patterns need to
 //! be matched against each line of text.
 //!
+//! **IMPORTANT NOTE:** The `RegexSet` here differs from what the `regex` crate
+//! provides in that `fancy-regex` will only return the left-most, highest priority
+//! match, with a non-overlapping search, as opposed to all overlapping matches.
+//!
 //! # Examples
 //!
 //! Basic usage:
@@ -329,6 +333,10 @@ impl RegexSetBuilder {
 /// different types of patterns:
 /// - Simple patterns are combined into a single high-performance DFA
 /// - Complex patterns (with backreferences, lookaround, etc.) use backtracking
+///
+/// **IMPORTANT NOTE:** The `RegexSet` here differs from what the `regex` crate
+/// provides in that `fancy-regex` will only return the left-most, highest priority
+/// match, with a non-overlapping search, as opposed to all overlapping matches.
 ///
 /// # Examples
 ///
