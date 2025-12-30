@@ -134,3 +134,39 @@ fn check_oniguruma_mode_changes_wordbounds() {
     let oniguruma_matches = find_all_matches(&oniguruma_mode, test_text);
     assert_eq!(oniguruma_matches, ["<prefix_>"]);
 }
+
+#[test]
+fn can_build_multiple_regexes_with_same_options() {
+    let mut builder = RegexBuilder::new(r"^[a-z@.]+$");
+    builder.case_insensitive(true);
+    let regex1 = build_regex(&builder);
+
+    let test_text = "VALID@domain.com";
+    assert!(regex1.is_match(test_text).unwrap());
+
+    let regex2 = build_regex(&builder.pattern(r"AB.$".to_string()));
+
+    let test_text = "abc";
+    assert!(regex2.is_match(test_text).unwrap());
+}
+
+#[test]
+fn changing_builder_options_has_no_effect_on_already_built_regexes() {
+    let pattern1 = r"^[a-z@.]+$";
+    let pattern2 = r"AB.$";
+
+    let mut builder = RegexBuilder::new(pattern1);
+    builder.case_insensitive(true);
+    let regex1 = build_regex(&builder);
+    let regex2 = build_regex(&builder.case_insensitive(false));
+    let regex3 = build_regex(&builder.pattern(pattern2.to_string()));
+    let regex4 = build_regex(&builder.case_insensitive(true));
+
+    let test_text1 = "VALID@domain.com";
+    let test_text2 = "abc";
+
+    assert!(regex1.is_match(test_text1).unwrap());
+    assert!(!regex2.is_match(test_text1).unwrap());
+    assert!(!regex3.is_match(test_text2).unwrap());
+    assert!(regex4.is_match(test_text2).unwrap());
+}

@@ -1305,8 +1305,7 @@ mod tests {
     fn parse_oniguruma(s: &str) -> crate::Result<Expr> {
         let mut options = RegexOptions::default();
         options.oniguruma_mode = true;
-        options.pattern = String::from(s);
-        Expr::parse_tree_with_flags(&options.pattern, options.compute_flags()).map(|tree| tree.expr)
+        Expr::parse_tree_with_flags(s, options.compute_flags()).map(|tree| tree.expr)
     }
 
     #[cfg_attr(feature = "track_caller", track_caller)]
@@ -2881,10 +2880,9 @@ mod tests {
         }
     }
 
-    fn get_options(pattern: &str, func: impl Fn(SyntaxConfig) -> SyntaxConfig) -> RegexOptions {
+    fn get_options(func: impl Fn(SyntaxConfig) -> SyntaxConfig) -> RegexOptions {
         let mut options = RegexOptions::default();
         options.syntaxc = func(options.syntaxc);
-        options.pattern = String::from(pattern);
         options
     }
 
@@ -2907,9 +2905,9 @@ mod tests {
 
     #[test]
     fn parse_with_case_insensitive_option() {
-        let options = get_options("hello", |x| x.case_insensitive(true));
+        let options = get_options(|x| x.case_insensitive(true));
 
-        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
+        let tree = Expr::parse_tree_with_flags("hello", options.compute_flags());
         let expr = tree.unwrap().expr;
 
         assert_eq!(
@@ -2926,9 +2924,9 @@ mod tests {
 
     #[test]
     fn parse_with_multiline_in_pattern() {
-        let options = get_options("(?m)^hello$", |x| x);
+        let options = get_options(|x| x);
 
-        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
+        let tree = Expr::parse_tree_with_flags("(?m)^hello$", options.compute_flags());
         let expr = tree.unwrap().expr;
 
         assert_eq!(
@@ -2947,9 +2945,9 @@ mod tests {
 
     #[test]
     fn pparse_with_multiline_option() {
-        let options = get_options("^hello$", |x| x.multi_line(true));
+        let options = get_options(|x| x.multi_line(true));
 
-        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
+        let tree = Expr::parse_tree_with_flags("^hello$", options.compute_flags());
         let expr = tree.unwrap().expr;
 
         assert_eq!(
@@ -2968,9 +2966,9 @@ mod tests {
 
     #[test]
     fn parse_with_dot_matches_new_line_in_pattern() {
-        let options = get_options("(?s)(.*)", |x| x);
+        let options = get_options(|x| x);
 
-        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
+        let tree = Expr::parse_tree_with_flags("(?s)(.*)", options.compute_flags());
         let expr = tree.unwrap().expr;
 
         assert_eq!(
@@ -2986,9 +2984,9 @@ mod tests {
 
     #[test]
     fn parse_with_dot_matches_new_line_option() {
-        let options = get_options("(.*)", |x| x.dot_matches_new_line(true));
+        let options = get_options(|x| x.dot_matches_new_line(true));
 
-        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
+        let tree = Expr::parse_tree_with_flags("(.*)", options.compute_flags());
         let expr = tree.unwrap().expr;
 
         assert_eq!(
@@ -3004,9 +3002,9 @@ mod tests {
 
     #[test]
     fn parse_fancy_with_dot_matches_new_line_in_pattern() {
-        let options = get_options("(.*)(?<=hugo)", |x| x.dot_matches_new_line(true));
+        let options = get_options(|x| x.dot_matches_new_line(true));
 
-        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
+        let tree = Expr::parse_tree_with_flags("(.*)(?<=hugo)", options.compute_flags());
         let expr = tree.unwrap().expr;
 
         assert_eq!(
@@ -3032,10 +3030,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_with_case_insensitre_from_pattern_and_multi_line_option() {
-        let options = get_options("(?i)^hello$", |x| x.multi_line(true));
+    fn parse_with_case_insensitive_from_pattern_and_multi_line_option() {
+        let options = get_options(|x| x.multi_line(true));
 
-        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
+        let tree = Expr::parse_tree_with_flags("(?i)^hello$", options.compute_flags());
         let expr = tree.unwrap().expr;
 
         assert_eq!(
@@ -3054,10 +3052,10 @@ mod tests {
 
     #[test]
     fn parse_with_multi_line_and_case_insensitive_options() {
-        let mut options = get_options("^hello$", |x| x.multi_line(true));
+        let mut options = get_options(|x| x.multi_line(true));
         options.syntaxc = options.syntaxc.case_insensitive(true);
 
-        let tree = Expr::parse_tree_with_flags(&options.pattern, options.compute_flags());
+        let tree = Expr::parse_tree_with_flags("^hello$", options.compute_flags());
         let expr = tree.unwrap().expr;
 
         assert_eq!(
