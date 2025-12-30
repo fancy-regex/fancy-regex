@@ -585,7 +585,7 @@ impl<'r, 'h> Iterator for SplitN<'r, 'h> {
 
 impl<'r, 'h> core::iter::FusedIterator for SplitN<'r, 'h> {}
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 struct RegexOptions {
     syntaxc: SyntaxConfig,
     delegate_size_limit: Option<usize>,
@@ -621,23 +621,18 @@ impl RegexOptions {
     }
 }
 
-impl Default for RegexOptions {
-    fn default() -> Self {
-        RegexOptions {
-            syntaxc: SyntaxConfig::default(),
-            delegate_size_limit: None,
-            delegate_dfa_size_limit: None,
-            oniguruma_mode: false,
-            hard_regex_runtime_options: HardRegexRuntimeOptions::default(),
-        }
-    }
-}
 
 impl Default for HardRegexRuntimeOptions {
     fn default() -> Self {
         HardRegexRuntimeOptions {
             backtrack_limit: 1_000_000,
         }
+    }
+}
+
+impl Default for RegexOptionsBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -787,6 +782,10 @@ impl RegexOptionsBuilder {
     }
 }
 
+#[deprecated(
+    since = "0.18.0",
+    note = "Use RegexOptionsBuilder to build regex options, and pass the pattern to the build method"
+)]
 impl RegexBuilder {
     /// Create a new regex builder.
     pub fn new(pattern: &str) -> Self {
@@ -986,7 +985,7 @@ impl Regex {
             // NOTE: there is a good opportunity here to use Hir to avoid regex-automata re-parsing it
             let mut re_cooked = String::new();
             tree.expr.to_str(&mut re_cooked, 0);
-            let inner = compile::compile_inner(&re_cooked, &options)?;
+            let inner = compile::compile_inner(&re_cooked, options)?;
             return Ok(Regex {
                 inner: RegexImpl::Wrap {
                     inner,

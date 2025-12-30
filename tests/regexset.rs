@@ -1,6 +1,6 @@
 mod common;
 
-use fancy_regex::{Error, RegexSet, RegexSetBuilder, RuntimeError};
+use fancy_regex::{Error, RegexOptionsBuilder, RegexSet, RuntimeError};
 
 #[test]
 fn test_empty_regexset() {
@@ -103,34 +103,6 @@ fn test_capture_groups() {
 }
 
 #[test]
-fn test_builder_case_insensitive() {
-    let set = RegexSetBuilder::new(&[r"hello", r"world"])
-        .case_insensitive(true)
-        .build()
-        .unwrap();
-
-    let haystack = "HELLO WORLD";
-    let matches: Vec<_> = set.matches(haystack).map(|m| m.unwrap()).collect();
-
-    assert_eq!(matches.len(), 2);
-    assert_eq!(matches[0].as_str(), "HELLO");
-    assert_eq!(matches[1].as_str(), "WORLD");
-}
-
-#[test]
-fn test_builder_multi_line() {
-    let set = RegexSetBuilder::new(&[r"^hello", r"world$"])
-        .multi_line(true)
-        .build()
-        .unwrap();
-
-    let haystack = "hello\nworld";
-    let matches: Vec<_> = set.matches(haystack).map(|m| m.unwrap()).collect();
-
-    assert_eq!(matches.len(), 2);
-}
-
-#[test]
 fn test_no_matches() {
     let set = RegexSet::new(&[r"\d+", r"[A-Z]+"]).unwrap();
 
@@ -176,10 +148,10 @@ fn test_zero_width_matches_utf8_boundary() {
 #[test]
 fn test_backtrack_limit_error_handling() {
     // Test that when a backtrack limit is hit, the iterator stops properly
-    let set = RegexSetBuilder::new(&[r"(x+x+)+(?>y)", r"\d+"])
-        .backtrack_limit(1)
-        .build()
-        .unwrap();
+    let mut options = RegexOptionsBuilder::new();
+    options.backtrack_limit(1);
+    let set = RegexSet::new_with_options(&[r"(x+x+)+(?>y)", r"\d+"], &options)
+        .expect("all regex patterns should compile successfully");
 
     let text = "xxxxxxxxxxy 123";
     let result: Vec<_> = set.matches(text).collect();

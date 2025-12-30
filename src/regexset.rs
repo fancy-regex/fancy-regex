@@ -54,30 +54,6 @@
 //! # }
 //! ```
 //!
-//! Using the builder for custom options:
-//!
-//! ```rust
-//! use fancy_regex::RegexSetBuilder;
-//!
-//! # fn main() -> Result<(), fancy_regex::Error> {
-//! let set = RegexSetBuilder::new(&[
-//!     r"hello",
-//!     r"world",
-//! ])
-//! .case_insensitive(true)
-//! .multi_line(true)
-//! .build()?;
-//!
-//! let text = "HELLO\nWORLD";
-//!
-//! for result in set.matches(text) {
-//!     let m = result?;
-//!     println!("Pattern {} matched: {}", m.pattern(), m.as_str());
-//! }
-//! # Ok(())
-//! # }
-//! ```
-//!
 //! # Performance
 //!
 //! The `RegexSet` uses a hybrid approach to achieve good performance:

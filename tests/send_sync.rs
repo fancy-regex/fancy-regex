@@ -87,12 +87,16 @@ fn assert_test_cases(re: Arc<Regex>, test_cases: Vec<(&str, bool)>) {
     }
 }
 
-#[cfg(all(test, feature = "regex-set"))]
+#[cfg(feature = "regex-set")]
+#[test]
 fn test_regexset_is_send() {
+    use fancy_regex::RegexSet;
     assert_send::<RegexSet>();
 }
 
-#[cfg(all(test, feature = "regex-set"))]
+#[cfg(feature = "regex-set")]
+#[test]
 fn test_regexset_is_sync() {
+    use fancy_regex::RegexSet;
     assert_sync::<RegexSet>();
 }

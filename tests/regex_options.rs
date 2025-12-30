@@ -1,3 +1,5 @@
+#[allow(deprecated)]
+
 use fancy_regex::Regex;
 use fancy_regex::RegexBuilder;
 
