@@ -13,6 +13,7 @@ with the exception that 0.x versions can break between minor versions.
 ### Changed
 - `RegexBuilder` can now build multiple patterns with the same options (#213)
 ### Fixed
+- Fixed bug with parsing nested character classes containing unescaped `]` (#211)
 
 ## [0.17.0] - 2025-12-13
 ### Added
