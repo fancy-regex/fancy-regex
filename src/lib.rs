@@ -657,7 +657,7 @@ impl RegexOptionsBuilder {
 
     /// Override default case insensitive
     /// this is to enable/disable casing via builder instead of a flag within
-    /// the raw string provided to the regex builder
+    /// the raw string pattern which will be parsed
     ///
     /// Default is false
     pub fn case_insensitive(&mut self, yes: bool) -> &mut Self {
@@ -797,138 +797,68 @@ impl RegexBuilder {
         self.options.build(self.pattern.clone())
     }
 
-    /// Change the pattern to build
+    /// Change the pattern to build. Useful when building multiple regexes from
+    /// many patterns.
     pub fn pattern(&mut self, pattern: String) -> &mut Self {
         self.pattern = pattern;
         self
     }
 
-    /// Override default case insensitive
-    /// this is to enable/disable casing via builder instead of a flag within
-    /// the raw string provided to the regex builder
-    ///
-    /// Default is false
+    /// See [`RegexOptionsBuilder::case_insensitive`]
     pub fn case_insensitive(&mut self, yes: bool) -> &mut Self {
         self.options.case_insensitive(yes);
         self
     }
 
-    /// Enable multi-line regex
+    /// See [`RegexOptionsBuilder::multi_line`]
     pub fn multi_line(&mut self, yes: bool) -> &mut Self {
         self.options.multi_line(yes);
         self
     }
 
-    /// Allow ignore whitespace
+    /// See [`RegexOptionsBuilder::ignore_whitespace`]
     pub fn ignore_whitespace(&mut self, yes: bool) -> &mut Self {
         self.options.ignore_whitespace(yes);
         self
     }
 
-    /// Enable or disable the "dot matches any character" flag.
-    /// When this is enabled, `.` will match any character. When it's disabled, then `.` will match any character
-    /// except for a new line character.
+    /// See [`RegexOptionsBuilder::dot_matches_new_line`]
     pub fn dot_matches_new_line(&mut self, yes: bool) -> &mut Self {
         self.options.dot_matches_new_line(yes);
         self
     }
 
-    /// Enable verbose mode in the regular expression.
-    ///
-    /// The same as ignore_whitespace
-    ///
-    /// When enabled, verbose mode permits insigificant whitespace in many
-    /// places in the regular expression, as well as comments. Comments are
-    /// started using `#` and continue until the end of the line.
-    ///
-    /// By default, this is disabled. It may be selectively enabled in the
-    /// regular expression by using the `x` flag regardless of this setting.
+    /// See [`RegexOptionsBuilder::verbose_mode`]
     pub fn verbose_mode(&mut self, yes: bool) -> &mut Self {
         self.options.ignore_whitespace(yes);
         self
     }
 
-    /// Enable or disable the Unicode flag (`u`) by default.
-    ///
-    /// By default this is **enabled**. It may alternatively be selectively
-    /// disabled in the regular expression itself via the `u` flag.
-    ///
-    /// Note that unless "allow invalid UTF-8" is enabled (it's disabled by
-    /// default), a regular expression will fail to parse if Unicode mode is
-    /// disabled and a sub-expression could possibly match invalid UTF-8.
-    ///
-    /// **WARNING**: Unicode mode can greatly increase the size of the compiled
-    /// DFA, which can noticeably impact both memory usage and compilation
-    /// time. This is especially noticeable if your regex contains character
-    /// classes like `\w` that are impacted by whether Unicode is enabled or
-    /// not. If Unicode is not necessary, you are encouraged to disable it.
+    /// See [`RegexOptionsBuilder::unicode_mode`]
     pub fn unicode_mode(&mut self, yes: bool) -> &mut Self {
         self.options.unicode_mode(yes);
         self
     }
 
-    /// Limit for how many times backtracking should be attempted for fancy regexes (where
-    /// backtracking is used). If this limit is exceeded, execution returns an error with
-    /// [`Error::BacktrackLimitExceeded`](enum.Error.html#variant.BacktrackLimitExceeded).
-    /// This is for preventing a regex with catastrophic backtracking to run for too long.
-    ///
-    /// Default is `1_000_000` (1 million).
+    /// See [`RegexOptionsBuilder::backtrack_limit`]
     pub fn backtrack_limit(&mut self, limit: usize) -> &mut Self {
         self.options.backtrack_limit(limit);
         self
     }
 
-    /// Set the approximate size limit of the compiled regular expression.
-    ///
-    /// This option is forwarded from the wrapped `regex` crate. Note that depending on the used
-    /// regex features there may be multiple delegated sub-regexes fed to the `regex` crate. As
-    /// such the actual limit is closer to `<number of delegated regexes> * delegate_size_limit`.
+    /// See [`RegexOptionsBuilder::delegate_size_limit`]
     pub fn delegate_size_limit(&mut self, limit: usize) -> &mut Self {
         self.options.delegate_size_limit(limit);
         self
     }
 
-    /// Set the approximate size of the cache used by the DFA.
-    ///
-    /// This option is forwarded from the wrapped `regex` crate. Note that depending on the used
-    /// regex features there may be multiple delegated sub-regexes fed to the `regex` crate. As
-    /// such the actual limit is closer to `<number of delegated regexes> *
-    /// delegate_dfa_size_limit`.
+    /// See [`RegexOptionsBuilder::delegate_dfa_size_limit`]
     pub fn delegate_dfa_size_limit(&mut self, limit: usize) -> &mut Self {
         self.options.delegate_dfa_size_limit(limit);
         self
     }
 
-    /// Attempts to better match [Oniguruma](https://github.com/kkos/oniguruma)'s default behavior
-    ///
-    /// Currently this amounts to changing behavior with:
-    ///
-    /// # Left and right word bounds
-    ///
-    /// `fancy-regex` follows the default of other regex engines such as the `regex` crate itself
-    /// where `\<` and `\>` correspond to a _left_ and _right_ word-bound respectively. This
-    /// differs from Oniguruma's defaults which treat them as matching the literals `<` and `>`.
-    /// When this option is set using `\<` and `\>` in the pattern will match the literals
-    /// `<` and `>` instead of word bounds.
-    ///
-    /// ## Example
-    ///
-    /// ```
-    /// use fancy_regex::{Regex, RegexBuilder};
-    ///
-    /// let haystack = "turbo::<Fish>";
-    /// let regex = r"\<\w*\>";
-    ///
-    /// // By default `\<` and `\>` will match the start and end of a word boundary
-    /// let word_bounds_regex = Regex::new(regex).unwrap();
-    /// let word_bounds = word_bounds_regex.find(haystack).unwrap().unwrap();
-    /// assert_eq!(word_bounds.as_str(), "turbo");
-    ///
-    /// // With the option set they instead match the literal `<` and `>` characters
-    /// let literals_regex = RegexBuilder::new(regex).oniguruma_mode(true).build().unwrap();
-    /// let literals = literals_regex.find(haystack).unwrap().unwrap();
-    /// assert_eq!(literals.as_str(), "<Fish>");
-    /// ```
+    /// See [`RegexOptionsBuilder::oniguruma_mode`]
     pub fn oniguruma_mode(&mut self, yes: bool) -> &mut Self {
         self.options.oniguruma_mode(yes);
         self
