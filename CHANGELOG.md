@@ -12,6 +12,7 @@ with the exception that 0.x versions can break between minor versions.
 - Add support for `(*FAIL)` backtracking control verb (#210)
 - Add `RegexSet` API for efficiently retrieving the first match in a set of patterns
 ### Changed
+- `RegexBuilder` can now build multiple patterns with the same options (#213)
 ### Fixed
 
 ## [0.17.0] - 2025-12-13

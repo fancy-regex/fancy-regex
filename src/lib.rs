@@ -285,7 +285,7 @@ enum RegexImpl {
         n_groups: usize,
         /// The original pattern which the regex was constructed from
         pattern: String,
-        options: RegexOptions,
+        options: HardRegexRuntimeOptions,
     },
 }
 
@@ -582,10 +582,15 @@ impl<'r, 'h> core::iter::FusedIterator for SplitN<'r, 'h> {}
 #[derive(Clone, Debug)]
 struct RegexOptions {
     syntaxc: SyntaxConfig,
-    backtrack_limit: usize,
     delegate_size_limit: Option<usize>,
     delegate_dfa_size_limit: Option<usize>,
     oniguruma_mode: bool,
+    hard_regex_runtime_options: HardRegexRuntimeOptions,
+}
+
+#[derive(Copy, Clone, Debug)]
+struct HardRegexRuntimeOptions {
+    backtrack_limit: usize,
 }
 
 impl RegexOptions {
@@ -614,10 +619,18 @@ impl Default for RegexOptions {
     fn default() -> Self {
         RegexOptions {
             syntaxc: SyntaxConfig::default(),
-            backtrack_limit: 1_000_000,
             delegate_size_limit: None,
             delegate_dfa_size_limit: None,
             oniguruma_mode: false,
+            hard_regex_runtime_options: HardRegexRuntimeOptions::default(),
+        }
+    }
+}
+
+impl Default for HardRegexRuntimeOptions {
+    fn default() -> Self {
+        HardRegexRuntimeOptions {
+            backtrack_limit: 1_000_000,
         }
     }
 }
@@ -637,11 +650,17 @@ impl RegexBuilder {
     ///
     /// Returns an [`Error`](enum.Error.html) if the pattern could not be parsed.
     pub fn build(&self) -> Result<Regex> {
-        Regex::new_options(self.pattern.clone(), self.options.clone())
+        Regex::new_options(self.pattern.clone(), &self.options)
     }
 
     fn set_config(&mut self, func: impl Fn(SyntaxConfig) -> SyntaxConfig) -> &mut Self {
         self.options.syntaxc = func(self.options.syntaxc);
+        self
+    }
+
+    /// Change the pattern to build
+    pub fn pattern(&mut self, pattern: String) -> &mut Self {
+        self.pattern = pattern;
         self
     }
 
@@ -710,7 +729,7 @@ impl RegexBuilder {
     ///
     /// Default is `1_000_000` (1 million).
     pub fn backtrack_limit(&mut self, limit: usize) -> &mut Self {
-        self.options.backtrack_limit = limit;
+        self.options.hard_regex_runtime_options.backtrack_limit = limit;
         self
     }
 
@@ -799,10 +818,10 @@ impl Regex {
     ///
     /// Returns an [`Error`](enum.Error.html) if the pattern could not be parsed.
     pub fn new(re: &str) -> Result<Regex> {
-        Self::new_options(re.to_string(), RegexOptions::default())
+        Self::new_options(re.to_string(), &RegexOptions::default())
     }
 
-    fn new_options(pattern: String, options: RegexOptions) -> Result<Regex> {
+    fn new_options(pattern: String, options: &RegexOptions) -> Result<Regex> {
         let mut tree = Expr::parse_tree_with_flags(&pattern, options.compute_flags())?;
 
         // try to optimize the expression tree
@@ -833,7 +852,7 @@ impl Regex {
             inner: RegexImpl::Fancy {
                 prog: Arc::new(prog),
                 n_groups: info.end_group(),
-                options,
+                options: options.hard_regex_runtime_options,
                 pattern,
             },
             named_groups: Arc::new(tree.named_groups),
