@@ -208,7 +208,7 @@ impl RegexSetBuilder {
 
     /// Set the backtracking limit for fancy patterns.
     pub fn backtrack_limit(&mut self, limit: usize) -> &mut Self {
-        self.options.backtrack_limit = limit;
+        self.options.hard_regex_runtime_options.backtrack_limit = limit;
         self
     }
 
@@ -284,7 +284,7 @@ impl RegexSetBuilder {
                         prog: Arc::new(prog),
                         n_groups: info.end_group(),
                         pattern: pattern_str.clone(),
-                        options: self.options.clone(),
+                        options: self.options.hard_regex_runtime_options,
                     },
                     named_groups: Arc::new(expr_tree.named_groups),
                 }
