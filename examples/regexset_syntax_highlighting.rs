@@ -1,18 +1,18 @@
 // Example demonstrating RegexSet usage for syntax highlighting
 
-use fancy_regex::{RegexSetBuilder, Result};
+use fancy_regex::{RegexOptionsBuilder, RegexSet, Result};
 
 fn main() -> Result<()> {
     // Create a regex set for basic syntax highlighting
-    let set = RegexSetBuilder::new(&[
+    let mut options_builder = RegexOptionsBuilder::new();
+    options_builder.multi_line(true);
+    let set = RegexSet::new_with_options(&[
         r"//.*$",                    // 0: Single-line comments
         r#""(?:[^"\\]|\\.)*""#,      // 1: String literals
         r"\b(fn|let|mut|if|else)\b", // 2: Keywords
         r"\b[0-9]+\b",               // 3: Numbers
         r"[a-zA-Z_][a-zA-Z0-9_]*",   // 4: Identifiers
-    ])
-    .multi_line(true)
-    .build()?;
+    ], &options_builder)?;
 
     let code = r#"let x = 42; // a comment
 let s = "hello world";"#;

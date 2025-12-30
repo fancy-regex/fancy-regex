@@ -102,225 +102,22 @@
 //! `pos + max(1, len)`, which prevents infinite loops on zero-width matches.
 
 use alloc::boxed::Box;
-use alloc::string::{String, ToString};
+use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::ops::Range;
 
+use crate::RegexOptionsBuilder;
+
 use regex_automata::meta::Regex as RaRegex;
-use regex_automata::util::syntax::Config as SyntaxConfig;
 use regex_automata::Input as RaInput;
 use regex_automata::PatternSet;
 
-use crate::analyze::{analyze, can_compile_as_anchored};
-use crate::compile::compile;
 use crate::compile::options_to_rabuilder;
-use crate::optimize::optimize;
 use crate::CompileError;
 use crate::Error;
-use crate::{Captures, Expr, Regex, RegexOptions, Result};
-
-/// A builder for a `RegexSet` to allow configuring options.
-///
-/// This builder allows you to configure the compilation options for all patterns
-/// in a regex set. All patterns in the set share the same options.
-///
-/// # Examples
-///
-/// ```rust
-/// use fancy_regex::RegexSetBuilder;
-///
-/// # fn main() -> Result<(), fancy_regex::Error> {
-/// let set = RegexSetBuilder::new(&[r"hello", r"world"])
-///     .case_insensitive(true)
-///     .multi_line(true)
-///     .backtrack_limit(10_000_000)
-///     .build()?;
-/// # Ok(())
-/// # }
-/// ```
-#[derive(Debug)]
-pub struct RegexSetBuilder {
-    patterns: Vec<String>,
-    options: RegexOptions,
-}
-
-impl RegexSetBuilder {
-    /// Create a new RegexSet builder with a list of patterns.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use fancy_regex::RegexSetBuilder;
-    ///
-    /// let builder = RegexSetBuilder::new(&[r"\d+", r"[a-z]+"]);
-    /// ```
-    pub fn new<I, S>(patterns: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<str>,
-    {
-        let patterns: Vec<String> = patterns
-            .into_iter()
-            .map(|s| s.as_ref().to_string())
-            .collect();
-        RegexSetBuilder {
-            patterns,
-            options: RegexOptions::default(),
-        }
-    }
-
-    fn set_config(&mut self, func: impl Fn(SyntaxConfig) -> SyntaxConfig) -> &mut Self {
-        self.options.syntaxc = func(self.options.syntaxc);
-        self
-    }
-
-    /// Set case insensitive mode for all patterns in the set.
-    pub fn case_insensitive(&mut self, yes: bool) -> &mut Self {
-        self.set_config(|x| x.case_insensitive(yes))
-    }
-
-    /// Set multi-line mode for all patterns in the set.
-    pub fn multi_line(&mut self, yes: bool) -> &mut Self {
-        self.set_config(|x| x.multi_line(yes))
-    }
-
-    /// Allow whitespace to be ignored in patterns.
-    pub fn ignore_whitespace(&mut self, yes: bool) -> &mut Self {
-        self.set_config(|x| x.ignore_whitespace(yes))
-    }
-
-    /// Set verbose mode for all patterns in the set. Same as ignore_whitespace.
-    pub fn verbose_mode(&mut self, yes: bool) -> &mut Self {
-        self.set_config(|x| x.ignore_whitespace(yes))
-    }
-
-    /// Enable or disable the "dot matches any character" flag for all patterns.
-    pub fn dot_matches_new_line(&mut self, yes: bool) -> &mut Self {
-        self.set_config(|x| x.dot_matches_new_line(yes))
-    }
-
-    /// Enable or disable Unicode mode for all patterns.
-    pub fn unicode_mode(&mut self, yes: bool) -> &mut Self {
-        self.set_config(|x| x.unicode(yes))
-    }
-
-    /// Set the backtracking limit for fancy patterns.
-    pub fn backtrack_limit(&mut self, limit: usize) -> &mut Self {
-        self.options.hard_regex_runtime_options.backtrack_limit = limit;
-        self
-    }
-
-    /// Set size limit for delegated regex compilation.
-    pub fn delegate_size_limit(&mut self, limit: usize) -> &mut Self {
-        self.options.delegate_size_limit = Some(limit);
-        self
-    }
-
-    /// Set DFA size limit for delegated regex compilation.
-    pub fn delegate_dfa_size_limit(&mut self, limit: usize) -> &mut Self {
-        self.options.delegate_dfa_size_limit = Some(limit);
-        self
-    }
-
-    /// Enable Oniguruma compatibility mode for all patterns in the set.
-    pub fn oniguruma_mode(&mut self, yes: bool) -> &mut Self {
-        self.options.oniguruma_mode = yes;
-        self
-    }
-
-    /// Build the RegexSet.
-    ///
-    /// Returns an error if any pattern fails to compile.
-    pub fn build(&self) -> Result<RegexSet> {
-        if self.patterns.is_empty() {
-            return Ok(RegexSet {
-                inner: Arc::new(RegexSetImpl {
-                    easy_patterns: None,
-                    patterns: Vec::new(),
-                }),
-            });
-        }
-
-        let mut easy_pattern_strings = Vec::new();
-        let mut easy_pattern_indices = Vec::new();
-        let mut patterns = Vec::new();
-
-        let flags = self.options.compute_flags();
-
-        // Parse, analyze, and classify each pattern
-        for (index, pattern_str) in self.patterns.iter().enumerate() {
-            let mut expr_tree = Expr::parse_tree_with_flags(pattern_str, flags)?;
-
-            let requires_capture_group_fixup = optimize(&mut expr_tree);
-            let info = analyze(&expr_tree, requires_capture_group_fixup)?;
-
-            // Construct a Regex from the parsed/analyzed data
-            let regex = if !info.hard {
-                // Easy case, wrap regex
-                let mut re_cooked = String::new();
-                expr_tree.expr.to_str(&mut re_cooked, 0);
-                let inner = crate::compile::compile_inner(&re_cooked, &self.options)?;
-
-                // Also save for the multi-pattern DFA
-                easy_pattern_strings.push(re_cooked.clone());
-                easy_pattern_indices.push(index);
-
-                Regex {
-                    inner: crate::RegexImpl::Wrap {
-                        inner,
-                        pattern: pattern_str.clone(),
-                        explicit_capture_group_0: requires_capture_group_fixup,
-                        delegated_pattern: re_cooked,
-                    },
-                    named_groups: Arc::new(expr_tree.named_groups),
-                }
-            } else {
-                // Hard case, use VM
-                let prog = compile(&info, can_compile_as_anchored(&expr_tree.expr))?;
-                Regex {
-                    inner: crate::RegexImpl::Fancy {
-                        prog: Arc::new(prog),
-                        n_groups: info.end_group(),
-                        pattern: pattern_str.clone(),
-                        options: self.options.hard_regex_runtime_options,
-                    },
-                    named_groups: Arc::new(expr_tree.named_groups),
-                }
-            };
-
-            patterns.push(Pattern {
-                pattern_id: index,
-                regex,
-            });
-        }
-
-        // Build multi-pattern DFA for easy patterns
-        let easy_patterns = if !easy_pattern_strings.is_empty() {
-            let builder = options_to_rabuilder(&self.options);
-
-            let dfa = builder
-                .build_many(&easy_pattern_strings)
-                .map_err(CompileError::InnerError)
-                .map_err(|e| Error::CompileError(Box::new(e)))?;
-
-            Some(EasyPatternSet {
-                dfa,
-                pattern_indices: easy_pattern_indices,
-            })
-        } else {
-            None
-        };
-
-        Ok(RegexSet {
-            inner: Arc::new(RegexSetImpl {
-                easy_patterns,
-                patterns,
-            }),
-        })
-    }
-}
+use crate::{Captures, Regex, RegexOptions, Result};
 
 /// A compiled set of regular expressions.
 ///
@@ -413,7 +210,127 @@ impl RegexSet {
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
-        RegexSetBuilder::new(patterns).build()
+        let builder = RegexOptionsBuilder::new();
+        Self::new_with_options(patterns, &builder)
+    }
+
+    /// Create a new RegexSet from an iterator of patterns using specified options.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any pattern fails to compile.
+    pub fn new_with_options<I, S>(patterns: I, options_builder: &RegexOptionsBuilder) -> Result<Self>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let regexes = patterns
+            .into_iter()
+            .map(|pattern| {
+                options_builder.build(pattern.as_ref().to_string())
+            })
+        .collect::<Result<Vec<_>>>()?;
+        Self::from_regexes(regexes)
+    }
+
+    /// Create a new RegexSet from pre-built `Regex` instances.
+    ///
+    /// Regex instances which are just thin wrappers around the `regex` crate
+    /// i.e. "easy" patterns (those without backreferences, lookarounds, etc.)
+    /// are combined into a single DFA, while hard patterns are evaluated individually.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use fancy_regex::{Regex, RegexBuilder, RegexSet};
+    ///
+    /// # fn main() -> Result<(), fancy_regex::Error> {
+    /// // Create regexes with different options
+    /// let re1 = RegexBuilder::new(r"hello")
+    ///     .case_insensitive(true)
+    ///     .build()?;
+    /// let re2 = Regex::new(r"\d+")?;
+    /// let re3 = Regex::new(r"(?<=\w)end")?; // lookbehind - fancy pattern
+    ///
+    /// // Combine them into a RegexSet
+    /// let set = RegexSet::from_regexes([re1, re2, re3])?;
+    ///
+    /// let text = "HELLO 123 send";
+    /// for m in set.matches(text) {
+    ///     let m = m?;
+    ///     println!("Pattern {} matched: {}", m.pattern(), m.as_str());
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the multi-pattern DFA construction fails for easy patterns.
+    pub fn from_regexes<I>(regexes: I) -> Result<Self>
+    where
+        I: IntoIterator<Item = Regex>,
+    {
+        let regexes_vec: Vec<Regex> = regexes.into_iter().collect();
+        
+        if regexes_vec.is_empty() {
+            return Ok(RegexSet {
+                inner: Arc::new(RegexSetImpl {
+                    easy_patterns: None,
+                    patterns: Vec::new(),
+                }),
+            });
+        }
+
+        let mut easy_pattern_strings = Vec::new();
+        let mut easy_pattern_indices = Vec::new();
+        let mut patterns = Vec::new();
+
+        // Analyze each regex and categorize as easy or hard
+        for (index, regex) in regexes_vec.into_iter().enumerate() {
+            match &regex.inner {
+                crate::RegexImpl::Wrap { delegated_pattern, .. } => {
+                    // Easy pattern - can be delegated to DFA
+                    easy_pattern_strings.push(delegated_pattern.clone());
+                    easy_pattern_indices.push(index);
+                }
+                crate::RegexImpl::Fancy { .. } => {
+                    // Hard pattern - uses backtracking VM
+                }
+            }
+
+            patterns.push(Pattern {
+                pattern_id: index,
+                regex,
+            });
+        }
+
+        // Build multi-pattern DFA for easy patterns
+        let easy_patterns = if !easy_pattern_strings.is_empty() {
+            // Use default options for the DFA builder
+            // Note: Individual regexes already have their options baked in
+            let options = RegexOptions::default();
+            let builder = options_to_rabuilder(&options);
+
+            let dfa = builder
+                .build_many(&easy_pattern_strings)
+                .map_err(CompileError::InnerError)
+                .map_err(|e| Error::CompileError(Box::new(e)))?;
+
+            Some(EasyPatternSet {
+                dfa,
+                pattern_indices: easy_pattern_indices,
+            })
+        } else {
+            None
+        };
+
+        Ok(RegexSet {
+            inner: Arc::new(RegexSetImpl {
+                easy_patterns,
+                patterns,
+            }),
+        })
     }
 
     /// Returns the number of patterns in the set.
