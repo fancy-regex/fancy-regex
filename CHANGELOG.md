@@ -11,6 +11,7 @@ with the exception that 0.x versions can break between minor versions.
 - Add support for `\N` to mean any character except newline, for Oniguruma compatibility (#206)
 - Add support for `(*FAIL)` backtracking control verb (#210)
 ### Changed
+- `RegexBuilder` can now build multiple patterns with the same options (#213)
 ### Fixed
 
 ## [0.17.0] - 2025-12-13

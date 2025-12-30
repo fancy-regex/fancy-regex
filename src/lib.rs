@@ -652,6 +652,12 @@ impl RegexBuilder {
         self
     }
 
+    /// Change the pattern to build
+    pub fn pattern(&mut self, pattern: String) -> &mut Self {
+        self.pattern = pattern;
+        self
+    }
+
     /// Override default case insensitive
     /// this is to enable/disable casing via builder instead of a flag within
     /// the raw string provided to the regex builder
