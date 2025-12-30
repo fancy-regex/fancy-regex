@@ -95,7 +95,8 @@ fn backtrack_limit() {
     let mut options_builder = RegexOptionsBuilder::new();
     let re = options_builder
         .backtrack_limit(100_000)
-        .build(r"(?i)(a|b|ab)*(?>c)".to_string()).expect("regex to compile successfully");
+        .build(r"(?i)(a|b|ab)*(?>c)".to_string())
+        .expect("regex to compile successfully");
     let s = "abababababababababababababababababababababababababababab";
     let result = re.is_match(s);
     assert!(result.is_err());

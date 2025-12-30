@@ -621,7 +621,6 @@ impl RegexOptions {
     }
 }
 
-
 impl Default for HardRegexRuntimeOptions {
     fn default() -> Self {
         HardRegexRuntimeOptions {

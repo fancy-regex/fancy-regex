@@ -195,17 +195,18 @@ impl RegexSet {
     /// # Errors
     ///
     /// Returns an error if any pattern fails to compile.
-    pub fn new_with_options<I, S>(patterns: I, options_builder: &RegexOptionsBuilder) -> Result<Self>
+    pub fn new_with_options<I, S>(
+        patterns: I,
+        options_builder: &RegexOptionsBuilder,
+    ) -> Result<Self>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
         let regexes = patterns
             .into_iter()
-            .map(|pattern| {
-                options_builder.build(pattern.as_ref().to_string())
-            })
-        .collect::<Result<Vec<_>>>()?;
+            .map(|pattern| options_builder.build(pattern.as_ref().to_string()))
+            .collect::<Result<Vec<_>>>()?;
         Self::from_regexes(regexes)
     }
 
@@ -248,7 +249,7 @@ impl RegexSet {
         I: IntoIterator<Item = Regex>,
     {
         let regexes_vec: Vec<Regex> = regexes.into_iter().collect();
-        
+
         if regexes_vec.is_empty() {
             return Ok(RegexSet {
                 inner: Arc::new(RegexSetImpl {
@@ -265,7 +266,9 @@ impl RegexSet {
         // Analyze each regex and categorize as easy or hard
         for (index, regex) in regexes_vec.into_iter().enumerate() {
             match &regex.inner {
-                crate::RegexImpl::Wrap { delegated_pattern, .. } => {
+                crate::RegexImpl::Wrap {
+                    delegated_pattern, ..
+                } => {
                     // Easy pattern - can be delegated to DFA
                     easy_pattern_strings.push(delegated_pattern.clone());
                     easy_pattern_indices.push(index);
