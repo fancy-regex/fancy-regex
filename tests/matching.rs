@@ -1,4 +1,4 @@
-use fancy_regex::{Error, RegexOptionsBuilder, RuntimeError};
+use fancy_regex::{Error, RegexBuilder, RuntimeError};
 
 mod common;
 
@@ -92,10 +92,9 @@ fn atomic_group() {
 
 #[test]
 fn backtrack_limit() {
-    let mut options_builder = RegexOptionsBuilder::new();
-    let re = options_builder
+    let re = RegexBuilder::new(r"(?i)(a|b|ab)*(?>c)")
         .backtrack_limit(100_000)
-        .build(r"(?i)(a|b|ab)*(?>c)".to_string())
+        .build()
         .expect("regex to compile successfully");
     let s = "abababababababababababababababababababababababababababab";
     let result = re.is_match(s);

@@ -781,10 +781,6 @@ impl RegexOptionsBuilder {
     }
 }
 
-#[deprecated(
-    since = "0.18.0",
-    note = "Use RegexOptionsBuilder to build regex options, and pass the pattern to the build method"
-)]
 impl RegexBuilder {
     /// Create a new regex builder.
     pub fn new(pattern: &str) -> Self {

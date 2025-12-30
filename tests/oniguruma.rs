@@ -5,7 +5,7 @@ use std::panic;
 
 use regex::Regex;
 
-use fancy_regex::RegexOptionsBuilder;
+use fancy_regex::RegexBuilder;
 
 #[derive(Debug, Eq, Hash, PartialEq)]
 struct Test {
@@ -151,11 +151,10 @@ fn run_test(test: &Test) -> Option<String> {
         ..
     } = test;
 
-    let mut options_builder = RegexOptionsBuilder::new();
-    let compile_result = options_builder
+    let compile_result = RegexBuilder::new(pattern)
         .multi_line(true)
         .oniguruma_mode(true)
-        .build(pattern.to_string());
+        .build();
     let Ok(regex) = compile_result else {
         let error = format!("{:?}", compile_result.unwrap_err());
         return Some(format!("Compile failed: {}", error));
