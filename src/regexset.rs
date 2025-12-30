@@ -272,7 +272,7 @@ impl RegexSetBuilder {
                         inner,
                         pattern: pattern_str.clone(),
                         explicit_capture_group_0: requires_capture_group_fixup,
-                        debug_pattern: re_cooked,
+                        delegated_pattern: re_cooked,
                     },
                     named_groups: Arc::new(expr_tree.named_groups),
                 }

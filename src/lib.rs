@@ -277,8 +277,8 @@ enum RegexImpl {
         pattern: String,
         /// Some optimizations avoid the VM, but need to use an extra capture group to represent the match boundaries
         explicit_capture_group_0: bool,
-        /// The actual pattern passed to regex-automata
-        debug_pattern: String,
+        /// The actual pattern passed to regex-automata for delegation
+        delegated_pattern: String,
     },
     Fancy {
         prog: Arc<Prog>,
@@ -841,7 +841,7 @@ impl Regex {
                     inner,
                     pattern,
                     explicit_capture_group_0: requires_capture_group_fixup,
-                    debug_pattern: re_cooked,
+                    delegated_pattern: re_cooked,
                 },
                 named_groups: Arc::new(tree.named_groups),
             });
@@ -1148,14 +1148,14 @@ impl Regex {
     pub fn debug_print(&self, writer: &mut Formatter<'_>) -> fmt::Result {
         match &self.inner {
             RegexImpl::Wrap {
-                debug_pattern,
+                delegated_pattern,
                 explicit_capture_group_0,
                 ..
             } => {
                 write!(
                     writer,
                     "wrapped Regex {:?}, explicit_capture_group_0: {:}",
-                    debug_pattern, *explicit_capture_group_0
+                    delegated_pattern, *explicit_capture_group_0
                 )
             }
             RegexImpl::Fancy { prog, .. } => prog.debug_print(writer),
