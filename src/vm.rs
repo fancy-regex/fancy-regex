@@ -99,7 +99,7 @@ use crate::Assertion;
 use crate::Error;
 use crate::Formatter;
 use crate::Result;
-use crate::{codepoint_len, RegexOptions};
+use crate::{codepoint_len, HardRegexRuntimeOptions};
 
 /// Enable tracing of VM execution. Only for debugging/investigating.
 const OPTION_TRACE: u32 = 1 << 0;
@@ -604,12 +604,18 @@ fn store_capture_groups(
 
 /// Run the program with trace printing for debugging.
 pub fn run_trace(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
-    run(prog, s, pos, OPTION_TRACE, &RegexOptions::default())
+    run(
+        prog,
+        s,
+        pos,
+        OPTION_TRACE,
+        &HardRegexRuntimeOptions::default(),
+    )
 }
 
 /// Run the program with default options.
 pub fn run_default(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
-    run(prog, s, pos, 0, &RegexOptions::default())
+    run(prog, s, pos, 0, &HardRegexRuntimeOptions::default())
 }
 
 /// Run the program with options.
@@ -619,7 +625,7 @@ pub(crate) fn run(
     s: &str,
     pos: usize,
     option_flags: u32,
-    options: &RegexOptions,
+    options: &HardRegexRuntimeOptions,
 ) -> Result<Option<Vec<usize>>> {
     let mut state = State::new(prog.n_saves, MAX_STACK, option_flags);
     let mut inner_slots: Vec<Option<NonMaxUsize>> = Vec::new();
