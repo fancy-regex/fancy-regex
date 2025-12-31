@@ -315,6 +315,25 @@ fn unicode_property_remapping_outside_char_class() {
     assert_match(r"\P{L}", "1");
     assert_match(r"\P{L}", " ");
     assert_match(r"\P{L}", "-");
+
+    // Test \p{cntrl} - control characters (U+0000-U+001F, U+007F-U+009F)
+    assert_match(r"\p{cntrl}", "\x00"); // NULL
+    assert_match(r"\p{cntrl}", "\x1F"); // Unit Separator
+    assert_match(r"\p{cntrl}", "\x7F"); // DEL
+    assert_match(r"\p{cntrl}", "\u{0080}"); // Control character
+    assert_match(r"\p{cntrl}", "\u{009F}"); // Control character
+    assert_no_match(r"\p{cntrl}", "a");
+    assert_no_match(r"\p{cntrl}", " ");
+    assert_no_match(r"\p{cntrl}", "0");
+    assert_no_match(r"\p{cntrl}", "\u{00A0}"); // Non-breaking space (not control)
+
+    // Test \P{cntrl} - non-control characters
+    assert_no_match(r"\P{cntrl}", "\x00");
+    assert_no_match(r"\P{cntrl}", "\x1F");
+    assert_no_match(r"\P{cntrl}", "\x7F");
+    assert_match(r"\P{cntrl}", "a");
+    assert_match(r"\P{cntrl}", " ");
+    assert_match(r"\P{cntrl}", "0");
 }
 
 #[test]
@@ -363,6 +382,16 @@ fn unicode_property_remapping_inside_char_class() {
     let slash_not_alnum_pattern = r"[/\P{alnum}]";
     assert_no_match(slash_not_alnum_pattern, "a");
     assert_match(slash_not_alnum_pattern, "/");
+
+    // Test \p{cntrl}
+    let cntrl_pattern = r"[\p{cntrl}]";
+    assert_match(cntrl_pattern, "\x00");
+    assert_match(cntrl_pattern, "\x7F");
+    assert_no_match(cntrl_pattern, "a");
+
+    let not_cntrl_pattern = r"[\P{cntrl}]";
+    assert_match(not_cntrl_pattern, "a");
+    assert_no_match(not_cntrl_pattern, "\x00");
 }
 
 #[test]
@@ -496,4 +525,106 @@ fn match_text(re: &str, text: &str) -> bool {
         result
     );
     result.unwrap()
+}
+
+#[test]
+fn unicode_property_graph() {
+    // Test \p{graph} - graphical/visible characters (not whitespace, control, unassigned, surrogate)
+    assert_match(r"\p{graph}", "a");
+    assert_match(r"\p{graph}", "Z");
+    assert_match(r"\p{graph}", "0");
+    assert_match(r"\p{graph}", "!");
+    assert_match(r"\p{graph}", "š");
+    assert_no_match(r"\p{graph}", " ");
+    assert_no_match(r"\p{graph}", "\t");
+    assert_no_match(r"\p{graph}", "\n");
+    assert_no_match(r"\p{graph}", "\x00"); // control character
+    assert_no_match(r"\p{graph}", "\x7F"); // control character
+
+    // Test \P{graph} - non-graphical characters
+    assert_no_match(r"\P{graph}", "a");
+    assert_no_match(r"\P{graph}", "0");
+    assert_match(r"\P{graph}", " ");
+    assert_match(r"\P{graph}", "\t");
+    assert_match(r"\P{graph}", "\n");
+    assert_match(r"\P{graph}", "\x00");
+
+    // Test in character class
+    assert_match(r"[\p{graph}]", "a");
+    assert_match(r"[\p{graph}]", "!");
+    assert_no_match(r"[\p{graph}]", " ");
+
+    assert_match(r"[\P{graph}]", " ");
+    assert_no_match(r"[\P{graph}]", "a");
+
+    // Test combining graph with other characters in a class
+    assert_match(r"[\p{graph}0-9]", "a");
+    assert_match(r"[\p{graph}0-9]", "5");
+    assert_no_match(r"[\p{graph}0-9]", " ");
+}
+
+#[test]
+fn unicode_property_print() {
+    // Test \p{print} - printable characters (graph + space separators)
+    assert_match(r"\p{print}", "a");
+    assert_match(r"\p{print}", "Z");
+    assert_match(r"\p{print}", "0");
+    assert_match(r"\p{print}", "!");
+    assert_match(r"\p{print}", "š");
+    assert_match(r"\p{print}", " "); // space separator
+    assert_no_match(r"\p{print}", "\t"); // tab is not a space separator
+    assert_no_match(r"\p{print}", "\n");
+    assert_no_match(r"\p{print}", "\x00"); // control character
+    assert_no_match(r"\p{print}", "\x7F"); // control character
+
+    // Test \P{print} - non-printable characters
+    assert_no_match(r"\P{print}", "a");
+    assert_no_match(r"\P{print}", "0");
+    assert_no_match(r"\P{print}", " "); // space is printable
+    assert_match(r"\P{print}", "\t");
+    assert_match(r"\P{print}", "\n");
+    assert_match(r"\P{print}", "\x00");
+
+    // Test in character class
+    assert_match(r"[\p{print}]", "a");
+    assert_match(r"[\p{print}]", " ");
+    assert_no_match(r"[\p{print}]", "\t");
+
+    assert_match(r"[\P{print}]", "\t");
+    assert_no_match(r"[\P{print}]", "a");
+
+    // Test combining print with other characters in a class
+    assert_match(r"[\p{print}A-Z]", "a");
+    assert_match(r"[\p{print}A-Z]", "A");
+    assert_match(r"[\p{print}A-Z]", " ");
+    assert_no_match(r"[\p{print}A-Z]", "\t");
+}
+
+#[test]
+fn unicode_property_cntrl_graph_print_combined() {
+    // Test combinations to ensure they work as expected
+
+    // Test that each property works individually in character classes
+    assert_match(r"[\p{cntrl}]", "\x00"); // cntrl
+    assert_match(r"[\p{graph}]", "a"); // graph
+    assert_match(r"[\p{print}]", " "); // print
+
+    // Verify that cntrl and graph are distinct
+    assert_match(r"\p{cntrl}", "\x00");
+    assert_no_match(r"\p{graph}", "\x00");
+
+    // Verify that graph is a subset of print
+    assert_match(r"\p{graph}", "a");
+    assert_match(r"\p{print}", "a");
+
+    // Space is in print but not graph
+    assert_no_match(r"\p{graph}", " ");
+    assert_match(r"\p{print}", " ");
+
+    // Test that cntrl and graph can be combined in a character class
+    // This is tricky because graph is a negated class
+    // We expect: matches cntrl OR graph, but not space
+    assert_match(r"[\p{cntrl}\x21-\x7E]", "\x00"); // control char
+    assert_match(r"[\p{cntrl}\x21-\x7E]", "a"); // visible ASCII
+    assert_no_match(r"[\p{cntrl}\x21-\x7E]", " "); // space (not in cntrl or \x21-\x7E)
 }
