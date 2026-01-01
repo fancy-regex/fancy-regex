@@ -71,7 +71,7 @@ fn negative_lookbehind_variable_sized_alt() {
 
 #[test]
 #[cfg(feature = "variable-lookbehinds")]
-fn lookbehind_positive_variable_sized_functionality() {
+fn lookbehind_positive_variable_sized_functionality_easy() {
     assert_eq!(find(r"(?<=a(?:b|cd))x", "abx"), Some((2, 3)));
     assert_eq!(find(r"(?<=a(?:b|cd))x", "acdx"), Some((3, 4)));
     assert_eq!(find(r"(?<=a(?:b|cd))x", "ax"), None);
@@ -94,7 +94,7 @@ fn lookbehind_positive_variable_sized_functionality() {
 
 #[test]
 #[cfg(feature = "variable-lookbehinds")]
-fn lookbehind_negative_variable_sized_functionality() {
+fn lookbehind_negative_variable_sized_functionality_easy() {
     assert_eq!(find(r"(?<!a(?:b|cd))x", "abx"), None);
     assert_eq!(find(r"(?<!a(?:b|cd))x", "acdx"), None);
     assert_eq!(find(r"(?<!a(?:b|cd))x", "ax"), Some((1, 2)));
@@ -110,6 +110,38 @@ fn lookbehind_negative_variable_sized_functionality() {
 
     assert_eq!(find(r"\b(?<!\|\s{0,9})(?:[gG]pu)\b", "|gpu"), None);
     assert_eq!(find(r"\b(?<!\|\s{0,9})(?:[gG]pu)\b", "|  gpu"), None);
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn lookbehind_with_word_boundary_and_variable_length() {
+    // Test (?<=\ba+)b - word boundary followed by variable-length a's
+    assert_eq!(find(r"(?<=\ba+)b", "aaab"), Some((3, 4)));
+    assert_eq!(find(r"(?<=\ba+)b", " aaab"), Some((4, 5)));
+    assert_eq!(find(r"(?<=\ba+)b", "ab"), Some((1, 2)));
+    assert_eq!(find(r"(?<=\ba+)b", "xaaab"), None); // No word boundary
+    assert_eq!(find(r"(?<=\ba+)b", "b"), None); // No 'a's before 'b'
+
+    // Test (?<=\Ba+)b - NOT word boundary followed by variable-length a's
+    assert_eq!(find(r"(?<=\Ba+)b", "a_aab"), Some((4, 5)));
+
+    // Test negative lookbehind with word boundary
+    assert_eq!(find(r"(?<!\ba+)b", "xaaab"), Some((4, 5))); // 'a's not preceded by word boundary
+    assert_eq!(find(r"(?<!\ba+)b", "aaab"), None); // Word boundary before 'a's
+    assert_eq!(find(r"(?<!\ba+)b", " aaab"), None); // Word boundary after space
+    assert_eq!(find(r"(?<!\ba+)b", "b"), Some((0, 1))); // lookbehind doesn't match
+
+    assert_eq!(
+        find(r"(?=fuly)(?<=\b(?:[A-Z][a-z]*|[a-z]+))fuly\b", "Carefuly"),
+        Some((4, 8))
+    );
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn lookbehind_positive_variable_sized_functionality_unicode() {
+    assert_eq!(find(r"(?<=\b\w+\b)", "ežeras"), Some((7, 7)));
+    assert_eq!(find(r"(?<=\b\w+[ ]\d)", "ežeras 123"), Some((9, 9)));
 }
 
 #[test]

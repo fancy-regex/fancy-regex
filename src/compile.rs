@@ -478,48 +478,7 @@ impl Compiler {
                 {
                     let mut delegate_builder = DelegateBuilder::new();
                     delegate_builder.push(inner);
-                    let pattern = &delegate_builder.re;
-                    let capture_groups = delegate_builder
-                        .capture_groups
-                        .expect("Expected at least one expression");
-
-                    // Use reverse matching for variable-sized lookbehinds without fancy features
-                    use regex_automata::nfa::thompson;
-                    // Build a reverse DFA for the pattern
-                    let dfa = match regex_automata::hybrid::dfa::DFA::builder()
-                        .thompson(thompson::Config::new().reverse(true))
-                        .build(pattern)
-                    {
-                        Ok(dfa) => Arc::new(dfa),
-                        Err(e) => {
-                            return Err(Error::CompileError(Box::new(CompileError::DfaBuildError(
-                                e.to_string(),
-                            ))))
-                        }
-                    };
-
-                    let create: CachePoolFn = alloc::boxed::Box::new({
-                        let dfa = Arc::clone(&dfa);
-                        move || dfa.create_cache()
-                    });
-                    let cache_pool = Pool::new(create);
-
-                    // Build the forward regex for capture group extraction
-                    let forward_regex = if inner.start_group() != inner.end_group() {
-                        Some(compile_inner(pattern, &self.options)?)
-                    } else {
-                        None
-                    };
-
-                    self.b
-                        .add(Insn::BackwardsDelegate(ReverseBackwardsDelegate {
-                            dfa,
-                            cache_pool,
-                            pattern: pattern.to_string(),
-                            capture_group_extraction_inner: forward_regex,
-                            capture_groups: capture_groups.to_option_if_non_empty(),
-                        }));
-                    Ok(())
+                    self.compile_variable_lookbehind(delegate_builder)
                 }
                 #[cfg(not(feature = "variable-lookbehinds"))]
                 {
@@ -528,14 +487,123 @@ impl Compiler {
                     )))
                 }
             } else {
-                // variable sized lookbehinds with fancy features are currently unsupported
-                Err(Error::CompileError(Box::new(
-                    CompileError::LookBehindNotConst,
-                )))
+                // If the variable lookbehind is a Concat expression where all children
+                // are either easy or are guaranteed to consume 0 characters, then we can
+                // compile it as variable lookbehind without additional goback instructions.
+                if let Expr::Concat(_) = inner.expr {
+                    let can_compile = inner
+                        .children
+                        .iter()
+                        .all(|child| !child.hard || (child.const_size && child.min_size == 0));
+
+                    if can_compile {
+                        #[cfg(feature = "variable-lookbehinds")]
+                        {
+                            let mut delegate_nodes = vec![];
+                            for child in inner.children.iter().rev() {
+                                if child.hard {
+                                    self.compile_variable_lookbehind_from_concat_nodes(
+                                        &delegate_nodes,
+                                    )?;
+                                    delegate_nodes.clear();
+
+                                    self.visit(child, false)?;
+                                } else {
+                                    delegate_nodes.push(child);
+                                }
+                            }
+                            self.compile_variable_lookbehind_from_concat_nodes(&delegate_nodes)?;
+                            Ok(())
+                        }
+                        #[cfg(not(feature = "variable-lookbehinds"))]
+                        {
+                            Err(Error::CompileError(Box::new(
+                                CompileError::VariableLookBehindRequiresFeature,
+                            )))
+                        }
+                    } else {
+                        Err(Error::CompileError(Box::new(
+                            CompileError::FeatureNotYetSupported(
+                                "Variable length lookbehinds with fancy features".to_string(),
+                            ),
+                        )))
+                    }
+                } else {
+                    // variable sized lookbehinds with fancy features are currently unsupported
+                    Err(Error::CompileError(Box::new(
+                        CompileError::FeatureNotYetSupported(
+                            "Variable length lookbehinds with fancy features".to_string(),
+                        ),
+                    )))
+                }
             }
         } else {
             self.visit(inner, false)
         }
+    }
+
+    #[cfg(feature = "variable-lookbehinds")]
+    fn compile_variable_lookbehind_from_concat_nodes(
+        &mut self,
+        infos: &Vec<&Info<'_>>,
+    ) -> Result<()> {
+        if infos.is_empty() {
+            Ok(())
+        } else {
+            let mut delegate_builder = DelegateBuilder::new();
+            for info in infos.iter().rev() {
+                delegate_builder.push(info);
+            }
+            self.compile_variable_lookbehind(delegate_builder)
+        }
+    }
+
+    #[cfg(feature = "variable-lookbehinds")]
+    fn compile_variable_lookbehind(&mut self, delegate_builder: DelegateBuilder) -> Result<()> {
+        let pattern = &delegate_builder.re;
+        let capture_groups = delegate_builder
+            .capture_groups
+            .expect("Expected at least one expression");
+
+        // Use reverse matching for variable-sized lookbehinds without fancy features
+        use regex_automata::hybrid::dfa;
+        use regex_automata::nfa::thompson;
+        // Build a reverse DFA for the pattern
+        let dfa = match dfa::DFA::builder()
+            .configure(dfa::Config::new().unicode_word_boundary(true))
+            .thompson(thompson::Config::new().reverse(true))
+            .build(pattern)
+        {
+            Ok(dfa) => Arc::new(dfa),
+            Err(e) => {
+                return Err(Error::CompileError(Box::new(CompileError::DfaBuildError(
+                    e.to_string(),
+                ))))
+            }
+        };
+
+        let create: CachePoolFn = alloc::boxed::Box::new({
+            let dfa = Arc::clone(&dfa);
+            move || dfa.create_cache()
+        });
+        let cache_pool = Pool::new(create);
+
+        // Build the forward regex for capture group extraction
+        let forward_regex = if capture_groups.start() != capture_groups.end() {
+            Some(compile_inner(pattern, &self.options)?)
+        } else {
+            None
+        };
+
+        self.b
+            .add(Insn::BackwardsDelegate(ReverseBackwardsDelegate {
+                dfa,
+                cache_pool,
+                pattern: pattern.to_string(),
+                capture_group_extraction_inner: forward_regex,
+                capture_groups: capture_groups.to_option_if_non_empty(),
+            }));
+        Ok(())
     }
 
     fn compile_delegates(&mut self, infos: &[Info<'_>]) -> Result<()> {
@@ -897,11 +965,20 @@ mod tests {
             result.err().unwrap(),
             Error::CompileError(box_err) if matches!(*box_err, CompileError::VariableLookBehindRequiresFeature)
         );
+
+        let tree = Expr::parse_tree(r"(?<=\bab+)x").unwrap();
+        let info = analyze(&tree, true).unwrap();
+        let result = compile(&info, true);
+        assert!(result.is_err());
+        assert_matches!(
+            result.err().unwrap(),
+            Error::CompileError(box_err) if matches!(*box_err, CompileError::VariableLookBehindRequiresFeature)
+        );
     }
 
     #[test]
     #[cfg(feature = "variable-lookbehinds")]
-    fn variable_lookbehind_with_required_feature_no_captures() {
+    fn variable_lookbehind_with_required_feature_no_captures_easy() {
         let prog = compile_prog(r"(?<=ab+)x");
 
         assert_eq!(prog.len(), 5, "prog: {:?}", prog);
@@ -911,6 +988,21 @@ mod tests {
         assert_matches!(prog[2], Restore(0));
         assert_matches!(prog[3], Lit(ref l) if l == "x");
         assert_matches!(prog[4], End);
+    }
+
+    #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn variable_lookbehind_with_required_feature_no_captures_hard_const_size_zero_length() {
+        let prog = compile_prog(r"(?<=\bab+)x");
+
+        assert_eq!(prog.len(), 6, "prog: {:?}", prog);
+
+        assert_matches!(prog[0], Save(0));
+        assert_matches!(&prog[1], BackwardsDelegate(ReverseBackwardsDelegate { pattern, dfa: _, cache_pool: _, capture_group_extraction_inner: None, capture_groups: None }) if pattern == "ab+");
+        assert_matches!(prog[2], Insn::Assertion(crate::Assertion::WordBoundary));
+        assert_matches!(prog[3], Restore(0));
+        assert_matches!(prog[4], Lit(ref l) if l == "x");
+        assert_matches!(prog[5], End);
     }
 
     #[test]
@@ -938,7 +1030,7 @@ mod tests {
         assert!(result.is_err());
         assert_matches!(
             result.err().unwrap(),
-            Error::CompileError(box_err) if matches!(*box_err, CompileError::LookBehindNotConst)
+            Error::CompileError(box_err) if matches!(*box_err, CompileError::FeatureNotYetSupported(_))
         );
     }
 
