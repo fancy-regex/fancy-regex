@@ -10,6 +10,7 @@ with the exception that 0.x versions can break between minor versions.
 ### Added
 - Add support for `\N` to mean any character except newline, for Oniguruma compatibility (#206)
 - Add support for `(*FAIL)` backtracking control verb (#210)
+- Add support for word boundaries and zero-length fancy patterns inside variable lookbehinds (at top level) (#216)
 ### Changed
 - `RegexBuilder` can now build multiple patterns with the same options (#213)
 ### Fixed
