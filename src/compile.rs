@@ -24,6 +24,8 @@ use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 #[cfg(feature = "variable-lookbehinds")]
 use alloc::sync::Arc;
+#[cfg(feature = "variable-lookbehinds")]
+use alloc::vec;
 use alloc::vec::Vec;
 use regex_automata::meta::Regex as RaRegex;
 use regex_automata::meta::{Builder as RaBuilder, Config as RaConfig};
