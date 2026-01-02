@@ -496,7 +496,7 @@ impl Compiler {
                     let can_compile = inner
                         .children
                         .iter()
-                        .all(|child| !child.hard || (child.const_size && child.min_size == 0));
+                        .all(|child| !child.hard || child.const_size);
 
                     if can_compile {
                         #[cfg(feature = "variable-lookbehinds")]
@@ -509,7 +509,13 @@ impl Compiler {
                                     )?;
                                     delegate_nodes.clear();
 
+                                    if child.min_size > 0 {
+                                        self.b.add(Insn::GoBack(child.min_size));
+                                    }
                                     self.visit(child, false)?;
+                                    if child.min_size > 0 {
+                                        self.b.add(Insn::GoBack(child.min_size));
+                                    }
                                 } else {
                                     delegate_nodes.push(child);
                                 }
@@ -1005,6 +1011,45 @@ mod tests {
         assert_matches!(prog[3], Restore(0));
         assert_matches!(prog[4], Lit(ref l) if l == "x");
         assert_matches!(prog[5], End);
+    }
+
+    #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn variable_lookbehind_with_required_feature_no_captures_hard_const_size_non_zero_length() {
+        let prog = compile_prog(r"((.)b+(?<=\1\1b+)x)");
+
+        assert_eq!(prog.len(), 18, "prog: {:?}", prog);
+
+        assert_matches!(prog[0], Save(0));
+        assert_matches!(prog[1], Save(2));
+        assert_matches!(prog[2], AnyNoNL);
+        assert_matches!(prog[3], Save(3));
+        assert_matches!(prog[4], Lit(ref l) if l == "b");
+        assert_matches!(prog[5], Split(4, 6));
+        assert_matches!(prog[6], Save(4));
+        assert_matches!(&prog[7], BackwardsDelegate(ReverseBackwardsDelegate { pattern, dfa: _, cache_pool: _, capture_group_extraction_inner: None, capture_groups: None }) if pattern == "b+");
+        assert_matches!(prog[8], GoBack(1));
+        assert_matches!(
+            prog[9],
+            Backref {
+                slot: 2,
+                casei: false
+            }
+        );
+        assert_matches!(prog[10], GoBack(1));
+        assert_matches!(prog[11], GoBack(1));
+        assert_matches!(
+            prog[12],
+            Backref {
+                slot: 2,
+                casei: false
+            }
+        );
+        assert_matches!(prog[13], GoBack(1));
+        assert_matches!(prog[14], Restore(4));
+        assert_matches!(prog[15], Lit(ref l) if l == "x");
+        assert_matches!(prog[16], Save(1));
+        assert_matches!(prog[17], End);
     }
 
     #[test]

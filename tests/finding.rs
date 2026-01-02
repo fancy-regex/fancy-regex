@@ -135,6 +135,8 @@ fn lookbehind_with_word_boundary_and_variable_length() {
         find(r"(?=fuly)(?<=\b(?:[A-Z][a-z]*|[a-z]+))fuly\b", "Carefuly"),
         Some((4, 8))
     );
+
+    assert_eq!(find(r"(.)b+(?<=\1\1b+)x", "aabbx"), Some((1, 5)));
 }
 
 #[test]
