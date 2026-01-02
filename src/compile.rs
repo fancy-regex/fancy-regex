@@ -502,6 +502,7 @@ impl Compiler {
                         #[cfg(feature = "variable-lookbehinds")]
                         {
                             let mut delegate_nodes = vec![];
+                            let mut go_back: usize = 0;
                             for child in inner.children.iter().rev() {
                                 if child.hard {
                                     self.compile_variable_lookbehind_from_concat_nodes(
@@ -509,14 +510,17 @@ impl Compiler {
                                     )?;
                                     delegate_nodes.clear();
 
-                                    if child.min_size > 0 {
-                                        self.b.add(Insn::GoBack(child.min_size));
+                                    go_back += child.min_size;
+                                    if go_back > 0 {
+                                        self.b.add(Insn::GoBack(go_back));
                                     }
                                     self.visit(child, false)?;
-                                    if child.min_size > 0 {
-                                        self.b.add(Insn::GoBack(child.min_size));
-                                    }
+                                    go_back = child.min_size;
                                 } else {
+                                    if go_back > 0 {
+                                        self.b.add(Insn::GoBack(go_back));
+                                        go_back = 0;
+                                    }
                                     delegate_nodes.push(child);
                                 }
                             }
@@ -1018,7 +1022,7 @@ mod tests {
     fn variable_lookbehind_with_required_feature_no_captures_hard_const_size_non_zero_length() {
         let prog = compile_prog(r"((.)b+(?<=\1\1b+)x)");
 
-        assert_eq!(prog.len(), 18, "prog: {:?}", prog);
+        assert_eq!(prog.len(), 16, "prog: {:?}", prog);
 
         assert_matches!(prog[0], Save(0));
         assert_matches!(prog[1], Save(2));
@@ -1036,20 +1040,18 @@ mod tests {
                 casei: false
             }
         );
-        assert_matches!(prog[10], GoBack(1));
-        assert_matches!(prog[11], GoBack(1));
+        assert_matches!(prog[10], GoBack(2));
         assert_matches!(
-            prog[12],
+            prog[11],
             Backref {
                 slot: 2,
                 casei: false
             }
         );
-        assert_matches!(prog[13], GoBack(1));
-        assert_matches!(prog[14], Restore(4));
-        assert_matches!(prog[15], Lit(ref l) if l == "x");
-        assert_matches!(prog[16], Save(1));
-        assert_matches!(prog[17], End);
+        assert_matches!(prog[12], Restore(4));
+        assert_matches!(prog[13], Lit(ref l) if l == "x");
+        assert_matches!(prog[14], Save(1));
+        assert_matches!(prog[15], End);
     }
 
     #[test]
