@@ -1945,7 +1945,8 @@ macro_rules! children_iter_match {
                 second: Some(true_branch.$single_method()),
                 third: Some(false_branch.$single_method()),
             },
-            _ => $iter::Empty,
+            _ if $self.is_leaf_node() => $iter::Empty,
+            _ => unimplemented!(),
         }
     };
 }
