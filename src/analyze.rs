@@ -269,6 +269,44 @@ impl<'a> Analyzer<'a> {
                     CompileError::FeatureNotYetSupported("Backref at recursion level".to_string()),
                 )));
             }
+            Expr::Absent(ref absent) => {
+                use crate::Absent::*;
+                match absent {
+                    Repeater(ref child) => {
+                        let child_info = self.visit(child, min_pos_in_group)?;
+                        min_size = 0;
+                        const_size = false;
+                        hard = true;
+                        children.push(child_info);
+                    }
+                    Expression {
+                        ref absent,
+                        ref exp,
+                    } => {
+                        let absent_info = self.visit(absent, min_pos_in_group)?;
+                        let exp_info = self.visit(exp, min_pos_in_group)?;
+                        min_size = exp_info.min_size;
+                        const_size = false;
+                        hard = true;
+                        children.push(absent_info);
+                        children.push(exp_info);
+                    }
+                    Stopper(ref child) => {
+                        let child_info = self.visit(child, min_pos_in_group)?;
+                        // Absent stopper doesn't consume any characters itself
+                        min_size = 0;
+                        const_size = true;
+                        hard = true;
+                        children.push(child_info);
+                    }
+                    Clear => {
+                        // Range clear doesn't consume any characters
+                        min_size = 0;
+                        const_size = true;
+                        hard = true;
+                    }
+                }
+            }
         };
 
         Ok(Info {
@@ -659,5 +697,33 @@ mod tests {
         // prove we are looking at the position of the e in capture group 2
         assert_matches!(info.children[3].children[0].children[0].expr, Expr::Literal { val, casei: false } if val == "e");
         assert_eq!(info.children[3].children[0].children[0].min_pos_in_group, 0);
+    }
+
+    #[test]
+    fn absent_repeater_is_hard_and_not_const_size() {
+        let tree = Expr::parse_tree(r"(?~abc)").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        assert_eq!(info.min_size, 0);
+        assert!(!info.const_size);
+        assert!(info.hard);
+    }
+
+    #[test]
+    fn absent_expression_is_hard_and_not_const_size() {
+        let tree = Expr::parse_tree(r"(?~|abc|\d+)").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        // min_size comes from exp part (\d+ has min_size 1)
+        assert_eq!(info.min_size, 1);
+        assert!(!info.const_size);
+        assert!(info.hard);
+    }
+
+    #[test]
+    fn range_clear_is_hard_and_const_size() {
+        let tree = Expr::parse_tree(r"(?~|)").unwrap();
+        let info = analyze(&tree, false).unwrap();
+        assert_eq!(info.min_size, 0);
+        assert!(info.const_size);
+        assert!(info.hard);
     }
 }
