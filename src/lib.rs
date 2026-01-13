@@ -167,8 +167,9 @@ Look-around assertions for matching without changing the current position:
 
 **Note**: Look-behind assertions with variable length (e.g., `(?<=a+)`) are supported with the
 `variable-lookbehinds` feature (enabled by default). Without this feature, only constant-length
-look-behinds are supported. Variable-length look-behinds with backreferences or other "fancy"
-features are not currently supported.
+look-behinds are supported. Variable-length look-behinds can include word boundaries and other
+zero-width assertions (e.g., `(?<=\ba+)`) as long as the rest of the pattern doesn't use
+backreferences or other "fancy" features that require backtracking within the lookbehind.
 
 Atomic groups using `(?>exp)` to prevent backtracking within `exp`, e.g.:
 
