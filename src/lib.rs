@@ -114,7 +114,8 @@ This crate supports several optional features that can be enabled or disabled:
 
 # Syntax
 
-The regex syntax is based on the [regex] crate's, with some additional supported syntax.
+The regex syntax is based on the [regex] crate's and on Oniguruma, with some additional supported syntax.
+Where the two conflict, there is a flag to prefer Oniguruma parsing rules. (By default `regex` crate compatible parsing is used.)
 
 Escapes:
 
@@ -140,18 +141,18 @@ Backreferences:
 `\1`
 : match the exact string that the first capture group matched \
 `\2`
-: backref to the second capture group, etc
+: backref to the second capture group, etc. \
+`\k<name>`
+: match the exact string that the capture group named *name* matched \
+`(?P=name)`
+: same as `\k<name>` for compatibility with Python, etc.
 
 Named capture groups:
 
 `(?<name>exp)`
 : match *exp*, creating capture group named *name* \
-`\k<name>`
-: match the exact string that the capture group named *name* matched \
 `(?P<name>exp)`
-: same as `(?<name>exp)` for compatibility with Python, etc. \
-`(?P=name)`
-: same as `\k<name>` for compatibility with Python, etc.
+: same as `(?<name>exp)` for compatibility with Python, etc.
 
 Look-around assertions for matching without changing the current position:
 
@@ -183,7 +184,7 @@ Conditionals - if/then/else:
 
 `(?(1))`
 : continue only if first capture group matched \
-`(?(<name>))`
+`(?(<name>))` or `(?('name'))`
 : continue only if capture group named *name* matched \
 `(?(1)true_branch|false_branch)`
 : if the first capture group matched then execute the true_branch regex expression, else execute false_branch ([docs](https://www.regular-expressions.info/conditional.html)) \
@@ -1720,7 +1721,7 @@ pub enum LookAround {
 }
 
 /// Type of backtracking control verb which affects how backtracking will behave.
-/// See https://www.regular-expressions.info/verb.html
+/// See <https://www.regular-expressions.info/verb.html>
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum BacktrackingControlVerb {
     /// Fail this branch immediately
