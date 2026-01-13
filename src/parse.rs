@@ -823,7 +823,22 @@ impl<'a> Parser<'a> {
                 b'[' => {
                     nest += 1;
                     class.push('[');
-                    ix + 1
+                    let mut end = ix + 1;
+
+                    // Handle `]` after `[` or `[^` in nested classes
+                    // Check for negated character class
+                    if bytes.get(end) == Some(&b'^') {
+                        class.push('^');
+                        end += 1;
+                    }
+
+                    // `]` does not have to be escaped after opening `[` or `[^`
+                    if bytes.get(end) == Some(&b']') {
+                        class.push(']');
+                        end += 1;
+                    }
+
+                    end
                 }
                 b']' => {
                     nest -= 1;
