@@ -1846,6 +1846,112 @@ impl Assertion {
     }
 }
 
+/// An iterator over the immediate children of an [`Expr`].
+///
+/// This iterator yields references to child expressions but does not recurse into them.
+#[derive(Debug)]
+pub enum ExprChildrenIter<'a> {
+    /// No children (leaf node)
+    Empty,
+    /// A single child (Group, LookAround, AtomicGroup, Repeat)
+    Single(Option<&'a Expr>),
+    /// Multiple children in a Vec (Concat, Alt)
+    Vec(alloc::slice::Iter<'a, Expr>),
+    /// Three children (Conditional)
+    Triple {
+        /// First child
+        first: Option<&'a Expr>,
+        /// Second child
+        second: Option<&'a Expr>,
+        /// Third child
+        third: Option<&'a Expr>,
+    },
+}
+
+/// An iterator over the immediate children of an [`Expr`] for mutable access.
+///
+/// This iterator yields mutable references to child expressions but does not recurse into them.
+#[derive(Debug)]
+pub enum ExprChildrenIterMut<'a> {
+    /// No children (leaf node)
+    Empty,
+    /// A single child (Group, LookAround, AtomicGroup, Repeat)
+    Single(Option<&'a mut Expr>),
+    /// Multiple children in a Vec (Concat, Alt)
+    Vec(alloc::slice::IterMut<'a, Expr>),
+    /// Three children (Conditional)
+    Triple {
+        /// First child
+        first: Option<&'a mut Expr>,
+        /// Second child
+        second: Option<&'a mut Expr>,
+        /// Third child
+        third: Option<&'a mut Expr>,
+    },
+}
+
+impl<'a> Iterator for ExprChildrenIter<'a> {
+    type Item = &'a Expr;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            ExprChildrenIter::Empty => None,
+            ExprChildrenIter::Single(ref mut child) => child.take(),
+            ExprChildrenIter::Vec(ref mut iter) => iter.next(),
+            ExprChildrenIter::Triple {
+                ref mut first,
+                ref mut second,
+                ref mut third,
+            } => first
+                .take()
+                .or_else(|| second.take())
+                .or_else(|| third.take()),
+        }
+    }
+}
+
+impl<'a> Iterator for ExprChildrenIterMut<'a> {
+    type Item = &'a mut Expr;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            ExprChildrenIterMut::Empty => None,
+            ExprChildrenIterMut::Single(ref mut child) => child.take(),
+            ExprChildrenIterMut::Vec(ref mut iter) => iter.next(),
+            ExprChildrenIterMut::Triple {
+                ref mut first,
+                ref mut second,
+                ref mut third,
+            } => first
+                .take()
+                .or_else(|| second.take())
+                .or_else(|| third.take()),
+        }
+    }
+}
+
+macro_rules! children_iter_match {
+    ($self:expr, $iter:ident, $vec_method:ident, $single_method:ident) => {
+        match $self {
+            Expr::Concat(children) | Expr::Alt(children) => $iter::Vec(children.$vec_method()),
+            Expr::Group(child)
+            | Expr::LookAround(child, _)
+            | Expr::AtomicGroup(child)
+            | Expr::Repeat { child, .. } => $iter::Single(Some(child.$single_method())),
+            Expr::Conditional {
+                condition,
+                true_branch,
+                false_branch,
+            } => $iter::Triple {
+                first: Some(condition.$single_method()),
+                second: Some(true_branch.$single_method()),
+                third: Some(false_branch.$single_method()),
+            },
+            _ if $self.is_leaf_node() => $iter::Empty,
+            _ => unimplemented!(),
+        }
+    };
+}
 impl Expr {
     /// Parse the regex and return an expression (AST) and a bit set with the indexes of groups
     /// that are referenced by backrefs.
@@ -1857,6 +1963,45 @@ impl Expr {
     /// Flags should be bit based based on flags
     pub fn parse_tree_with_flags(re: &str, flags: u32) -> Result<ExprTree> {
         Parser::parse_with_flags(re, flags)
+    }
+
+    /// Returns `true` if this expression is a leaf node (has no children).
+    ///
+    /// Leaf nodes include literals, assertions, backreferences, and other atomic expressions.
+    /// Non-leaf nodes include groups, concatenations, alternations, and repetitions.
+    pub fn is_leaf_node(&self) -> bool {
+        matches!(
+            self,
+            Expr::Empty
+                | Expr::Any { .. }
+                | Expr::Assertion(_)
+                | Expr::Literal { .. }
+                | Expr::Delegate { .. }
+                | Expr::Backref { .. }
+                | Expr::BackrefWithRelativeRecursionLevel { .. }
+                | Expr::KeepOut
+                | Expr::ContinueFromPreviousMatchEnd
+                | Expr::BackrefExistsCondition(_)
+                | Expr::BacktrackingControlVerb(_)
+                | Expr::SubroutineCall(_)
+                | Expr::UnresolvedNamedSubroutineCall { .. }
+        )
+    }
+
+    /// Returns an iterator over the immediate children of this expression.
+    ///
+    /// For leaf nodes, this returns an empty iterator. For non-leaf nodes, it returns
+    /// references to their immediate children (non-recursive).
+    pub fn children_iter(&self) -> ExprChildrenIter<'_> {
+        children_iter_match!(self, ExprChildrenIter, iter, as_ref)
+    }
+
+    /// Returns an iterator over the immediate children of this expression for mutable access.
+    ///
+    /// For leaf nodes, this returns an empty iterator. For non-leaf nodes, it returns
+    /// mutable references to their immediate children (non-recursive).
+    pub fn children_iter_mut(&mut self) -> ExprChildrenIterMut<'_> {
+        children_iter_match!(self, ExprChildrenIterMut, iter_mut, as_mut)
     }
 
     /// Convert expression to a regex string in the regex crate's syntax.
@@ -1894,15 +2039,17 @@ impl Expr {
                     buf.push(')')
                 }
             }
-            Expr::Alt(ref children) => {
+            Expr::Alt(_) => {
                 if precedence > 0 {
                     buf.push_str("(?:");
                 }
-                for (i, child) in children.iter().enumerate() {
-                    if i != 0 {
+                let mut children = self.children_iter();
+                if let Some(first) = children.next() {
+                    first.to_str(buf, 1);
+                    for child in children {
                         buf.push('|');
+                        child.to_str(buf, 1);
                     }
-                    child.to_str(buf, 1);
                 }
                 if precedence > 0 {
                     buf.push(')');
@@ -2044,7 +2191,8 @@ pub mod internal {
 mod tests {
     use alloc::borrow::Cow;
     use alloc::boxed::Box;
-    use alloc::string::String;
+    use alloc::string::{String, ToString};
+    use alloc::vec::Vec;
     use alloc::{format, vec};
 
     use crate::parse::make_literal;
@@ -2197,4 +2345,126 @@ mod tests {
         assert_eq!(detect_possible_backref("a0a1a2\\"), false);
     }
     */
+
+    #[test]
+    fn test_is_leaf_node_leaf_nodes() {
+        // Test all leaf node variants
+        assert!(Expr::Empty.is_leaf_node());
+        assert!(Expr::Any { newline: false }.is_leaf_node());
+        assert!(Expr::Any { newline: true }.is_leaf_node());
+        assert!(Expr::Assertion(crate::Assertion::StartText).is_leaf_node());
+        assert!(Expr::Literal {
+            val: "test".to_string(),
+            casei: false
+        }
+        .is_leaf_node());
+        assert!(Expr::Delegate {
+            inner: "[0-9]".to_string(),
+            size: 1,
+            casei: false
+        }
+        .is_leaf_node());
+        assert!(Expr::Backref {
+            group: 1,
+            casei: false
+        }
+        .is_leaf_node());
+        assert!(Expr::BackrefWithRelativeRecursionLevel {
+            group: 1,
+            relative_level: -1,
+            casei: false
+        }
+        .is_leaf_node());
+        assert!(Expr::KeepOut.is_leaf_node());
+        assert!(Expr::ContinueFromPreviousMatchEnd.is_leaf_node());
+        assert!(Expr::BackrefExistsCondition(1).is_leaf_node());
+        assert!(Expr::BacktrackingControlVerb(crate::BacktrackingControlVerb::Fail).is_leaf_node());
+        assert!(Expr::SubroutineCall(1).is_leaf_node());
+        assert!(Expr::UnresolvedNamedSubroutineCall {
+            name: "test".to_string(),
+            ix: 0
+        }
+        .is_leaf_node());
+    }
+
+    #[test]
+    fn test_is_leaf_node_non_leaf_nodes() {
+        // Test all non-leaf node variants
+        assert!(!Expr::Concat(vec![make_literal("a")]).is_leaf_node());
+        assert!(!Expr::Alt(vec![make_literal("a"), make_literal("b")]).is_leaf_node());
+        assert!(!Expr::Group(Box::new(make_literal("a"))).is_leaf_node());
+        assert!(
+            !Expr::LookAround(Box::new(make_literal("a")), crate::LookAround::LookAhead)
+                .is_leaf_node()
+        );
+        assert!(!Expr::Repeat {
+            child: Box::new(make_literal("a")),
+            lo: 0,
+            hi: 1,
+            greedy: true
+        }
+        .is_leaf_node());
+        assert!(!Expr::AtomicGroup(Box::new(make_literal("a"))).is_leaf_node());
+        assert!(!Expr::Conditional {
+            condition: Box::new(Expr::BackrefExistsCondition(1)),
+            true_branch: Box::new(make_literal("a")),
+            false_branch: Box::new(Expr::Empty)
+        }
+        .is_leaf_node());
+    }
+
+    #[test]
+    fn test_children_iter_empty() {
+        // Leaf nodes should return empty iterator
+        let expr = Expr::Empty;
+        let mut iter = expr.children_iter();
+        assert!(iter.next().is_none());
+
+        let expr = make_literal("test");
+        let mut iter = expr.children_iter();
+        assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn test_children_iter_single() {
+        // Group, LookAround, AtomicGroup, Repeat should return single child
+        let child = make_literal("a");
+        let expr = Expr::Group(Box::new(child.clone()));
+        let children: Vec<_> = expr.children_iter().collect();
+        assert_eq!(children.len(), 1);
+
+        let expr = Expr::Repeat {
+            child: Box::new(child.clone()),
+            lo: 0,
+            hi: 1,
+            greedy: true,
+        };
+        let children: Vec<_> = expr.children_iter().collect();
+        assert_eq!(children.len(), 1);
+    }
+
+    #[test]
+    fn test_children_iter_vec() {
+        // Concat and Alt should return all children
+        let children_vec = vec![make_literal("a"), make_literal("b"), make_literal("c")];
+        let expr = Expr::Concat(children_vec.clone());
+        let children: Vec<_> = expr.children_iter().collect();
+        assert_eq!(children.len(), 3);
+
+        let expr = Expr::Alt(children_vec);
+        let children: Vec<_> = expr.children_iter().collect();
+        assert_eq!(children.len(), 3);
+    }
+
+    #[test]
+    fn test_children_iter_triple() {
+        // Conditional should return three children
+        let expr = Expr::Conditional {
+            condition: Box::new(Expr::BackrefExistsCondition(1)),
+            true_branch: Box::new(make_literal("a")),
+            false_branch: Box::new(make_literal("b")),
+        };
+        let children: Vec<_> = expr.children_iter().collect();
+        assert_eq!(children.len(), 3);
+    }
 }

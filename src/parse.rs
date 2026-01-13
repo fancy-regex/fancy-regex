@@ -1184,26 +1184,11 @@ impl<'a> Parser<'a> {
                     self.has_unresolved_subroutines = true;
                 }
             }
-            // recursively resolve in inner expressions
-            Expr::Group(inner) | Expr::LookAround(inner, _) | Expr::AtomicGroup(inner) => {
-                self.resolve_named_subroutine_calls(inner);
-            }
-            Expr::Concat(children) | Expr::Alt(children) => {
-                for child in children {
+            _ if !expr.is_leaf_node() => {
+                // recursively resolve in inner expressions
+                for child in expr.children_iter_mut() {
                     self.resolve_named_subroutine_calls(child);
                 }
-            }
-            Expr::Repeat { child, .. } => {
-                self.resolve_named_subroutine_calls(child);
-            }
-            Expr::Conditional {
-                condition,
-                true_branch,
-                false_branch,
-            } => {
-                self.resolve_named_subroutine_calls(condition);
-                self.resolve_named_subroutine_calls(true_branch);
-                self.resolve_named_subroutine_calls(false_branch);
             }
             _ => {}
         }
