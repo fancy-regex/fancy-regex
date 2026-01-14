@@ -91,6 +91,19 @@ jobs:
 
       - run: cargo fmt --all -- --check
 
+  doc:
+    name: rustdoc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Check documentation
+        env:
+          RUSTDOCFLAGS: -D rustdoc::bare_urls -D rustdoc::broken_intra_doc_links -D rustdoc::private_intra_doc_links -D rustdoc::invalid_codeblock_attributes -D rustdoc::invalid_html_tags
+        run: cargo doc --no-deps
+
   coverage:
     if: ${{ github.event_name != 'schedule' }}
     name: coverage
