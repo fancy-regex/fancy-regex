@@ -82,6 +82,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo run --example toy trace '\d*' '1122 33'
       - run: cargo test --examples
+      - run: cargo run --example regexset_syntax_highlighting --features regex-set
 
   fmt:
     name: rustfmt
