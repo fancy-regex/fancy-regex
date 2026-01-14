@@ -166,7 +166,7 @@ struct EasyPatternSet {
 #[derive(Debug, Clone)]
 struct Pattern {
     pattern_id: usize,
-    regex: Regex,
+    regex: Arc<Regex>,
 }
 
 impl RegexSet {
@@ -205,12 +205,16 @@ impl RegexSet {
     {
         let regexes = patterns
             .into_iter()
-            .map(|pattern| options_builder.build(pattern.as_ref().to_string()))
+            .map(|pattern| {
+                options_builder
+                    .build(pattern.as_ref().to_string())
+                    .map(Arc::new)
+            })
             .collect::<Result<Vec<_>>>()?;
         Self::from_regexes(regexes)
     }
 
-    /// Create a new RegexSet from pre-built `Regex` instances.
+    /// Create a new RegexSet from pre-built `Arc<Regex>` instances.
     ///
     /// Regex instances which are just thin wrappers around the `regex` crate
     /// i.e. "easy" patterns (those without backreferences, lookarounds, etc.)
@@ -220,14 +224,15 @@ impl RegexSet {
     ///
     /// ```rust
     /// use fancy_regex::{Regex, RegexBuilder, RegexSet};
+    /// use std::sync::Arc;
     ///
     /// # fn main() -> Result<(), fancy_regex::Error> {
     /// // Create regexes with different options
-    /// let re1 = RegexBuilder::new(r"hello")
+    /// let re1 = Arc::new(RegexBuilder::new(r"hello")
     ///     .case_insensitive(true)
-    ///     .build()?;
-    /// let re2 = Regex::new(r"\d+")?;
-    /// let re3 = Regex::new(r"(?<=\w)end")?; // lookbehind - fancy pattern
+    ///     .build()?);
+    /// let re2 = Arc::new(Regex::new(r"\d+")?);
+    /// let re3 = Arc::new(Regex::new(r"(?<=\w)end")?); // lookbehind - fancy pattern
     ///
     /// // Combine them into a RegexSet
     /// let set = RegexSet::from_regexes([re1, re2, re3])?;
@@ -246,9 +251,9 @@ impl RegexSet {
     /// Returns an error if the multi-pattern DFA construction fails for easy patterns.
     pub fn from_regexes<I>(regexes: I) -> Result<Self>
     where
-        I: IntoIterator<Item = Regex>,
+        I: IntoIterator<Item = Arc<Regex>>,
     {
-        let regexes_vec: Vec<Regex> = regexes.into_iter().collect();
+        let regexes_vec: Vec<Arc<Regex>> = regexes.into_iter().collect();
 
         if regexes_vec.is_empty() {
             return Ok(RegexSet {
