@@ -136,6 +136,9 @@ impl Compiler {
             Expr::Any { newline: false } => {
                 self.b.add(Insn::AnyNoNL);
             }
+            Expr::GeneralNewline { unicode } => {
+                self.compile_general_newline(unicode)?;
+            }
             Expr::Concat(_) => {
                 self.compile_concat(info, hard)?;
             }
@@ -652,6 +655,45 @@ impl Compiler {
             DelegateBuilder::new().push(info).build(&self.options)?
         };
         self.b.add(insn);
+        Ok(())
+    }
+
+    fn compile_general_newline(&mut self, unicode: bool) -> Result<()> {
+        // Compile \R as: try \r\n first, then try single newline chars
+        // The entire \R is atomic - once it matches, we don't backtrack
+        // This prevents \r\n from backtracking to \r
+
+        self.b.add(Insn::BeginAtomic);
+
+        let current_pc = self.b.pc();
+
+        // Split: try \r\n first, then single chars
+        self.b.add(Insn::Split(current_pc + 1, current_pc + 3));
+
+        // First alternative: \r\n
+        self.b.add(Insn::Lit("\r\n".to_string()));
+
+        // Jump over second alternative to EndAtomic
+        self.b.add(Insn::Jmp(current_pc + 4));
+
+        // Second alternative: single newline characters
+        let pattern = if unicode {
+            // Unicode mode: \n, \v, \f, \r, U+0085, U+2028, U+2029
+            "[\n\x0B\x0C\r\u{0085}\u{2028}\u{2029}]"
+        } else {
+            // Non-Unicode mode: \n, \v, \f, \r
+            "[\n\x0B\x0C\r]"
+        };
+
+        let compiled = compile_inner(pattern, &self.options)?;
+        self.b.add(Insn::Delegate(Delegate {
+            inner: compiled,
+            pattern: pattern.to_string(),
+            capture_groups: None,
+        }));
+
+        self.b.add(Insn::EndAtomic);
+
         Ok(())
     }
 }
