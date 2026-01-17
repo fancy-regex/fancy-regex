@@ -688,6 +688,16 @@ pub(crate) fn run(
                     if !match assertion {
                         Assertion::StartText => look_matcher.is_start(s.as_bytes(), ix),
                         Assertion::EndText => look_matcher.is_end(s.as_bytes(), ix),
+                        Assertion::EndTextIgnoreTrailingNewlines => {
+                            let bytes = s.as_bytes();
+                            if ix == bytes.len() {
+                                // At the end of string
+                                true
+                            } else {
+                                // Check if all remaining bytes are newlines
+                                bytes[ix..].iter().all(|&b| b == b'\n')
+                            }
+                        }
                         Assertion::StartLine { crlf: false } => {
                             look_matcher.is_start_lf(s.as_bytes(), ix)
                         }

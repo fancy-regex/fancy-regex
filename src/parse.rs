@@ -491,16 +491,10 @@ impl<'a> Parser<'a> {
         } else if b == b'z' && !in_class {
             (end, Expr::Assertion(Assertion::EndText))
         } else if b == b'Z' && !in_class {
+            // \Z matches at the end of the string, or before any number of newlines at the end
             (
                 end,
-                Expr::LookAround(
-                    Box::new(Expr::Delegate {
-                        inner: "\\n*$".to_string(),
-                        size: 0,
-                        casei: false,
-                    }),
-                    LookAhead,
-                ),
+                Expr::Assertion(Assertion::EndTextIgnoreTrailingNewlines),
             )
         } else if (b == b'b' || b == b'B') && !in_class {
             let check_pos = self.optional_whitespace(end)?;
@@ -539,7 +533,6 @@ impl<'a> Parser<'a> {
                 end,
                 Expr::Delegate {
                     inner: String::from(&self.re[ix..end]),
-                    size: 1,
                     casei: self.flag(FLAG_CASEI),
                 },
             )
@@ -553,7 +546,6 @@ impl<'a> Parser<'a> {
                 end,
                 Expr::Delegate {
                     inner: String::from(s),
-                    size: 1,
                     casei: false,
                 },
             )
@@ -591,7 +583,6 @@ impl<'a> Parser<'a> {
                         self.flag(FLAG_UNICODE),
                         in_class,
                     ),
-                    size: 1,
                     casei: self.flag(FLAG_CASEI),
                 },
             )
@@ -878,7 +869,6 @@ impl<'a> Parser<'a> {
         }
         let class = Expr::Delegate {
             inner: class,
-            size: 1,
             casei: self.flag(FLAG_CASEI),
         };
         let ix = ix + 1; // skip closing ']'
@@ -1467,14 +1457,7 @@ mod tests {
     fn end_text_before_empty_lines() {
         assert_eq!(
             p("\\Z"),
-            Expr::LookAround(
-                Box::new(Expr::Delegate {
-                    inner: "\\n*$".to_string(),
-                    size: 0,
-                    casei: false,
-                }),
-                LookAhead,
-            )
+            Expr::Assertion(Assertion::EndTextIgnoreTrailingNewlines)
         );
     }
 
@@ -1593,7 +1576,6 @@ mod tests {
             p("\\h"),
             Expr::Delegate {
                 inner: String::from("[0-9A-Fa-f]"),
-                size: 1,
                 casei: false
             }
         );
@@ -1601,7 +1583,6 @@ mod tests {
             p("\\H"),
             Expr::Delegate {
                 inner: String::from("[^0-9A-Fa-f]"),
-                size: 1,
                 casei: false
             }
         );
@@ -1921,7 +1902,6 @@ mod tests {
             p("\\p{Greek}"),
             Expr::Delegate {
                 inner: String::from("\\p{greek}"),
-                size: 1,
                 casei: false
             }
         );
@@ -1929,7 +1909,6 @@ mod tests {
             p("\\pL"),
             Expr::Delegate {
                 inner: String::from("\\pL"),
-                size: 1,
                 casei: false
             }
         );
@@ -1937,7 +1916,6 @@ mod tests {
             p("\\P{Greek}"),
             Expr::Delegate {
                 inner: String::from("\\P{greek}"),
-                size: 1,
                 casei: false
             }
         );
@@ -1945,7 +1923,6 @@ mod tests {
             p("\\PL"),
             Expr::Delegate {
                 inner: String::from("\\PL"),
-                size: 1,
                 casei: false
             }
         );
@@ -1953,7 +1930,6 @@ mod tests {
             p("(?i)\\p{Ll}"),
             Expr::Delegate {
                 inner: String::from("\\p{ll}"),
-                size: 1,
                 casei: true
             }
         );
@@ -2209,13 +2185,11 @@ mod tests {
                 make_literal("'"),
                 Expr::Delegate {
                     inner: String::from("[a-zA-Z_]"),
-                    size: 1,
                     casei: false
                 },
                 Expr::Repeat {
                     child: Box::new(Expr::Delegate {
                         inner: String::from("[a-zA-Z0-9_]"),
-                        size: 1,
                         casei: false
                     }),
                     lo: 0,
@@ -2702,7 +2676,6 @@ mod tests {
                 Expr::Conditional {
                     condition: Box::new(Expr::Delegate {
                         inner: "\\d".to_string(),
-                        size: 1,
                         casei: false,
                     }),
                     true_branch: Box::new(Expr::Concat(vec![
@@ -2713,7 +2686,6 @@ mod tests {
                     false_branch: Box::new(Expr::Concat(vec![
                         Expr::Delegate {
                             inner: "\\d".to_string(),
-                            size: 1,
                             casei: false,
                         },
                         make_literal("!"),
@@ -2729,14 +2701,12 @@ mod tests {
                 condition: Box::new(Expr::LookAround(
                     Box::new(Expr::Delegate {
                         inner: "\\d".to_string(),
-                        size: 1,
                         casei: false
                     }),
                     LookAhead
                 )),
                 true_branch: Box::new(Expr::Delegate {
                     inner: "\\w".to_string(),
-                    size: 1,
                     casei: false,
                 }),
                 false_branch: Box::new(make_literal("!")),

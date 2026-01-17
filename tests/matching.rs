@@ -219,6 +219,14 @@ fn hard_trailing_positive_lookaheads() {
 }
 
 #[test]
+fn lookbehind_with_emoji_in_char_class() {
+    // the Delegate Expr which gets parsed is analyzed as having min_size 1.
+    // Emojis typically consist of multiple bytes, but the lookbehind
+    // still behaves correctly
+    assert_match(r"(?<=[🎯])\s+z", "🎯   z");
+}
+
+#[test]
 fn word_boundary_brace_syntax() {
     // \b{start}
     assert_match(r"\b{start}world", "hello world");

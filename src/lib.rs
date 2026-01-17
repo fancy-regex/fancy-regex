@@ -1652,11 +1652,13 @@ pub enum Expr {
     },
     /// Delegate a regex to the regex crate. This is used as a simplification so that we don't have
     /// to represent all the expressions in the AST, e.g. character classes.
+    ///
+    /// **Constraint**: All Delegate expressions must match exactly 1 character. This ensures
+    /// consistent analysis and compilation behavior. For zero-width or multi-character patterns,
+    /// use the appropriate Expr variants instead (e.g., Assertion, Repeat, Concat).
     Delegate {
         /// The regex
         inner: String,
-        /// How many characters the regex matches
-        size: usize, // TODO: move into analysis result
         /// Whether the matching is case-insensitive or not
         casei: bool,
     },
@@ -1806,6 +1808,8 @@ pub enum Assertion {
     StartText,
     /// End of input text
     EndText,
+    /// End of input text, or before any trailing newlines at the end (Oniguruma's `\Z`)
+    EndTextIgnoreTrailingNewlines,
     /// Start of a line
     StartLine {
         /// CRLF mode
@@ -1842,6 +1846,7 @@ impl Assertion {
                 | RightWordHalfBoundary
                 | WordBoundary
                 | NotWordBoundary
+                | EndTextIgnoreTrailingNewlines
         )
     }
 }
@@ -2360,7 +2365,6 @@ mod tests {
         .is_leaf_node());
         assert!(Expr::Delegate {
             inner: "[0-9]".to_string(),
-            size: 1,
             casei: false
         }
         .is_leaf_node());
