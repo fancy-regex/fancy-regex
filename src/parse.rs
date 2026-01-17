@@ -1374,6 +1374,9 @@ fn remap_unicode_property_if_necessary(
             (r"print", false, false, true) => r"[^[:print:]]".to_string(),
             (r"print", false, true, false) => r"[:print:]".to_string(),
             (r"print", false, true, true) => r"[^[:print:]]".to_string(),
+            // cs - surrogates (only applies to UTF-16, never matches in UTF-8)
+            ("cs", _, _, false) => r"\P{any}".to_string(),
+            ("cs", _, _, true) => r"\p{any}".to_string(),
             // For other properties, convert to lowercase and reconstruct
             _ => {
                 let lower = p.to_lowercase();
@@ -3359,6 +3362,15 @@ mod tests {
         assert_eq!(
             remap_unicode_property_if_necessary(r"\P{print}", false, false),
             r"[^[:print:]]"
+        );
+        // Test \p{cs} and \P{cs} (surrogates, never matches in UTF-8)
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\p{Cs}", true, false),
+            r"\P{any}"
+        );
+        assert_eq!(
+            remap_unicode_property_if_necessary(r"\P{Cs}", true, false),
+            r"\p{any}"
         );
     }
 
