@@ -1706,6 +1706,8 @@ pub enum Expr {
     },
     /// Backtracking control verb
     BacktrackingControlVerb(BacktrackingControlVerb),
+    /// Match while the given expression is absent from the haystack
+    Absent(Absent),
 }
 
 /// Type of look-around assertion as used for a look-around expression.
@@ -1719,6 +1721,28 @@ pub enum LookAround {
     LookBehind,
     /// Negative look-behind assertion, e.g. `(?<!a)`
     LookBehindNeg,
+}
+
+/// Type of absent operator as used for Oniguruma's absent functionality.
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum Absent {
+    /// Absent repeater `(?~absent)` - works like `\O*` (match any character including newline, repeated)
+    /// but is limited by the range that does not include the string match with `absent`.
+    /// This is a written abbreviation of `(?~|absent|\O*)`.
+    Repeater(Box<Expr>),
+    /// Absent expression `(?~|absent|exp)` - works like `exp`, but is limited by the range
+    /// that does not include the string match with `absent`.
+    Expression {
+        /// The expression to avoid matching
+        absent: Box<Expr>,
+        /// The expression to match
+        exp: Box<Expr>,
+    },
+    /// Absent stopper `(?~|absent)` - after this operator, haystack range is limited
+    /// up to the point where `absent` matches.
+    Stopper(Box<Expr>),
+    /// Range clear `(?~|)` - clears the effects caused by absent stoppers.
+    Clear,
 }
 
 /// Type of backtracking control verb which affects how backtracking will behave.
@@ -1935,6 +1959,8 @@ macro_rules! children_iter_match {
         match $self {
             Expr::Concat(children) | Expr::Alt(children) => $iter::Vec(children.$vec_method()),
             Expr::Group(child)
+            | Expr::Absent(Absent::Repeater(child))
+            | Expr::Absent(Absent::Stopper(child))
             | Expr::LookAround(child, _)
             | Expr::AtomicGroup(child)
             | Expr::Repeat { child, .. } => $iter::Single(Some(child.$single_method())),
@@ -1946,6 +1972,11 @@ macro_rules! children_iter_match {
                 first: Some(condition.$single_method()),
                 second: Some(true_branch.$single_method()),
                 third: Some(false_branch.$single_method()),
+            },
+            Expr::Absent(Absent::Expression { absent, exp }) => $iter::Triple {
+                first: Some(absent.$single_method()),
+                second: Some(exp.$single_method()),
+                third: None,
             },
             _ if $self.is_leaf_node() => $iter::Empty,
             _ => unimplemented!(),
@@ -1985,6 +2016,7 @@ impl Expr {
                 | Expr::BacktrackingControlVerb(_)
                 | Expr::SubroutineCall(_)
                 | Expr::UnresolvedNamedSubroutineCall { .. }
+                | Expr::Absent(Absent::Clear),
         )
     }
 
@@ -2196,7 +2228,7 @@ mod tests {
     use alloc::{format, vec};
 
     use crate::parse::make_literal;
-    use crate::{Expr, Regex, RegexImpl};
+    use crate::{Absent, Expr, Regex, RegexImpl};
 
     //use detect_possible_backref;
 
@@ -2385,6 +2417,8 @@ mod tests {
             ix: 0
         }
         .is_leaf_node());
+
+        assert!(Expr::Absent(Absent::Clear).is_leaf_node());
     }
 
     #[test]
@@ -2411,6 +2445,19 @@ mod tests {
             false_branch: Box::new(Expr::Empty)
         }
         .is_leaf_node());
+
+        assert!(!Expr::Absent(Absent::Repeater(Box::new(make_literal("a")))).is_leaf_node());
+        assert!(!Expr::Absent(Absent::Expression {
+            absent: Box::new(make_literal("/*")),
+            exp: Box::new(Expr::Repeat {
+                child: Box::new(Expr::Any { newline: true }),
+                lo: 0,
+                hi: usize::MAX,
+                greedy: true
+            })
+        })
+        .is_leaf_node());
+        assert!(!Expr::Absent(Absent::Stopper(Box::new(make_literal("/*")))).is_leaf_node());
     }
 
     #[test]
@@ -2466,5 +2513,18 @@ mod tests {
         };
         let children: Vec<_> = expr.children_iter().collect();
         assert_eq!(children.len(), 3);
+
+        // Absent expression should return two children
+        let expr = Expr::Absent(Absent::Expression {
+            absent: Box::new(make_literal("/*")),
+            exp: Box::new(Expr::Repeat {
+                child: Box::new(Expr::Any { newline: true }),
+                lo: 0,
+                hi: usize::MAX,
+                greedy: true,
+            }),
+        });
+        let children: Vec<_> = expr.children_iter().collect();
+        assert_eq!(children.len(), 2);
     }
 }
