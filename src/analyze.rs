@@ -102,7 +102,7 @@ struct Analyzer<'a> {
     backrefs: &'a BitSet,
     group_ix: usize,
     /// Stores the analysis info for each group by group number
-    // NOTE: uses a Map instead of a Vec because sometimes we start from capture group 1 othertimes 0
+    // NOTE: uses a Map instead of a Vec because sometimes we start from capture group 1, other times 0
     group_info: Map<usize, SizeInfo>,
     /// Tracks subroutine calls: maps from a group to the subroutines it calls
     subroutine_calls: Map<usize, Vec<SubroutineCallInfo>>,
@@ -110,6 +110,12 @@ struct Analyzer<'a> {
     current_group: usize,
     /// Whether we're currently inside a zero-repetition (unreachable code)
     inside_zero_rep: bool,
+    /// Groups that are directly executed from root (not inside {0})
+    root_groups: BitSet,
+    /// Pre-populated map of capture group index to the inner expression of that group
+    pre_populated_groups: Map<usize, &'a Expr>,
+    /// Track groups currently being analyzed to prevent infinite recursion
+    analyzing_groups: BitSet,
 }
 
 impl<'a> Analyzer<'a> {
@@ -172,10 +178,18 @@ impl<'a> Analyzer<'a> {
             Expr::Group(ref child) => {
                 let group = self.group_ix;
                 self.group_ix += 1;
+                self.analyzing_groups.insert(group);
+
+                // Track if this group is executed from root (not inside {0})
+                if self.current_group == 0 && !self.inside_zero_rep {
+                    self.root_groups.insert(group);
+                }
+
                 let prev_group = self.current_group;
                 self.current_group = group;
                 let child_info = self.visit(child, 0)?;
                 self.current_group = prev_group;
+                self.analyzing_groups.remove(group);
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
                 // Store the group info for use by backrefs
@@ -288,11 +302,14 @@ impl<'a> Analyzer<'a> {
                 children.push(child_info_false);
             }
             Expr::SubroutineCall(target_group) => {
-                // Track this subroutine call (unless we're in unreachable code)
-                if !self.inside_zero_rep {
+                // Track this subroutine call
+                // Only skip tracking if we're in unreachable code at the root level
+                // Calls inside groups should always be tracked, even if the group is inside {0} at root,
+                // because the group can be called as a subroutine from elsewhere
+                if !self.inside_zero_rep || self.current_group != 0 {
                     self.subroutine_calls
                         .entry(self.current_group)
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(SubroutineCallInfo {
                             target_group,
                             min_pos: min_pos_in_group,
@@ -308,9 +325,36 @@ impl<'a> Analyzer<'a> {
                 {
                     min_size = group_min_size;
                     const_size = group_const_size;
-                } else {
+                } else if self.analyzing_groups.contains(target_group) {
+                    // Currently analyzing this group - circular reference
+                    // Use conservative defaults to avoid infinite recursion
+                    min_size = 0;
+                    const_size = false;
+                } else if let Some(&group_expr) = self.pre_populated_groups.get(&target_group) {
                     // If the group hasn't been seen yet (forward reference),
-                    // use conservative defaults
+                    // directly analyze it now
+                    self.analyzing_groups.insert(target_group);
+
+                    // Save and update current_group to properly track subroutine calls within the group
+                    let prev_group = self.current_group;
+                    self.current_group = target_group;
+                    let group_info = self.visit(group_expr, 0)?;
+                    self.current_group = prev_group;
+
+                    self.analyzing_groups.remove(target_group);
+
+                    min_size = group_info.min_size;
+                    const_size = group_info.const_size;
+                    // Store the analysis result for future lookups
+                    self.group_info.insert(
+                        target_group,
+                        SizeInfo {
+                            min_size,
+                            const_size,
+                        },
+                    );
+                } else {
+                    // Group doesn't exist - this shouldn't happen as the parser would have caught it
                     min_size = 0;
                     const_size = false;
                 }
@@ -380,21 +424,25 @@ impl<'a> Analyzer<'a> {
     /// Check for left-recursive subroutine calls using depth-first search
     fn check_left_recursion(&self, named_groups: &Map<String, usize>) -> Result<()> {
         // Build reverse mapping from group number to group name (if any)
+        // so we can give friendly error messages when left recursion is detected
         let mut group_names: Map<usize, String> = Map::new();
         for (name, &group_num) in named_groups.iter() {
             group_names.insert(group_num, name.clone());
         }
 
-        // Check each group for left recursion
+        // Compute which groups are reachable from the root (group 0)
+        let reachable_groups = self.compute_reachable_groups();
+
+        // Check each reachable group for left recursion
         for &start_group in self.subroutine_calls.keys() {
+            if !reachable_groups.contains(start_group) {
+                // Skip unreachable groups
+                continue;
+            }
+
             let mut visited = BitSet::new();
-            let mut rec_stack = BitSet::new();
-            if self.dfs_check_left_recursion(
-                start_group,
-                &mut visited,
-                &mut rec_stack,
-                &group_names,
-            )? {
+            let mut recursion_stack = BitSet::new();
+            if self.dfs_check_left_recursion(start_group, &mut visited, &mut recursion_stack)? {
                 // Found left recursion
                 let group_desc = if let Some(name) = group_names.get(&start_group) {
                     format!("group '{}' ({})", name, start_group)
@@ -409,16 +457,48 @@ impl<'a> Analyzer<'a> {
         Ok(())
     }
 
+    /// A group is reachable if it's executed from root (not inside {0}) or called from a reachable group
+    fn compute_reachable_groups(&self) -> BitSet {
+        let mut reachable = BitSet::new();
+        let mut to_visit = Vec::new();
+
+        // Start from root (group 0)
+        // Group 0 is always reachable
+        reachable.insert(0);
+        to_visit.push(0);
+
+        // Also mark groups that are directly executed from root (not inside {0})
+        for group in self.root_groups.iter() {
+            if !reachable.contains(group) {
+                reachable.insert(group);
+                to_visit.push(group);
+            }
+        }
+
+        // Propagate reachability through subroutine calls
+        while let Some(group) = to_visit.pop() {
+            if let Some(calls) = self.subroutine_calls.get(&group) {
+                for call_info in calls {
+                    if !reachable.contains(call_info.target_group) {
+                        reachable.insert(call_info.target_group);
+                        to_visit.push(call_info.target_group);
+                    }
+                }
+            }
+        }
+
+        reachable
+    }
+
     /// Depth-first search to detect left recursion
     /// Returns true if left recursion is detected
     fn dfs_check_left_recursion(
         &self,
         group: usize,
         visited: &mut BitSet,
-        rec_stack: &mut BitSet,
-        group_names: &Map<usize, String>,
+        recursion_stack: &mut BitSet,
     ) -> Result<bool> {
-        if rec_stack.contains(group) {
+        if recursion_stack.contains(group) {
             // We found a cycle. Since we only follow calls at position 0 (see below),
             // reaching a group already in the recursion stack means we have a left-recursive cycle.
             return Ok(true);
@@ -429,26 +509,25 @@ impl<'a> Analyzer<'a> {
         }
 
         visited.insert(group);
-        rec_stack.insert(group);
+        recursion_stack.insert(group);
 
         // Check all subroutine calls from this group
         if let Some(calls) = self.subroutine_calls.get(&group) {
             for call_info in calls {
                 // Only consider calls at position 0 (potential left recursion)
-                if call_info.min_pos == 0 {
-                    if self.dfs_check_left_recursion(
+                if call_info.min_pos == 0
+                    && self.dfs_check_left_recursion(
                         call_info.target_group,
                         visited,
-                        rec_stack,
-                        group_names,
-                    )? {
-                        return Ok(true);
-                    }
+                        recursion_stack,
+                    )?
+                {
+                    return Ok(true);
                 }
             }
         }
 
-        rec_stack.remove(group);
+        recursion_stack.remove(group);
         Ok(false)
     }
 }
@@ -460,9 +539,39 @@ fn literal_const_size(_: &str, _: bool) -> bool {
     true
 }
 
+/// Recursively collect all Group expressions and their capture group indices
+fn collect_groups<'a>(expr: &'a Expr, group_ix: &mut usize, groups: &mut Map<usize, &'a Expr>) {
+    match expr {
+        Expr::Group(inner) => {
+            let current_group = *group_ix;
+            *group_ix += 1;
+            groups.insert(current_group, inner.as_ref());
+            // Continue recursing to find nested groups
+            collect_groups(inner.as_ref(), group_ix, groups);
+        }
+        _ => {
+            // Recurse into all children
+            for child in expr.children_iter() {
+                collect_groups(child, group_ix, groups);
+            }
+        }
+    }
+}
+
 /// Analyze the parsed expression to determine whether it requires fancy features.
 pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result<Info<'a>> {
     let start_group = if explicit_capture_group_0 { 0 } else { 1 };
+
+    // pre-populate groups if subroutines are present to handle forward references
+    let pre_populated_groups = if tree.contains_subroutines {
+        let mut groups = Map::new();
+        let mut group_ix = start_group;
+        collect_groups(&tree.expr, &mut group_ix, &mut groups);
+        groups
+    } else {
+        Map::new()
+    };
+
     let mut analyzer = Analyzer {
         backrefs: &tree.backrefs,
         group_ix: start_group,
@@ -470,6 +579,9 @@ pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result
         subroutine_calls: Map::new(),
         current_group: 0, // Always start at group 0 (the implicit whole-pattern group)
         inside_zero_rep: false,
+        root_groups: BitSet::new(),
+        pre_populated_groups,
+        analyzing_groups: BitSet::new(),
     };
 
     let analyzed = analyzer.visit(&tree.expr, 0)?;
@@ -887,11 +999,23 @@ mod tests {
             result.err(),
             Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::LeftRecursiveSubroutineCall(_))
         ));
+
+        let tree = Expr::parse_tree(r"abc(\g<1>a)").unwrap();
+        let result = analyze(&tree, false);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::LeftRecursiveSubroutineCall(_))
+        ));
     }
 
     #[test]
     fn not_left_recursive_subroutine_after_group() {
         let tree = Expr::parse_tree(r"(a)\g<1>").unwrap();
+        let result = analyze(&tree, false);
+        assert!(result.is_ok());
+
+        let tree = Expr::parse_tree(r"(?<test>a)\g<test>").unwrap();
         let result = analyze(&tree, false);
         assert!(result.is_ok());
     }
@@ -906,12 +1030,28 @@ mod tests {
             result.err(),
             Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::LeftRecursiveSubroutineCall(_))
         ));
+
+        let tree = Expr::parse_tree(r"(?<test>\g<test>a)").unwrap();
+        let result = analyze(&tree, false);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::LeftRecursiveSubroutineCall(_))
+        ));
     }
 
     #[test]
     fn left_recursive_subroutine_indirect() {
         // Indirect left recursion: non-nested subroutine calls to each other
         let tree = Expr::parse_tree(r"(\g<2>)(\g<1>)").unwrap();
+        let result = analyze(&tree, false);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::LeftRecursiveSubroutineCall(_))
+        ));
+
+        let tree = Expr::parse_tree(r"(\g<2>)(\g<1>a)").unwrap();
         let result = analyze(&tree, false);
         assert!(result.is_err());
         assert!(matches!(
@@ -1030,5 +1170,38 @@ mod tests {
         // Group 3 -> Group 1 (at pos 0)
         // This forms a left-recursive cycle
         assert!(result.is_err());
+
+        let tree = Expr::parse_tree(r"(\g<2>a)(\g<3>b)(\g<1>c)").unwrap();
+        let result = analyze(&tree, false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn left_recursive_with_call_to_defined_group() {
+        // Even though the call from Group 1 to Group 2 is inside {0} at root level,
+        // Group 1's pattern can still be executed when called from Group 2
+        // Group 1 contains a?\g<2> - calls group 2 (when executed)
+        // Group 2 contains \g<1> - calls group 1 at position 0
+        // This creates a cycle: Group 2 -> Group 1 (at pos 0) -> Group 2 (at pos 0)
+        let tree = Expr::parse_tree(r"(a?\g<2>){0}(\g<1>)").unwrap();
+        let result = analyze(&tree, false);
+        assert!(result.is_err(), "Should be left-recursive");
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::LeftRecursiveSubroutineCall(_))
+        ));
+    }
+
+    #[test]
+    fn no_left_recursion_complex_pattern() {
+        // Group n (1): |\g<m>\g<n> - calls m then itself, but m has min_size > 0
+        // Group m (2): a(b)\g<m> - calls itself after 'ab'
+        let tree = Expr::parse_tree(r"(?<n>|\g<m>\g<n>)\z|\zEND (?<m>a(b)\g<m>)").unwrap();
+        let result = analyze(&tree, false);
+
+        assert!(
+            result.is_ok(),
+            "Pattern should not be left-recursive because group m has min_size > 0"
+        );
     }
 }

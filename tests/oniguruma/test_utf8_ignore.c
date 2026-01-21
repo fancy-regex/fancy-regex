@@ -166,10 +166,10 @@
   // Compile failed: ParseError(0, InvalidEscape("\\o"))
   x2("\\o{101}", "A", 0, 1);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Backref at recursion level"))
   x2("\\A(a|b\\g<1>c)\\k<1+3>\\z", "bbacca", 0, 6);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Backref at recursion level"))
   x2("(?i)\\A(a|b\\g<1>c)\\k<1+2>\\z", "bBACcbac", 0, 8);
 
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
@@ -578,16 +578,16 @@
   // Compile failed: ParseError(3, TargetNotRepeatable)
   x2("(?(?{....})123|456)", "123", 0, 3);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
+  // Compile failed: CompileError(LeftRecursiveSubroutineCall("group 0"))
   x2("\\g'0'++{,0}",   "abcdefgh", 0, 0);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
+  // Compile failed: CompileError(LeftRecursiveSubroutineCall("group 0"))
   x2("\\g'0'++{,0}?",  "abcdefgh", 0, 0);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
+  // Compile failed: CompileError(LeftRecursiveSubroutineCall("group 0"))
   x2("\\g'0'++{,0}b",  "abcdefgh", 1, 2);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
+  // Compile failed: CompileError(LeftRecursiveSubroutineCall("group 0"))
   x2("\\g'0'++{,0}?def", "abcdefgh", 3, 6);
 
   // Compile failed: CompileError(InnerError(BuildError { kind: Syntax { pid: PatternID(0), err: Parse(Error { kind: RepetitionCountInvalid, pattern: "a{3,2}b", span: Span(Position(o: 1, l: 1, c: 2), Position(o: 6, l: 1, c: 7)) }) } }))
