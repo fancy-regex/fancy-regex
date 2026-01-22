@@ -337,9 +337,12 @@ impl<'a> Analyzer<'a> {
 
                     // Save and update current_group to properly track subroutine calls within the group
                     let prev_group = self.current_group;
+                    let prev_group_ix = self.group_ix;
                     self.current_group = target_group;
+                    self.group_ix = target_group + 1;
                     let group_info = self.visit(group_expr, 0)?;
                     self.current_group = prev_group;
+                    self.group_ix = prev_group_ix;
 
                     self.analyzing_groups.remove(target_group);
 
