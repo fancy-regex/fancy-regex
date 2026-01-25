@@ -1285,4 +1285,63 @@ mod tests {
         assert_eq!(info.children[2].min_size, 2);
         assert!(!info.children[2].const_size);
     }
+
+    #[test]
+    fn forward_subroutine_call_with_nested_groups() {
+        // Forward reference with multiple nested groups defined after the subroutine call
+        let tree = Expr::parse_tree(r"(foo)\g<4>(a(b)?)(c(d))(?!e)").unwrap();
+        let info = analyze(&tree, false).unwrap();
+
+        // The pattern should have 5 capture groups
+        assert_eq!(info.start_group(), 1);
+        assert_eq!(info.end_group(), 6);
+
+        // Verify the Info Expr nodes - it's a Concat with 5 children
+        assert!(matches!(info.expr, Expr::Concat(_)));
+        assert_eq!(info.children.len(), 5);
+
+        // SubroutineCall to group 4
+        assert!(matches!(info.children[1].expr, Expr::SubroutineCall(4)));
+        // The subroutine call itself is not in a capture group. but after group 1
+        assert_eq!(info.children[1].start_group(), 2);
+        assert_eq!(info.children[1].end_group(), 2);
+        // SubroutineCall should get the min_size from the group
+        assert_eq!(info.children[1].min_size, 2);
+        assert!(info.children[1].const_size);
+
+        // First group after the subroutine call (capture group 2)
+        assert!(matches!(info.children[2].expr, Expr::Group(_)));
+        assert_eq!(info.children[2].start_group(), 2);
+        assert_eq!(info.children[2].end_group(), 4);
+        assert_eq!(info.children[2].min_size, 1);
+        assert!(!info.children[2].const_size);
+
+        // Second group after the subroutine call (nested inside group 2)
+        let group_info = &info.children[2].children[0].children[1].children[0];
+        assert!(matches!(group_info.expr, Expr::Group(_)));
+        assert_eq!(group_info.start_group(), 3);
+        assert_eq!(group_info.end_group(), 4);
+        assert_eq!(group_info.min_size, 1);
+        assert!(group_info.const_size);
+
+        // Third group after the subroutine call
+        assert!(matches!(info.children[3].expr, Expr::Group(_)));
+        assert_eq!(info.children[3].start_group(), 4);
+        assert_eq!(info.children[3].end_group(), 6);
+        assert_eq!(info.children[3].min_size, 2);
+        assert!(info.children[3].const_size);
+
+        // Fourth group after the subroutine call (nested inside group 4)
+        let group_info = &info.children[3].children[0].children[1];
+        assert!(matches!(group_info.expr, Expr::Group(_)));
+        assert_eq!(group_info.start_group(), 5);
+        assert_eq!(group_info.end_group(), 6);
+        assert_eq!(group_info.min_size, 1);
+        assert!(group_info.const_size);
+
+        // Negative lookahead should start after group 5
+        assert!(matches!(info.children[4].expr, Expr::LookAround(_, _)));
+        assert_eq!(info.children[4].start_group(), 6);
+        assert_eq!(info.children[4].end_group(), 6);
+    }
 }
