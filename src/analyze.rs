@@ -1207,4 +1207,82 @@ mod tests {
             "Pattern should not be left-recursive because group m has min_size > 0"
         );
     }
+
+    // Tests for forward-referenced subroutine calls
+    // These verify that the analyzer correctly handles subroutine calls to groups
+    // that are defined later in the pattern, and that group indexes are computed correctly.
+
+    #[test]
+    fn forward_subroutine_call_single_group() {
+        // Forward reference: calls group 1 before it's defined
+        let tree = Expr::parse_tree(r"\g<1>(.a.)").unwrap();
+        let info = analyze(&tree, false).unwrap();
+
+        // The pattern should have 1 capture group
+        assert_eq!(info.start_group(), 1);
+        assert_eq!(info.end_group(), 2);
+
+        // Verify the Info has the correct Expr nodes - a Concat with 2 children
+        assert!(matches!(info.expr, Expr::Concat(_)));
+        assert_eq!(info.children.len(), 2);
+
+        // First child is the SubroutineCall
+        assert!(matches!(info.children[0].expr, Expr::SubroutineCall(1)));
+        // SubroutineCall should have group range 1..1 (no new groups)
+        assert_eq!(info.children[0].start_group(), 1);
+        assert_eq!(info.children[0].end_group(), 1);
+        // SubroutineCall should get the min_size from the group
+        assert_eq!(info.children[0].min_size, 3);
+        assert!(info.children[0].const_size);
+
+        // Second child is the group
+        assert!(matches!(info.children[1].expr, Expr::Group(_)));
+        assert_eq!(info.children[1].start_group(), 1);
+        assert_eq!(info.children[1].end_group(), 2);
+        // The group itself should also have min_size 3
+        assert_eq!(info.children[1].min_size, 3);
+        assert!(info.children[1].const_size);
+
+        // Overall pattern should have min_size 6 (subroutine call + group)
+        assert_eq!(info.min_size, 6);
+        assert!(info.const_size);
+    }
+
+    #[test]
+    fn forward_subroutine_call_with_multiple_groups() {
+        // Forward reference with multiple groups defined after the subroutine call
+        let tree = Expr::parse_tree(r"\g<2>(a)(bc+)").unwrap();
+        let info = analyze(&tree, false).unwrap();
+
+        // The pattern should have 2 capture groups
+        assert_eq!(info.start_group(), 1);
+        assert_eq!(info.end_group(), 3);
+
+        // Verify the Info Expr nodes - it's a Concat with 3 children
+        assert!(matches!(info.expr, Expr::Concat(_)));
+        assert_eq!(info.children.len(), 3);
+
+        // SubroutineCall to group 2
+        assert!(matches!(info.children[0].expr, Expr::SubroutineCall(2)));
+        // The subroutine call itself is not in a capture group
+        assert_eq!(info.children[0].start_group(), 1);
+        assert_eq!(info.children[0].end_group(), 1);
+        // SubroutineCall should get the min_size from the group
+        assert_eq!(info.children[0].min_size, 2);
+        assert!(!info.children[0].const_size);
+
+        // First group (capture group 1)
+        assert!(matches!(info.children[1].expr, Expr::Group(_)));
+        assert_eq!(info.children[1].start_group(), 1);
+        assert_eq!(info.children[1].end_group(), 2);
+        assert_eq!(info.children[1].min_size, 1);
+        assert!(info.children[1].const_size);
+
+        // Second group (capture group 2)
+        assert!(matches!(info.children[2].expr, Expr::Group(_)));
+        assert_eq!(info.children[2].start_group(), 2);
+        assert_eq!(info.children[2].end_group(), 3);
+        assert_eq!(info.children[2].min_size, 2);
+        assert!(!info.children[2].const_size);
+    }
 }
