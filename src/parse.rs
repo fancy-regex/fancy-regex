@@ -3629,7 +3629,6 @@ mod tests {
                 exp: Box::new(Expr::Repeat {
                     child: Box::new(Expr::Delegate {
                         inner: "\\d".to_string(),
-                        size: 1,
                         casei: false
                     }),
                     lo: 1,
