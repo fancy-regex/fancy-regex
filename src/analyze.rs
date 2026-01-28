@@ -183,9 +183,10 @@ impl<'a> Analyzer<'a> {
                 hard = child_info.hard;
                 children.push(child_info);
             }
-            Expr::Delegate { size, .. } => {
-                // currently only used for empty and single-char matches
-                min_size = size;
+            Expr::Delegate { .. } => {
+                // Delegate expressions always match exactly 1 character.
+                // This constraint ensures consistency in the AST representation.
+                min_size = 1;
                 const_size = true;
             }
             Expr::Backref { group, .. } => {
