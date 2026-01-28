@@ -187,21 +187,6 @@
   // No match found
   x2("(?:(?'name'a)|(?'name'b))(?('name')c|d)e", "ace", 0, 3);
 
-  // Compile failed: ParseError(0, InvalidEscape("\\R"))
-  x2("\\R", "\r\n", 0, 2);
-
-  // Compile failed: ParseError(0, InvalidEscape("\\R"))
-  x2("\\R", "\r", 0, 1);
-
-  // Compile failed: ParseError(0, InvalidEscape("\\R"))
-  x2("\\R", "\n", 0, 1);
-
-  // Compile failed: ParseError(0, InvalidEscape("\\R"))
-  x2("\\R", "\x0b", 0, 1);
-
-  // Compile failed: ParseError(0, InvalidEscape("\\R"))
-  x2("\\R", "\xc2\x85", 0, 2);
-
   // No match found
   x2("(?:()|()|())*\\3\\1", "abc", 0, 0);
 
