@@ -677,18 +677,23 @@ impl Compiler {
 
         self.b.add(Insn::BeginAtomic);
 
-        let current_pc = self.b.pc();
-
         // Split: try \r\n first, then single chars
-        self.b.add(Insn::Split(current_pc + 1, current_pc + 3));
+        let split_pc = self.b.pc();
+        self.b.add(Insn::Split(split_pc + 1, usize::MAX)); // Will fix second target later
 
         // First alternative: \r\n
         self.b.add(Insn::Lit("\r\n".to_string()));
 
-        // Jump over second alternative to EndAtomic
-        self.b.add(Insn::Jmp(current_pc + 4));
+        // Jump over other alternatives
+        let jmp_pc = self.b.pc();
+        self.b.add(Insn::Jmp(usize::MAX)); // Will fix target later
 
         // Second alternative: single newline characters
+        let single_newline_char_pc = self.b.pc();
+        self.b
+            .set_split_target(split_pc, single_newline_char_pc, true);
+
+        // Compile a delegate for matching single newline characters
         let pattern = if unicode {
             // Unicode mode: \n, \v, \f, \r, U+0085, U+2028, U+2029
             "[\n\x0B\x0C\r\u{0085}\u{2028}\u{2029}]"
@@ -704,7 +709,11 @@ impl Compiler {
             capture_groups: None,
         }));
 
+        // Fix the jump target
+        let end_atomic_pc = self.b.pc();
         self.b.add(Insn::EndAtomic);
+
+        self.b.set_jmp_target(jmp_pc, end_atomic_pc);
 
         Ok(())
     }
