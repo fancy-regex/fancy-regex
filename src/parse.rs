@@ -591,6 +591,13 @@ impl<'a> Parser<'a> {
             (end, Expr::KeepOut)
         } else if b == b'G' && !in_class {
             (end, Expr::ContinueFromPreviousMatchEnd)
+        } else if b == b'R' && !in_class {
+            (
+                end,
+                Expr::GeneralNewline {
+                    unicode: self.flag(FLAG_UNICODE),
+                },
+            )
         } else if b == b'O' && !in_class {
             (end, Expr::Any { newline: true })
         } else if b == b'N' && !in_class {
@@ -629,7 +636,7 @@ impl<'a> Parser<'a> {
                         if b.is_ascii_alphabetic()
                             && !matches!(
                                 b,
-                                b'k' | b'A' | b'z' | b'b' | b'B' | b'<' | b'>' | b'K' | b'G'
+                                b'k' | b'A' | b'z' | b'b' | b'B' | b'<' | b'>' | b'K' | b'G' | b'R'
                             )
                         {
                             return Err(Error::ParseError(

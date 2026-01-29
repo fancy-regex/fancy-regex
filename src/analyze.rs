@@ -115,6 +115,13 @@ impl<'a> Analyzer<'a> {
                 min_size = 1;
                 const_size = true;
             }
+            Expr::GeneralNewline { .. } => {
+                // \R matches either \r\n (2 chars) or single newline chars (1 char)
+                // So it has min_size = 1, but is not const_size
+                min_size = 1;
+                const_size = false;
+                hard = true; // requires backtracking to handle \r\n without backtracking to \r
+            }
             Expr::Literal { ref val, casei } => {
                 // right now each character in a literal gets its own node, that might change
                 min_size = 1;

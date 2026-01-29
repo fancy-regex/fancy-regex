@@ -134,7 +134,9 @@ Escapes:
 `\O`
 : any character including newline\
 `\N`
-: any character except newline
+: any character except newline\
+`\R`
+: general newline - matches all common line break characters: \n, \v, \f, \r, treating \r\n as an atomic unit
 
 Backreferences:
 
@@ -1619,6 +1621,13 @@ pub enum Expr {
     },
     /// An assertion
     Assertion(Assertion),
+    /// General newline sequence, `\R`
+    /// Matches `\r\n` or any single newline character (\n, \v, \f, \r)
+    /// In Unicode mode, also matches U+0085, U+2028, U+2029
+    GeneralNewline {
+        /// Whether Unicode mode is enabled
+        unicode: bool,
+    },
     /// The string as a literal, e.g. `a`
     Literal {
         /// The string to match
@@ -2011,6 +2020,7 @@ impl Expr {
             Expr::Empty
                 | Expr::Any { .. }
                 | Expr::Assertion(_)
+                | Expr::GeneralNewline { .. }
                 | Expr::Literal { .. }
                 | Expr::Delegate { .. }
                 | Expr::Backref { .. }

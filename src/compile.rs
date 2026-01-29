@@ -136,6 +136,9 @@ impl Compiler {
             Expr::Any { newline: false } => {
                 self.b.add(Insn::AnyNoNL);
             }
+            Expr::GeneralNewline { unicode } => {
+                self.compile_general_newline(unicode)?;
+            }
             Expr::Concat(_) => {
                 self.compile_concat(info, hard)?;
             }
@@ -664,6 +667,54 @@ impl Compiler {
             DelegateBuilder::new().push(info).build(&self.options)?
         };
         self.b.add(insn);
+        Ok(())
+    }
+
+    fn compile_general_newline(&mut self, unicode: bool) -> Result<()> {
+        // Compile \R as: try \r\n first, then try single newline chars
+        // The entire \R is atomic - once it matches, we don't backtrack
+        // This prevents \r\n from backtracking to \r
+
+        self.b.add(Insn::BeginAtomic);
+
+        // Split: try \r\n first, then single chars
+        let split_pc = self.b.pc();
+        self.b.add(Insn::Split(split_pc + 1, usize::MAX)); // Will fix second target later
+
+        // First alternative: \r\n
+        self.b.add(Insn::Lit("\r\n".to_string()));
+
+        // Jump over other alternatives
+        let jmp_pc = self.b.pc();
+        self.b.add(Insn::Jmp(usize::MAX)); // Will fix target later
+
+        // Second alternative: single newline characters
+        let single_newline_char_pc = self.b.pc();
+        self.b
+            .set_split_target(split_pc, single_newline_char_pc, true);
+
+        // Compile a delegate for matching single newline characters
+        let pattern = if unicode {
+            // Unicode mode: \n, \v, \f, \r, U+0085, U+2028, U+2029
+            "[\n\x0B\x0C\r\u{0085}\u{2028}\u{2029}]"
+        } else {
+            // Non-Unicode mode: \n, \v, \f, \r
+            "[\n\x0B\x0C\r]"
+        };
+
+        let compiled = compile_inner(pattern, &self.options)?;
+        self.b.add(Insn::Delegate(Delegate {
+            inner: compiled,
+            pattern: pattern.to_string(),
+            capture_groups: None,
+        }));
+
+        // Fix the jump target
+        let end_atomic_pc = self.b.pc();
+        self.b.add(Insn::EndAtomic);
+
+        self.b.set_jmp_target(jmp_pc, end_atomic_pc);
+
         Ok(())
     }
 }
