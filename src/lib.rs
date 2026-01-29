@@ -1643,7 +1643,7 @@ pub enum Expr {
     Alt(Vec<Expr>),
     /// Capturing group of expression, e.g. `(a.)` matches `a` and any character and "captures"
     /// (remembers) the match
-    Group(Box<Expr>),
+    Group(Arc<Expr>),
     /// Look-around (e.g. positive/negative look-ahead or look-behind) with an expression, e.g.
     /// `(?=a)` means the next character must be `a` (but the match is not consumed)
     LookAround(Box<Expr>, LookAround),
@@ -1661,11 +1661,13 @@ pub enum Expr {
     },
     /// Delegate a regex to the regex crate. This is used as a simplification so that we don't have
     /// to represent all the expressions in the AST, e.g. character classes.
+    ///
+    /// **Constraint**: All Delegate expressions must match exactly 1 character. This ensures
+    /// consistent analysis and compilation behavior. For zero-width or multi-character patterns,
+    /// use the appropriate Expr variants instead (e.g., Assertion, Repeat, Concat).
     Delegate {
         /// The regex
         inner: String,
-        /// How many characters the regex matches
-        size: usize, // TODO: move into analysis result
         /// Whether the matching is case-insensitive or not
         casei: bool,
     },
@@ -1715,6 +1717,8 @@ pub enum Expr {
     },
     /// Backtracking control verb
     BacktrackingControlVerb(BacktrackingControlVerb),
+    /// Match while the given expression is absent from the haystack
+    Absent(Absent),
 }
 
 /// Type of look-around assertion as used for a look-around expression.
@@ -1728,6 +1732,28 @@ pub enum LookAround {
     LookBehind,
     /// Negative look-behind assertion, e.g. `(?<!a)`
     LookBehindNeg,
+}
+
+/// Type of absent operator as used for Oniguruma's absent functionality.
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum Absent {
+    /// Absent repeater `(?~absent)` - works like `\O*` (match any character including newline, repeated)
+    /// but is limited by the range that does not include the string match with `absent`.
+    /// This is a written abbreviation of `(?~|absent|\O*)`.
+    Repeater(Box<Expr>),
+    /// Absent expression `(?~|absent|exp)` - works like `exp`, but is limited by the range
+    /// that does not include the string match with `absent`.
+    Expression {
+        /// The expression to avoid matching
+        absent: Box<Expr>,
+        /// The expression to match
+        exp: Box<Expr>,
+    },
+    /// Absent stopper `(?~|absent)` - after this operator, haystack range is limited
+    /// up to the point where `absent` matches.
+    Stopper(Box<Expr>),
+    /// Range clear `(?~|)` - clears the effects caused by absent stoppers.
+    Clear,
 }
 
 /// Type of backtracking control verb which affects how backtracking will behave.
@@ -1815,6 +1841,8 @@ pub enum Assertion {
     StartText,
     /// End of input text
     EndText,
+    /// End of input text, or before any trailing newlines at the end (Oniguruma's `\Z`)
+    EndTextIgnoreTrailingNewlines,
     /// Start of a line
     StartLine {
         /// CRLF mode
@@ -1851,6 +1879,7 @@ impl Assertion {
                 | RightWordHalfBoundary
                 | WordBoundary
                 | NotWordBoundary
+                | EndTextIgnoreTrailingNewlines
         )
     }
 }
@@ -1940,10 +1969,12 @@ impl<'a> Iterator for ExprChildrenIterMut<'a> {
 }
 
 macro_rules! children_iter_match {
-    ($self:expr, $iter:ident, $vec_method:ident, $single_method:ident) => {
+    ($self:expr, $iter:ident, $vec_method:ident, $single_method:ident, $group_method:ident) => {
         match $self {
             Expr::Concat(children) | Expr::Alt(children) => $iter::Vec(children.$vec_method()),
-            Expr::Group(child)
+            Expr::Group(child) => $iter::Single(Some(Arc::$group_method(child))),
+            Expr::Absent(Absent::Repeater(child))
+            | Expr::Absent(Absent::Stopper(child))
             | Expr::LookAround(child, _)
             | Expr::AtomicGroup(child)
             | Expr::Repeat { child, .. } => $iter::Single(Some(child.$single_method())),
@@ -1955,6 +1986,11 @@ macro_rules! children_iter_match {
                 first: Some(condition.$single_method()),
                 second: Some(true_branch.$single_method()),
                 third: Some(false_branch.$single_method()),
+            },
+            Expr::Absent(Absent::Expression { absent, exp }) => $iter::Triple {
+                first: Some(absent.$single_method()),
+                second: Some(exp.$single_method()),
+                third: None,
             },
             _ if $self.is_leaf_node() => $iter::Empty,
             _ => unimplemented!(),
@@ -1995,6 +2031,7 @@ impl Expr {
                 | Expr::BacktrackingControlVerb(_)
                 | Expr::SubroutineCall(_)
                 | Expr::UnresolvedNamedSubroutineCall { .. }
+                | Expr::Absent(Absent::Clear),
         )
     }
 
@@ -2003,7 +2040,7 @@ impl Expr {
     /// For leaf nodes, this returns an empty iterator. For non-leaf nodes, it returns
     /// references to their immediate children (non-recursive).
     pub fn children_iter(&self) -> ExprChildrenIter<'_> {
-        children_iter_match!(self, ExprChildrenIter, iter, as_ref)
+        children_iter_match!(self, ExprChildrenIter, iter, as_ref, as_ref)
     }
 
     /// Returns an iterator over the immediate children of this expression for mutable access.
@@ -2011,7 +2048,7 @@ impl Expr {
     /// For leaf nodes, this returns an empty iterator. For non-leaf nodes, it returns
     /// mutable references to their immediate children (non-recursive).
     pub fn children_iter_mut(&mut self) -> ExprChildrenIterMut<'_> {
-        children_iter_match!(self, ExprChildrenIterMut, iter_mut, as_mut)
+        children_iter_match!(self, ExprChildrenIterMut, iter_mut, as_mut, make_mut)
     }
 
     /// Convert expression to a regex string in the regex crate's syntax.
@@ -2202,11 +2239,12 @@ mod tests {
     use alloc::borrow::Cow;
     use alloc::boxed::Box;
     use alloc::string::{String, ToString};
+    use alloc::sync::Arc;
     use alloc::vec::Vec;
     use alloc::{format, vec};
 
-    use crate::parse::make_literal;
-    use crate::{Expr, Regex, RegexImpl};
+    use crate::parse::{make_group, make_literal};
+    use crate::{Absent, Expr, Regex, RegexImpl};
 
     //use detect_possible_backref;
 
@@ -2240,7 +2278,7 @@ mod tests {
 
     #[test]
     fn to_str_group_alt() {
-        let e = Expr::Group(Box::new(Expr::Alt(vec![
+        let e = Expr::Group(Arc::new(Expr::Alt(vec![
             make_literal("a"),
             make_literal("b"),
         ])));
@@ -2370,7 +2408,6 @@ mod tests {
         .is_leaf_node());
         assert!(Expr::Delegate {
             inner: "[0-9]".to_string(),
-            size: 1,
             casei: false
         }
         .is_leaf_node());
@@ -2395,6 +2432,8 @@ mod tests {
             ix: 0
         }
         .is_leaf_node());
+
+        assert!(Expr::Absent(Absent::Clear).is_leaf_node());
     }
 
     #[test]
@@ -2402,7 +2441,7 @@ mod tests {
         // Test all non-leaf node variants
         assert!(!Expr::Concat(vec![make_literal("a")]).is_leaf_node());
         assert!(!Expr::Alt(vec![make_literal("a"), make_literal("b")]).is_leaf_node());
-        assert!(!Expr::Group(Box::new(make_literal("a"))).is_leaf_node());
+        assert!(!make_group(make_literal("a")).is_leaf_node());
         assert!(
             !Expr::LookAround(Box::new(make_literal("a")), crate::LookAround::LookAhead)
                 .is_leaf_node()
@@ -2421,6 +2460,19 @@ mod tests {
             false_branch: Box::new(Expr::Empty)
         }
         .is_leaf_node());
+
+        assert!(!Expr::Absent(Absent::Repeater(Box::new(make_literal("a")))).is_leaf_node());
+        assert!(!Expr::Absent(Absent::Expression {
+            absent: Box::new(make_literal("/*")),
+            exp: Box::new(Expr::Repeat {
+                child: Box::new(Expr::Any { newline: true }),
+                lo: 0,
+                hi: usize::MAX,
+                greedy: true
+            })
+        })
+        .is_leaf_node());
+        assert!(!Expr::Absent(Absent::Stopper(Box::new(make_literal("/*")))).is_leaf_node());
     }
 
     #[test]
@@ -2439,7 +2491,7 @@ mod tests {
     fn test_children_iter_single() {
         // Group, LookAround, AtomicGroup, Repeat should return single child
         let child = make_literal("a");
-        let expr = Expr::Group(Box::new(child.clone()));
+        let expr = make_group(child.clone());
         let children: Vec<_> = expr.children_iter().collect();
         assert_eq!(children.len(), 1);
 
@@ -2476,5 +2528,18 @@ mod tests {
         };
         let children: Vec<_> = expr.children_iter().collect();
         assert_eq!(children.len(), 3);
+
+        // Absent expression should return two children
+        let expr = Expr::Absent(Absent::Expression {
+            absent: Box::new(make_literal("/*")),
+            exp: Box::new(Expr::Repeat {
+                child: Box::new(Expr::Any { newline: true }),
+                lo: 0,
+                hi: usize::MAX,
+                greedy: true,
+            }),
+        });
+        let children: Vec<_> = expr.children_iter().collect();
+        assert_eq!(children.len(), 2);
     }
 }
