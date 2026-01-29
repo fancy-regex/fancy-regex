@@ -136,7 +136,7 @@ Escapes:
 `\N`
 : any character except newline\
 `\R`
-: general newline - matches a newline, treating \r\n atomically
+: general newline - matches all common line break characters: \n, \v, \f, \r, treating \r\n as an atomic unit
 
 Backreferences:
 
