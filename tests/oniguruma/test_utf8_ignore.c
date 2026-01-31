@@ -166,10 +166,10 @@
   // Compile failed: ParseError(0, InvalidEscape("\\o"))
   x2("\\o{101}", "A", 0, 1);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Backref at recursion level"))
   x2("\\A(a|b\\g<1>c)\\k<1+3>\\z", "bbacca", 0, 6);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Backref at recursion level"))
   x2("(?i)\\A(a|b\\g<1>c)\\k<1+2>\\z", "bBACcbac", 0, 8);
 
   // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
@@ -186,21 +186,6 @@
 
   // No match found
   x2("(?:(?'name'a)|(?'name'b))(?('name')c|d)e", "ace", 0, 3);
-
-  // Compile failed: ParseError(0, InvalidEscape("\\R"))
-  x2("\\R", "\r\n", 0, 2);
-
-  // Compile failed: ParseError(0, InvalidEscape("\\R"))
-  x2("\\R", "\r", 0, 1);
-
-  // Compile failed: ParseError(0, InvalidEscape("\\R"))
-  x2("\\R", "\n", 0, 1);
-
-  // Compile failed: ParseError(0, InvalidEscape("\\R"))
-  x2("\\R", "\x0b", 0, 1);
-
-  // Compile failed: ParseError(0, InvalidEscape("\\R"))
-  x2("\\R", "\xc2\x85", 0, 2);
 
   // No match found
   x2("(?:()|()|())*\\3\\1", "abc", 0, 0);
@@ -223,142 +208,142 @@
   // Compile failed: ParseError(1, InvalidEscape("\\o"))
   x2("[\\o{101}]", "A", 0, 1);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
   x2("(?~)", "", 0, 0);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
   x2("(?~)", "A", 0, 0);
 
-  // Compile failed: ParseError(7, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
   x2("aaaaa(?~)", "aaaaaaaaaa", 0, 5);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
   x2("(?~(?:|aaa))", "aaa", 0, 0);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
   x2("(?~aaa|)", "aaa", 0, 0);
 
-  // Compile failed: ParseError(3, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
   x2("a(?~(?~)).", "abcdefghijklmnopqrstuvwxyz", 0, 26);
 
-  // Compile failed: ParseError(5, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
   x2("/\\*(?~\\*/)\\*/", "/* */ */", 0, 5);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
   x2("(?~\\w+)zzzzz", "zzzzz", 0, 5);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
   x2("(?~\\w*)zzzzz", "zzzzz", 0, 5);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
   x2("(?~A.C|B)", "ABC", 0, 0);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
   x2("(?~XYZ|ABC)a", "ABCa", 1, 4);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
   x2("(?~XYZ|ABC)a", "aABCa", 0, 1);
 
-  // Compile failed: ParseError(9, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
   x2("<[^>]*>(?~[<>])</[^>]*>", "<a>vvv</a>   <b>  </b>", 0, 10);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
   x2("(?~ab)", "ccc\ndab", 0, 5);
 
-  // Compile failed: ParseError(6, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
   x2("(?m:(?~ab))", "ccc\ndab", 0, 5);
 
-  // Compile failed: ParseError(7, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
   x2("(?-m:(?~ab))", "ccc\ndab", 0, 5);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
   x2("(?~abc)xyz", "xyz012345678901234567890123456789abc", 0, 3);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent expression"))
   x2("(?~|78|\\d*)", "123456789", 0, 6);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent expression"))
   x2("(?~|def|(?:abc|de|f){0,100})", "abcdedeabcfdefabc", 0, 11);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent expression"))
   x2("(?~|ab|.*)", "ccc\nddd", 0, 3);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent expression"))
   x2("(?~|ab|\\O*)", "ccc\ndab", 0, 5);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent expression"))
   x2("(?~|ab|\\O{2,10})", "ccc\ndab", 0, 5);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent expression"))
   x2("(?~|ab|\\O{1,10})", "ab", 1, 2);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent expression"))
   x2("(?~|abc|\\O{1,10})", "abc", 1, 3);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent expression"))
   x2("(?~|ab|\\O{5,10})|abc", "abc", 0, 3);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent expression"))
   x2("(?~|ab|\\O{1,10})", "cccccccccccab", 0, 10);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent expression"))
   x2("(?~|aaa|)", "aaa", 0, 0);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent expression"))
   x2("(?~||a*)", "aaaaaa", 0, 0);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent expression"))
   x2("(?~||a*?)", "aaaaaa", 0, 0);
 
-  // Compile failed: ParseError(5, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent expression"))
   x2("(a)(?~|b|\\1)", "aaaaaa", 0, 2);
 
-  // Compile failed: ParseError(5, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent expression"))
   x2("(a)(?~|bb|(?:a\\1)*)", "aaaaaa", 0, 5);
 
-  // Compile failed: ParseError(7, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent expression"))
   x2("(b|c)(?~|abac|(?:a\\1)*)", "abababacabab", 1, 4);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent expression"))
   x2("(?~|aaaaa|a*+)", "aaaaa", 0, 0);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent expression"))
   x2("(?~|aaaaaa|a*+)b", "aaaaaab", 1, 7);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent expression"))
   x2("(?~|abcd|(?>))", "zzzabcd", 0, 0);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent expression"))
   x2("(?~|abc|a*?)", "aaaabc", 0, 0);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent stopper"))
   x2("(?~|abc)a*", "aaaaaabc", 0, 5);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent stopper"))
   x2("(?~|abc)a*z|aaaaaabc", "aaaaaabc", 0, 8);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent stopper"))
   x2("(?~|aaaaaa)a*", "aaaaaa", 0, 0);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent stopper"))
   x2("(?~|abc)aaaa|aaaabc", "aaaabc", 0, 6);
 
-  // Compile failed: ParseError(5, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent stopper"))
   x2("(?>(?~|abc))aaaa|aaaabc", "aaaabc", 0, 6);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Range clear"))
   x2("(?~|)a", "a", 0, 1);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent stopper"))
   x2("(?~|a)(?~|)a", "a", 0, 1);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent stopper"))
   x2("(?~|a).*(?~|)a", "bbbbbbbbbbbbbbbbbbbba", 0, 21);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent stopper"))
   x2("(?~|abc).*(xyz|pqr)(?~|)abc", "aaaaxyzaaapqrabc", 0, 16);
 
-  // Compile failed: ParseError(2, UnknownFlag("(?~"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent stopper"))
   x2("(?~|abc).*(xyz|pqr)(?~|)abc", "aaaaxyzaaaabcpqrabc", 11, 19);
 
   // No match found
@@ -593,16 +578,16 @@
   // Compile failed: ParseError(3, TargetNotRepeatable)
   x2("(?(?{....})123|456)", "123", 0, 3);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
+  // Compile failed: CompileError(LeftRecursiveSubroutineCall("group 0"))
   x2("\\g'0'++{,0}",   "abcdefgh", 0, 0);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
+  // Compile failed: CompileError(LeftRecursiveSubroutineCall("group 0"))
   x2("\\g'0'++{,0}?",  "abcdefgh", 0, 0);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
+  // Compile failed: CompileError(LeftRecursiveSubroutineCall("group 0"))
   x2("\\g'0'++{,0}b",  "abcdefgh", 1, 2);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Subroutine Call"))
+  // Compile failed: CompileError(LeftRecursiveSubroutineCall("group 0"))
   x2("\\g'0'++{,0}?def", "abcdefgh", 3, 6);
 
   // Compile failed: CompileError(InnerError(BuildError { kind: Syntax { pid: PatternID(0), err: Parse(Error { kind: RepetitionCountInvalid, pattern: "a{3,2}b", span: Span(Position(o: 1, l: 1, c: 2), Position(o: 6, l: 1, c: 7)) }) } }))

@@ -136,6 +136,9 @@ impl Compiler {
             Expr::Any { newline: false } => {
                 self.b.add(Insn::AnyNoNL);
             }
+            Expr::GeneralNewline { unicode } => {
+                self.compile_general_newline(unicode)?;
+            }
             Expr::Concat(_) => {
                 self.compile_concat(info, hard)?;
             }
@@ -211,6 +214,18 @@ impl Compiler {
             }
             Expr::UnresolvedNamedSubroutineCall { .. } => unreachable!(),
             Expr::BackrefWithRelativeRecursionLevel { .. } => unreachable!(),
+            Expr::Absent(ref absent) => {
+                use crate::Absent::*;
+                let error_msg = match absent {
+                    Repeater(_) => "Absent repeater",
+                    Expression { .. } => "Absent expression",
+                    Stopper(_) => "Absent stopper",
+                    Clear => "Range clear",
+                };
+                return Err(Error::CompileError(Box::new(
+                    CompileError::FeatureNotYetSupported(error_msg.to_string()),
+                )));
+            }
         }
         Ok(())
     }
@@ -654,6 +669,54 @@ impl Compiler {
         self.b.add(insn);
         Ok(())
     }
+
+    fn compile_general_newline(&mut self, unicode: bool) -> Result<()> {
+        // Compile \R as: try \r\n first, then try single newline chars
+        // The entire \R is atomic - once it matches, we don't backtrack
+        // This prevents \r\n from backtracking to \r
+
+        self.b.add(Insn::BeginAtomic);
+
+        // Split: try \r\n first, then single chars
+        let split_pc = self.b.pc();
+        self.b.add(Insn::Split(split_pc + 1, usize::MAX)); // Will fix second target later
+
+        // First alternative: \r\n
+        self.b.add(Insn::Lit("\r\n".to_string()));
+
+        // Jump over other alternatives
+        let jmp_pc = self.b.pc();
+        self.b.add(Insn::Jmp(usize::MAX)); // Will fix target later
+
+        // Second alternative: single newline characters
+        let single_newline_char_pc = self.b.pc();
+        self.b
+            .set_split_target(split_pc, single_newline_char_pc, true);
+
+        // Compile a delegate for matching single newline characters
+        let pattern = if unicode {
+            // Unicode mode: \n, \v, \f, \r, U+0085, U+2028, U+2029
+            "[\n\x0B\x0C\r\u{0085}\u{2028}\u{2029}]"
+        } else {
+            // Non-Unicode mode: \n, \v, \f, \r
+            "[\n\x0B\x0C\r]"
+        };
+
+        let compiled = compile_inner(pattern, &self.options)?;
+        self.b.add(Insn::Delegate(Delegate {
+            inner: compiled,
+            pattern: pattern.to_string(),
+            capture_groups: None,
+        }));
+
+        // Fix the jump target
+        let end_atomic_pc = self.b.pc();
+        self.b.add(Insn::EndAtomic);
+
+        self.b.set_jmp_target(jmp_pc, end_atomic_pc);
+
+        Ok(())
+    }
 }
 
 // Unlike Regex in `regex`, `regex-automata` does not store the pattern string,
@@ -1082,6 +1145,49 @@ mod tests {
         // the backref to a capture group inside the variable lookbehind makes the capture group hard
         let tree = Expr::parse_tree(r"(?<=a(b+))\1").unwrap();
         let info = analyze(&tree, false).unwrap();
+        let result = compile(&info, true);
+        assert!(result.is_err());
+        assert_matches!(
+            result.err().unwrap(),
+            Error::CompileError(box_err) if matches!(*box_err, CompileError::FeatureNotYetSupported(_))
+        );
+    }
+
+    #[test]
+    fn absent_operators_error() {
+        // Test that absent repeater returns feature not supported
+        let tree = Expr::parse_tree(r"(?~abc)").unwrap();
+        let info = analyze(&tree, true).unwrap();
+        let result = compile(&info, true);
+        assert!(result.is_err());
+        assert_matches!(
+            result.err().unwrap(),
+            Error::CompileError(box_err) if matches!(*box_err, CompileError::FeatureNotYetSupported(_))
+        );
+
+        // Test that absent expression returns feature not supported
+        let tree = Expr::parse_tree(r"(?~|abc|\d*)").unwrap();
+        let info = analyze(&tree, true).unwrap();
+        let result = compile(&info, true);
+        assert!(result.is_err());
+        assert_matches!(
+            result.err().unwrap(),
+            Error::CompileError(box_err) if matches!(*box_err, CompileError::FeatureNotYetSupported(_))
+        );
+
+        // Test that absent stopper returns feature not supported
+        let tree = Expr::parse_tree(r"(?~|abc)").unwrap();
+        let info = analyze(&tree, true).unwrap();
+        let result = compile(&info, true);
+        assert!(result.is_err());
+        assert_matches!(
+            result.err().unwrap(),
+            Error::CompileError(box_err) if matches!(*box_err, CompileError::FeatureNotYetSupported(_))
+        );
+
+        // Test that range clear returns feature not supported
+        let tree = Expr::parse_tree(r"(?~|)").unwrap();
+        let info = analyze(&tree, true).unwrap();
         let result = compile(&info, true);
         assert!(result.is_err());
         assert_matches!(
