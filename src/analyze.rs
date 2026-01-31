@@ -118,6 +118,9 @@ struct Analyzer<'a> {
 }
 
 impl<'a> Analyzer<'a> {
+    // enclosing_group: The group that currently contains the expression being analyzed.
+    // This is used to track which group "owns" any subroutine calls found,
+    // and to determine if we're at the root level (group 0).
     fn visit(
         &mut self,
         expr: &'a Expr,
