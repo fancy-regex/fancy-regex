@@ -118,7 +118,13 @@ struct Analyzer<'a> {
 }
 
 impl<'a> Analyzer<'a> {
-    fn visit(&mut self, expr: &'a Expr, min_pos_in_group: usize, inside_zero_rep: bool, enclosing_group: usize) -> Result<Info<'a>> {
+    fn visit(
+        &mut self,
+        expr: &'a Expr,
+        min_pos_in_group: usize,
+        inside_zero_rep: bool,
+        enclosing_group: usize,
+    ) -> Result<Info<'a>> {
         let start_group = self.next_group_number;
         let mut children = Vec::new();
         let mut min_size = 0;
@@ -152,7 +158,8 @@ impl<'a> Analyzer<'a> {
                 const_size = true;
                 let mut pos_in_group = min_pos_in_group;
                 for child in v {
-                    let child_info = self.visit(child, pos_in_group, inside_zero_rep, enclosing_group)?;
+                    let child_info =
+                        self.visit(child, pos_in_group, inside_zero_rep, enclosing_group)?;
                     min_size += child_info.min_size;
                     const_size &= child_info.const_size;
                     hard |= child_info.hard;
@@ -161,13 +168,15 @@ impl<'a> Analyzer<'a> {
                 }
             }
             Expr::Alt(ref v) => {
-                let child_info = self.visit(&v[0], min_pos_in_group, inside_zero_rep, enclosing_group)?;
+                let child_info =
+                    self.visit(&v[0], min_pos_in_group, inside_zero_rep, enclosing_group)?;
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
                 hard = child_info.hard;
                 children.push(child_info);
                 for child in &v[1..] {
-                    let child_info = self.visit(child, min_pos_in_group, inside_zero_rep, enclosing_group)?;
+                    let child_info =
+                        self.visit(child, min_pos_in_group, inside_zero_rep, enclosing_group)?;
                     const_size &= child_info.const_size && min_size == child_info.min_size;
                     min_size = min(min_size, child_info.min_size);
                     hard |= child_info.hard;
@@ -204,7 +213,8 @@ impl<'a> Analyzer<'a> {
             }
             Expr::LookAround(ref child, _) => {
                 // NOTE: min_pos_in_group might seem weird for lookbehinds
-                let child_info = self.visit(child, min_pos_in_group, inside_zero_rep, enclosing_group)?;
+                let child_info =
+                    self.visit(child, min_pos_in_group, inside_zero_rep, enclosing_group)?;
                 // min_size = 0
                 const_size = true;
                 hard = true;
@@ -219,7 +229,12 @@ impl<'a> Analyzer<'a> {
                 } else {
                     inside_zero_rep
                 };
-                let child_info = self.visit(child, min_pos_in_group, child_inside_zero_rep, enclosing_group)?;
+                let child_info = self.visit(
+                    child,
+                    min_pos_in_group,
+                    child_inside_zero_rep,
+                    enclosing_group,
+                )?;
                 min_size = child_info.min_size * lo;
                 const_size = child_info.const_size && lo == hi;
                 hard = child_info.hard;
@@ -249,7 +264,8 @@ impl<'a> Analyzer<'a> {
                 hard = true;
             }
             Expr::AtomicGroup(ref child) => {
-                let child_info = self.visit(child, min_pos_in_group, inside_zero_rep, enclosing_group)?;
+                let child_info =
+                    self.visit(child, min_pos_in_group, inside_zero_rep, enclosing_group)?;
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
                 hard = true; // TODO: possibly could weaken
@@ -278,14 +294,24 @@ impl<'a> Analyzer<'a> {
             } => {
                 hard = true;
 
-                let child_info_condition = self.visit(condition, min_pos_in_group, inside_zero_rep, enclosing_group)?;
+                let child_info_condition = self.visit(
+                    condition,
+                    min_pos_in_group,
+                    inside_zero_rep,
+                    enclosing_group,
+                )?;
                 let child_info_truth = self.visit(
                     true_branch,
                     min_pos_in_group + child_info_condition.min_size,
                     inside_zero_rep,
                     enclosing_group,
                 )?;
-                let child_info_false = self.visit(false_branch, min_pos_in_group, inside_zero_rep, enclosing_group)?;
+                let child_info_false = self.visit(
+                    false_branch,
+                    min_pos_in_group,
+                    inside_zero_rep,
+                    enclosing_group,
+                )?;
 
                 min_size = child_info_condition.min_size
                     + min(child_info_truth.min_size, child_info_false.min_size);
@@ -372,7 +398,8 @@ impl<'a> Analyzer<'a> {
                 use crate::Absent::*;
                 match absent {
                     Repeater(ref child) => {
-                        let child_info = self.visit(child, min_pos_in_group, inside_zero_rep, enclosing_group)?;
+                        let child_info =
+                            self.visit(child, min_pos_in_group, inside_zero_rep, enclosing_group)?;
                         min_size = 0;
                         const_size = false;
                         hard = true;
@@ -382,8 +409,10 @@ impl<'a> Analyzer<'a> {
                         ref absent,
                         ref exp,
                     } => {
-                        let absent_info = self.visit(absent, min_pos_in_group, inside_zero_rep, enclosing_group)?;
-                        let exp_info = self.visit(exp, min_pos_in_group, inside_zero_rep, enclosing_group)?;
+                        let absent_info =
+                            self.visit(absent, min_pos_in_group, inside_zero_rep, enclosing_group)?;
+                        let exp_info =
+                            self.visit(exp, min_pos_in_group, inside_zero_rep, enclosing_group)?;
                         min_size = exp_info.min_size;
                         const_size = false;
                         hard = true;
@@ -391,7 +420,8 @@ impl<'a> Analyzer<'a> {
                         children.push(exp_info);
                     }
                     Stopper(ref child) => {
-                        let child_info = self.visit(child, min_pos_in_group, inside_zero_rep, enclosing_group)?;
+                        let child_info =
+                            self.visit(child, min_pos_in_group, inside_zero_rep, enclosing_group)?;
                         // Absent stopper doesn't consume any characters itself
                         min_size = 0;
                         const_size = true;
