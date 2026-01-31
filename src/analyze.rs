@@ -109,10 +109,6 @@ struct Analyzer<'a> {
     group_info: Map<usize, SizeInfo>,
     /// Tracks subroutine calls: maps from a group to the subroutines it calls
     subroutine_calls: Map<usize, Vec<SubroutineCallInfo>>,
-    /// The group that currently contains the expression being analyzed.
-    /// This is used to track which group "owns" any subroutine calls found,
-    /// and to determine if we're at the root level (group 0).
-    enclosing_group: usize,
     /// Groups that are directly executed from root (not inside {0})
     root_groups: BitSet,
     /// Pre-populated map of capture group index to the inner expression of that group
@@ -122,7 +118,7 @@ struct Analyzer<'a> {
 }
 
 impl<'a> Analyzer<'a> {
-    fn visit(&mut self, expr: &'a Expr, min_pos_in_group: usize, inside_zero_rep: bool) -> Result<Info<'a>> {
+    fn visit(&mut self, expr: &'a Expr, min_pos_in_group: usize, inside_zero_rep: bool, enclosing_group: usize) -> Result<Info<'a>> {
         let start_group = self.next_group_number;
         let mut children = Vec::new();
         let mut min_size = 0;
@@ -156,7 +152,7 @@ impl<'a> Analyzer<'a> {
                 const_size = true;
                 let mut pos_in_group = min_pos_in_group;
                 for child in v {
-                    let child_info = self.visit(child, pos_in_group, inside_zero_rep)?;
+                    let child_info = self.visit(child, pos_in_group, inside_zero_rep, enclosing_group)?;
                     min_size += child_info.min_size;
                     const_size &= child_info.const_size;
                     hard |= child_info.hard;
@@ -165,13 +161,13 @@ impl<'a> Analyzer<'a> {
                 }
             }
             Expr::Alt(ref v) => {
-                let child_info = self.visit(&v[0], min_pos_in_group, inside_zero_rep)?;
+                let child_info = self.visit(&v[0], min_pos_in_group, inside_zero_rep, enclosing_group)?;
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
                 hard = child_info.hard;
                 children.push(child_info);
                 for child in &v[1..] {
-                    let child_info = self.visit(child, min_pos_in_group, inside_zero_rep)?;
+                    let child_info = self.visit(child, min_pos_in_group, inside_zero_rep, enclosing_group)?;
                     const_size &= child_info.const_size && min_size == child_info.min_size;
                     min_size = min(min_size, child_info.min_size);
                     hard |= child_info.hard;
@@ -184,14 +180,11 @@ impl<'a> Analyzer<'a> {
                 self.analyzing_groups.insert(group);
 
                 // Track if this group is executed from root (not inside {0})
-                if self.enclosing_group == 0 && !inside_zero_rep {
+                if enclosing_group == 0 && !inside_zero_rep {
                     self.root_groups.insert(group);
                 }
 
-                let prev_group = self.enclosing_group;
-                self.enclosing_group = group;
-                let child_info = self.visit(child, 0, inside_zero_rep)?;
-                self.enclosing_group = prev_group;
+                let child_info = self.visit(child, 0, inside_zero_rep, group)?;
                 self.analyzing_groups.remove(group);
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
@@ -211,7 +204,7 @@ impl<'a> Analyzer<'a> {
             }
             Expr::LookAround(ref child, _) => {
                 // NOTE: min_pos_in_group might seem weird for lookbehinds
-                let child_info = self.visit(child, min_pos_in_group, inside_zero_rep)?;
+                let child_info = self.visit(child, min_pos_in_group, inside_zero_rep, enclosing_group)?;
                 // min_size = 0
                 const_size = true;
                 hard = true;
@@ -226,7 +219,7 @@ impl<'a> Analyzer<'a> {
                 } else {
                     inside_zero_rep
                 };
-                let child_info = self.visit(child, min_pos_in_group, child_inside_zero_rep)?;
+                let child_info = self.visit(child, min_pos_in_group, child_inside_zero_rep, enclosing_group)?;
                 min_size = child_info.min_size * lo;
                 const_size = child_info.const_size && lo == hi;
                 hard = child_info.hard;
@@ -256,7 +249,7 @@ impl<'a> Analyzer<'a> {
                 hard = true;
             }
             Expr::AtomicGroup(ref child) => {
-                let child_info = self.visit(child, min_pos_in_group, inside_zero_rep)?;
+                let child_info = self.visit(child, min_pos_in_group, inside_zero_rep, enclosing_group)?;
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
                 hard = true; // TODO: possibly could weaken
@@ -285,13 +278,14 @@ impl<'a> Analyzer<'a> {
             } => {
                 hard = true;
 
-                let child_info_condition = self.visit(condition, min_pos_in_group, inside_zero_rep)?;
+                let child_info_condition = self.visit(condition, min_pos_in_group, inside_zero_rep, enclosing_group)?;
                 let child_info_truth = self.visit(
                     true_branch,
                     min_pos_in_group + child_info_condition.min_size,
                     inside_zero_rep,
+                    enclosing_group,
                 )?;
-                let child_info_false = self.visit(false_branch, min_pos_in_group, inside_zero_rep)?;
+                let child_info_false = self.visit(false_branch, min_pos_in_group, inside_zero_rep, enclosing_group)?;
 
                 min_size = child_info_condition.min_size
                     + min(child_info_truth.min_size, child_info_false.min_size);
@@ -310,9 +304,9 @@ impl<'a> Analyzer<'a> {
                 // Only skip tracking if we're in unreachable code at the root level
                 // Calls inside groups should always be tracked, even if the group is inside {0} at root,
                 // because the group can be called as a subroutine from elsewhere
-                if !inside_zero_rep || self.enclosing_group != 0 {
+                if !inside_zero_rep || enclosing_group != 0 {
                     self.subroutine_calls
-                        .entry(self.enclosing_group)
+                        .entry(enclosing_group)
                         .or_default()
                         .push(SubroutineCallInfo {
                             target_group,
@@ -339,13 +333,10 @@ impl<'a> Analyzer<'a> {
                     // directly analyze it now
                     self.analyzing_groups.insert(target_group);
 
-                    // Save and update enclosing_group to properly track subroutine calls within the group
-                    let prev_enclosing_group = self.enclosing_group;
+                    // Save and restore next_group_number around the recursive call
                     let prev_next_group_number = self.next_group_number;
-                    self.enclosing_group = target_group;
                     self.next_group_number = target_group + 1;
-                    let group_info = self.visit(group_expr, 0, inside_zero_rep)?;
-                    self.enclosing_group = prev_enclosing_group;
+                    let group_info = self.visit(group_expr, 0, inside_zero_rep, target_group)?;
                     self.next_group_number = prev_next_group_number;
 
                     self.analyzing_groups.remove(target_group);
@@ -381,7 +372,7 @@ impl<'a> Analyzer<'a> {
                 use crate::Absent::*;
                 match absent {
                     Repeater(ref child) => {
-                        let child_info = self.visit(child, min_pos_in_group, inside_zero_rep)?;
+                        let child_info = self.visit(child, min_pos_in_group, inside_zero_rep, enclosing_group)?;
                         min_size = 0;
                         const_size = false;
                         hard = true;
@@ -391,8 +382,8 @@ impl<'a> Analyzer<'a> {
                         ref absent,
                         ref exp,
                     } => {
-                        let absent_info = self.visit(absent, min_pos_in_group, inside_zero_rep)?;
-                        let exp_info = self.visit(exp, min_pos_in_group, inside_zero_rep)?;
+                        let absent_info = self.visit(absent, min_pos_in_group, inside_zero_rep, enclosing_group)?;
+                        let exp_info = self.visit(exp, min_pos_in_group, inside_zero_rep, enclosing_group)?;
                         min_size = exp_info.min_size;
                         const_size = false;
                         hard = true;
@@ -400,7 +391,7 @@ impl<'a> Analyzer<'a> {
                         children.push(exp_info);
                     }
                     Stopper(ref child) => {
-                        let child_info = self.visit(child, min_pos_in_group, inside_zero_rep)?;
+                        let child_info = self.visit(child, min_pos_in_group, inside_zero_rep, enclosing_group)?;
                         // Absent stopper doesn't consume any characters itself
                         min_size = 0;
                         const_size = true;
@@ -584,13 +575,12 @@ pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result
         next_group_number: start_group,
         group_info: Map::new(),
         subroutine_calls: Map::new(),
-        enclosing_group: 0, // Always start at group 0 (the implicit whole-pattern group)
         root_groups: BitSet::new(),
         pre_populated_groups,
         analyzing_groups: BitSet::new(),
     };
 
-    let analyzed = analyzer.visit(&tree.expr, 0, false)?;
+    let analyzed = analyzer.visit(&tree.expr, 0, false, 0)?;
     if analyzer.backrefs.contains(0) {
         return Err(Error::CompileError(Box::new(CompileError::InvalidBackref(
             0,
