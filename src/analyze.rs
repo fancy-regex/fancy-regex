@@ -1157,9 +1157,16 @@ mod tests {
     }
 
     #[test]
-    fn left_recursive_group_zero_explicit() {
+    fn not_left_recursive_group_zero_explicit() {
         // Self-recursive on explicit group 0: (a\g<0>)
         let tree = Expr::parse_tree(r"(a\g<0>)").unwrap();
+        let result = analyze(&tree, true);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn not_left_recursive_group_zero_subroutine_call_unreachable() {
+        let tree = Expr::parse_tree(r"\g<0>{0}abc").unwrap();
         let result = analyze(&tree, true);
         assert!(result.is_ok());
     }
