@@ -111,8 +111,10 @@ struct Analyzer<'a> {
     subroutine_calls: Map<usize, Vec<SubroutineCallInfo>>,
     /// Groups that are directly executed from root (not inside {0})
     root_groups: BitSet,
-    /// Pre-populated map of capture group index to the inner expression of that group
-    pre_populated_groups: Map<usize, &'a Expr>,
+    /// Pre-populated map of capture group index to the inner expression of that group.
+    /// Only pre-populated/used when there are subroutine calls, to enable correct resolution
+    /// of forward references, to detect whether they are const-size etc.
+    group_exprs: Map<usize, &'a Expr>,
     /// Track groups currently being analyzed to prevent infinite recursion
     analyzing_groups: BitSet,
 }
@@ -357,7 +359,7 @@ impl<'a> Analyzer<'a> {
                     // Use conservative defaults to avoid infinite recursion
                     min_size = 0;
                     const_size = false;
-                } else if let Some(&group_expr) = self.pre_populated_groups.get(&target_group) {
+                } else if let Some(&group_expr) = self.group_exprs.get(&target_group) {
                     // If the group hasn't been seen yet (forward reference),
                     // directly analyze it now
                     self.analyzing_groups.insert(target_group);
@@ -571,19 +573,23 @@ fn literal_const_size(_: &str, _: bool) -> bool {
 }
 
 /// Recursively collect all Group expressions and their capture group indices
-fn collect_groups<'a>(expr: &'a Expr, group_ix: &mut usize, groups: &mut Map<usize, &'a Expr>) {
+fn collect_groups<'a>(
+    expr: &'a Expr,
+    next_group_number: &mut usize,
+    groups: &mut Map<usize, &'a Expr>,
+) {
     match expr {
         Expr::Group(inner) => {
-            let current_group = *group_ix;
-            *group_ix += 1;
+            let current_group = *next_group_number;
+            *next_group_number += 1;
             groups.insert(current_group, inner.as_ref());
             // Continue recursing to find nested groups
-            collect_groups(inner.as_ref(), group_ix, groups);
+            collect_groups(inner.as_ref(), next_group_number, groups);
         }
         _ => {
             // Recurse into all children
             for child in expr.children_iter() {
-                collect_groups(child, group_ix, groups);
+                collect_groups(child, next_group_number, groups);
             }
         }
     }
@@ -594,10 +600,10 @@ pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result
     let start_group = if explicit_capture_group_0 { 0 } else { 1 };
 
     // pre-populate groups if subroutines are present to handle forward references
-    let pre_populated_groups = if tree.contains_subroutines {
+    let group_exprs = if tree.contains_subroutines {
         let mut groups = Map::new();
-        let mut group_ix = start_group;
-        collect_groups(&tree.expr, &mut group_ix, &mut groups);
+        let mut next_group_number = start_group;
+        collect_groups(&tree.expr, &mut next_group_number, &mut groups);
         groups
     } else {
         Map::new()
@@ -609,7 +615,7 @@ pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result
         group_info: Map::new(),
         subroutine_calls: Map::new(),
         root_groups: BitSet::new(),
-        pre_populated_groups,
+        group_exprs,
         analyzing_groups: BitSet::new(),
     };
 
