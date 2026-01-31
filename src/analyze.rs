@@ -100,14 +100,19 @@ struct SubroutineCallInfo {
 
 struct Analyzer<'a> {
     backrefs: &'a BitSet,
-    group_ix: usize,
+    /// The next group number to assign when a new capture group is encountered.
+    /// Starts at 0 or 1 depending on whether explicit capture group 0 is enabled,
+    /// and increments for each capture group found during traversal.
+    next_group_number: usize,
     /// Stores the analysis info for each group by group number
     // NOTE: uses a Map instead of a Vec because sometimes we start from capture group 1, other times 0
     group_info: Map<usize, SizeInfo>,
     /// Tracks subroutine calls: maps from a group to the subroutines it calls
     subroutine_calls: Map<usize, Vec<SubroutineCallInfo>>,
-    /// The current group being analyzed (for tracking which group contains subroutine calls)
-    current_group: usize,
+    /// The group that currently contains the expression being analyzed.
+    /// This is used to track which group "owns" any subroutine calls found,
+    /// and to determine if we're at the root level (group 0).
+    enclosing_group: usize,
     /// Groups that are directly executed from root (not inside {0})
     root_groups: BitSet,
     /// Pre-populated map of capture group index to the inner expression of that group
@@ -118,7 +123,7 @@ struct Analyzer<'a> {
 
 impl<'a> Analyzer<'a> {
     fn visit(&mut self, expr: &'a Expr, min_pos_in_group: usize, inside_zero_rep: bool) -> Result<Info<'a>> {
-        let start_group = self.group_ix;
+        let start_group = self.next_group_number;
         let mut children = Vec::new();
         let mut min_size = 0;
         let mut const_size = false;
@@ -174,19 +179,19 @@ impl<'a> Analyzer<'a> {
                 }
             }
             Expr::Group(ref child) => {
-                let group = self.group_ix;
-                self.group_ix += 1;
+                let group = self.next_group_number;
+                self.next_group_number += 1;
                 self.analyzing_groups.insert(group);
 
                 // Track if this group is executed from root (not inside {0})
-                if self.current_group == 0 && !inside_zero_rep {
+                if self.enclosing_group == 0 && !inside_zero_rep {
                     self.root_groups.insert(group);
                 }
 
-                let prev_group = self.current_group;
-                self.current_group = group;
+                let prev_group = self.enclosing_group;
+                self.enclosing_group = group;
                 let child_info = self.visit(child, 0, inside_zero_rep)?;
-                self.current_group = prev_group;
+                self.enclosing_group = prev_group;
                 self.analyzing_groups.remove(group);
                 min_size = child_info.min_size;
                 const_size = child_info.const_size;
@@ -305,9 +310,9 @@ impl<'a> Analyzer<'a> {
                 // Only skip tracking if we're in unreachable code at the root level
                 // Calls inside groups should always be tracked, even if the group is inside {0} at root,
                 // because the group can be called as a subroutine from elsewhere
-                if !inside_zero_rep || self.current_group != 0 {
+                if !inside_zero_rep || self.enclosing_group != 0 {
                     self.subroutine_calls
-                        .entry(self.current_group)
+                        .entry(self.enclosing_group)
                         .or_default()
                         .push(SubroutineCallInfo {
                             target_group,
@@ -334,14 +339,14 @@ impl<'a> Analyzer<'a> {
                     // directly analyze it now
                     self.analyzing_groups.insert(target_group);
 
-                    // Save and update current_group to properly track subroutine calls within the group
-                    let prev_group = self.current_group;
-                    let prev_group_ix = self.group_ix;
-                    self.current_group = target_group;
-                    self.group_ix = target_group + 1;
+                    // Save and update enclosing_group to properly track subroutine calls within the group
+                    let prev_enclosing_group = self.enclosing_group;
+                    let prev_next_group_number = self.next_group_number;
+                    self.enclosing_group = target_group;
+                    self.next_group_number = target_group + 1;
                     let group_info = self.visit(group_expr, 0, inside_zero_rep)?;
-                    self.current_group = prev_group;
-                    self.group_ix = prev_group_ix;
+                    self.enclosing_group = prev_enclosing_group;
+                    self.next_group_number = prev_next_group_number;
 
                     self.analyzing_groups.remove(target_group);
 
@@ -415,7 +420,7 @@ impl<'a> Analyzer<'a> {
         Ok(Info {
             expr,
             children,
-            capture_groups: CaptureGroupRange(start_group, self.group_ix),
+            capture_groups: CaptureGroupRange(start_group, self.next_group_number),
             min_size,
             const_size,
             hard,
@@ -576,10 +581,10 @@ pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result
 
     let mut analyzer = Analyzer {
         backrefs: &tree.backrefs,
-        group_ix: start_group,
+        next_group_number: start_group,
         group_info: Map::new(),
         subroutine_calls: Map::new(),
-        current_group: 0, // Always start at group 0 (the implicit whole-pattern group)
+        enclosing_group: 0, // Always start at group 0 (the implicit whole-pattern group)
         root_groups: BitSet::new(),
         pre_populated_groups,
         analyzing_groups: BitSet::new(),
@@ -592,12 +597,12 @@ pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result
         ))));
     }
     if let Some(highest_backref) = analyzer.backrefs.into_iter().last() {
-        if highest_backref > analyzer.group_ix - start_group
+        if highest_backref > analyzer.next_group_number - start_group
             // if we have an explicit capture group 0, and the highest backref is the number of capture groups
             // then that backref refers to an invalid group
             // i.e. `(a\1)b`   has no capture group 1
             //      `(a(b))\2` has no capture group 2
-            || highest_backref == analyzer.group_ix && start_group == 0
+            || highest_backref == analyzer.next_group_number && start_group == 0
         {
             return Err(Error::CompileError(Box::new(CompileError::InvalidBackref(
                 highest_backref,
