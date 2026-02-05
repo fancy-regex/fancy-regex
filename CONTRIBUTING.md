@@ -15,7 +15,7 @@ pass the tests and are formatted as expected.
 
 When adding support for new syntax (i.e. for better compatibility with
 oniguruma syntax), remember to update the "Syntax" section of the
-documentation comments in `lib.rs`.
+documentation - `docs/syntax.md`.
 
 ## Manual testing
 
