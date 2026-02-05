@@ -21,7 +21,6 @@
 #![doc = include_str!("../docs/main.md")]
 #![doc = include_str!("../docs/features.md")]
 #![doc = include_str!("../docs/syntax.md")]
-
 #![deny(missing_docs)]
 #![deny(missing_debug_implementations)]
 #![cfg_attr(not(feature = "std"), no_std)]
