@@ -8,6 +8,8 @@ NFA-based implementations (exemplified by
 [RE2](https://github.com/google/re2), and implemented in Rust in the
 [regex](https://crates.io/crates/regex) crate).
 
+Aims to be compatible with Oniguruma syntax when the relevant flag is set.
+
 Try it online in the **[fancy-regex playground](https://fancy-regex.github.io/fancy-regex/)** - test and explore regular expressions with advanced features in your browser.
 
 [![docs](https://docs.rs/fancy-regex/badge.svg)](https://docs.rs/fancy-regex)
