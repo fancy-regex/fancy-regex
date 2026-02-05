@@ -51,6 +51,8 @@ mod expand;
 mod optimize;
 mod parse;
 mod parse_flags;
+#[cfg(feature = "regex-set")]
+mod regexset;
 mod replacer;
 mod vm;
 
@@ -64,6 +66,8 @@ use crate::vm::{Prog, OPTION_SKIPPED_EMPTY_MATCH};
 
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
 pub use crate::expand::Expander;
+#[cfg(feature = "regex-set")]
+pub use crate::regexset::{RegexSet, RegexSetMatch, RegexSetMatches};
 pub use crate::replacer::{NoExpand, Replacer, ReplacerRef};
 
 const MAX_RECURSION: usize = 64;
@@ -74,6 +78,12 @@ const MAX_RECURSION: usize = 64;
 #[derive(Debug)]
 pub struct RegexBuilder {
     pattern: String,
+    options: RegexOptionsBuilder,
+}
+
+/// A builder for a `Regex` to allow configuring options.
+#[derive(Debug)]
+pub struct RegexOptionsBuilder {
     options: RegexOptions,
 }
 
@@ -94,8 +104,8 @@ enum RegexImpl {
         pattern: String,
         /// Some optimizations avoid the VM, but need to use an extra capture group to represent the match boundaries
         explicit_capture_group_0: bool,
-        /// The actual pattern passed to regex-automata
-        debug_pattern: String,
+        /// The actual pattern passed to regex-automata for delegation
+        delegated_pattern: String,
     },
     Fancy {
         prog: Arc<Prog>,
@@ -257,13 +267,13 @@ impl<'r, 't> Iterator for CaptureMatches<'r, 't> {
 }
 
 /// A set of capture groups found for a regex.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Captures<'t> {
     inner: CapturesImpl<'t>,
     named_groups: Arc<NamedGroups>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum CapturesImpl<'t> {
     Wrap {
         text: &'t str,
@@ -396,7 +406,7 @@ impl<'r, 'h> Iterator for SplitN<'r, 'h> {
 
 impl<'r, 'h> core::iter::FusedIterator for SplitN<'r, 'h> {}
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 struct RegexOptions {
     syntaxc: SyntaxConfig,
     delegate_size_limit: Option<usize>,
@@ -432,18 +442,6 @@ impl RegexOptions {
     }
 }
 
-impl Default for RegexOptions {
-    fn default() -> Self {
-        RegexOptions {
-            syntaxc: SyntaxConfig::default(),
-            delegate_size_limit: None,
-            delegate_dfa_size_limit: None,
-            oniguruma_mode: false,
-            hard_regex_runtime_options: HardRegexRuntimeOptions::default(),
-        }
-    }
-}
-
 impl Default for HardRegexRuntimeOptions {
     fn default() -> Self {
         HardRegexRuntimeOptions {
@@ -452,22 +450,25 @@ impl Default for HardRegexRuntimeOptions {
     }
 }
 
-impl RegexBuilder {
-    /// Create a new regex builder with a regex pattern.
-    ///
-    /// If the pattern is invalid, the call to `build` will fail later.
-    pub fn new(pattern: &str) -> Self {
-        RegexBuilder {
-            pattern: pattern.to_string(),
+impl Default for RegexOptionsBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RegexOptionsBuilder {
+    /// Create a new regex options builder.
+    pub fn new() -> Self {
+        RegexOptionsBuilder {
             options: RegexOptions::default(),
         }
     }
 
-    /// Build the `Regex`.
+    /// Build a `Regex` from the given pattern.
     ///
     /// Returns an [`Error`](enum.Error.html) if the pattern could not be parsed.
-    pub fn build(&self) -> Result<Regex> {
-        Regex::new_options(self.pattern.clone(), &self.options)
+    pub fn build(&self, pattern: String) -> Result<Regex> {
+        Regex::new_options(pattern, &self.options)
     }
 
     fn set_config(&mut self, func: impl Fn(SyntaxConfig) -> SyntaxConfig) -> &mut Self {
@@ -475,15 +476,9 @@ impl RegexBuilder {
         self
     }
 
-    /// Change the pattern to build
-    pub fn pattern(&mut self, pattern: String) -> &mut Self {
-        self.pattern = pattern;
-        self
-    }
-
     /// Override default case insensitive
     /// this is to enable/disable casing via builder instead of a flag within
-    /// the raw string provided to the regex builder
+    /// the raw string pattern which will be parsed
     ///
     /// Default is false
     pub fn case_insensitive(&mut self, yes: bool) -> &mut Self {
@@ -607,6 +602,90 @@ impl RegexBuilder {
     }
 }
 
+impl RegexBuilder {
+    /// Create a new regex builder.
+    pub fn new(pattern: &str) -> Self {
+        RegexBuilder {
+            pattern: pattern.to_string(),
+            options: RegexOptionsBuilder::new(),
+        }
+    }
+
+    /// Build a `Regex` from the given pattern.
+    ///
+    /// Returns an [`Error`](enum.Error.html) if the pattern could not be parsed.
+    pub fn build(&self) -> Result<Regex> {
+        self.options.build(self.pattern.clone())
+    }
+
+    /// Change the pattern to build. Useful when building multiple regexes from
+    /// many patterns.
+    pub fn pattern(&mut self, pattern: String) -> &mut Self {
+        self.pattern = pattern;
+        self
+    }
+
+    /// See [`RegexOptionsBuilder::case_insensitive`]
+    pub fn case_insensitive(&mut self, yes: bool) -> &mut Self {
+        self.options.case_insensitive(yes);
+        self
+    }
+
+    /// See [`RegexOptionsBuilder::multi_line`]
+    pub fn multi_line(&mut self, yes: bool) -> &mut Self {
+        self.options.multi_line(yes);
+        self
+    }
+
+    /// See [`RegexOptionsBuilder::ignore_whitespace`]
+    pub fn ignore_whitespace(&mut self, yes: bool) -> &mut Self {
+        self.options.ignore_whitespace(yes);
+        self
+    }
+
+    /// See [`RegexOptionsBuilder::dot_matches_new_line`]
+    pub fn dot_matches_new_line(&mut self, yes: bool) -> &mut Self {
+        self.options.dot_matches_new_line(yes);
+        self
+    }
+
+    /// See [`RegexOptionsBuilder::verbose_mode`]
+    pub fn verbose_mode(&mut self, yes: bool) -> &mut Self {
+        self.options.ignore_whitespace(yes);
+        self
+    }
+
+    /// See [`RegexOptionsBuilder::unicode_mode`]
+    pub fn unicode_mode(&mut self, yes: bool) -> &mut Self {
+        self.options.unicode_mode(yes);
+        self
+    }
+
+    /// See [`RegexOptionsBuilder::backtrack_limit`]
+    pub fn backtrack_limit(&mut self, limit: usize) -> &mut Self {
+        self.options.backtrack_limit(limit);
+        self
+    }
+
+    /// See [`RegexOptionsBuilder::delegate_size_limit`]
+    pub fn delegate_size_limit(&mut self, limit: usize) -> &mut Self {
+        self.options.delegate_size_limit(limit);
+        self
+    }
+
+    /// See [`RegexOptionsBuilder::delegate_dfa_size_limit`]
+    pub fn delegate_dfa_size_limit(&mut self, limit: usize) -> &mut Self {
+        self.options.delegate_dfa_size_limit(limit);
+        self
+    }
+
+    /// See [`RegexOptionsBuilder::oniguruma_mode`]
+    pub fn oniguruma_mode(&mut self, yes: bool) -> &mut Self {
+        self.options.oniguruma_mode(yes);
+        self
+    }
+}
+
 impl fmt::Debug for Regex {
     /// Shows the original regular expression.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -652,13 +731,13 @@ impl Regex {
             // NOTE: there is a good opportunity here to use Hir to avoid regex-automata re-parsing it
             let mut re_cooked = String::new();
             tree.expr.to_str(&mut re_cooked, 0);
-            let inner = compile::compile_inner(&re_cooked, &options)?;
+            let inner = compile::compile_inner(&re_cooked, options)?;
             return Ok(Regex {
                 inner: RegexImpl::Wrap {
                     inner,
                     pattern,
                     explicit_capture_group_0: requires_capture_group_fixup,
-                    debug_pattern: re_cooked,
+                    delegated_pattern: re_cooked,
                 },
                 named_groups: Arc::new(tree.named_groups),
             });
@@ -965,14 +1044,14 @@ impl Regex {
     pub fn debug_print(&self, writer: &mut Formatter<'_>) -> fmt::Result {
         match &self.inner {
             RegexImpl::Wrap {
-                debug_pattern,
+                delegated_pattern,
                 explicit_capture_group_0,
                 ..
             } => {
                 write!(
                     writer,
                     "wrapped Regex {:?}, explicit_capture_group_0: {:}",
-                    debug_pattern, *explicit_capture_group_0
+                    delegated_pattern, *explicit_capture_group_0
                 )
             }
             RegexImpl::Fancy { prog, .. } => prog.debug_print(writer),
@@ -2001,7 +2080,7 @@ fn codepoint_len(b: u8) -> usize {
 /// Returns the smallest possible index of the next valid UTF-8 sequence
 /// starting after `i`.
 /// Adapted from a function with the same name in the `regex` crate.
-fn next_utf8(text: &str, i: usize) -> usize {
+pub(crate) fn next_utf8(text: &str, i: usize) -> usize {
     let b = match text.as_bytes().get(i) {
         None => return i + 1,
         Some(&b) => b,

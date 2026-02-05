@@ -1,7 +1,9 @@
 use fancy_regex::Regex;
+#[allow(deprecated)]
 use fancy_regex::RegexBuilder;
 
-pub fn build_regex(builder: &RegexBuilder) -> Regex {
+#[allow(deprecated)]
+fn build_regex(builder: &RegexBuilder) -> Regex {
     let result = builder.build();
     assert!(
         result.is_ok(),

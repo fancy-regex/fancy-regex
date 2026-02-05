@@ -10,7 +10,7 @@ repository = "https://github.com/fancy-regex/fancy-regex"
 documentation = "https://docs.rs/fancy-regex"
 categories = ["text-processing"]
 exclude = ["/.github/*", "/Cargo.lock.msrv"]
-rust-version = "1.66"
+rust-version = "1.70"
 
 [features]
 default = ["unicode", "perf", "std", "variable-lookbehinds"]
@@ -21,6 +21,8 @@ unicode = ["regex-automata/unicode", "regex-syntax/unicode"]
 std = ["regex-automata/std", "regex-syntax/std", "bit-set/std"]
 # Enable variable-length lookbehinds using reverse DFA search
 variable-lookbehinds = ["regex-automata/dfa-search"]
+# Enable RegexSet for multi-pattern matching
+regex-set = []
 
 [dependencies.regex-automata]
 version = "0.4"
@@ -40,6 +42,14 @@ criterion = "0.5"
 matches = "0.1.10"
 quickcheck = "1.0"
 regex = "1.10"
+
+[[example]]
+name = "regexset_syntax_highlighting"
+required-features = ["regex-set"]
+
+[[test]]
+name = "regexset"
+required-features = ["regex-set"]
 
 [[bench]]
 name = "bench"
