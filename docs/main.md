@@ -1,5 +1,5 @@
 An implementation of regexes, supporting a relatively rich set of features, including backreferences
-and lookaround.
+and lookaround. Aims to be compatible with Oniguruma syntax when the relevant flag is set.
 
 It builds on top of the excellent [regex] crate. If you are not
 familiar with it, make sure you read its documentation and maybe you don't even need fancy-regex.
