@@ -31,7 +31,7 @@ use bit_set::BitSet;
 use regex_syntax::escape_into;
 
 use crate::parse_flags::*;
-use crate::{codepoint_len, CompileError, Error, Expr, ParseError, Result, MAX_RECURSION};
+use crate::{codepoint_len, Error, Expr, ParseError, Result, MAX_RECURSION};
 use crate::{Absent, Assertion, BacktrackingControlVerb, LookAround::*};
 
 #[cfg(not(feature = "std"))]
@@ -44,6 +44,7 @@ pub struct ExprTree {
     pub expr: Expr,
     pub backrefs: BitSet,
     pub named_groups: NamedGroups,
+    pub(crate) numeric_capture_group_references: bool,
     pub(crate) contains_subroutines: bool,
     pub(crate) self_recursive: bool,
 }
@@ -54,7 +55,7 @@ pub(crate) struct Parser<'a> {
     backrefs: BitSet,
     flags: u32,
     named_groups: NamedGroups,
-    numeric_backrefs: bool,
+    numeric_capture_group_references: bool,
     curr_group: usize, // need to keep track of which group number we're parsing
     contains_subroutines: bool,
     has_unresolved_subroutines: bool,
@@ -66,6 +67,7 @@ struct NamedBackrefOrSubroutine<'a> {
     group_ix: Option<usize>,
     group_name: Option<&'a str>,
     recursion_level: Option<isize>,
+    was_numeric: bool, // true if the original reference was numeric (e.g., \g<1> not \g<foo>)
 }
 
 impl<'a> Parser<'a> {
@@ -88,6 +90,7 @@ impl<'a> Parser<'a> {
             expr,
             backrefs: p.backrefs,
             named_groups: p.named_groups,
+            numeric_capture_group_references: p.numeric_capture_group_references,
             contains_subroutines: p.contains_subroutines,
             self_recursive: p.self_recursive,
         })
@@ -104,7 +107,7 @@ impl<'a> Parser<'a> {
             re,
             backrefs: Default::default(),
             named_groups: Default::default(),
-            numeric_backrefs: false,
+            numeric_capture_group_references: false,
             flags,
             curr_group: 0,
             contains_subroutines: false,
@@ -125,12 +128,6 @@ impl<'a> Parser<'a> {
                 ix = self.optional_whitespace(next)?;
             }
             return Ok((ix, Expr::Alt(children)));
-        }
-        // can't have numeric backrefs and named backrefs
-        if self.numeric_backrefs && !self.named_groups.is_empty() {
-            return Err(Error::CompileError(Box::new(
-                CompileError::NamedBackrefOnly,
-            )));
         }
         Ok((ix, child))
     }
@@ -319,8 +316,10 @@ impl<'a> Parser<'a> {
             group_ix,
             group_name,
             recursion_level,
+            was_numeric,
         } = self.parse_named_backref_or_subroutine(ix, open, close, allow_relative)?;
         if let Some(group) = group_ix {
+            self.numeric_capture_group_references |= was_numeric;
             self.backrefs.insert(group);
             return Ok((
                 end,
@@ -360,11 +359,13 @@ impl<'a> Parser<'a> {
             group_ix,
             group_name,
             recursion_level,
+            was_numeric,
         } = self.parse_named_backref_or_subroutine(ix, open, close, allow_relative)?;
         if recursion_level.is_some() {
             return Err(Error::ParseError(ix, ParseError::InvalidGroupName));
         }
         if let Some(group) = group_ix {
+            self.numeric_capture_group_references |= was_numeric;
             self.contains_subroutines = true;
             if group == 0 {
                 self.self_recursive = true;
@@ -397,10 +398,12 @@ impl<'a> Parser<'a> {
             skip,
         }) = parse_id(&self.re[ix..], open, close, allow_relative)
         {
-            let group = if let Some(group) = self.named_groups.get(id) {
-                Some(*group)
-            } else if let Ok(group) = id.parse::<usize>() {
+            let group_number = id.parse::<usize>();
+
+            let group = if let Ok(group) = group_number {
                 Some(group)
+            } else if let Some(group) = self.named_groups.get(id) {
+                Some(*group)
             } else if let Some(relative_group) = relative {
                 if id.is_empty() {
                     relative = None;
@@ -421,6 +424,7 @@ impl<'a> Parser<'a> {
                     group_ix: Some(group),
                     group_name: None,
                     recursion_level: relative,
+                    was_numeric: group_number.is_ok(),
                 })
             } else {
                 // here the name was parsed but doesn't match a capture group we have already parsed
@@ -429,6 +433,7 @@ impl<'a> Parser<'a> {
                     group_ix: None,
                     group_name: Some(id),
                     recursion_level: relative,
+                    was_numeric: false,
                 })
             }
         } else {
@@ -439,7 +444,7 @@ impl<'a> Parser<'a> {
 
     fn parse_numbered_backref(&mut self, ix: usize) -> Result<(usize, Expr)> {
         let (end, group) = self.parse_numbered_backref_or_subroutine_call(ix)?;
-        self.numeric_backrefs = true;
+        self.numeric_capture_group_references = true;
         self.backrefs.insert(group);
         Ok((
             end,
@@ -452,7 +457,7 @@ impl<'a> Parser<'a> {
 
     fn parse_numbered_subroutine_call(&mut self, ix: usize) -> Result<(usize, Expr)> {
         let (end, group) = self.parse_numbered_backref_or_subroutine_call(ix)?;
-        self.numeric_backrefs = true;
+        self.numeric_capture_group_references = true;
         self.contains_subroutines = true;
         if group == 0 {
             self.self_recursive = true;
@@ -2007,8 +2012,9 @@ mod tests {
 
     #[test]
     fn backref() {
+        let tree = Expr::parse_tree(r"(.)\1").unwrap();
         assert_eq!(
-            p("(.)\\1"),
+            tree.expr,
             Expr::Concat(vec![
                 make_group(Expr::Any { newline: false }),
                 Expr::Backref {
@@ -2017,12 +2023,14 @@ mod tests {
                 },
             ])
         );
+        assert!(tree.numeric_capture_group_references);
     }
 
     #[test]
     fn named_backref() {
+        let tree = Expr::parse_tree(r"(?<i>.)\k<i>").unwrap();
         assert_eq!(
-            p("(?<i>.)\\k<i>"),
+            tree.expr,
             Expr::Concat(vec![
                 make_group(Expr::Any { newline: false }),
                 Expr::Backref {
@@ -2031,12 +2039,14 @@ mod tests {
                 },
             ])
         );
+        assert!(!tree.numeric_capture_group_references);
     }
 
     #[test]
     fn relative_backref() {
+        let tree = Expr::parse_tree(r"(a)(.)\k<-1>").unwrap();
         assert_eq!(
-            p(r"(a)(.)\k<-1>"),
+            tree.expr,
             Expr::Concat(vec![
                 make_group(make_literal("a")),
                 make_group(Expr::Any { newline: false }),
@@ -2046,9 +2056,12 @@ mod tests {
                 },
             ])
         );
+        // this doesn't count as a numeric reference
+        assert!(!tree.numeric_capture_group_references);
 
+        let tree = Expr::parse_tree(r"(a)\k<+1>(.)").unwrap();
         assert_eq!(
-            p(r"(a)\k<+1>(.)"),
+            tree.expr,
             Expr::Concat(vec![
                 make_group(make_literal("a")),
                 Expr::Backref {
@@ -2058,6 +2071,8 @@ mod tests {
                 make_group(Expr::Any { newline: false }),
             ])
         );
+        // this doesn't count as a numeric reference
+        assert!(!tree.numeric_capture_group_references);
 
         fail("(?P<->.)");
         fail("(.)(?P=-)");
@@ -2384,12 +2399,6 @@ mod tests {
             "\\k<id>(?<id>.)",
             "Parsing error at position 2: Invalid group name in back reference: id",
         );
-    }
-
-    #[test]
-    fn named_backref_only() {
-        assert_error("(?<id>.)\\1", "Error compiling regex: Numbered backref/call not allowed because named group was used, use a named backref instead");
-        assert_error("(a)\\1(?<name>b)", "Error compiling regex: Numbered backref/call not allowed because named group was used, use a named backref instead");
     }
 
     #[test]
@@ -2899,24 +2908,31 @@ mod tests {
     fn self_recursive_subroutine_call() {
         let tree = Expr::parse_tree(r"hello\g<0>?world").unwrap();
         assert!(tree.self_recursive);
+        assert!(tree.numeric_capture_group_references);
 
         let tree = Expr::parse_tree(r"hello\g0?world").unwrap();
         assert!(tree.self_recursive);
+        assert!(tree.numeric_capture_group_references);
 
         let tree = Expr::parse_tree(r"hello world").unwrap();
         assert!(!tree.self_recursive);
+        assert!(!tree.numeric_capture_group_references);
 
         let tree = Expr::parse_tree(r"hello\g1world").unwrap();
         assert!(!tree.self_recursive);
+        assert!(tree.numeric_capture_group_references);
 
         let tree = Expr::parse_tree(r"hello\g<1>world").unwrap();
         assert!(!tree.self_recursive);
+        assert!(tree.numeric_capture_group_references);
 
         let tree = Expr::parse_tree(r"(hello\g1?world)").unwrap();
         assert!(!tree.self_recursive);
+        assert!(tree.numeric_capture_group_references);
 
         let tree = Expr::parse_tree(r"(?<a>hello\g<a>world)").unwrap();
         assert!(!tree.self_recursive);
+        assert!(!tree.numeric_capture_group_references);
     }
 
     #[test]
