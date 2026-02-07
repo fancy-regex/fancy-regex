@@ -2,6 +2,7 @@ import init, {
     find_captures,
     parse_regex,
     analyze_regex,
+    analyze_regex_tree,
     is_match
 } from './pkg/fancy_regex_playground.js';
 
@@ -11,6 +12,7 @@ class FancyRegexPlayground {
         this.debounceTimer = null;
         this.elements = {};
         this.lastResults = null;
+        this.expandedNodes = new Set(); // Track which node paths are expanded
     }
 
     async init() {
@@ -258,11 +260,130 @@ class FancyRegexPlayground {
         }
 
         try {
-            const analysis = analyze_regex(pattern, flags);
-            this.elements.analysisDisplay.textContent = analysis;
+            const analysisTree = analyze_regex_tree(pattern, flags);
+            this.renderAnalysisTree(analysisTree);
         } catch (error) {
-            this.elements.analysisDisplay.textContent = error.toString();
+            this.elements.analysisDisplay.innerHTML = `<div class="error">${this.escapeHtml(error.toString())}</div>`;
         }
+    }
+
+    renderAnalysisTree(tree) {
+        // Clear and build the tree view
+        this.elements.analysisDisplay.innerHTML = '';
+        
+        // Create header
+        const header = document.createElement('div');
+        header.className = 'analysis-grid__header';
+        header.innerHTML = `
+            <div class="analysis-row__node">Node</div>
+            <div class="analysis-row__min-size">min_size</div>
+            <div class="analysis-row__const-size">const_size</div>
+        `;
+        this.elements.analysisDisplay.appendChild(header);
+        
+        // Create tree container
+        const treeContainer = document.createElement('div');
+        treeContainer.className = 'analysis-tree';
+        this.elements.analysisDisplay.appendChild(treeContainer);
+        
+        // Initialize all nodes as expanded
+        this.expandedNodes = new Set();
+        this.collectAllPaths(tree, '0', this.expandedNodes);
+        
+        // Render the tree
+        this.renderTreeNode(tree, treeContainer, 0, '0');
+    }
+
+    collectAllPaths(node, path, pathSet) {
+        if (node.children && node.children.length > 0) {
+            pathSet.add(path);
+            node.children.forEach((child, index) => {
+                const childPath = `${path}-${index}`;
+                this.collectAllPaths(child, childPath, pathSet);
+            });
+        }
+    }
+
+    renderTreeNode(node, container, depth, path) {
+        // Create row
+        const row = document.createElement('div');
+        row.className = `analysis-row ${node.hard ? 'analysis-node--hard' : 'analysis-node--easy'}`;
+        if (node.children.length > 0 && !this.expandedNodes.has(path)) {
+            row.classList.add('analysis-node--collapsed');
+        }
+        
+        // Create node cell with indentation
+        const nodeCell = document.createElement('div');
+        nodeCell.className = 'analysis-row__node';
+        
+        const indent = document.createElement('span');
+        indent.className = 'analysis-node__indent';
+        indent.style.paddingLeft = `${depth * 1.5}rem`;
+        
+        // Add toggle if has children
+        if (node.children.length > 0) {
+            const toggle = document.createElement('span');
+            toggle.className = 'analysis-node__toggle';
+            toggle.textContent = this.expandedNodes.has(path) ? '−' : '+';
+            toggle.onclick = (e) => {
+                e.stopPropagation();
+                this.toggleNode(path);
+            };
+            indent.appendChild(toggle);
+        } else {
+            // Placeholder for alignment
+            const placeholder = document.createElement('span');
+            placeholder.className = 'analysis-node__toggle analysis-node__toggle--placeholder';
+            placeholder.textContent = ' ';
+            indent.appendChild(placeholder);
+        }
+        
+        // Add node label
+        const label = document.createElement('span');
+        label.className = 'analysis-node__label';
+        label.textContent = `${node.kind}${node.summary ? ' ' + node.summary : ''}`;
+        indent.appendChild(label);
+        
+        nodeCell.appendChild(indent);
+        row.appendChild(nodeCell);
+        
+        // Add min_size cell
+        const minSizeCell = document.createElement('div');
+        minSizeCell.className = 'analysis-row__min-size';
+        minSizeCell.textContent = node.min_size.toString();
+        row.appendChild(minSizeCell);
+        
+        // Add const_size cell
+        const constSizeCell = document.createElement('div');
+        constSizeCell.className = 'analysis-row__const-size';
+        if (node.const_size) {
+            constSizeCell.className += ' const-size-tick';
+            constSizeCell.textContent = '✓';
+        } else {
+            constSizeCell.className += ' const-size-cross';
+            constSizeCell.textContent = '✗';
+        }
+        row.appendChild(constSizeCell);
+        
+        container.appendChild(row);
+        
+        // Render children if expanded
+        if (this.expandedNodes.has(path) && node.children.length > 0) {
+            node.children.forEach((child, index) => {
+                const childPath = `${path}-${index}`;
+                this.renderTreeNode(child, container, depth + 1, childPath);
+            });
+        }
+    }
+
+    toggleNode(path) {
+        if (this.expandedNodes.has(path)) {
+            this.expandedNodes.delete(path);
+        } else {
+            this.expandedNodes.add(path);
+        }
+        // Re-render the analysis
+        this.updateAnalysis();
     }
 
     displayError(message) {
