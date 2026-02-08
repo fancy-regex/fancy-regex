@@ -38,27 +38,37 @@ use alloc::collections::BTreeMap as Map;
 #[cfg(feature = "std")]
 use std::collections::HashMap as Map;
 
+/// Analysis information for a regex expression.
+///
+/// This structure contains the results of analyzing a regex expression,
+/// including size information, whether it requires backtracking features,
+/// and references to child expressions in the tree.
 #[derive(Debug)]
 pub struct Info<'a> {
     pub(crate) capture_groups: CaptureGroupRange,
-    pub(crate) min_size: usize,
-    pub(crate) const_size: bool,
+    /// The minimum number of characters this expression will match
+    pub min_size: usize,
+    /// Whether this expression always matches the same number of characters
+    pub const_size: bool,
     /// Tracks the minimum number of characters that would be consumed in the innermost capture group
     /// before this expression is matched.
     pub(crate) min_pos_in_group: usize,
-    pub(crate) hard: bool,
-    pub(crate) expr: &'a Expr,
-    pub(crate) children: Vec<Info<'a>>,
+    /// Whether this expression requires backtracking features (lookaround, backrefs, etc.)
+    pub hard: bool,
+    /// The expression being analyzed
+    pub expr: &'a Expr,
+    /// Analysis information for child expressions
+    pub children: Vec<Info<'a>>,
 }
 
 impl<'a> Info<'a> {
     /// Returns the start (first) group number for this expression.
-    pub(crate) fn start_group(&self) -> usize {
+    pub fn start_group(&self) -> usize {
         self.capture_groups.start()
     }
 
     /// Returns the end (last) group number for this expression.
-    pub(crate) fn end_group(&self) -> usize {
+    pub fn end_group(&self) -> usize {
         self.capture_groups.end()
     }
 

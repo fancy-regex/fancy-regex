@@ -2044,7 +2044,7 @@ pub fn detect_possible_backref(re: &str) -> bool {
 /// experimenting.
 #[doc(hidden)]
 pub mod internal {
-    pub use crate::analyze::{analyze, can_compile_as_anchored};
+    pub use crate::analyze::{analyze, can_compile_as_anchored, Info};
     pub use crate::compile::compile;
     pub use crate::optimize::optimize;
     pub use crate::parse_flags::{
