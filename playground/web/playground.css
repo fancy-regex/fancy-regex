@@ -384,3 +384,12 @@ footer a {
     background: rgba(230, 126, 34, 0.1);
 }
 
+/* Children container for collapsible nodes */
+.analysis-children {
+    display: block;
+}
+
+.analysis-children--collapsed {
+    display: none;
+}
+

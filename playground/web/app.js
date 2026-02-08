@@ -295,10 +295,8 @@ class FancyRegexPlayground {
     renderTreeNode(node, container, depth, path) {
         // Create row
         const row = document.createElement('div');
+        row.id = `analysis-node-${path}`;
         row.className = `analysis-row ${node.hard ? 'analysis-node--hard' : 'analysis-node--easy'}`;
-        if (node.children.length > 0 && this.collapsedNodes.has(path)) {
-            row.classList.add('analysis-node--collapsed');
-        }
         
         // Create node cell with indentation
         const nodeCell = document.createElement('div');
@@ -355,12 +353,21 @@ class FancyRegexPlayground {
         
         container.appendChild(row);
         
-        // Render children if expanded
-        if (!this.collapsedNodes.has(path) && node.children.length > 0) {
+        // Render children if expanded - wrap in container for CSS toggling
+        if (node.children.length > 0) {
+            const childrenContainer = document.createElement('div');
+            childrenContainer.id = `analysis-children-${path}`;
+            childrenContainer.className = 'analysis-children';
+            if (this.collapsedNodes.has(path)) {
+                childrenContainer.classList.add('analysis-children--collapsed');
+            }
+            
             node.children.forEach((child, index) => {
                 const childPath = `${path}-${index}`;
-                this.renderTreeNode(child, container, depth + 1, childPath);
+                this.renderTreeNode(child, childrenContainer, depth + 1, childPath);
             });
+            
+            container.appendChild(childrenContainer);
         }
     }
 
@@ -370,7 +377,18 @@ class FancyRegexPlayground {
         } else {
             this.collapsedNodes.add(path);
         }
-        this.renderAnalysisTree();
+        
+        // Instead of re-rendering, just toggle the CSS class on the children container
+        const childrenContainer = document.getElementById(`analysis-children-${path}`);
+        if (childrenContainer) {
+            childrenContainer.classList.toggle('analysis-children--collapsed');
+            
+            // Update toggle icon
+            const toggle = document.querySelector(`#analysis-node-${path} .analysis-node__toggle`);
+            if (toggle) {
+                toggle.textContent = this.collapsedNodes.has(path) ? '+' : '-';
+            }
+        }
     }
 
     displayError(message) {
