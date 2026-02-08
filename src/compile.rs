@@ -897,7 +897,7 @@ mod tests {
 
         assert_eq!(prog.len(), 5, "prog: {:?}", prog);
         assert_matches!(prog[0], Save(0));
-        assert_delegate(&prog[1], "ab*");
+        assert_delegate(&prog[1], "ab*", None);
         assert_matches!(prog[2], Restore(0));
         assert_matches!(prog[3], Lit(ref l) if l == "c");
         assert_matches!(prog[4], End);
@@ -912,7 +912,7 @@ mod tests {
         assert_matches!(prog[0], Split(1, 3));
         assert_matches!(prog[1], Lit(ref l) if l == "x");
         assert_matches!(prog[2], FailNegativeLookAround);
-        assert_delegate(&prog[3], "(?:a|ab)x*");
+        assert_delegate(&prog[3], "(?:a|ab)x*", None);
         assert_matches!(prog[4], End);
     }
 
@@ -925,8 +925,8 @@ mod tests {
         assert_matches!(prog[0], Split(1, 3));
         assert_matches!(prog[1], Lit(ref l) if l == "x");
         assert_matches!(prog[2], FailNegativeLookAround);
-        assert_delegate(&prog[3], "(?:a|b)c");
-        assert_delegate(&prog[4], "x*");
+        assert_delegate(&prog[3], "(?:a|b)c", None);
+        assert_delegate(&prog[4], "x*", None);
         assert_matches!(prog[5], End);
     }
 
@@ -943,7 +943,7 @@ mod tests {
         assert_matches!(prog[4], Lit(ref l) if l == "a");
         assert_matches!(prog[5], Jmp(7));
         assert_matches!(prog[6], Lit(ref l) if l == "ab");
-        assert_delegate(&prog[7], "x*");
+        assert_delegate(&prog[7], "x*", None);
         assert_matches!(prog[8], End);
     }
 
@@ -1190,6 +1190,35 @@ mod tests {
         );
     }
 
+    #[test]
+    fn single_delegate_with_capture_groups_can_be_compiled() {
+        let prog = compile_prog(r"(.(b)([^a]+))c");
+
+        assert_eq!(prog.len(), 2, "prog: {:?}", prog);
+        assert_delegate(&prog[0], "(.(b)([^a]+))c", Some(CaptureGroupRange(0, 3)));
+        assert_matches!(prog[1], End);
+    }
+
+    #[test]
+    fn delegated_capture_groups_can_be_compiled() {
+        let prog = compile_prog(r"(.(b)([^a]+)(?!c)(\w))");
+
+        assert_eq!(prog.len(), 12, "prog: {:?}", prog);
+
+        assert_matches!(prog[0], Save(0));
+        assert_delegate(&prog[1], ".(b)", Some(CaptureGroupRange(1, 2)));
+        assert_matches!(prog[2], Save(4));
+        assert_delegate(&prog[3], "[^a]", None);
+        assert_matches!(prog[4], Split(3, 5));
+        assert_matches!(prog[5], Save(5));
+        assert_matches!(prog[6], Split(7, 9));
+        assert_matches!(prog[7], Lit(ref l) if l == "c");
+        assert_matches!(prog[8], FailNegativeLookAround);
+        assert_delegate(&prog[9], r"(\w)", Some(CaptureGroupRange(3, 4)));
+        assert_matches!(prog[10], Save(1));
+        assert_matches!(prog[11], End);
+    }
+
     fn compile_prog(re: &str) -> Vec<Insn> {
         let tree = Expr::parse_tree(re).unwrap();
         let info = analyze(&tree, true).unwrap();
@@ -1198,11 +1227,15 @@ mod tests {
     }
 
     #[cfg(feature = "std")]
-    fn assert_delegate(insn: &Insn, re: &str) {
+    fn assert_delegate(insn: &Insn, re: &str, captures: Option<CaptureGroupRange>) {
         use crate::vm::Delegate;
 
         match insn {
-            Insn::Delegate(Delegate { inner, .. }) => {
+            Insn::Delegate(Delegate {
+                inner,
+                capture_groups,
+                ..
+            }) => {
                 assert_eq!(
                     PATTERN_MAPPING
                         .read()
@@ -1211,6 +1244,7 @@ mod tests {
                         .unwrap(),
                     re
                 );
+                assert_eq!(captures, *capture_groups);
             }
             _ => {
                 panic!("Expected Insn::Delegate but was {:#?}", insn);
@@ -1219,5 +1253,5 @@ mod tests {
     }
 
     #[cfg(not(feature = "std"))]
-    fn assert_delegate(_: &Insn, _: &str) {}
+    fn assert_delegate(_: &Insn, _: &str, _: Option<CaptureGroupRange>) {}
 }
