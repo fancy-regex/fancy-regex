@@ -1,8 +1,6 @@
 use fancy_regex::Regex;
-#[allow(deprecated)]
 use fancy_regex::RegexBuilder;
 
-#[allow(deprecated)]
 fn build_regex(builder: &RegexBuilder) -> Regex {
     let result = builder.build();
     assert!(
