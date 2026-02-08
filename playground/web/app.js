@@ -12,7 +12,8 @@ class FancyRegexPlayground {
         this.debounceTimer = null;
         this.elements = {};
         this.lastResults = null;
-        this.expandedNodes = new Set(); // Track which node paths are expanded
+        this.collapsedNodes = new Set(); // Track which node paths are collapsed in the analysis tree
+        this.analysisTree = null;
     }
 
     async init() {
@@ -260,14 +261,15 @@ class FancyRegexPlayground {
         }
 
         try {
-            const analysisTree = analyze_regex_tree(pattern, flags);
-            this.renderAnalysisTree(analysisTree);
+            this.analysisTree = analyze_regex_tree(pattern, flags);
+            this.collapsedNodes = new Set();
+            this.renderAnalysisTree();
         } catch (error) {
             this.elements.analysisDisplay.innerHTML = `<div class="error">${this.escapeHtml(error.toString())}</div>`;
         }
     }
 
-    renderAnalysisTree(tree) {
+    renderAnalysisTree() {
         // Clear and build the tree view
         this.elements.analysisDisplay.innerHTML = '';
         
@@ -286,29 +288,15 @@ class FancyRegexPlayground {
         treeContainer.className = 'analysis-tree';
         this.elements.analysisDisplay.appendChild(treeContainer);
         
-        // Initialize all nodes as expanded
-        this.expandedNodes = new Set();
-        this.collectAllPaths(tree, '0', this.expandedNodes);
-        
         // Render the tree
-        this.renderTreeNode(tree, treeContainer, 0, '0');
-    }
-
-    collectAllPaths(node, path, pathSet) {
-        if (node.children && node.children.length > 0) {
-            pathSet.add(path);
-            node.children.forEach((child, index) => {
-                const childPath = `${path}-${index}`;
-                this.collectAllPaths(child, childPath, pathSet);
-            });
-        }
+        this.renderTreeNode(this.analysisTree, treeContainer, 0, '0');
     }
 
     renderTreeNode(node, container, depth, path) {
         // Create row
         const row = document.createElement('div');
         row.className = `analysis-row ${node.hard ? 'analysis-node--hard' : 'analysis-node--easy'}`;
-        if (node.children.length > 0 && !this.expandedNodes.has(path)) {
+        if (node.children.length > 0 && this.collapsedNodes.has(path)) {
             row.classList.add('analysis-node--collapsed');
         }
         
@@ -324,7 +312,7 @@ class FancyRegexPlayground {
         if (node.children.length > 0) {
             const toggle = document.createElement('span');
             toggle.className = 'analysis-node__toggle';
-            toggle.textContent = this.expandedNodes.has(path) ? '−' : '+';
+            toggle.textContent = this.collapsedNodes.has(path) ? '+' : '-';
             toggle.onclick = (e) => {
                 e.stopPropagation();
                 this.toggleNode(path);
@@ -368,7 +356,7 @@ class FancyRegexPlayground {
         container.appendChild(row);
         
         // Render children if expanded
-        if (this.expandedNodes.has(path) && node.children.length > 0) {
+        if (!this.collapsedNodes.has(path) && node.children.length > 0) {
             node.children.forEach((child, index) => {
                 const childPath = `${path}-${index}`;
                 this.renderTreeNode(child, container, depth + 1, childPath);
@@ -377,13 +365,12 @@ class FancyRegexPlayground {
     }
 
     toggleNode(path) {
-        if (this.expandedNodes.has(path)) {
-            this.expandedNodes.delete(path);
+        if (this.collapsedNodes.has(path)) {
+            this.collapsedNodes.delete(path);
         } else {
-            this.expandedNodes.add(path);
+            this.collapsedNodes.add(path);
         }
-        // Re-render the analysis
-        this.updateAnalysis();
+        this.renderAnalysisTree();
     }
 
     displayError(message) {
