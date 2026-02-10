@@ -276,7 +276,7 @@ fn info_to_tree_node<'a>(
         Expr::Assertion(_) => ("Assertion".to_string(), "".to_string(), None),
         Expr::GeneralNewline { .. } => ("GeneralNewline".to_string(), "\\R".to_string(), None),
         Expr::Literal { val, .. } => {
-            let escaped = escape_literal(&val);
+            let escaped = escape_literal(val);
             ("Literal".to_string(), format!("\"{}\"", escaped), None)
         }
         Expr::Concat(v) => ("Concat".to_string(), format!("({})", v.len()), None),
@@ -324,7 +324,7 @@ fn info_to_tree_node<'a>(
             ("Delegate".to_string(), format!("\"{}\"", escaped), None)
         }
         Expr::Backref { group, .. } => {
-            let summary = if let Some(name) = group_names.get(&group) {
+            let summary = if let Some(name) = group_names.get(group) {
                 format!("({})", name)
             } else {
                 format!("{}", group)
@@ -336,7 +336,7 @@ fn info_to_tree_node<'a>(
             relative_level,
             ..
         } => {
-            let summary = if let Some(name) = group_names.get(&group) {
+            let summary = if let Some(name) = group_names.get(group) {
                 format!("({}) level={}", name, relative_level)
             } else {
                 format!("{} level={}", group, relative_level)
