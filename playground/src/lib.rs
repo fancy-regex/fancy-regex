@@ -246,17 +246,24 @@ fn escape_literal(s: &str) -> String {
     result
 }
 
-// Convert Info to AnalysisTreeNode for UI rendering
-fn info_to_tree_node<'a>(
-    info: &fancy_regex::internal::Info<'a>,
+/// Build a reverse lookup map from group index to name from the named_groups map.
+/// This converts from (name → index) to (index → name) format.
+fn build_group_names_lookup(
     named_groups: &std::collections::HashMap<String, usize>,
-) -> AnalysisTreeNode {
-    // Create reverse lookup map from group index to name
+) -> std::collections::HashMap<usize, String> {
     let mut group_names = std::collections::HashMap::new();
     for (name, &index) in named_groups {
         group_names.insert(index, name.clone());
     }
+    group_names
+}
 
+// Convert Info to AnalysisTreeNode for UI rendering
+// Takes a pre-built reverse lookup map (group index -> name) to avoid rebuilding it on every call
+fn info_to_tree_node<'a>(
+    info: &fancy_regex::internal::Info<'a>,
+    group_names: &std::collections::HashMap<usize, String>,
+) -> AnalysisTreeNode {
     let (kind, summary, group_info) = match info.expr {
         Expr::Empty => ("Empty".to_string(), "".to_string(), None),
         Expr::Any { newline } => {
@@ -364,7 +371,7 @@ fn info_to_tree_node<'a>(
     let children = info
         .children
         .iter()
-        .map(|child| info_to_tree_node(child, named_groups))
+        .map(|child| info_to_tree_node(child, group_names))
         .collect();
 
     AnalysisTreeNode {
@@ -389,10 +396,12 @@ pub fn analyze_regex_tree(pattern: &str, flags: JsValue) -> Result<JsValue, Stri
     match fancy_regex::Expr::parse_tree_with_flags(pattern, regex_flags) {
         Ok(mut tree) => {
             let named_groups = tree.named_groups.clone();
+            // Build reverse lookup map from group index to name once
+            let group_names = build_group_names_lookup(&named_groups);
             let requires_capture_group_fixup = optimize(&mut tree);
             match analyze(&tree, requires_capture_group_fixup) {
                 Ok(info) => {
-                    let tree_node = info_to_tree_node(&info, &named_groups);
+                    let tree_node = info_to_tree_node(&info, &group_names);
                     serde_wasm_bindgen::to_value(&tree_node)
                         .map_err(|e| format!("Serialization error: {}", e))
                 }
@@ -448,9 +457,9 @@ mod tests {
         // For this test, we'll use analyze to get real Info
         let tree = fancy_regex::Expr::parse_tree("test\\n").unwrap();
         let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-        let named_groups = std::collections::HashMap::new();
+        let group_names = std::collections::HashMap::new();
 
-        let node = info_to_tree_node(&info, &named_groups);
+        let node = info_to_tree_node(&info, &group_names);
 
         assert_eq!(node.kind, "Concat");
         assert_eq!(node.children.len(), 5); // "test\n" as separate literals
@@ -463,9 +472,9 @@ mod tests {
         // Test that Delegate shows the pattern
         let tree = fancy_regex::Expr::parse_tree(r"\w").unwrap();
         let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-        let named_groups = std::collections::HashMap::new();
+        let group_names = std::collections::HashMap::new();
 
-        let node = info_to_tree_node(&info, &named_groups);
+        let node = info_to_tree_node(&info, &group_names);
 
         // The root should be a Delegate node
         assert_eq!(node.kind, "Delegate");
@@ -480,9 +489,10 @@ mod tests {
         // Test named capture group
         let tree = fancy_regex::Expr::parse_tree(r"(?<word>\w+)").unwrap();
         let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-        let named_groups = tree.named_groups.clone();
+        // Build reverse lookup map from named_groups
+        let group_names = build_group_names_lookup(&tree.named_groups);
 
-        let node = info_to_tree_node(&info, &named_groups);
+        let node = info_to_tree_node(&info, &group_names);
 
         // Find the Group node (should be a child of root)
         assert_eq!(node.kind, "Group");
@@ -498,9 +508,9 @@ mod tests {
         // Test unnamed capture group
         let tree = fancy_regex::Expr::parse_tree(r"(\w+)").unwrap();
         let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-        let named_groups = tree.named_groups.clone();
+        let group_names = std::collections::HashMap::new();
 
-        let node = info_to_tree_node(&info, &named_groups);
+        let node = info_to_tree_node(&info, &group_names);
 
         assert_eq!(node.kind, "Group");
         assert_eq!(node.group.as_ref().unwrap().index, 1);
@@ -512,9 +522,10 @@ mod tests {
         // Test named backref
         let tree = fancy_regex::Expr::parse_tree(r"(?<word>\w+)\s+\k<word>").unwrap();
         let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-        let named_groups = tree.named_groups.clone();
+        // Build reverse lookup map from named_groups
+        let group_names = build_group_names_lookup(&tree.named_groups);
 
-        let node = info_to_tree_node(&info, &named_groups);
+        let node = info_to_tree_node(&info, &group_names);
 
         // Navigate to find Backref node (it's in Concat children)
         assert_eq!(node.kind, "Concat");
@@ -535,9 +546,9 @@ mod tests {
         // Test numeric backref
         let tree = fancy_regex::Expr::parse_tree(r"(\w+)\s+\1").unwrap();
         let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-        let named_groups = tree.named_groups.clone();
+        let group_names = std::collections::HashMap::new();
 
-        let node = info_to_tree_node(&info, &named_groups);
+        let node = info_to_tree_node(&info, &group_names);
 
         // Navigate to find Backref node
         let backref_node = node
@@ -563,9 +574,9 @@ mod tests {
         for (pattern, expected_summary) in test_cases {
             let tree = fancy_regex::Expr::parse_tree(pattern).unwrap();
             let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-            let named_groups = tree.named_groups.clone();
+            let group_names = std::collections::HashMap::new();
 
-            let node = info_to_tree_node(&info, &named_groups);
+            let node = info_to_tree_node(&info, &group_names);
 
             assert_eq!(node.kind, "Repeat", "Pattern: {}", pattern);
             assert_eq!(node.summary, expected_summary, "Pattern: {}", pattern);
@@ -577,9 +588,9 @@ mod tests {
         // Test Concat and Alt count
         let tree = fancy_regex::Expr::parse_tree(r"abc").unwrap();
         let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-        let named_groups = tree.named_groups.clone();
+        let group_names = std::collections::HashMap::new();
 
-        let node = info_to_tree_node(&info, &named_groups);
+        let node = info_to_tree_node(&info, &group_names);
 
         assert_eq!(node.kind, "Concat");
         assert_eq!(node.summary, "(3)");
@@ -587,9 +598,9 @@ mod tests {
         // Test Alt
         let tree = fancy_regex::Expr::parse_tree(r"a|b|c").unwrap();
         let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-        let named_groups = tree.named_groups.clone();
+        let group_names = std::collections::HashMap::new();
 
-        let node = info_to_tree_node(&info, &named_groups);
+        let node = info_to_tree_node(&info, &group_names);
 
         assert_eq!(node.kind, "Alt");
         assert_eq!(node.summary, "(3)");
@@ -607,9 +618,9 @@ mod tests {
         for (pattern, expected_kind, expected_summary) in test_cases {
             let tree = fancy_regex::Expr::parse_tree(pattern).unwrap();
             let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-            let named_groups = tree.named_groups.clone();
+            let group_names = std::collections::HashMap::new();
 
-            let node = info_to_tree_node(&info, &named_groups);
+            let node = info_to_tree_node(&info, &group_names);
 
             assert_eq!(node.kind, expected_kind, "Pattern: {}", pattern);
             assert_eq!(node.summary, expected_summary, "Pattern: {}", pattern);
@@ -622,18 +633,18 @@ mod tests {
         // Backref should be hard
         let tree = fancy_regex::Expr::parse_tree(r"(\w+)\1").unwrap();
         let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-        let named_groups = tree.named_groups.clone();
+        let group_names = std::collections::HashMap::new();
 
-        let node = info_to_tree_node(&info, &named_groups);
+        let node = info_to_tree_node(&info, &group_names);
 
         assert!(node.hard, "Pattern with backref should be hard");
 
         // Simple literal should be easy
         let tree = fancy_regex::Expr::parse_tree(r"abc").unwrap();
         let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-        let named_groups = tree.named_groups.clone();
+        let group_names = std::collections::HashMap::new();
 
-        let node = info_to_tree_node(&info, &named_groups);
+        let node = info_to_tree_node(&info, &group_names);
 
         assert!(!node.hard, "Simple literal pattern should be easy");
     }
