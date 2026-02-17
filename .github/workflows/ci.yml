@@ -33,6 +33,8 @@ jobs:
       - run: cargo check --no-default-features
       - run: cargo check --no-default-features --features "unicode,perf,variable-lookbehinds"
       - run: cargo check --no-default-features --features "std"
+      - run: cargo check --features "regex-set"
+      - run: cargo check --no-default-features --features "regex-set"
       - run: cargo check --examples
       - run: cargo check --benches
 
@@ -69,6 +71,8 @@ jobs:
       - run: cargo test
       - run: cargo test --no-default-features
       - run: cargo test --no-default-features --features "unicode,perf,variable-lookbehinds"
+      - run: cargo test --features "regex-set"
+      - run: cargo test --no-default-features --features "regex-set"
 
   example:
     name: example
@@ -78,6 +82,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo run --example toy trace '\d*' '1122 33'
       - run: cargo test --examples
+      - run: cargo run --example regexset_syntax_highlighting --features regex-set
 
   playground-tests:
     name: playground-tests

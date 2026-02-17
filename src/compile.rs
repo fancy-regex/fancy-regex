@@ -727,17 +727,9 @@ impl Compiler {
 static PATTERN_MAPPING: RwLock<BTreeMap<String, String>> = RwLock::new(BTreeMap::new());
 
 pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<RaRegex> {
-    let mut config = RaConfig::new();
-    if let Some(size_limit) = options.delegate_size_limit {
-        config = config.nfa_size_limit(Some(size_limit));
-    }
-    if let Some(dfa_size_limit) = options.delegate_dfa_size_limit {
-        config = config.dfa_size_limit(Some(dfa_size_limit));
-    }
+    let builder = options_to_rabuilder(options);
 
-    let re = RaBuilder::new()
-        .configure(config)
-        .syntax(options.syntaxc)
+    let re = builder
         .build(inner_re)
         .map_err(CompileError::InnerError)
         .map_err(|e| Error::CompileError(Box::new(e)))?;
@@ -749,6 +741,21 @@ pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<Ra
         .insert(format!("{:?}", re), inner_re.to_owned());
 
     Ok(re)
+}
+
+pub(crate) fn options_to_rabuilder(options: &RegexOptions) -> RaBuilder {
+    let mut config = RaConfig::new();
+    if let Some(limit) = options.delegate_size_limit {
+        config = config.nfa_size_limit(Some(limit));
+    }
+    if let Some(limit) = options.delegate_dfa_size_limit {
+        config = config.dfa_size_limit(Some(limit));
+    }
+
+    let mut builder = RaBuilder::new();
+    builder.configure(config);
+    builder.syntax(options.syntaxc);
+    builder
 }
 
 /// Compile the analyzed expressions into a program.

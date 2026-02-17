@@ -111,10 +111,10 @@ fn atomic_group() {
 
 #[test]
 fn backtrack_limit() {
-    let re = RegexBuilder::new("(?i)(a|b|ab)*(?>c)")
+    let re = RegexBuilder::new(r"(?i)(a|b|ab)*(?>c)")
         .backtrack_limit(100_000)
         .build()
-        .unwrap();
+        .expect("regex to compile successfully");
     let s = "abababababababababababababababababababababababababababab";
     let result = re.is_match(s);
     assert!(result.is_err());
