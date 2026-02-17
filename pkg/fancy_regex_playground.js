@@ -28,6 +28,21 @@ export function analyze_regex(pattern, flags) {
 
 /**
  * @param {string} pattern
+ * @param {any} flags
+ * @returns {any}
+ */
+export function analyze_regex_tree(pattern, flags) {
+    const ptr0 = passStringToWasm0(pattern, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.analyze_regex_tree(ptr0, len0, flags);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * @param {string} pattern
  * @param {string} text
  * @param {any} flags
  * @returns {any}

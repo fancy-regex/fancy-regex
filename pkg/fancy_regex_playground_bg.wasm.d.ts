@@ -2,6 +2,7 @@
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
 export const analyze_regex: (a: number, b: number, c: any) => [number, number, number, number];
+export const analyze_regex_tree: (a: number, b: number, c: any) => [number, number, number];
 export const find_captures: (a: number, b: number, c: number, d: number, e: any) => [number, number, number];
 export const is_match: (a: number, b: number, c: number, d: number, e: any) => [number, number, number];
 export const main: () => void;

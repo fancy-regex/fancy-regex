@@ -3,6 +3,8 @@
 
 export function analyze_regex(pattern: string, flags: any): string;
 
+export function analyze_regex_tree(pattern: string, flags: any): any;
+
 export function find_captures(pattern: string, text: string, flags: any): any;
 
 export function is_match(pattern: string, text: string, flags: any): boolean;
@@ -16,6 +18,7 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly analyze_regex: (a: number, b: number, c: any) => [number, number, number, number];
+    readonly analyze_regex_tree: (a: number, b: number, c: any) => [number, number, number];
     readonly find_captures: (a: number, b: number, c: number, d: number, e: any) => [number, number, number];
     readonly is_match: (a: number, b: number, c: number, d: number, e: any) => [number, number, number];
     readonly main: () => void;
