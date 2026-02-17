@@ -490,6 +490,103 @@ impl<'a> Analyzer<'a> {
         Ok(())
     }
 
+    /// Check for recursive subroutine calls that can never terminate
+    fn check_unbounded_recursion(&self, root_expr: &'a Expr) -> Result<()> {
+        let mut memo = Map::new();
+        if self.group_can_terminate(0, root_expr, &mut BitSet::new(), &mut memo) {
+            return Ok(());
+        }
+
+        Err(Error::CompileError(Box::new(
+            CompileError::NeverEndingRecursion,
+        )))
+    }
+
+    fn group_can_terminate(
+        &self,
+        group: usize,
+        root_expr: &'a Expr,
+        recursion_stack: &mut BitSet,
+        memo: &mut Map<usize, bool>,
+    ) -> bool {
+        if let Some(&can_terminate) = memo.get(&group) {
+            return can_terminate;
+        }
+
+        if recursion_stack.contains(group) {
+            return false;
+        }
+
+        let expr = if group == 0 {
+            root_expr
+        } else if let Some(&group_expr) = self.group_exprs.get(&group) {
+            group_expr
+        } else {
+            return true;
+        };
+
+        recursion_stack.insert(group);
+        let can_terminate = self.expr_can_terminate(expr, root_expr, recursion_stack, memo);
+        recursion_stack.remove(group);
+        memo.insert(group, can_terminate);
+        can_terminate
+    }
+
+    fn expr_can_terminate(
+        &self,
+        expr: &'a Expr,
+        root_expr: &'a Expr,
+        recursion_stack: &mut BitSet,
+        memo: &mut Map<usize, bool>,
+    ) -> bool {
+        match expr {
+            Expr::Concat(children) => children
+                .iter()
+                .all(|child| self.expr_can_terminate(child, root_expr, recursion_stack, memo)),
+            Expr::Alt(children) => children
+                .iter()
+                .any(|child| self.expr_can_terminate(child, root_expr, recursion_stack, memo)),
+            Expr::Group(child) => self.expr_can_terminate(child, root_expr, recursion_stack, memo),
+            Expr::LookAround(child, _) => {
+                self.expr_can_terminate(child, root_expr, recursion_stack, memo)
+            }
+            Expr::AtomicGroup(child) => {
+                self.expr_can_terminate(child, root_expr, recursion_stack, memo)
+            }
+            Expr::Repeat { child, lo, .. } => {
+                *lo == 0 || self.expr_can_terminate(child, root_expr, recursion_stack, memo)
+            }
+            Expr::Conditional {
+                condition,
+                true_branch,
+                false_branch,
+            } => {
+                self.expr_can_terminate(false_branch, root_expr, recursion_stack, memo)
+                    || (self.expr_can_terminate(condition, root_expr, recursion_stack, memo)
+                        && self.expr_can_terminate(true_branch, root_expr, recursion_stack, memo))
+            }
+            Expr::SubroutineCall(target_group) => {
+                self.group_can_terminate(*target_group, root_expr, recursion_stack, memo)
+            }
+            Expr::Absent(absent) => {
+                use crate::Absent::*;
+                match absent {
+                    Repeater(child) | Stopper(child) => {
+                        self.expr_can_terminate(child, root_expr, recursion_stack, memo)
+                    }
+                    Expression { absent, exp } => {
+                        self.expr_can_terminate(absent, root_expr, recursion_stack, memo)
+                            && self.expr_can_terminate(exp, root_expr, recursion_stack, memo)
+                    }
+                    Clear => true,
+                }
+            }
+            Expr::UnresolvedNamedSubroutineCall { .. }
+            | Expr::BackrefWithRelativeRecursionLevel { .. } => true,
+            _ => true,
+        }
+    }
+
     /// A group is reachable if it's executed from root (not inside {0}) or called from a reachable group
     fn compute_reachable_groups(&self) -> BitSet {
         let mut reachable = BitSet::new();
@@ -646,9 +743,10 @@ pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result
         }
     }
 
-    // Check for left-recursive subroutine calls (only if subroutines are present)
+    // Check for left-recursive and unterminating subroutine calls (only if subroutines are present)
     if tree.contains_subroutines {
         analyzer.check_left_recursion(&tree.named_groups)?;
+        analyzer.check_unbounded_recursion(&tree.expr)?;
     }
 
     Ok(analyzed)
@@ -1196,9 +1294,21 @@ mod tests {
     }
 
     #[test]
-    fn not_left_recursive_after_char() {
-        // Not left recursive because subroutine call is after a character was consumed
+    fn unbounded_recursive_after_char() {
+        // Not left recursive because subroutine call is after a character was consumed,
+        // but still never-ending because the recursive call is mandatory.
         let tree = Expr::parse_tree(r"(a\g<1>)").unwrap();
+        let result = analyze(&tree, false);
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(ref box_err))
+                if matches!(**box_err, CompileError::NeverEndingRecursion)
+        ));
+    }
+
+    #[test]
+    fn bounded_recursive_after_char_is_allowed() {
+        let tree = Expr::parse_tree(r"(a\g<1>?)").unwrap();
         let result = analyze(&tree, false);
         assert!(result.is_ok());
     }
@@ -1240,7 +1350,11 @@ mod tests {
         let tree = Expr::parse_tree(r"a\g<0>").unwrap();
         let result = analyze(&tree, false);
         // Group 0 calls itself at position 1 (after 'a'), so this is NOT left recursive
-        assert!(result.is_ok());
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(ref box_err))
+                if matches!(**box_err, CompileError::NeverEndingRecursion)
+        ));
     }
 
     #[test]
@@ -1258,7 +1372,11 @@ mod tests {
         // Self-recursive on explicit group 0: (a\g<0>)
         let tree = Expr::parse_tree(r"(a\g<0>)").unwrap();
         let result = analyze(&tree, true);
-        assert!(result.is_ok());
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(ref box_err))
+                if matches!(**box_err, CompileError::NeverEndingRecursion)
+        ));
     }
 
     #[test]
@@ -1279,7 +1397,7 @@ mod tests {
 
     #[test]
     fn three_way_indirect_recursion() {
-        // Three-way indirect recursion
+        // Three-way indirect recursion where each recursive call is mandatory.
         let tree = Expr::parse_tree(r"(\g<2>)(\g<3>)(a\g<1>)").unwrap();
         let result = analyze(&tree, false);
         // Group 1 -> Group 2 (at pos 0)
@@ -1287,7 +1405,11 @@ mod tests {
         // Group 3 -> Group 1 (at pos 1, after 'a')
         // This forms a cycle, but the call from group 3 to group 1 is at position 1
         // So it's not left-recursive
-        assert!(result.is_ok());
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(ref box_err))
+                if matches!(**box_err, CompileError::NeverEndingRecursion)
+        ));
     }
 
     #[test]
