@@ -385,7 +385,6 @@ fn info_to_tree_node<'a>(
     }
 }
 
-// New WASM export for structured analysis
 #[wasm_bindgen]
 pub fn analyze_regex_tree(pattern: &str, flags: JsValue) -> Result<JsValue, String> {
     let flags = get_flags(flags)?;
@@ -489,7 +488,6 @@ mod tests {
         // Test named capture group
         let tree = fancy_regex::Expr::parse_tree(r"(?<word>\w+)").unwrap();
         let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-        // Build reverse lookup map from named_groups
         let group_names = build_group_names_lookup(&tree.named_groups);
 
         let node = info_to_tree_node(&info, &group_names);
