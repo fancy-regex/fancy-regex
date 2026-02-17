@@ -13,6 +13,7 @@ with the exception that 0.x versions can break between minor versions.
 - Add support for more `\p{...}` and `\P{...}` aliases, for Oniguruma compatibility (#207)
 - Add support for word boundaries and zero-length fancy patterns inside variable lookbehinds (at top level) (#216)
 - Add support for `\R` to mean general newline, matching all common line break characters, treating `\r\n` atomically (#220)
+- Add support for subroutine calls (including recursion) `\g<1>` (#230)
 ### Changed
 - `RegexBuilder` can now build multiple patterns with the same options (#213)
 ### Fixed

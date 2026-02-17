@@ -21,6 +21,7 @@
 //! Compilation of regexes to VM.
 
 use alloc::boxed::Box;
+use alloc::format;
 use alloc::string::{String, ToString};
 #[cfg(feature = "variable-lookbehinds")]
 use alloc::sync::Arc;
@@ -34,12 +35,20 @@ use regex_automata::util::pool::Pool;
 #[cfg(all(test, feature = "std"))]
 use std::{collections::BTreeMap, sync::RwLock};
 
+#[cfg(not(feature = "std"))]
+use alloc::collections::BTreeMap as Map;
+#[cfg(feature = "std")]
+use std::collections::HashMap as Map;
+
 use crate::analyze::Info;
 #[cfg(feature = "variable-lookbehinds")]
 use crate::vm::{CachePoolFn, ReverseBackwardsDelegate};
 use crate::vm::{CaptureGroupRange, Delegate, Insn, Prog};
 use crate::LookAround::*;
 use crate::{BacktrackingControlVerb, CompileError, Error, Expr, LookAround, RegexOptions, Result};
+
+/// Maximum recursion depth for subroutine calls (matches Oniguruma's limit)
+const MAX_SUBROUTINE_RECURSION_DEPTH: usize = 19;
 
 // I'm thinking it probably doesn't make a lot of sense having this split
 // out from Compiler.
@@ -101,18 +110,27 @@ impl VMBuilder {
     }
 }
 
-struct Compiler {
+struct Compiler<'a> {
     b: VMBuilder,
     options: RegexOptions,
     inside_alternation: bool,
+    /// Map from group number to its Info node for subroutine expansion
+    group_info_map: Map<usize, &'a Info<'a>>,
+    /// Stack tracking currently expanding subroutine calls to detect recursion depth
+    subroutine_recursion_stack: Vec<usize>,
+    /// Root Info node for handling group 0 subroutine calls
+    root_info: Option<&'a Info<'a>>,
 }
 
-impl Compiler {
-    fn new(max_group: usize) -> Compiler {
+impl<'a> Compiler<'a> {
+    fn new(max_group: usize) -> Compiler<'a> {
         Compiler {
             b: VMBuilder::new(max_group),
             options: Default::default(),
             inside_alternation: false,
+            group_info_map: Map::new(),
+            subroutine_recursion_stack: Vec::new(),
+            root_info: None,
         }
     }
 
@@ -151,7 +169,7 @@ impl Compiler {
             }
             Expr::Group(_) => {
                 let group = info.start_group();
-                self.b.add(Insn::Save(group * 2));
+                self.b.add(Insn::SaveCaptureGroupStart(group));
                 self.visit(&info.children[0], hard)?;
                 self.b.add(Insn::Save(group * 2 + 1));
             }
@@ -207,10 +225,63 @@ impl Compiler {
             Expr::Conditional { .. } => {
                 self.compile_conditional(|compiler, i| compiler.visit(&info.children[i], hard))?;
             }
-            Expr::SubroutineCall(_) => {
-                return Err(Error::CompileError(Box::new(
-                    CompileError::FeatureNotYetSupported("Subroutine Call".to_string()),
-                )));
+            Expr::SubroutineCall(target_group) => {
+                // Check if we're already expanding this specific group (direct/indirect recursion)
+                let recursion_count = self
+                    .subroutine_recursion_stack
+                    .iter()
+                    .filter(|&&g| g == target_group)
+                    .count();
+                if recursion_count >= MAX_SUBROUTINE_RECURSION_DEPTH {
+                    // Hit recursion limit - don't expand further, effectively making this match fail
+                    // This matches Oniguruma's behavior of limiting recursion depth
+                    self.b.add(Insn::Fail);
+                    return Ok(());
+                }
+
+                // Handle group 0 (whole pattern) specially
+                let target_info = if target_group == 0 {
+                    self.root_info
+                } else {
+                    self.group_info_map.get(&target_group).map(|v| &**v)
+                };
+
+                if let Some(target_info) = target_info {
+                    // Track that we're expanding this subroutine
+                    self.subroutine_recursion_stack.push(target_group);
+
+                    // For group 0, visit the entire root info
+                    // For other groups, visit the child of the Group expression
+                    if target_group == 0 {
+                        self.visit(target_info, hard)?;
+                    } else {
+                        // Groups should always have at least one child (the group content)
+                        // If empty, this is an error in the analysis phase
+                        if target_info.children.is_empty() {
+                            return Err(Error::CompileError(Box::new(
+                                CompileError::FeatureNotYetSupported(format!(
+                                    "Subroutine call to empty group {}",
+                                    target_group
+                                )),
+                            )));
+                        }
+                        self.b.add(Insn::SaveCaptureGroupStart(target_group));
+                        self.visit(&target_info.children[0], hard)?;
+                        self.b.add(Insn::Save(target_group * 2 + 1));
+                    }
+
+                    // Pop the recursion stack
+                    self.subroutine_recursion_stack.pop();
+                } else {
+                    // The target group doesn't exist (invalid group reference)
+                    // This should have been caught by analysis, but be defensive
+                    return Err(Error::CompileError(Box::new(
+                        CompileError::FeatureNotYetSupported(format!(
+                            "Invalid subroutine call to non-existent group {}",
+                            target_group
+                        )),
+                    )));
+                }
             }
             Expr::UnresolvedNamedSubroutineCall { .. } => unreachable!(),
             Expr::BackrefWithRelativeRecursionLevel { .. } => unreachable!(),
@@ -345,6 +416,12 @@ impl Compiler {
         hard: bool,
     ) -> Result<()> {
         let child = &info.children[0];
+        if lo == 0 && hi == 0 {
+            // zero repetition, matches empty string without executing child
+            // This can happen with patterns like (abc){0}, which should match but never
+            // execute the child expression or its capture groups
+            return Ok(());
+        }
         if lo == 0 && hi == 1 {
             // e?
             let pc = self.b.pc();
@@ -751,9 +828,38 @@ pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<Ra
     Ok(re)
 }
 
+/// Recursively populate the group_info_map with all capture groups in the Info tree
+fn populate_group_info_map<'a>(map: &mut Map<usize, &'a Info<'a>>, info: &'a Info<'a>) {
+    match info.expr {
+        Expr::Group(_) => {
+            let group = info.start_group();
+            map.insert(group, info);
+            // Continue recursing into children
+            for child in &info.children {
+                populate_group_info_map(map, child);
+            }
+        }
+        _ => {
+            // Recurse into all children
+            for child in &info.children {
+                populate_group_info_map(map, child);
+            }
+        }
+    }
+}
+
 /// Compile the analyzed expressions into a program.
-pub fn compile(info: &Info<'_>, anchored: bool) -> Result<Prog> {
+pub fn compile(info: &Info<'_>, anchored: bool, contains_subroutines: bool) -> Result<Prog> {
     let mut c = Compiler::new(info.end_group());
+
+    if contains_subroutines {
+        // Store root info for group 0 subroutine calls
+        c.root_info = Some(info);
+
+        // Pre-populate the group_info_map to support forward references
+        populate_group_info_map(&mut c.group_info_map, info);
+    }
+
     if !anchored {
         // add instructions as if \O*? was used at the start of the expression
         // so that we bump the haystack index by one when failing to match at the current position
@@ -972,7 +1078,7 @@ mod tests {
         assert_matches!(prog[0], Split(3, 1));
         assert_matches!(prog[1], Any);
         assert_matches!(prog[2], Jmp(0));
-        assert_matches!(prog[3], Save(0));
+        assert_matches!(prog[3], SaveCaptureGroupStart(0));
         assert_matches!(prog[4], Split(5, 7));
         assert_matches!(prog[5], Lit(ref l) if l == "a");
         assert_matches!(prog[6], FailNegativeLookAround);
@@ -994,7 +1100,7 @@ mod tests {
     fn other_backtracking_control_verbs_error() {
         let tree = Expr::parse_tree(r"(*ACCEPT)").unwrap();
         let info = analyze(&tree, true).unwrap();
-        let result = compile(&info, true);
+        let result = compile(&info, true, tree.contains_subroutines);
         assert!(result.is_err());
         assert_matches!(
             result.err().unwrap(),
@@ -1003,7 +1109,7 @@ mod tests {
 
         let tree = Expr::parse_tree(r"(*COMMIT)").unwrap();
         let info = analyze(&tree, true).unwrap();
-        let result = compile(&info, true);
+        let result = compile(&info, true, tree.contains_subroutines);
         assert!(result.is_err());
         assert_matches!(
             result.err().unwrap(),
@@ -1012,7 +1118,7 @@ mod tests {
 
         let tree = Expr::parse_tree(r"(*SKIP)").unwrap();
         let info = analyze(&tree, true).unwrap();
-        let result = compile(&info, true);
+        let result = compile(&info, true, tree.contains_subroutines);
         assert!(result.is_err());
         assert_matches!(
             result.err().unwrap(),
@@ -1021,7 +1127,7 @@ mod tests {
 
         let tree = Expr::parse_tree(r"(*PRUNE)").unwrap();
         let info = analyze(&tree, true).unwrap();
-        let result = compile(&info, true);
+        let result = compile(&info, true, tree.contains_subroutines);
         assert!(result.is_err());
         assert_matches!(
             result.err().unwrap(),
@@ -1035,7 +1141,7 @@ mod tests {
         // Without the feature flag, variable-length lookbehinds should error
         let tree = Expr::parse_tree(r"(?<=ab+)x").unwrap();
         let info = analyze(&tree, true).unwrap();
-        let result = compile(&info, true);
+        let result = compile(&info, true, tree.contains_subroutines);
         assert!(result.is_err());
         assert_matches!(
             result.err().unwrap(),
@@ -1044,7 +1150,7 @@ mod tests {
 
         let tree = Expr::parse_tree(r"(?<=\bab+)x").unwrap();
         let info = analyze(&tree, true).unwrap();
-        let result = compile(&info, true);
+        let result = compile(&info, true, tree.contains_subroutines);
         assert!(result.is_err());
         assert_matches!(
             result.err().unwrap(),
@@ -1088,8 +1194,8 @@ mod tests {
 
         assert_eq!(prog.len(), 16, "prog: {:?}", prog);
 
-        assert_matches!(prog[0], Save(0));
-        assert_matches!(prog[1], Save(2));
+        assert_matches!(prog[0], SaveCaptureGroupStart(0));
+        assert_matches!(prog[1], SaveCaptureGroupStart(1));
         assert_matches!(prog[2], AnyNoNL);
         assert_matches!(prog[3], Save(3));
         assert_matches!(prog[4], Lit(ref l) if l == "b");
@@ -1139,7 +1245,7 @@ mod tests {
         // the backref to a capture group inside the variable lookbehind makes the capture group hard
         let tree = Expr::parse_tree(r"(?<=a(b+))\1").unwrap();
         let info = analyze(&tree, false).unwrap();
-        let result = compile(&info, true);
+        let result = compile(&info, true, tree.contains_subroutines);
         assert!(result.is_err());
         assert_matches!(
             result.err().unwrap(),
@@ -1152,7 +1258,7 @@ mod tests {
         // Test that absent repeater returns feature not supported
         let tree = Expr::parse_tree(r"(?~abc)").unwrap();
         let info = analyze(&tree, true).unwrap();
-        let result = compile(&info, true);
+        let result = compile(&info, true, tree.contains_subroutines);
         assert!(result.is_err());
         assert_matches!(
             result.err().unwrap(),
@@ -1162,7 +1268,7 @@ mod tests {
         // Test that absent expression returns feature not supported
         let tree = Expr::parse_tree(r"(?~|abc|\d*)").unwrap();
         let info = analyze(&tree, true).unwrap();
-        let result = compile(&info, true);
+        let result = compile(&info, true, tree.contains_subroutines);
         assert!(result.is_err());
         assert_matches!(
             result.err().unwrap(),
@@ -1172,7 +1278,7 @@ mod tests {
         // Test that absent stopper returns feature not supported
         let tree = Expr::parse_tree(r"(?~|abc)").unwrap();
         let info = analyze(&tree, true).unwrap();
-        let result = compile(&info, true);
+        let result = compile(&info, true, tree.contains_subroutines);
         assert!(result.is_err());
         assert_matches!(
             result.err().unwrap(),
@@ -1182,7 +1288,7 @@ mod tests {
         // Test that range clear returns feature not supported
         let tree = Expr::parse_tree(r"(?~|)").unwrap();
         let info = analyze(&tree, true).unwrap();
-        let result = compile(&info, true);
+        let result = compile(&info, true, tree.contains_subroutines);
         assert!(result.is_err());
         assert_matches!(
             result.err().unwrap(),
@@ -1205,9 +1311,9 @@ mod tests {
 
         assert_eq!(prog.len(), 12, "prog: {:?}", prog);
 
-        assert_matches!(prog[0], Save(0));
+        assert_matches!(prog[0], SaveCaptureGroupStart(0));
         assert_delegate(&prog[1], ".(b)", Some(CaptureGroupRange(1, 2)));
-        assert_matches!(prog[2], Save(4));
+        assert_matches!(prog[2], SaveCaptureGroupStart(2));
         assert_delegate(&prog[3], "[^a]", None);
         assert_matches!(prog[4], Split(3, 5));
         assert_matches!(prog[5], Save(5));
@@ -1219,10 +1325,40 @@ mod tests {
         assert_matches!(prog[11], End);
     }
 
+    #[test]
+    fn subroutine_call_can_be_compiled() {
+        let prog = compile_prog(r"((.)\g<1>)");
+
+        assert_eq!(prog.len(), 7, "prog: {:?}", prog);
+
+        assert_matches!(prog[0], SaveCaptureGroupStart(0));
+        assert_delegate(&prog[1], "(.)", Some(CaptureGroupRange(1, 2)));
+        assert_matches!(prog[2], SaveCaptureGroupStart(1));
+        assert_matches!(prog[3], AnyNoNL);
+        assert_matches!(prog[4], Save(3));
+        assert_matches!(prog[5], Save(1));
+        assert_matches!(prog[6], End);
+    }
+
+    #[test]
+    fn forward_reference_subroutine_call_can_be_compiled() {
+        let prog = compile_prog(r"(\g<1>(.))");
+
+        assert_eq!(prog.len(), 7, "prog: {:?}", prog);
+
+        assert_matches!(prog[0], SaveCaptureGroupStart(0));
+        assert_matches!(prog[1], SaveCaptureGroupStart(1));
+        assert_matches!(prog[2], AnyNoNL);
+        assert_matches!(prog[3], Save(3));
+        assert_delegate(&prog[4], "(.)", Some(CaptureGroupRange(1, 2)));
+        assert_matches!(prog[5], Save(1));
+        assert_matches!(prog[6], End);
+    }
+
     fn compile_prog(re: &str) -> Vec<Insn> {
         let tree = Expr::parse_tree(re).unwrap();
         let info = analyze(&tree, true).unwrap();
-        let prog = compile(&info, true).unwrap();
+        let prog = compile(&info, true, tree.contains_subroutines).unwrap();
         prog.body
     }
 

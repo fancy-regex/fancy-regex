@@ -21,6 +21,10 @@
 #![doc = include_str!("../docs/main.md")]
 #![doc = include_str!("../docs/features.md")]
 #![doc = include_str!("../docs/syntax.md")]
+#![doc = include_str!("../docs/subroutines/intro.md")]
+#![doc = include_str!("../docs/subroutines/flags and the common misconception.md")]
+#![doc = include_str!("../docs/subroutines/left recursion.md")]
+#![doc = include_str!("../docs/subroutines/recursion.md")]
 #![deny(missing_docs)]
 #![deny(missing_debug_implementations)]
 #![cfg_attr(not(feature = "std"), no_std)]
@@ -664,7 +668,11 @@ impl Regex {
             });
         }
 
-        let prog = compile(&info, can_compile_as_anchored(&tree.expr))?;
+        let prog = compile(
+            &info,
+            can_compile_as_anchored(&tree.expr),
+            tree.contains_subroutines,
+        )?;
         Ok(Regex {
             inner: RegexImpl::Fancy {
                 prog: Arc::new(prog),

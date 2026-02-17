@@ -267,6 +267,24 @@ impl<'a> Analyzer<'a> {
                         group,
                     ))));
                 }
+
+                // Check if this backref is inside a recursed group that it refers to
+                // This happens when:
+                // 1. The backref refers to a group we're currently analyzing
+                // 2. That group has a subroutine call to itself
+                if self.analyzing_groups.contains(group) {
+                    // Check if the group has a recursive subroutine call to itself
+                    if let Some(calls) = self.subroutine_calls.get(&group) {
+                        if calls.iter().any(|call| call.target_group == group) {
+                            return Err(Error::CompileError(Box::new(
+                                CompileError::FeatureNotYetSupported(
+                                    "Backreference to a capture group from within the same group when it's being recursed".to_string()
+                                )
+                            )));
+                        }
+                    }
+                }
+
                 // Look up the referenced group's size information
                 if let Some(&SizeInfo {
                     min_size: group_min_size,
@@ -1113,6 +1131,51 @@ mod tests {
         assert!(!analyze(&Expr::parse_tree(r"(hello)(?<=\b\1)").unwrap(), false).is_err());
         assert!(!analyze(&Expr::parse_tree(r"(..)(?<=\1\1)").unwrap(), false).is_err());
         assert!(!analyze(&Expr::parse_tree(r"(abc)(?<=\1)def").unwrap(), false).is_err());
+    }
+
+    #[test]
+    fn backref_inside_recursed_group_not_supported() {
+        let tree = Expr::parse_tree(r"(?<foo>a|\(\g<foo>\)\k<foo>?)").unwrap();
+        let result = analyze(&tree, false);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(ref box_err))
+                if matches!(**box_err, CompileError::FeatureNotYetSupported(ref s)
+                    if s.contains("Backreference") && s.contains("recursed"))
+        ));
+
+        // Test with numbered groups
+        let tree = Expr::parse_tree(r"(\g<1>\1)").unwrap();
+        let result = analyze(&tree, false);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(ref box_err))
+                if matches!(**box_err, CompileError::FeatureNotYetSupported(ref s)
+                    if s.contains("Backreference") && s.contains("recursed"))
+        ));
+
+        // Another example with alternation inside recursed group
+        let tree = Expr::parse_tree(r"(a|\g<1>b\1)").unwrap();
+        let result = analyze(&tree, false);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.err(),
+            Some(Error::CompileError(ref box_err))
+                if matches!(**box_err, CompileError::FeatureNotYetSupported(ref s)
+                    if s.contains("Backreference") && s.contains("recursed"))
+        ));
+    }
+
+    #[test]
+    fn backref_outside_recursed_group_is_allowed() {
+        let tree = Expr::parse_tree(r"(?<foo>a|\(\g<foo>\))\k<foo>").unwrap();
+        let result = analyze(&tree, false);
+        assert!(
+            result.is_ok(),
+            "Backref outside recursed group should pass analysis"
+        );
     }
 
     #[test]

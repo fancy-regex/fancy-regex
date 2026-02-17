@@ -33,7 +33,11 @@ Backreferences:
 `\k<name>`
 : match the exact string that the capture group named *name* matched \
 `(?P=name)`
-: same as `\k<name>` for compatibility with Python, etc.
+: same as `\k<name>` for compatibility with Python, etc. \
+`\g<name>`
+: call the subroutine defined in capture group named *name* \
+`\g<1>`
+: call the subroutine defined in capture group 1
 
 Named capture groups:
 
