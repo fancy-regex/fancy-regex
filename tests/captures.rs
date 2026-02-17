@@ -254,6 +254,60 @@ fn captures_iter_collect_when_backtrack_limit_hit() {
     assert!(result[0].is_err());
 }
 
+#[test]
+fn captures_in_lookbehind_subroutine_call() {
+    let captures = captures(r"(?<=(?<A>.)\g<A>)b", "axyabc");
+
+    assert_eq!(captures.len(), 2);
+    assert_match(captures.get(0), "b", 4, 5);
+
+    // right most capture takes precedence
+    assert_match(captures.get(1), "a", 3, 4);
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn captures_in_variable_lookbehind_subroutine_call() {
+    let regex = common::regex(r"(?<=(?<A>[^b])(?<B>b+)\g<A>)d");
+
+    let captures = assert_captures(regex.captures_from_pos("aaabbcd", 5));
+    assert_eq!(captures.len(), 3);
+    assert_match(captures.get(0), "d", 6, 7);
+    assert_match(captures.get(2), "bb", 3, 5);
+
+    // right most capture takes precedence
+    assert_match(captures.get(1), "c", 5, 6);
+}
+
+#[test]
+fn self_recursive_capture_groups() {
+    // Test recursive pattern with capture groups
+    let caps1 = captures(r"(?<foo>a|\(\g<foo>\))", "((((((a))))))");
+
+    // According to Oniguruma behavior, capture group 1 should match the same as group 0
+    // for the input "((((((a))))))"
+    assert_eq!(caps1.len(), 2);
+    assert_match(caps1.get(0), "((((((a))))))", 0, 13);
+    assert_match(caps1.get(1), "((((((a))))))", 0, 13);
+
+    // Test with simpler input "(a)"
+    let caps2 = captures(r"(?<foo>a|\(\g<foo>\))", "(a)");
+    assert_eq!(caps2.len(), 2);
+    assert_match(caps2.get(0), "(a)", 0, 3);
+    assert_match(caps2.get(1), "(a)", 0, 3);
+}
+
+#[test]
+fn forward_reference_subroutine_capture_groups() {
+    // Test that a subroutine call updates the capture group
+    let captures = captures(r"\g<_B>\g<_B>|\zEND(?<_A>.a.)(?<_B>.b.)", "xbxyby");
+
+    assert_eq!(captures.len(), 3);
+    assert_match(captures.get(0), "xbxyby", 0, 6);
+    assert!(captures.name("_A").is_none());
+    assert_match(captures.name("_B"), "yby", 3, 6);
+}
+
 #[cfg_attr(feature = "track_caller", track_caller)]
 fn captures<'a>(re: &str, text: &'a str) -> Captures<'a> {
     let regex = common::regex(re);

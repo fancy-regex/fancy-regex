@@ -237,6 +237,9 @@ pub enum Insn {
     Save(usize),
     /// Save `0` into the specified slot
     Save0(usize),
+    /// Save the current string index into the specified capture group start slot if the capture group is empty
+    /// or has already completed.
+    SaveCaptureGroupStart(usize),
     /// Set the string index to the value that was saved in the specified slot
     Restore(usize),
     /// Repeat greedily (match as much as possible)
@@ -586,6 +589,7 @@ fn store_capture_groups(
     state: &mut State,
     inner_slots: &[Option<NonMaxUsize>],
     range: CaptureGroupRange,
+    skip_earlier_captures: bool,
 ) {
     let start_group = range.start();
     let end_group = range.end();
@@ -593,11 +597,18 @@ fn store_capture_groups(
         let slot = (start_group + i) * 2;
         if let Some(start) = inner_slots[(i + 1) * 2] {
             let end = inner_slots[(i + 1) * 2 + 1].unwrap();
-            state.save(slot, start.get());
-            state.save(slot + 1, end.get());
-        } else {
-            state.save(slot, usize::MAX);
-            state.save(slot + 1, usize::MAX);
+
+            let mut save = !skip_earlier_captures;
+            if skip_earlier_captures {
+                let existing_start = state.get(slot);
+                let existing_end = state.get(slot + 1);
+                save = (start.get() >= existing_start || existing_start == usize::MAX)
+                    && (end.get() >= existing_end || existing_end == usize::MAX);
+            }
+            if save {
+                state.save(slot, start.get());
+                state.save(slot + 1, end.get());
+            }
         }
     }
 }
@@ -743,6 +754,16 @@ pub(crate) fn run(
                 }
                 Insn::Save(slot) => state.save(slot, ix),
                 Insn::Save0(slot) => state.save(slot, 0),
+                Insn::SaveCaptureGroupStart(group) => {
+                    let start_slot = group * 2;
+                    // if the capture group's start slot is empty
+                    // i.e. execution is not currently inside this capture group
+                    // or the end slot for that capture group is complete
+                    // then we save the current position in the capture group start slot
+                    if state.get(start_slot) == usize::MAX || state.get(start_slot + 1) <= ix {
+                        state.save(start_slot, ix);
+                    }
+                }
                 Insn::Restore(slot) => ix = state.get(slot),
                 Insn::RepeatGr {
                     lo,
@@ -903,8 +924,8 @@ pub(crate) fn run(
                                         .search_slots(&forward_input, &mut inner_slots)
                                         .is_some()
                                     {
-                                        // Store capture group positions
-                                        store_capture_groups(&mut state, &inner_slots, range);
+                                        // Store capture group positions, ignoring any whose range is earlier than what has been stored already
+                                        store_capture_groups(&mut state, &inner_slots, range, true);
                                     } else {
                                         break 'fail;
                                     }
@@ -938,7 +959,8 @@ pub(crate) fn run(
                         // Has capture groups, need to extract them
                         inner_slots.resize((range.end() - range.start() + 1) * 2, None);
                         if inner.search_slots(&input, &mut inner_slots).is_some() {
-                            store_capture_groups(&mut state, &inner_slots, range);
+                            // store the capture groups, no need to check current state to see if new values are further to the right
+                            store_capture_groups(&mut state, &inner_slots, range, false);
                             ix = inner_slots[1].unwrap().get();
                         } else {
                             break 'fail;

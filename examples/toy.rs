@@ -211,7 +211,7 @@ digraph G {
   5 [label=\"5: Split(4, 6)\"];
   5 -> 4;
   5 -> 6;
-  6 [label=\"6: Save(2)\"];
+  6 [label=\"6: SaveCaptureGroupStart(1)\"];
   6 -> 7;
   7 [label=\"7: Split(8, 10)\"];
   7 -> 8;
@@ -258,7 +258,7 @@ digraph G {
   3: Save(0)
   4: Lit(\"a\")
   5: Split(4, 6)
-  6: Save(2)
+  6: SaveCaptureGroupStart(1)
   7: Split(8, 10)
   8: Lit(\"b\")
   9: Jmp(7)
