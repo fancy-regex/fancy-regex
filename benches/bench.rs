@@ -63,7 +63,7 @@ fn analyze_literal_re(c: &mut Criterion) {
 fn run_backtrack(c: &mut Criterion) {
     let tree = Expr::parse_tree("^.*?(([ab]+)\\1b)").unwrap();
     let a = analyze(&tree, true).unwrap();
-    let p = compile(&a, true).unwrap();
+    let p = compile(&a, true, tree.contains_subroutines).unwrap();
     c.bench_function("run_backtrack", |b| {
         b.iter(|| {
             let result = run_default(&p, "babab", 0).unwrap();
@@ -78,7 +78,7 @@ fn run_backtrack(c: &mut Criterion) {
 fn run_tricky(c: &mut Criterion) {
     let tree = Expr::parse_tree("(a|b|ab)*bc").unwrap();
     let a = analyze(&tree, false).unwrap();
-    let p = compile(&a, false).unwrap();
+    let p = compile(&a, false, tree.contains_subroutines).unwrap();
     let mut s = String::new();
     for _ in 0..28 {
         s.push_str("ab");
@@ -90,7 +90,7 @@ fn run_tricky(c: &mut Criterion) {
 fn run_backtrack_limit(c: &mut Criterion) {
     let tree = Expr::parse_tree("(?i)(a|b|ab)*(?>c)").unwrap();
     let a = analyze(&tree, false).unwrap();
-    let p = compile(&a, false).unwrap();
+    let p = compile(&a, false, tree.contains_subroutines).unwrap();
     let s = "abababababababababababababababababababababababababababab";
     c.bench_function("run_backtrack_limit", |b| {
         b.iter(|| run_default(&p, &s, 0).unwrap_err())
@@ -102,7 +102,7 @@ fn const_size_lookbehind(c: &mut Criterion) {
     // Benchmark const-size lookbehind (should use simple GoBack)
     let tree = Expr::parse_tree(r"(?<=ab)x").unwrap();
     let a = analyze(&tree, false).unwrap();
-    let p = compile(&a, false).unwrap();
+    let p = compile(&a, false, tree.contains_subroutines).unwrap();
     let input = "abx";
     c.bench_function("const_size_lookbehind", |b| {
         b.iter(|| run_default(&p, input, 0).unwrap())
@@ -114,7 +114,7 @@ fn variable_size_lookbehind(c: &mut Criterion) {
     // Benchmark variable-size lookbehind (uses reverse DFA)
     let tree = Expr::parse_tree(r"(?<=a+b+)x").unwrap();
     let a = analyze(&tree, false).unwrap();
-    let p = compile(&a, false).unwrap();
+    let p = compile(&a, false, tree.contains_subroutines).unwrap();
     let input = "aaabbbbx";
     c.bench_function("variable_size_lookbehind", |b| {
         b.iter(|| run_default(&p, input, 0).unwrap())
@@ -126,7 +126,7 @@ fn variable_size_alt_lookbehind(c: &mut Criterion) {
     // Benchmark variable-size lookbehind with alternation
     let tree = Expr::parse_tree(r"(?<=a|bc)x").unwrap();
     let a = analyze(&tree, false).unwrap();
-    let p = compile(&a, false).unwrap();
+    let p = compile(&a, false, tree.contains_subroutines).unwrap();
     let input = "bcx";
     c.bench_function("variable_size_alt_lookbehind", |b| {
         b.iter(|| run_default(&p, input, 0).unwrap())
@@ -163,7 +163,7 @@ fn continue_from_end_of_prev_match_short_haystack(c: &mut Criterion) {
     // Benchmark \G with a short haystack that doesn't match
     let tree = Expr::parse_tree(r"\Gfoo").unwrap();
     let a = analyze(&tree, false).unwrap();
-    let p = compile(&a, false).unwrap();
+    let p = compile(&a, false, tree.contains_subroutines).unwrap();
     let input = "bar"; // 3 bytes, doesn't match
     c.bench_function("continue_from_end_of_prev_match_short_haystack", |b| {
         b.iter(|| run_default(&p, input, 0).unwrap())
@@ -174,7 +174,7 @@ fn continue_from_end_of_prev_match_long_haystack(c: &mut Criterion) {
     // Benchmark \G with a long haystack that doesn't match
     let tree = Expr::parse_tree(r"\Gfoo").unwrap();
     let a = analyze(&tree, false).unwrap();
-    let p = compile(&a, false).unwrap();
+    let p = compile(&a, false, tree.contains_subroutines).unwrap();
     let mut input = String::new();
     for _ in 0..10000 {
         input.push('x');

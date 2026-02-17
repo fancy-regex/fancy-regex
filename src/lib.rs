@@ -668,7 +668,11 @@ impl Regex {
             });
         }
 
-        let prog = compile(&info, can_compile_as_anchored(&tree.expr))?;
+        let prog = compile(
+            &info,
+            can_compile_as_anchored(&tree.expr),
+            tree.contains_subroutines,
+        )?;
         Ok(Regex {
             inner: RegexImpl::Fancy {
                 prog: Arc::new(prog),

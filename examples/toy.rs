@@ -90,7 +90,7 @@ fn main() {
             let tree = Expr::parse_tree(&re).unwrap();
             let text = args.next().expect("expected text argument");
             let a = analyze(&tree, false).unwrap();
-            let p = compile(&a, true).unwrap();
+            let p = compile(&a, true, tree.contains_subroutines).unwrap();
             run_trace(&p, &text, 0).unwrap();
         } else if cmd == "graph" {
             let re = args.next().expect("expected regexp argument");
@@ -146,7 +146,12 @@ fn prog(re: &str) -> Prog {
     let mut tree = Expr::parse_tree(re).expect("Expected parsing regex to work");
     let requires_capture_group_fixup = optimize(&mut tree);
     let result = analyze(&tree, requires_capture_group_fixup).expect("Expected analyze to succeed");
-    compile(&result, can_compile_as_anchored(&tree.expr)).expect("Expected compile to succeed")
+    compile(
+        &result,
+        can_compile_as_anchored(&tree.expr),
+        tree.contains_subroutines,
+    )
+    .expect("Expected compile to succeed")
 }
 
 struct AnalyzeFormatterWrapper<'a> {
