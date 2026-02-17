@@ -228,8 +228,8 @@ pub struct GroupInfo {
     pub name: Option<String>,
 }
 
-// Helper function to escape literal strings for display
-fn escape_literal(s: &str) -> String {
+// Helper function to escape delegate strings for display
+fn escape_delegate(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     for ch in s.chars() {
         match ch {
@@ -275,10 +275,7 @@ fn info_to_tree_node<'a>(
         }
         Expr::Assertion(_) => ("Assertion".to_string(), "".to_string(), None),
         Expr::GeneralNewline { .. } => ("GeneralNewline".to_string(), "\\R".to_string(), None),
-        Expr::Literal { val, .. } => {
-            let escaped = escape_literal(val);
-            ("Literal".to_string(), format!("\"{}\"", escaped), None)
-        }
+        Expr::Literal { val, .. } => ("Literal".to_string(), format!("{:?}", val), None),
         Expr::Concat(v) => ("Concat".to_string(), format!("({})", v.len()), None),
         Expr::Alt(v) => ("Alt".to_string(), format!("({})", v.len()), None),
         Expr::Group(_) => {
@@ -320,7 +317,7 @@ fn info_to_tree_node<'a>(
             )
         }
         Expr::Delegate { inner, .. } => {
-            let escaped = escape_literal(inner);
+            let escaped = escape_delegate(inner);
             ("Delegate".to_string(), format!("\"{}\"", escaped), None)
         }
         Expr::Backref { group, .. } => {
@@ -420,41 +417,32 @@ pub fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fancy_regex::Expr;
 
     #[test]
-    fn test_escape_literal_basic() {
-        assert_eq!(escape_literal("abc"), "abc");
-        assert_eq!(escape_literal("hello world"), "hello world");
+    fn test_escape_delegate_basic() {
+        assert_eq!(escape_delegate("abc"), "abc");
+        assert_eq!(escape_delegate("hello world"), "hello world");
     }
 
     #[test]
-    fn test_escape_literal_special_chars() {
-        assert_eq!(escape_literal("a\nb"), "a\\nb");
-        assert_eq!(escape_literal("a\rb"), "a\\rb");
-        assert_eq!(escape_literal("a\tb"), "a\\tb");
-        assert_eq!(escape_literal("a\\b"), "a\\b");
-        assert_eq!(escape_literal("a\"b"), "a\\\"b");
+    fn test_escape_delegate_special_chars() {
+        assert_eq!(escape_delegate("a\nb"), "a\\nb");
+        assert_eq!(escape_delegate("a\rb"), "a\\rb");
+        assert_eq!(escape_delegate("a\tb"), "a\\tb");
+        assert_eq!(escape_delegate("a\\b"), "a\\b");
+        assert_eq!(escape_delegate("a\"b"), "a\\\"b");
     }
 
     #[test]
-    fn test_escape_literal_control_chars() {
-        let result = escape_literal("\x01\x02");
+    fn test_escape_delegate_control_chars() {
+        let result = escape_delegate("\x01\x02");
         assert!(result.contains("\\u{1}"));
         assert!(result.contains("\\u{2}"));
     }
 
     #[test]
-    fn test_info_to_tree_node_literal() {
-        // Create a simple literal expression
-        let _expr = Expr::Literal {
-            val: "test\n".to_string(),
-            casei: false,
-        };
-
-        // Create mock Info - we need to manually construct this
-        // For this test, we'll use analyze to get real Info
-        let tree = fancy_regex::Expr::parse_tree("test\\n").unwrap();
+    fn test_info_to_tree_node_literal_newline() {
+        let tree = fancy_regex::Expr::parse_tree("test\n").unwrap();
         let info = fancy_regex::internal::analyze(&tree, false).unwrap();
         let group_names = std::collections::HashMap::new();
 
@@ -464,6 +452,37 @@ mod tests {
         assert_eq!(node.children.len(), 5); // "test\n" as separate literals
         assert_eq!(node.children[0].kind, "Literal");
         assert_eq!(node.children[0].summary, "\"t\"");
+        assert_eq!(node.children[4].summary, "\"\\n\"");
+    }
+
+    #[test]
+    fn test_info_to_tree_node_literal_slash_n() {
+        let tree = fancy_regex::Expr::parse_tree(r"test\n").unwrap();
+        let info = fancy_regex::internal::analyze(&tree, false).unwrap();
+        let group_names = std::collections::HashMap::new();
+
+        let node = info_to_tree_node(&info, &group_names);
+
+        assert_eq!(node.kind, "Concat");
+        assert_eq!(node.children.len(), 5); // "test\n" as separate literals
+        assert_eq!(node.children[0].kind, "Literal");
+        assert_eq!(node.children[0].summary, "\"t\"");
+        assert_eq!(node.children[4].summary, "\"\\n\"");
+    }
+
+    #[test]
+    fn test_info_to_tree_node_literal_slash() {
+        let tree = fancy_regex::Expr::parse_tree("test\\\\").unwrap();
+        let info = fancy_regex::internal::analyze(&tree, false).unwrap();
+        let group_names = std::collections::HashMap::new();
+
+        let node = info_to_tree_node(&info, &group_names);
+
+        assert_eq!(node.kind, "Concat");
+        assert_eq!(node.children.len(), 5); // "test\n" as separate literals
+        assert_eq!(node.children[0].kind, "Literal");
+        assert_eq!(node.children[0].summary, "\"t\"");
+        assert_eq!(node.children[4].summary, "\"\\\\\"");
     }
 
     #[test]
@@ -478,8 +497,12 @@ mod tests {
         // The root should be a Delegate node
         assert_eq!(node.kind, "Delegate");
         assert!(
-            node.summary.contains("\\w"),
+            node.summary.contains(r"\w"),
             "Delegate summary should contain the pattern"
+        );
+        assert!(
+            !node.summary.contains(r"\\w"),
+            "Delegate summary should not contain extra slashes"
         );
     }
 
