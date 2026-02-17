@@ -456,13 +456,6 @@ impl<'a> Analyzer<'a> {
 
     /// Check for left-recursive subroutine calls using depth-first search
     fn check_left_recursion(&self, named_groups: &Map<String, usize>) -> Result<()> {
-        // Build reverse mapping from group number to group name (if any)
-        // so we can give friendly error messages when left recursion is detected
-        let mut group_names: Map<usize, String> = Map::new();
-        for (name, &group_num) in named_groups.iter() {
-            group_names.insert(group_num, name.clone());
-        }
-
         // Compute which groups are reachable from the root (group 0)
         let reachable_groups = self.compute_reachable_groups();
 
@@ -477,6 +470,13 @@ impl<'a> Analyzer<'a> {
             let mut recursion_stack = BitSet::new();
             if self.dfs_check_left_recursion(start_group, &mut visited, &mut recursion_stack)? {
                 // Found left recursion
+                // Build reverse mapping from group number to group name (if any)
+                // so we can give friendly error messages
+                let mut group_names: Map<usize, String> = Map::new();
+                for (name, &group_num) in named_groups.iter() {
+                    group_names.insert(group_num, name.clone());
+                }
+
                 let group_desc = if let Some(name) = group_names.get(&start_group) {
                     format!("group '{}' ({})", name, start_group)
                 } else {
