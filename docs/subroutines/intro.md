@@ -46,3 +46,7 @@ assert!(!re.is_match("foo 717").expect("expected execution to complete"));
 ```
 
 In the above example, 7 was stored in capture group 1. Then it was replaced with 1 by the subroutine call. Then the backreference to group 1 can only match the literal `1`.
+
+## Side effect edge cases
+
+Also, in a lookbehind, a subroutine call would not update the capture group position when the currently stored position for that capture group is further to the right in the haystack. i.e. right-most captures take precedence.
