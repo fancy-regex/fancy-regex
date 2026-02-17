@@ -84,6 +84,8 @@ pub enum CompileError {
     SubroutineCallTargetNotFound(String, usize),
     /// Left-recursive subroutine call detected
     LeftRecursiveSubroutineCall(String),
+    /// Unbounded recursive subroutine call detected
+    NeverEndingRecursion,
 }
 
 /// An error as the result of executing a regex.
@@ -153,6 +155,9 @@ impl fmt::Display for CompileError {
             }
             CompileError::LeftRecursiveSubroutineCall(s) => {
                 write!(f, "Left-recursive subroutine call detected: {}", s)
+            }
+            CompileError::NeverEndingRecursion => {
+                write!(f, "Never-ending recursive subroutine call detected")
             }
         }
     }
