@@ -1681,8 +1681,15 @@ pub enum Expr {
     KeepOut,
     /// Anchor to match at the position where the previous match ended
     ContinueFromPreviousMatchEnd,
-    /// Conditional expression based on whether the numbered capture group matched or not
-    BackrefExistsCondition(usize),
+    /// Conditional expression based on whether the numbered capture group matched or not.
+    /// The optional `relative_recursion_level` qualifies which recursion level's capture is
+    /// tested (Oniguruma `(?(name+N)...)` syntax).
+    BackrefExistsCondition {
+        /// The resolved capture group number
+        group: usize,
+        /// Optional relative recursion level (e.g. `+0`, `-1`)
+        relative_recursion_level: Option<isize>,
+    },
     /// If/Then/Else Condition. If there is no Then/Else, these will just be empty expressions.
     Conditional {
         /// The conditional expression to evaluate
@@ -1694,17 +1701,52 @@ pub enum Expr {
     },
     /// Subroutine call to the specified group number
     SubroutineCall(usize),
-    /// Unresolved subroutine call to the specified group name
-    UnresolvedNamedSubroutineCall {
-        /// The capture group name
-        name: String,
-        /// The position in the original regex pattern where the subroutine call is made
-        ix: usize,
-    },
     /// Backtracking control verb
     BacktrackingControlVerb(BacktrackingControlVerb),
     /// Match while the given expression is absent from the haystack
     Absent(Absent),
+    /// Abstract Syntax Tree node - will be resolved into an Expr before analysis.
+    /// Contains the position in the pattern where the node was parsed from
+    #[allow(private_interfaces)]
+    AstNode(AstNode, usize),
+}
+
+/// Target of a backreference or subroutine call
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub(crate) enum CaptureGroupTarget {
+    /// Direct numbered reference
+    ByNumber(usize),
+
+    /// Named reference
+    ByName(String),
+
+    /// Relative reference (e.g., -1, -2, etc.)
+    Relative(isize),
+}
+
+/// Abstract Syntax Tree node - will be resolved into an Expr before analysis
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub(crate) enum AstNode {
+    /// Group with optional name - name is only present if explicitly specified in pattern
+    AstGroup {
+        name: Option<String>,
+        inner: Box<Expr>,
+    },
+    /// Backreference
+    Backref {
+        target: CaptureGroupTarget,
+        casei: bool, // TODO: move out of Backref and prefer a Flags AstNode
+        relative_recursion_level: Option<isize>,
+    },
+    /// Subroutine Call
+    SubroutineCall(CaptureGroupTarget),
+    /// Backreference exists condition `(?(name)...)` or `(?(1)...)` - unresolved target.
+    /// The optional `relative_recursion_level` corresponds to the Oniguruma `+N`/`-N` suffix
+    /// (e.g. `(?(name+0)...)`) which qualifies which recursion level's capture is tested.
+    BackrefExistsCondition {
+        target: CaptureGroupTarget,
+        relative_recursion_level: Option<isize>,
+    },
 }
 
 /// Type of look-around assertion as used for a look-around expression.
@@ -2017,11 +2059,14 @@ impl Expr {
                 | Expr::BackrefWithRelativeRecursionLevel { .. }
                 | Expr::KeepOut
                 | Expr::ContinueFromPreviousMatchEnd
-                | Expr::BackrefExistsCondition(_)
+                | Expr::BackrefExistsCondition { .. }
                 | Expr::BacktrackingControlVerb(_)
-                | Expr::SubroutineCall(_)
-                | Expr::UnresolvedNamedSubroutineCall { .. }
-                | Expr::Absent(Absent::Clear),
+                |             Expr::SubroutineCall(_)
+                | Expr::Absent(Absent::Clear)
+                // An unresolved AstNode has no separate child Expr to iterate; the resolver
+                // should have replaced it before analysis, so treat it as a leaf so that
+                // collection/iteration doesn't panic, and let the analyzer emit the error.
+                | Expr::AstNode(..),
         )
     }
 
@@ -2427,14 +2472,13 @@ mod tests {
         .is_leaf_node());
         assert!(Expr::KeepOut.is_leaf_node());
         assert!(Expr::ContinueFromPreviousMatchEnd.is_leaf_node());
-        assert!(Expr::BackrefExistsCondition(1).is_leaf_node());
-        assert!(Expr::BacktrackingControlVerb(crate::BacktrackingControlVerb::Fail).is_leaf_node());
-        assert!(Expr::SubroutineCall(1).is_leaf_node());
-        assert!(Expr::UnresolvedNamedSubroutineCall {
-            name: "test".to_string(),
-            ix: 0
+        assert!(Expr::BackrefExistsCondition {
+            group: 1,
+            relative_recursion_level: None
         }
         .is_leaf_node());
+        assert!(Expr::BacktrackingControlVerb(crate::BacktrackingControlVerb::Fail).is_leaf_node());
+        assert!(Expr::SubroutineCall(1).is_leaf_node());
 
         assert!(Expr::Absent(Absent::Clear).is_leaf_node());
     }
@@ -2458,7 +2502,10 @@ mod tests {
         .is_leaf_node());
         assert!(!Expr::AtomicGroup(Box::new(make_literal("a"))).is_leaf_node());
         assert!(!Expr::Conditional {
-            condition: Box::new(Expr::BackrefExistsCondition(1)),
+            condition: Box::new(Expr::BackrefExistsCondition {
+                group: 1,
+                relative_recursion_level: None
+            }),
             true_branch: Box::new(make_literal("a")),
             false_branch: Box::new(Expr::Empty)
         }
@@ -2528,7 +2575,10 @@ mod tests {
     fn test_children_iter_triple() {
         // Conditional should return three children
         let expr = Expr::Conditional {
-            condition: Box::new(Expr::BackrefExistsCondition(1)),
+            condition: Box::new(Expr::BackrefExistsCondition {
+                group: 1,
+                relative_recursion_level: None,
+            }),
             true_branch: Box::new(make_literal("a")),
             false_branch: Box::new(make_literal("b")),
         };

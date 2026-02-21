@@ -373,7 +373,7 @@ fn info_to_tree_node<'a>(
         Expr::ContinueFromPreviousMatchEnd => {
             ("ContinueFromPreviousMatchEnd".to_string(), None, None)
         }
-        Expr::BackrefExistsCondition(group) => (
+        Expr::BackrefExistsCondition { group, relative_recursion_level: _ } => (
             "BackrefExistsCondition".to_string(),
             Some(format!("{}", group)),
             None,
@@ -382,11 +382,6 @@ fn info_to_tree_node<'a>(
         Expr::SubroutineCall(group) => (
             "SubroutineCall".to_string(),
             Some(format!("{}", group)),
-            None,
-        ),
-        Expr::UnresolvedNamedSubroutineCall { name, .. } => (
-            "UnresolvedNamedSubroutineCall".to_string(),
-            Some(format!("({})", name)),
             None,
         ),
         Expr::BacktrackingControlVerb(_) => ("BacktrackingControlVerb".to_string(), None, None),
@@ -399,6 +394,7 @@ fn info_to_tree_node<'a>(
                 Clear => ("AbsentClear".to_string(), None, None),
             }
         }
+        Expr::AstNode { .. } => unreachable!("Any AstNode left after the parser's resolver stage causes an error upon analysis"),
     };
 
     let children = info
