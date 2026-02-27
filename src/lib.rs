@@ -139,14 +139,14 @@ impl<'r, 't> Matches<'r, 't> {
     pub fn regex(&self) -> &'r Regex {
         self.re
     }
-}
 
-impl<'r, 't> Iterator for Matches<'r, 't> {
-    type Item = Result<Match<'t>>;
-
-    /// Adapted from the `regex` crate. Calls `find_from_pos` repeatedly.
+    /// Adapted from the `regex` crate. Calls `find_from_pos`/`captures_from_pos` repeatedly.
     /// Ignores empty matches immediately after a match.
-    fn next(&mut self) -> Option<Self::Item> {
+    /// Also passes a flag when skipping an empty match, so that \G wouldn't match at the new start position.
+    fn next_with<F, R>(&mut self, mut search: F) -> Option<Result<R>>
+    where
+        F: FnMut(&Regex, usize, u32) -> Result<Option<(R, Match<'t>)>>,
+    {
         if self.last_end > self.text.len() {
             return None;
         }
@@ -160,20 +160,17 @@ impl<'r, 't> Iterator for Matches<'r, 't> {
         } else {
             0
         };
-        let mat =
-            match self
-                .re
-                .find_from_pos_with_option_flags(self.text, self.last_end, option_flags)
-            {
-                Err(error) => {
-                    // Stop on first error: If an error is encountered, return it, and set the "last match position"
-                    // to the string length, so that the next next() call will return None, to prevent an infinite loop.
-                    self.last_end = self.text.len() + 1;
-                    return Some(Err(error));
-                }
-                Ok(None) => return None,
-                Ok(Some(mat)) => mat,
-            };
+
+        let (result, mat) = match search(self.re, self.last_end, option_flags) {
+            Err(error) => {
+                // Stop on first error: If an error is encountered, return it, and set the "last match position"
+                // to the string length, so that the next next() call will return None, to prevent an infinite loop.
+                self.last_end = self.text.len() + 1;
+                return Some(Err(error));
+            }
+            Ok(None) => return None,
+            Ok(Some(pair)) => pair,
+        };
 
         if mat.start == mat.end {
             // This is an empty match. To ensure we make progress, start
@@ -183,7 +180,7 @@ impl<'r, 't> Iterator for Matches<'r, 't> {
             // Don't accept empty matches immediately following a match.
             // Just move on to the next match.
             if Some(mat.end) == self.last_match {
-                return self.next();
+                return self.next_with(search);
             }
         } else {
             self.last_end = mat.end;
@@ -191,7 +188,19 @@ impl<'r, 't> Iterator for Matches<'r, 't> {
 
         self.last_match = Some(mat.end);
 
-        Some(Ok(mat))
+        Some(Ok(result))
+    }
+}
+
+impl<'r, 't> Iterator for Matches<'r, 't> {
+    type Item = Result<Match<'t>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let text = self.text;
+        self.next_with(move |re, pos, flags| {
+            re.find_from_pos_with_option_flags(text, pos, flags)
+                .map(|opt| opt.map(|m| (m, m)))
+        })
     }
 }
 
@@ -220,53 +229,17 @@ impl<'r, 't> CaptureMatches<'r, 't> {
 impl<'r, 't> Iterator for CaptureMatches<'r, 't> {
     type Item = Result<Captures<'t>>;
 
-    /// Adapted from the `regex` crate. Calls `captures_from_pos` repeatedly.
-    /// Ignores empty matches immediately after a match.
     fn next(&mut self) -> Option<Self::Item> {
-        if self.0.last_end > self.0.text.len() {
-            return None;
-        }
-
-        let option_flags = if let Some(last_match) = self.0.last_match {
-            if self.0.last_end > last_match {
-                OPTION_SKIPPED_EMPTY_MATCH
-            } else {
-                0
-            }
-        } else {
-            0
-        };
-
-        let captures = match self.0.re.captures_from_pos_with_option_flags(
-            self.0.text,
-            self.0.last_end,
-            option_flags,
-        ) {
-            Err(error) => {
-                // Stop on first error: If an error is encountered, return it, and set the "last match position"
-                // to the string length, so that the next next() call will return None, to prevent an infinite loop.
-                self.0.last_end = self.0.text.len() + 1;
-                return Some(Err(error));
-            }
-            Ok(None) => return None,
-            Ok(Some(captures)) => captures,
-        };
-
-        let mat = captures
-            .get(0)
-            .expect("`Captures` is expected to have entire match at 0th position");
-        if mat.start == mat.end {
-            self.0.last_end = next_utf8(self.0.text, mat.end);
-            if Some(mat.end) == self.0.last_match {
-                return self.next();
-            }
-        } else {
-            self.0.last_end = mat.end;
-        }
-
-        self.0.last_match = Some(mat.end);
-
-        Some(Ok(captures))
+        let text = self.0.text;
+        self.0.next_with(move |re, pos, flags| {
+            let captures = re.captures_from_pos_with_option_flags(text, pos, flags)?;
+            Ok(captures.map(|c| {
+                let mat = c
+                    .get(0)
+                    .expect("`Captures` is expected to have entire match at 0th position");
+                (c, mat)
+            }))
+        })
     }
 }
 
