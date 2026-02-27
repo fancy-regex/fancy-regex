@@ -771,6 +771,7 @@ pub fn can_compile_as_anchored(root_expr: &Expr) -> bool {
     match root_expr {
         Expr::Concat(children) => match children[0] {
             Expr::Assertion(assertion) => assertion == Assertion::StartText,
+            Expr::ContinueFromPreviousMatchEnd => true,
             _ => false,
         },
         Expr::Assertion(assertion) => *assertion == Assertion::StartText,
@@ -1068,6 +1069,12 @@ mod tests {
         assert_eq!(can_compile_as_anchored(&tree.expr), true);
 
         let tree = Expr::parse_tree(r"^").unwrap();
+        assert_eq!(can_compile_as_anchored(&tree.expr), true);
+    }
+
+    #[test]
+    fn anchored_for_continue_from_prev_match_assertions() {
+        let tree = Expr::parse_tree(r"\G(\w+)\1").unwrap();
         assert_eq!(can_compile_as_anchored(&tree.expr), true);
     }
 
