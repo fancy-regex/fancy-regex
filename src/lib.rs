@@ -227,7 +227,21 @@ impl<'r, 't> Iterator for CaptureMatches<'r, 't> {
             return None;
         }
 
-        let captures = match self.0.re.captures_from_pos(self.0.text, self.0.last_end) {
+        let option_flags = if let Some(last_match) = self.0.last_match {
+            if self.0.last_end > last_match {
+                OPTION_SKIPPED_EMPTY_MATCH
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        let captures = match self.0.re.captures_from_pos_with_option_flags(
+            self.0.text,
+            self.0.last_end,
+            option_flags,
+        ) {
             Err(error) => {
                 // Stop on first error: If an error is encountered, return it, and set the "last match position"
                 // to the string length, so that the next next() call will return None, to prevent an infinite loop.
@@ -898,6 +912,15 @@ impl Regex {
     /// of the string slice.
     ///
     pub fn captures_from_pos<'t>(&self, text: &'t str, pos: usize) -> Result<Option<Captures<'t>>> {
+        self.captures_from_pos_with_option_flags(text, pos, 0)
+    }
+
+    fn captures_from_pos_with_option_flags<'t>(
+        &self,
+        text: &'t str,
+        pos: usize,
+        option_flags: u32,
+    ) -> Result<Option<Captures<'t>>> {
         let named_groups = self.named_groups.clone();
         match &self.inner {
             RegexImpl::Wrap {
@@ -926,7 +949,7 @@ impl Regex {
                 options,
                 ..
             } => {
-                let result = vm::run(prog, text, pos, 0, options)?;
+                let result = vm::run(prog, text, pos, option_flags, options)?;
                 Ok(result.map(|mut saves| {
                     saves.truncate(n_groups * 2);
                     Captures {

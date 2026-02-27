@@ -183,6 +183,67 @@ fn captures_iter_attributes() {
 }
 
 #[test]
+fn captures_iter_continue_from_previous_match_end() {
+    let text = "1122 33";
+
+    for (i, caps) in common::regex(r"\G(\d)\d").captures_iter(text).enumerate() {
+        let caps = caps.unwrap();
+
+        match i {
+            0 => {
+                assert_eq!(caps.get(0).unwrap().start(), 0);
+                assert_eq!(caps.get(0).unwrap().end(), 2);
+                assert_eq!(caps.get(1).unwrap().start(), 0);
+                assert_eq!(caps.get(1).unwrap().end(), 1);
+            }
+            1 => {
+                assert_eq!(caps.get(0).unwrap().start(), 2);
+                assert_eq!(caps.get(0).unwrap().end(), 4);
+                assert_eq!(caps.get(1).unwrap().start(), 2);
+                assert_eq!(caps.get(1).unwrap().end(), 3);
+            }
+            i => panic!("Expected 2 results, got {}", i + 1),
+        }
+    }
+}
+
+#[test]
+fn captures_iter_continue_from_previous_match_end_with_zero_width_match() {
+    let text = "1122 33";
+
+    for (i, caps) in common::regex(r"\G\d*").captures_iter(text).enumerate() {
+        let caps = caps.unwrap();
+
+        match i {
+            0 => {
+                assert_eq!(caps.get(0).unwrap().start(), 0);
+                assert_eq!(caps.get(0).unwrap().end(), 4);
+            }
+            i => panic!("Expected 1 result, got {}", i + 1),
+        }
+    }
+}
+
+#[test]
+fn captures_iter_continue_from_previous_match_end_single_match() {
+    let text = "123 456 789";
+
+    for (i, caps) in common::regex(r"\G(\d+)").captures_iter(text).enumerate() {
+        let caps = caps.unwrap();
+
+        match i {
+            0 => {
+                assert_eq!(caps.get(0).unwrap().start(), 0);
+                assert_eq!(caps.get(0).unwrap().end(), 3);
+                assert_eq!(caps.get(1).unwrap().start(), 0);
+                assert_eq!(caps.get(1).unwrap().end(), 3);
+            }
+            i => panic!("Expected 1 result, got {}", i + 1),
+        }
+    }
+}
+
+#[test]
 fn captures_from_pos() {
     let text = "11 21 33";
 
