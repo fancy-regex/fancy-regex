@@ -1,19 +1,22 @@
 # Subroutines: reusable patterns with stable meaning
 
-Subroutines in fancy-regex are not "inline expansions" and not "dynamic calls".
-They are *compiled pattern definitions* that can be invoked safely and predictably.
-
 ## What is a subroutine
 
+Subroutines in fancy-regex are *compiled pattern definitions* that can be invoked safely and predictably.
 Any capture group can become a subroutine - it just needs to be "called".
+
+```regexp
+(?<num>\d*\.\d+|\d+) x \g<num>
+```
+
+In the above example, a capture group called `num` is defined, to match numbers with or without decimal places. `\g<num>` executes the same pattern again, without the author having to re-type it.
+The above pattern would match text like `5.2 x 6` for instance.
 
 Think of a subroutine as:
 
 - defined by a capture group
 - executed exactly the way the capture group was originally defined
 - reusable from multiple places
-
->> Calling a subroutine does not recompile it in the caller's context.
 
 ## Side effects
 
@@ -23,7 +26,7 @@ A subroutine call has one side-effect - it updates the capture group position, w
 
 Let's imagine a pattern which will match a digit and capture it into group 1. Then it will call that capture group as a subroutine. Then it will do a backref to group 1.
 
-This will match only when a digit is followed by another digit and then itself.
+This will match only when a digit is followed by another digit and the first digit again.
 
 ```rust
 use fancy_regex::Regex;
