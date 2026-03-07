@@ -37,7 +37,7 @@ Backreferences:
 `\g<name>`
 : call the subroutine defined in capture group named *name* \
 `\g<1>`
-: call the subroutine defined in capture group 1
+: call the subroutine defined in capture group 1. Subroutines can be recursive up to 20 levels deep.
 
 Named capture groups:
 
