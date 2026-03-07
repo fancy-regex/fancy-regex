@@ -9,7 +9,7 @@ Any capture group can become a subroutine - it just needs to be "called".
 (?<num>\d*\.\d+|\d+) x \g<num>
 ```
 
-In the above example, a capture group called `num` is defined, to match numbers with or without decimal places. `\g<num>` executes the same pattern again, without the author having to re-type it.
+In the above example, a capture group called `num` is defined, to match numbers with or without decimal places. `\g<num>` executes the capture group again, without the author having to re-type the pattern inside it.
 The above pattern would match text like `5.2 x 6` for instance.
 
 Think of a subroutine as:
@@ -26,7 +26,7 @@ A subroutine call has one side-effect - it updates the capture group position, w
 
 Let's imagine a pattern which will match a digit and capture it into group 1. Then it will call that capture group as a subroutine. Then it will do a backref to group 1.
 
-This will match only when a digit is followed by another digit and the first digit again.
+This will match three consecutive digits. The 2nd and 3rd digits must be identical.
 
 ```rust
 use fancy_regex::Regex;
