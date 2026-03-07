@@ -100,16 +100,3 @@ Or, when recursion is genuinely required:
 ```
 
 In this version, input is consumed before the recursive call, satisfying fancy-regex's safety rules.
-
-### Key takeaway
-
-fancy-regex rejects any pattern that could recurse without consuming input.
-
-This restriction:
-
-- Prevents infinite recursion
-- Guarantees termination
-- Makes performance predictable
-- Shifts errors from runtime to compile time (note that this refers to when the regex is compiled to a VM, which is not done by the rust compiler, but when the regex is instanciated/parsed from a string)
-
-The result is a regex engine that is both expressive and safe - without relying on fragile heuristics or input-dependent behavior.
