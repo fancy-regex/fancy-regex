@@ -16,17 +16,19 @@ Here we have a pattern which defines capture group 1 as consuming the literal `a
 With 22 `a` characters as input, only 20 are matched:
 
 ```rust
-use fancy_regex::Regex;
+use fancy_regex::{Error, Regex};
 
 let pattern = r"(a\g<1>?)";
-let re = Regex::new(pattern).expect("expected compilation to be successful");
+let re = Regex::new(pattern)?;
 
 let haystack = "aaaaaaaaaaaaaaaaaaaaaa"; // 22 a's
-let result = re.find(haystack).expect("expected execution to be complete");
+let result = re.find(haystack)?;
 
-let found = result.expect("expected to find a match");
+let found = result.unwrap();
 // match is limited to 20 characters due to recursion depth limit
 assert_eq!(found.as_str().len(), 20);
+
+# Ok::<(), Error>(())
 ```
 
 ### Unbounded recursion

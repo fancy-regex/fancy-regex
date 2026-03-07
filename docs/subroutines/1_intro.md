@@ -29,23 +29,25 @@ Let's imagine a pattern which will match a digit and capture it into group 1. Th
 This will match three consecutive digits. The 2nd and 3rd digits must be identical.
 
 ```rust
-use fancy_regex::Regex;
+use fancy_regex::{Error, Regex};
 
-let re = Regex::new(r"(\d)\g<1>\1").expect("expected compilation to be successful");
-let result = re.captures("foo 711").expect("expected execution to be complete");
+let re = Regex::new(r"(\d)\g<1>\1")?;
+let result = re.captures("foo 711")?;
 
-let captures = result.expect("expected to find a match");
+let captures = result.unwrap();
 
-let m = captures.get(0).expect("expected capture group 0 to exist");
+let m = captures.get(0).unwrap();
 
 assert_eq!(m.start(), 4);
 assert_eq!(m.end(), 7);
 assert_eq!(m.as_str(), "711");
 
-let group = captures.get(1).expect("expected capture group 1 to exist");
+let group = captures.get(1).unwrap();
 assert_eq!(group.as_str(), "1");
 
-assert!(!re.is_match("foo 717").expect("expected execution to complete"));
+assert!(!re.is_match("foo 717")?);
+
+# Ok::<(), Error>(())
 ```
 
 In the above example, 7 was stored in capture group 1. Then it was replaced with 1 by the subroutine call. Then the backreference to group 1 can only match the literal `1`.
