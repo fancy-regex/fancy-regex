@@ -39,7 +39,7 @@ use crate::analyze::Info;
 use crate::vm::{CachePoolFn, ReverseBackwardsDelegate};
 use crate::vm::{CaptureGroupRange, Delegate, Insn, Prog};
 use crate::LookAround::*;
-use crate::{BacktrackingControlVerb, CompileError, Error, Expr, LookAround, RegexOptions, Result};
+use crate::{Absent, BacktrackingControlVerb, CompileError, Error, Expr, LookAround, RegexOptions, Result};
 
 // I'm thinking it probably doesn't make a lot of sense having this split
 // out from Compiler.
@@ -206,6 +206,30 @@ impl Compiler {
             }
             Expr::Conditional { .. } => {
                 self.compile_conditional(|compiler, i| compiler.visit(&info.children[i], hard))?;
+            }
+            Expr::Absent(Absent::Repeater(_)) => {
+                let child_info = &info.children[0];
+                if child_info.hard {
+                    return Err(Error::CompileError(Box::new(
+                        CompileError::FeatureNotYetSupported("Absent repeater containing hard patterns".to_string()),
+                    )));
+                }
+                // Compile the child expression as a delegate
+                let delegate = self.compile_absent_delegate(child_info)?;
+                
+                // Add the Absent instruction with a placeholder for next
+                let absent_pc = self.b.pc();
+                self.b.add(Insn::Absent {
+                    delegate,
+                    next: 0, // Will be set below
+                });
+                
+                // Set the next pointer to the instruction after the Absent
+                let next_pc = self.b.pc();
+                match self.b.prog[absent_pc] {
+                    Insn::Absent { ref mut next, .. } => *next = next_pc,
+                    _ => unreachable!(),
+                }
             }
             Expr::SubroutineCall(_) => {
                 return Err(Error::CompileError(Box::new(
@@ -631,6 +655,23 @@ impl Compiler {
                 capture_groups: capture_groups.to_option_if_non_empty(),
             }));
         Ok(())
+    }
+
+    fn compile_absent_delegate(&mut self, info: &Info) -> Result<Delegate> {
+        let mut builder = DelegateBuilder::new();
+        builder.push(info);
+        
+        let capture_groups = builder
+            .capture_groups
+            .expect("Expected at least one expression");
+        
+        let compiled = compile_inner(&builder.re, &self.options)?;
+        
+        Ok(Delegate {
+            inner: compiled,
+            pattern: builder.re.clone(),
+            capture_groups: capture_groups.to_option_if_non_empty(),
+        })
     }
 
     fn compile_delegates(&mut self, infos: &[Info<'_>]) -> Result<()> {
@@ -1147,9 +1188,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn absent_operators_error() {
-        // Test that absent repeater returns feature not supported
+    /*TODO
+    // Test that absent repeater returns feature not supported
         let tree = Expr::parse_tree(r"(?~abc)").unwrap();
         let info = analyze(&tree, true).unwrap();
         let result = compile(&info, true);
@@ -1158,7 +1198,10 @@ mod tests {
             result.err().unwrap(),
             Error::CompileError(box_err) if matches!(*box_err, CompileError::FeatureNotYetSupported(_))
         );
+*/
 
+    #[test]
+    fn absent_operators_error() {
         // Test that absent expression returns feature not supported
         let tree = Expr::parse_tree(r"(?~|abc|\d*)").unwrap();
         let info = analyze(&tree, true).unwrap();

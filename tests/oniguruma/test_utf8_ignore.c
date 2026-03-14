@@ -208,56 +208,8 @@
   // Compile failed: ParseError(1, InvalidEscape("\\o"))
   x2("[\\o{101}]", "A", 0, 1);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
-  x2("(?~)", "", 0, 0);
-
-  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
-  x2("(?~)", "A", 0, 0);
-
-  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
-  x2("aaaaa(?~)", "aaaaaaaaaa", 0, 5);
-
-  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
-  x2("(?~(?:|aaa))", "aaa", 0, 0);
-
-  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
-  x2("(?~aaa|)", "aaa", 0, 0);
-
-  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater containing hard patterns"))
   x2("a(?~(?~)).", "abcdefghijklmnopqrstuvwxyz", 0, 26);
-
-  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
-  x2("/\\*(?~\\*/)\\*/", "/* */ */", 0, 5);
-
-  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
-  x2("(?~\\w+)zzzzz", "zzzzz", 0, 5);
-
-  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
-  x2("(?~\\w*)zzzzz", "zzzzz", 0, 5);
-
-  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
-  x2("(?~A.C|B)", "ABC", 0, 0);
-
-  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
-  x2("(?~XYZ|ABC)a", "ABCa", 1, 4);
-
-  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
-  x2("(?~XYZ|ABC)a", "aABCa", 0, 1);
-
-  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
-  x2("<[^>]*>(?~[<>])</[^>]*>", "<a>vvv</a>   <b>  </b>", 0, 10);
-
-  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
-  x2("(?~ab)", "ccc\ndab", 0, 5);
-
-  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
-  x2("(?m:(?~ab))", "ccc\ndab", 0, 5);
-
-  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
-  x2("(?-m:(?~ab))", "ccc\ndab", 0, 5);
-
-  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater"))
-  x2("(?~abc)xyz", "xyz012345678901234567890123456789abc", 0, 3);
 
   // Compile failed: CompileError(FeatureNotYetSupported("Absent expression"))
   x2("(?~|78|\\d*)", "123456789", 0, 6);

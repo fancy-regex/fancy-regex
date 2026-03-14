@@ -313,6 +313,13 @@ pub enum Insn {
     #[cfg(feature = "variable-lookbehinds")]
     /// Reverse lookbehind using regex-automata for variable-sized patterns
     BackwardsDelegate(ReverseBackwardsDelegate),
+    /// Absent operator - matches if delegate does not match from current position
+    Absent {
+        /// The delegate pattern to check
+        delegate: Delegate,
+        /// Program counter for continuing after absent check
+        next: usize,
+    },
 }
 
 /// Sequence of instructions for the VM to execute.
@@ -949,6 +956,42 @@ pub(crate) fn run(
                             Some(m) => ix = m.offset(),
                             _ => break 'fail,
                         }
+                    }
+                }
+                Insn::Absent { ref delegate, next } => {
+                    // The absent operator matches the shortest string not containing the delegate pattern
+                    // We advance one character at a time, checking if delegate matches at each position
+                    // If delegate matches, we've found the boundary and continue to next instruction
+                    // If we reach end of string without delegate matching, we also continue
+                    
+                    // Check if delegate matches at current position
+                    let input = Input::new(s).span(ix..s.len()).anchored(Anchored::Yes);
+                    let delegate_matches_here = if delegate.capture_groups.is_some() {
+                        let range = delegate.capture_groups.unwrap();
+                        inner_slots.resize((range.end() - range.start() + 1) * 2, None);
+                        delegate.inner.search_slots(&input, &mut inner_slots).is_some()
+                    } else {
+                        delegate.inner.search_half(&input).is_some()
+                    };
+                    
+                    if delegate_matches_here {
+                        // Delegate matches at current position - we've reached the boundary
+                        // Continue to next instruction without consuming any characters
+                        pc = next;
+                        continue;
+                    }
+                    
+                    // Delegate doesn't match here
+                    if ix < s.len() {
+                        // Try advancing one character and checking again
+                        state.push(next, ix)?; // If advancing fails, continue to next instruction
+                        ix += codepoint_len_at(s, ix);
+                        // Stay at same pc to check delegate match at new position
+                        continue;
+                    } else {
+                        // Reached end of string - delegate never matched, so we succeed
+                        pc = next;
+                        continue;
                     }
                 }
                 Insn::ContinueFromPreviousMatchEnd { at_start } => {
