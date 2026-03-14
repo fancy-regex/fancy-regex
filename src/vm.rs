@@ -317,8 +317,6 @@ pub enum Insn {
     Absent {
         /// The delegate pattern to check
         delegate: Delegate,
-        /// Program counter for continuing after absent check
-        next: usize,
     },
 }
 
@@ -958,7 +956,7 @@ pub(crate) fn run(
                         }
                     }
                 }
-                Insn::Absent { ref delegate, next } => {
+                Insn::Absent { ref delegate } => {
                     // The absent operator matches the shortest string not containing the delegate pattern
                     // We advance one character at a time, checking if delegate matches at each position
                     // If delegate matches, we've found the boundary and continue to next instruction
@@ -980,21 +978,16 @@ pub(crate) fn run(
                     if delegate_matches_here {
                         // Delegate matches at current position - we've reached the boundary
                         // Continue to next instruction without consuming any characters
-                        pc = next;
-                        continue;
-                    }
-
-                    // Delegate doesn't match here
-                    if ix < s.len() {
+                        // Fall through via pc += 1 below
+                    } else if ix < s.len() {
                         // Try advancing one character and checking again
-                        state.push(next, ix)?; // If advancing fails, continue to next instruction
+                        state.push(pc + 1, ix)?;
                         ix += codepoint_len_at(s, ix);
                         // Stay at same pc to check delegate match at new position
                         continue;
                     } else {
                         // Reached end of string - delegate never matched, so we succeed
-                        pc = next;
-                        continue;
+                        // Fall through via pc += 1 below
                     }
                 }
                 Insn::ContinueFromPreviousMatchEnd { at_start } => {

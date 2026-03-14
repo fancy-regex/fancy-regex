@@ -221,19 +221,8 @@ impl Compiler {
                 // Compile the child expression as a delegate
                 let delegate = self.compile_absent_delegate(child_info)?;
 
-                // Add the Absent instruction with a placeholder for next
-                let absent_pc = self.b.pc();
-                self.b.add(Insn::Absent {
-                    delegate,
-                    next: 0, // Will be set below
-                });
-
-                // Set the next pointer to the instruction after the Absent
-                let next_pc = self.b.pc();
-                match self.b.prog[absent_pc] {
-                    Insn::Absent { ref mut next, .. } => *next = next_pc,
-                    _ => unreachable!(),
-                }
+                // Add the Absent instruction
+                self.b.add(Insn::Absent { delegate });
             }
             Expr::SubroutineCall(_) => {
                 return Err(Error::CompileError(Box::new(
