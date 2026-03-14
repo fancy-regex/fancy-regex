@@ -212,7 +212,7 @@ pub fn is_match(pattern: &str, text: &str, flags: JsValue) -> Result<bool, Strin
 #[derive(Serialize, Deserialize)]
 pub struct AnalysisTreeNode {
     pub kind: String,
-    pub summary: String,
+    pub summary: Option<String>,
     pub hard: bool,
     pub min_size: usize,
     pub const_size: bool,
@@ -265,26 +265,28 @@ fn info_to_tree_node<'a>(
     group_names: &std::collections::HashMap<usize, String>,
 ) -> AnalysisTreeNode {
     let (kind, summary, group_info) = match info.expr {
-        Expr::Empty => ("Empty".to_string(), "".to_string(), None),
+        Expr::Empty => ("Empty".to_string(), None, None),
         Expr::Any { newline } => {
             if *newline {
-                ("Any".to_string(), "".to_string(), None)
+                ("Any".to_string(), None, None)
             } else {
-                ("Any".to_string(), "(no newline)".to_string(), None)
+                ("Any".to_string(), Some("(no newline)".to_string()), None)
             }
         }
-        Expr::Assertion(_) => ("Assertion".to_string(), "".to_string(), None),
-        Expr::GeneralNewline { .. } => ("GeneralNewline".to_string(), "\\R".to_string(), None),
-        Expr::Literal { val, .. } => ("Literal".to_string(), format!("{:?}", val), None),
-        Expr::Concat(v) => ("Concat".to_string(), format!("({})", v.len()), None),
-        Expr::Alt(v) => ("Alt".to_string(), format!("({})", v.len()), None),
+        Expr::Assertion(_) => ("Assertion".to_string(), None, None),
+        Expr::GeneralNewline { .. } => {
+            ("GeneralNewline".to_string(), Some("\\R".to_string()), None)
+        }
+        Expr::Literal { val, .. } => ("Literal".to_string(), Some(format!("{:?}", val)), None),
+        Expr::Concat(v) => ("Concat".to_string(), Some(format!("({})", v.len())), None),
+        Expr::Alt(v) => ("Alt".to_string(), Some(format!("({})", v.len())), None),
         Expr::Group(_) => {
             let group_index = info.start_group();
             let group_name = group_names.get(&group_index).cloned();
             let summary = if let Some(ref name) = group_name {
-                format!("{} ({})", group_index, name)
+                Some(format!("{} ({})", group_index, name))
             } else {
-                format!("{}", group_index)
+                Some(format!("{}", group_index))
             };
             (
                 "Group".to_string(),
@@ -302,7 +304,7 @@ fn info_to_tree_node<'a>(
                 LookAround::LookBehind => ("LookBehind", "positive"),
                 LookAround::LookBehindNeg => ("LookBehind", "negative"),
             };
-            (kind_str.to_string(), format!("({})", polarity), None)
+            (kind_str.to_string(), Some(format!("({})", polarity)), None)
         }
         Expr::Repeat { lo, hi, .. } => {
             let hi_str = if *hi == usize::MAX {
@@ -312,19 +314,23 @@ fn info_to_tree_node<'a>(
             };
             (
                 "Repeat".to_string(),
-                format!("{{{}..{}}}", lo, hi_str),
+                Some(format!("{{{}..{}}}", lo, hi_str)),
                 None,
             )
         }
         Expr::Delegate { inner, .. } => {
             let escaped = escape_delegate(inner);
-            ("Delegate".to_string(), format!("\"{}\"", escaped), None)
+            (
+                "Delegate".to_string(),
+                Some(format!("\"{}\"", escaped)),
+                None,
+            )
         }
         Expr::Backref { group, .. } => {
             let summary = if let Some(name) = group_names.get(group) {
-                format!("({})", name)
+                Some(format!("({})", name))
             } else {
-                format!("{}", group)
+                Some(format!("{}", group))
             };
             ("Backref".to_string(), summary, None)
         }
@@ -334,41 +340,41 @@ fn info_to_tree_node<'a>(
             ..
         } => {
             let summary = if let Some(name) = group_names.get(group) {
-                format!("({}) level={}", name, relative_level)
+                Some(format!("({}) level={}", name, relative_level))
             } else {
-                format!("{} level={}", group, relative_level)
+                Some(format!("{} level={}", group, relative_level))
             };
             ("Backref".to_string(), summary, None)
         }
-        Expr::AtomicGroup(_) => ("AtomicGroup".to_string(), "".to_string(), None),
-        Expr::KeepOut => ("KeepOut".to_string(), "".to_string(), None),
-        Expr::ContinueFromPreviousMatchEnd => (
-            "ContinueFromPreviousMatchEnd".to_string(),
-            "".to_string(),
-            None,
-        ),
+        Expr::AtomicGroup(_) => ("AtomicGroup".to_string(), None, None),
+        Expr::KeepOut => ("KeepOut".to_string(), None, None),
+        Expr::ContinueFromPreviousMatchEnd => {
+            ("ContinueFromPreviousMatchEnd".to_string(), None, None)
+        }
         Expr::BackrefExistsCondition(group) => (
             "BackrefExistsCondition".to_string(),
-            format!("{}", group),
+            Some(format!("{}", group)),
             None,
         ),
-        Expr::Conditional { .. } => ("Conditional".to_string(), "".to_string(), None),
-        Expr::SubroutineCall(group) => ("SubroutineCall".to_string(), format!("{}", group), None),
+        Expr::Conditional { .. } => ("Conditional".to_string(), None, None),
+        Expr::SubroutineCall(group) => (
+            "SubroutineCall".to_string(),
+            Some(format!("{}", group)),
+            None,
+        ),
         Expr::UnresolvedNamedSubroutineCall { name, .. } => (
             "UnresolvedNamedSubroutineCall".to_string(),
-            format!("({})", name),
+            Some(format!("({})", name)),
             None,
         ),
-        Expr::BacktrackingControlVerb(_) => {
-            ("BacktrackingControlVerb".to_string(), "".to_string(), None)
-        }
+        Expr::BacktrackingControlVerb(_) => ("BacktrackingControlVerb".to_string(), None, None),
         Expr::Absent(ref absent) => {
             use crate::Absent::*;
             match absent {
-                Repeater(_) => ("AbsentRepeater".to_string(), "".to_string(), None),
-                Expression { .. } => ("AbsentExpression".to_string(), "".to_string(), None),
-                Stopper(_) => ("AbsentStopper".to_string(), "".to_string(), None),
-                Clear => ("AbsentClear".to_string(), "".to_string(), None),
+                Repeater(_) => ("AbsentRepeater".to_string(), None, None),
+                Expression { .. } => ("AbsentExpression".to_string(), None, None),
+                Stopper(_) => ("AbsentStopper".to_string(), None, None),
+                Clear => ("AbsentClear".to_string(), None, None),
             }
         }
     };
@@ -459,8 +465,8 @@ mod tests {
         assert_eq!(node.kind, "Concat");
         assert_eq!(node.children.len(), 5); // "test\n" as separate literals
         assert_eq!(node.children[0].kind, "Literal");
-        assert_eq!(node.children[0].summary, "\"t\"");
-        assert_eq!(node.children[4].summary, "\"\\n\"");
+        assert_eq!(node.children[0].summary.as_deref(), Some("\"t\""));
+        assert_eq!(node.children[4].summary.as_deref(), Some("\"\\n\""));
     }
 
     #[test]
@@ -474,8 +480,8 @@ mod tests {
         assert_eq!(node.kind, "Concat");
         assert_eq!(node.children.len(), 5); // "test\n" as separate literals
         assert_eq!(node.children[0].kind, "Literal");
-        assert_eq!(node.children[0].summary, "\"t\"");
-        assert_eq!(node.children[4].summary, "\"\\n\"");
+        assert_eq!(node.children[0].summary.as_deref(), Some("\"t\""));
+        assert_eq!(node.children[4].summary.as_deref(), Some("\"\\n\""));
     }
 
     #[test]
@@ -489,8 +495,8 @@ mod tests {
         assert_eq!(node.kind, "Concat");
         assert_eq!(node.children.len(), 5); // "test\n" as separate literals
         assert_eq!(node.children[0].kind, "Literal");
-        assert_eq!(node.children[0].summary, "\"t\"");
-        assert_eq!(node.children[4].summary, "\"\\\\\"");
+        assert_eq!(node.children[0].summary.as_deref(), Some("\"t\""));
+        assert_eq!(node.children[4].summary.as_deref(), Some("\"\\\\\""));
     }
 
     #[test]
@@ -505,11 +511,11 @@ mod tests {
         // The root should be a Delegate node
         assert_eq!(node.kind, "Delegate");
         assert!(
-            node.summary.contains(r"\w"),
+            node.summary.as_deref().unwrap_or("").contains(r"\w"),
             "Delegate summary should contain the pattern"
         );
         assert!(
-            !node.summary.contains(r"\\w"),
+            !node.summary.as_deref().unwrap_or("").contains(r"\\w"),
             "Delegate summary should not contain extra slashes"
         );
     }
@@ -526,7 +532,7 @@ mod tests {
         // Find the Group node (should be a child of root)
         assert_eq!(node.kind, "Group");
         assert!(
-            node.summary.contains("word"),
+            node.summary.as_deref().unwrap_or("").contains("word"),
             "Group summary should contain the name"
         );
         assert_eq!(node.group.as_ref().unwrap().name, Some("word".to_string()));
@@ -565,7 +571,11 @@ mod tests {
             .expect("Should find Backref node");
 
         assert!(
-            backref_node.summary.contains("word"),
+            backref_node
+                .summary
+                .as_deref()
+                .unwrap_or("")
+                .contains("word"),
             "Backref summary should contain the name"
         );
     }
@@ -586,7 +596,7 @@ mod tests {
             .find(|n| n.kind == "Backref")
             .expect("Should find Backref node");
 
-        assert_eq!(backref_node.summary, "1");
+        assert_eq!(backref_node.summary.as_deref(), Some("1"));
     }
 
     #[test]
@@ -608,7 +618,12 @@ mod tests {
             let node = info_to_tree_node(&info, &group_names);
 
             assert_eq!(node.kind, "Repeat", "Pattern: {}", pattern);
-            assert_eq!(node.summary, expected_summary, "Pattern: {}", pattern);
+            assert_eq!(
+                node.summary.as_deref(),
+                Some(expected_summary),
+                "Pattern: {}",
+                pattern
+            );
         }
     }
 
@@ -622,7 +637,7 @@ mod tests {
         let node = info_to_tree_node(&info, &group_names);
 
         assert_eq!(node.kind, "Concat");
-        assert_eq!(node.summary, "(3)");
+        assert_eq!(node.summary.as_deref(), Some("(3)"));
 
         // Test Alt
         let tree = fancy_regex::Expr::parse_tree(r"a|b|c").unwrap();
@@ -632,7 +647,7 @@ mod tests {
         let node = info_to_tree_node(&info, &group_names);
 
         assert_eq!(node.kind, "Alt");
-        assert_eq!(node.summary, "(3)");
+        assert_eq!(node.summary.as_deref(), Some("(3)"));
     }
 
     #[test]
@@ -652,7 +667,12 @@ mod tests {
             let node = info_to_tree_node(&info, &group_names);
 
             assert_eq!(node.kind, expected_kind, "Pattern: {}", pattern);
-            assert_eq!(node.summary, expected_summary, "Pattern: {}", pattern);
+            assert_eq!(
+                node.summary.as_deref(),
+                Some(expected_summary),
+                "Pattern: {}",
+                pattern
+            );
         }
     }
 
