@@ -219,7 +219,9 @@ impl Compiler {
                     )));
                 }
                 // Compile the child expression as a delegate
-                let delegate = self.compile_absent_delegate(child_info)?;
+                let delegate = DelegateBuilder::new()
+                    .push(child_info)
+                    .build_delegate(&self.options)?;
 
                 // Add the Absent instruction
                 self.b.add(Insn::Absent { delegate });
@@ -650,23 +652,6 @@ impl Compiler {
         Ok(())
     }
 
-    fn compile_absent_delegate(&mut self, info: &Info) -> Result<Delegate> {
-        let mut builder = DelegateBuilder::new();
-        builder.push(info);
-
-        let capture_groups = builder
-            .capture_groups
-            .expect("Expected at least one expression");
-
-        let compiled = compile_inner(&builder.re, &self.options)?;
-
-        Ok(Delegate {
-            inner: compiled,
-            pattern: builder.re.clone(),
-            capture_groups: capture_groups.to_option_if_non_empty(),
-        })
-    }
-
     fn compile_delegates(&mut self, infos: &[Info<'_>]) -> Result<()> {
         if infos.is_empty() {
             return Ok(());
@@ -857,17 +842,21 @@ impl DelegateBuilder {
     }
 
     fn build(&self, options: &RegexOptions) -> Result<Insn> {
+        Ok(Insn::Delegate(self.build_delegate(options)?))
+    }
+
+    fn build_delegate(&self, options: &RegexOptions) -> Result<Delegate> {
         let capture_groups = self
             .capture_groups
             .expect("Expected at least one expression");
 
         let compiled = compile_inner(&self.re, options)?;
 
-        Ok(Insn::Delegate(Delegate {
+        Ok(Delegate {
             inner: compiled,
             pattern: self.re.clone(),
             capture_groups: capture_groups.to_option_if_non_empty(),
-        }))
+        })
     }
 }
 
