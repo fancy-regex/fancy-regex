@@ -1,7 +1,7 @@
 use fancy_regex::internal::{
     FLAG_CASEI, FLAG_DOTNL, FLAG_IGNORE_SPACE, FLAG_MULTI, FLAG_ONIGURUMA_MODE, FLAG_UNICODE,
 };
-use fancy_regex::{Expr, LookAround, Regex, RegexBuilder};
+use fancy_regex::{Absent, Expr, LookAround, Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
@@ -362,7 +362,15 @@ fn info_to_tree_node<'a>(
         Expr::BacktrackingControlVerb(_) => {
             ("BacktrackingControlVerb".to_string(), "".to_string(), None)
         }
-        Expr::Absent(_) => ("Absent".to_string(), "".to_string(), None),
+        Expr::Absent(ref absent) => {
+            use crate::Absent::*;
+            match absent {
+                Repeater(_) => ("AbsentRepeater".to_string(), "".to_string(), None),
+                Expression { .. } => ("AbsentExpression".to_string(), "".to_string(), None),
+                Stopper(_) => ("AbsentStopper".to_string(), "".to_string(), None),
+                Clear => ("AbsentClear".to_string(), "".to_string(), None),
+            }
+        }
     };
 
     let children = info
@@ -668,5 +676,51 @@ mod tests {
         let node = info_to_tree_node(&info, &group_names);
 
         assert!(!node.hard, "Simple literal pattern should be easy");
+    }
+
+    #[test]
+    fn test_info_to_tree_node_absent_repeater() {
+        let tree = fancy_regex::Expr::parse_tree(r"(?~abc)").unwrap();
+        let info = fancy_regex::internal::analyze(&tree, false).unwrap();
+        let group_names = std::collections::HashMap::new();
+
+        let node = info_to_tree_node(&info, &group_names);
+
+        assert_eq!(node.kind, "AbsentRepeater");
+    }
+
+    #[test]
+    fn test_info_to_tree_node_absent_expression() {
+        let tree = fancy_regex::Expr::parse_tree(r"(?~|abc|\d+)").unwrap();
+        let info = fancy_regex::internal::analyze(&tree, false).unwrap();
+        let group_names = std::collections::HashMap::new();
+
+        let node = info_to_tree_node(&info, &group_names);
+
+        assert_eq!(node.kind, "AbsentExpression");
+        // Should have 2 children: absent and exp
+        assert_eq!(node.children.len(), 2);
+    }
+
+    #[test]
+    fn test_info_to_tree_node_absent_stopper() {
+        let tree = fancy_regex::Expr::parse_tree(r"(?~|abc)").unwrap();
+        let info = fancy_regex::internal::analyze(&tree, false).unwrap();
+        let group_names = std::collections::HashMap::new();
+
+        let node = info_to_tree_node(&info, &group_names);
+
+        assert_eq!(node.kind, "AbsentStopper");
+    }
+
+    #[test]
+    fn test_info_to_tree_node_absent_clear() {
+        let tree = fancy_regex::Expr::parse_tree(r"(?~|)").unwrap();
+        let info = fancy_regex::internal::analyze(&tree, false).unwrap();
+        let group_names = std::collections::HashMap::new();
+
+        let node = info_to_tree_node(&info, &group_names);
+
+        assert_eq!(node.kind, "AbsentClear");
     }
 }
