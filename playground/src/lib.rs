@@ -707,6 +707,10 @@ mod tests {
         let node = info_to_tree_node(&info, &group_names);
 
         assert_eq!(node.kind, "AbsentRepeater");
+        // Should have 1 children: concat
+        assert_eq!(node.children.len(), 1);
+        // concat should have a b and c literals as children
+        assert_eq!(node.children[0].children.len(), 3);
     }
 
     #[test]
