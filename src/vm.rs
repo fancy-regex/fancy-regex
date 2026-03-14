@@ -963,24 +963,27 @@ pub(crate) fn run(
                     // We advance one character at a time, checking if delegate matches at each position
                     // If delegate matches, we've found the boundary and continue to next instruction
                     // If we reach end of string without delegate matching, we also continue
-                    
+
                     // Check if delegate matches at current position
                     let input = Input::new(s).span(ix..s.len()).anchored(Anchored::Yes);
                     let delegate_matches_here = if delegate.capture_groups.is_some() {
                         let range = delegate.capture_groups.unwrap();
                         inner_slots.resize((range.end() - range.start() + 1) * 2, None);
-                        delegate.inner.search_slots(&input, &mut inner_slots).is_some()
+                        delegate
+                            .inner
+                            .search_slots(&input, &mut inner_slots)
+                            .is_some()
                     } else {
                         delegate.inner.search_half(&input).is_some()
                     };
-                    
+
                     if delegate_matches_here {
                         // Delegate matches at current position - we've reached the boundary
                         // Continue to next instruction without consuming any characters
                         pc = next;
                         continue;
                     }
-                    
+
                     // Delegate doesn't match here
                     if ix < s.len() {
                         // Try advancing one character and checking again

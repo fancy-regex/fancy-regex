@@ -39,7 +39,9 @@ use crate::analyze::Info;
 use crate::vm::{CachePoolFn, ReverseBackwardsDelegate};
 use crate::vm::{CaptureGroupRange, Delegate, Insn, Prog};
 use crate::LookAround::*;
-use crate::{Absent, BacktrackingControlVerb, CompileError, Error, Expr, LookAround, RegexOptions, Result};
+use crate::{
+    Absent, BacktrackingControlVerb, CompileError, Error, Expr, LookAround, RegexOptions, Result,
+};
 
 // I'm thinking it probably doesn't make a lot of sense having this split
 // out from Compiler.
@@ -211,19 +213,21 @@ impl Compiler {
                 let child_info = &info.children[0];
                 if child_info.hard {
                     return Err(Error::CompileError(Box::new(
-                        CompileError::FeatureNotYetSupported("Absent repeater containing hard patterns".to_string()),
+                        CompileError::FeatureNotYetSupported(
+                            "Absent repeater containing hard patterns".to_string(),
+                        ),
                     )));
                 }
                 // Compile the child expression as a delegate
                 let delegate = self.compile_absent_delegate(child_info)?;
-                
+
                 // Add the Absent instruction with a placeholder for next
                 let absent_pc = self.b.pc();
                 self.b.add(Insn::Absent {
                     delegate,
                     next: 0, // Will be set below
                 });
-                
+
                 // Set the next pointer to the instruction after the Absent
                 let next_pc = self.b.pc();
                 match self.b.prog[absent_pc] {
@@ -660,13 +664,13 @@ impl Compiler {
     fn compile_absent_delegate(&mut self, info: &Info) -> Result<Delegate> {
         let mut builder = DelegateBuilder::new();
         builder.push(info);
-        
+
         let capture_groups = builder
             .capture_groups
             .expect("Expected at least one expression");
-        
+
         let compiled = compile_inner(&builder.re, &self.options)?;
-        
+
         Ok(Delegate {
             inner: compiled,
             pattern: builder.re.clone(),
@@ -938,7 +942,7 @@ mod tests {
 
         assert_eq!(prog.len(), 5, "prog: {:?}", prog);
         assert_matches!(prog[0], Save(0));
-        assert_delegate(&prog[1], "ab*", None);
+        assert_delegate_insn(&prog[1], "ab*", None);
         assert_matches!(prog[2], Restore(0));
         assert_matches!(prog[3], Lit(ref l) if l == "c");
         assert_matches!(prog[4], End);
@@ -953,7 +957,7 @@ mod tests {
         assert_matches!(prog[0], Split(1, 3));
         assert_matches!(prog[1], Lit(ref l) if l == "x");
         assert_matches!(prog[2], FailNegativeLookAround);
-        assert_delegate(&prog[3], "(?:a|ab)x*", None);
+        assert_delegate_insn(&prog[3], "(?:a|ab)x*", None);
         assert_matches!(prog[4], End);
     }
 
@@ -966,8 +970,8 @@ mod tests {
         assert_matches!(prog[0], Split(1, 3));
         assert_matches!(prog[1], Lit(ref l) if l == "x");
         assert_matches!(prog[2], FailNegativeLookAround);
-        assert_delegate(&prog[3], "(?:a|b)c", None);
-        assert_delegate(&prog[4], "x*", None);
+        assert_delegate_insn(&prog[3], "(?:a|b)c", None);
+        assert_delegate_insn(&prog[4], "x*", None);
         assert_matches!(prog[5], End);
     }
 
@@ -984,7 +988,7 @@ mod tests {
         assert_matches!(prog[4], Lit(ref l) if l == "a");
         assert_matches!(prog[5], Jmp(7));
         assert_matches!(prog[6], Lit(ref l) if l == "ab");
-        assert_delegate(&prog[7], "x*", None);
+        assert_delegate_insn(&prog[7], "x*", None);
         assert_matches!(prog[8], End);
     }
 
@@ -1188,17 +1192,16 @@ mod tests {
         );
     }
 
-    /*TODO
-    // Test that absent repeater returns feature not supported
-        let tree = Expr::parse_tree(r"(?~abc)").unwrap();
-        let info = analyze(&tree, true).unwrap();
-        let result = compile(&info, true);
-        assert!(result.is_err());
-        assert_matches!(
-            result.err().unwrap(),
-            Error::CompileError(box_err) if matches!(*box_err, CompileError::FeatureNotYetSupported(_))
-        );
-*/
+    #[test]
+    fn absent_repeater_with_easy_inner_compiles() {
+        let prog = compile_prog(r"((?~abc))");
+
+        assert_eq!(prog.len(), 4, "prog: {:?}", prog);
+        assert_matches!(prog[0], Save(0));
+        assert_absent_insn(&prog[1], "abc", None);
+        assert_matches!(prog[2], Save(1));
+        assert_matches!(prog[3], End);
+    }
 
     #[test]
     fn absent_operators_error() {
@@ -1238,7 +1241,7 @@ mod tests {
         let prog = compile_prog(r"(.(b)([^a]+))c");
 
         assert_eq!(prog.len(), 2, "prog: {:?}", prog);
-        assert_delegate(&prog[0], "(.(b)([^a]+))c", Some(CaptureGroupRange(0, 3)));
+        assert_delegate_insn(&prog[0], "(.(b)([^a]+))c", Some(CaptureGroupRange(0, 3)));
         assert_matches!(prog[1], End);
     }
 
@@ -1249,15 +1252,15 @@ mod tests {
         assert_eq!(prog.len(), 12, "prog: {:?}", prog);
 
         assert_matches!(prog[0], Save(0));
-        assert_delegate(&prog[1], ".(b)", Some(CaptureGroupRange(1, 2)));
+        assert_delegate_insn(&prog[1], ".(b)", Some(CaptureGroupRange(1, 2)));
         assert_matches!(prog[2], Save(4));
-        assert_delegate(&prog[3], "[^a]", None);
+        assert_delegate_insn(&prog[3], "[^a]", None);
         assert_matches!(prog[4], Split(3, 5));
         assert_matches!(prog[5], Save(5));
         assert_matches!(prog[6], Split(7, 9));
         assert_matches!(prog[7], Lit(ref l) if l == "c");
         assert_matches!(prog[8], FailNegativeLookAround);
-        assert_delegate(&prog[9], r"(\w)", Some(CaptureGroupRange(3, 4)));
+        assert_delegate_insn(&prog[9], r"(\w)", Some(CaptureGroupRange(3, 4)));
         assert_matches!(prog[10], Save(1));
         assert_matches!(prog[11], End);
     }
@@ -1270,29 +1273,40 @@ mod tests {
     }
 
     #[cfg(feature = "std")]
-    fn assert_delegate(insn: &Insn, re: &str, captures: Option<CaptureGroupRange>) {
-        use crate::vm::Delegate;
-
+    fn assert_delegate_insn(insn: &Insn, re: &str, captures: Option<CaptureGroupRange>) {
         match insn {
-            Insn::Delegate(Delegate {
-                inner,
-                capture_groups,
-                ..
-            }) => {
-                assert_eq!(
-                    PATTERN_MAPPING
-                        .read()
-                        .unwrap()
-                        .get(&alloc::format!("{:?}", inner))
-                        .unwrap(),
-                    re
-                );
-                assert_eq!(captures, *capture_groups);
-            }
+            Insn::Delegate(delegate) => assert_delegate(delegate, re, captures),
             _ => {
                 panic!("Expected Insn::Delegate but was {:#?}", insn);
             }
         }
+    }
+
+    #[cfg(feature = "std")]
+    fn assert_absent_insn(insn: &Insn, re: &str, captures: Option<CaptureGroupRange>) {
+        match insn {
+            Insn::Absent { delegate, .. } => assert_delegate(delegate, re, captures),
+            _ => {
+                panic!("Expected Insn::Absent but was {:#?}", insn);
+            }
+        }
+    }
+
+    #[cfg(feature = "std")]
+    fn assert_delegate(
+        delegate: &crate::vm::Delegate,
+        re: &str,
+        captures: Option<CaptureGroupRange>,
+    ) {
+        assert_eq!(
+            PATTERN_MAPPING
+                .read()
+                .unwrap()
+                .get(&alloc::format!("{:?}", delegate.inner))
+                .unwrap(),
+            re
+        );
+        assert_eq!(captures, delegate.capture_groups);
     }
 
     #[cfg(not(feature = "std"))]
