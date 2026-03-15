@@ -964,16 +964,8 @@ pub(crate) fn run(
 
                     // Check if delegate matches at current position
                     let input = Input::new(s).span(ix..s.len()).anchored(Anchored::Yes);
-                    let delegate_matches_here = if delegate.capture_groups.is_some() {
-                        let range = delegate.capture_groups.unwrap();
-                        inner_slots.resize((range.end() - range.start() + 1) * 2, None);
-                        delegate
-                            .inner
-                            .search_slots(&input, &mut inner_slots)
-                            .is_some()
-                    } else {
-                        delegate.inner.search_half(&input).is_some()
-                    };
+                    // capture groups in the delegate are always ignored, so we can use the quicker search_half method
+                    let delegate_matches_here = delegate.inner.search_half(&input).is_some();
 
                     if delegate_matches_here {
                         // Delegate matches at current position - we've reached the boundary
