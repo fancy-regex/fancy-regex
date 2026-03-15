@@ -224,7 +224,7 @@ impl Compiler {
                     .build_delegate(&self.options)?;
 
                 // Add the Absent instruction
-                self.b.add(Insn::Absent { delegate });
+                self.b.add(Insn::AbsentRepeater(delegate));
             }
             Expr::SubroutineCall(_) => {
                 return Err(Error::CompileError(Box::new(
@@ -1176,7 +1176,7 @@ mod tests {
 
         assert_eq!(prog.len(), 4, "prog: {:?}", prog);
         assert_matches!(prog[0], Save(0));
-        assert_absent_insn(&prog[1], "abc", None);
+        assert_absent_repeater_insn(&prog[1], "abc", None);
         assert_matches!(prog[2], Save(1));
         assert_matches!(prog[3], End);
     }
@@ -1261,11 +1261,11 @@ mod tests {
     }
 
     #[cfg(feature = "std")]
-    fn assert_absent_insn(insn: &Insn, re: &str, captures: Option<CaptureGroupRange>) {
+    fn assert_absent_repeater_insn(insn: &Insn, re: &str, captures: Option<CaptureGroupRange>) {
         match insn {
-            Insn::Absent { delegate, .. } => assert_delegate(delegate, re, captures),
+            Insn::AbsentRepeater(delegate) => assert_delegate(delegate, re, captures),
             _ => {
-                panic!("Expected Insn::Absent but was {:#?}", insn);
+                panic!("Expected Insn::AbsentRepeater but was {:#?}", insn);
             }
         }
     }

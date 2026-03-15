@@ -313,11 +313,8 @@ pub enum Insn {
     #[cfg(feature = "variable-lookbehinds")]
     /// Reverse lookbehind using regex-automata for variable-sized patterns
     BackwardsDelegate(ReverseBackwardsDelegate),
-    /// Absent operator - matches if delegate does not match from current position
-    Absent {
-        /// The delegate pattern to check
-        delegate: Delegate,
-    },
+    /// Absent repeater operator - matches if delegate does not match from current position
+    AbsentRepeater(Delegate),
 }
 
 /// Sequence of instructions for the VM to execute.
@@ -956,7 +953,7 @@ pub(crate) fn run(
                         }
                     }
                 }
-                Insn::Absent { ref delegate } => {
+                Insn::AbsentRepeater(ref delegate) => {
                     // The absent operator matches the shortest string not containing the delegate pattern
                     // We advance one character at a time, checking if delegate matches at each position
                     // If delegate matches, we've found the boundary and continue to next instruction
