@@ -1050,6 +1050,20 @@ impl<'a> Parser<'a> {
         let bytes = self.re.as_bytes();
         // get the character after the open paren
         let b = bytes[ix];
+
+        // Check for DEFINE condition first - (?(DEFINE)...)
+        if self.re[ix..].starts_with("DEFINE)") {
+            let end = ix + "DEFINE)".len();
+            let (end, definitions) = self.parse_re(end, depth)?;
+            let after = self.check_for_close_paren(end)?;
+            return Ok((
+                after,
+                Expr::DefineGroup {
+                    definitions: Box::new(definitions),
+                },
+            ));
+        }
+
         let (next, condition) = if b == b'\'' {
             self.parse_named_backref(ix, "'", "')", true)?
         } else if b == b'<' {
@@ -3661,5 +3675,44 @@ mod tests {
     #[test]
     fn parse_absent_range_clear() {
         assert_eq!(p(r"(?~|)"), Expr::Absent(Absent::Clear));
+    }
+
+    #[test]
+    fn define_group() {
+        assert_eq!(
+            p(r"(?(DEFINE)(?<word>\w+))"),
+            Expr::DefineGroup {
+                definitions: Box::new(make_group(Expr::Repeat {
+                    child: Box::new(Expr::Delegate {
+                        inner: "\\w".to_string(),
+                        casei: false,
+                    }),
+                    lo: 1,
+                    hi: usize::MAX,
+                    greedy: true,
+                })),
+            }
+        );
+    }
+
+    #[test]
+    fn define_group_with_subroutine_call() {
+        assert_eq!(
+            p(r"(?(DEFINE)(?<word>\w+))\g<word>"),
+            Expr::Concat(vec![
+                Expr::DefineGroup {
+                    definitions: Box::new(make_group(Expr::Repeat {
+                        child: Box::new(Expr::Delegate {
+                            inner: "\\w".to_string(),
+                            casei: false,
+                        }),
+                        lo: 1,
+                        hi: usize::MAX,
+                        greedy: true,
+                    })),
+                },
+                Expr::SubroutineCall(1),
+            ])
+        );
     }
 }

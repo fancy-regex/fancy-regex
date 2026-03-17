@@ -469,6 +469,16 @@ impl<'a> Analyzer<'a> {
                     }
                 }
             }
+            Expr::DefineGroup { ref definitions } => {
+                // DEFINE groups don't match anything themselves, but we still need to
+                // visit the definitions to assign group numbers and analyze any nested content.
+                // The DEFINE block itself is not hard - it matches nothing, so it can be
+                // delegated (as an empty string) to the underlying engine.
+                let def_info = self.visit(definitions, 0, inside_zero_rep, enclosing_group)?;
+                min_size = 0;
+                const_size = true;
+                children.push(def_info);
+            }
         };
 
         Ok(Info {
@@ -611,6 +621,9 @@ impl<'a> Analyzer<'a> {
             }
             Expr::UnresolvedNamedSubroutineCall { .. }
             | Expr::BackrefWithRelativeRecursionLevel { .. } => true,
+            Expr::DefineGroup { definitions } => {
+                self.expr_can_terminate(definitions, root_expr, recursion_stack, memo)
+            }
             _ => true,
         }
     }
@@ -1672,5 +1685,40 @@ mod tests {
         assert!(matches!(info.children[4].expr, Expr::LookAround(_, _)));
         assert_eq!(info.children[4].start_group(), 6);
         assert_eq!(info.children[4].end_group(), 6);
+    }
+
+    #[test]
+    fn define_group_is_easy_zero_size() {
+        // A DEFINE block should be analyzed as: min_size=0, const_size=true, hard=false
+        // It matches nothing itself, so it doesn't need backtracking.
+        let tree = Expr::parse_tree(r"(?(DEFINE)(?<word>\w+))").unwrap();
+        let info = analyze(&tree, false).unwrap();
+
+        assert!(matches!(info.expr, Expr::DefineGroup { .. }));
+        assert_eq!(info.min_size, 0);
+        assert!(info.const_size);
+        assert!(!info.hard);
+    }
+
+    #[test]
+    fn define_group_assigns_group_numbers() {
+        // Groups inside a DEFINE block should still be assigned group numbers,
+        // so that subroutine calls can reference them.
+        let tree = Expr::parse_tree(r"(?(DEFINE)(?<first>a)(?<second>b))").unwrap();
+        let info = analyze(&tree, false).unwrap();
+
+        // The definitions child: a Concat of two groups (groups 1 and 2)
+        assert_eq!(info.children[0].start_group(), 1);
+        assert_eq!(info.children[0].end_group(), 3);
+
+        // Group numbers are assigned in the usual order
+        let tree = Expr::parse_tree(r"(abc)(?(DEFINE)(?<second>a)ignored: no group(?<third>b(?<fourth>c)))(?<fifth>d)").unwrap();
+        let info = analyze(&tree, false).unwrap();
+
+        assert_eq!(info.start_group(), 1);
+        assert_eq!(info.end_group(), 6);
+        assert_eq!(info.children[0].start_group(), 1);
+        assert_eq!(info.children[1].children[0].start_group(), 2);
+        assert_eq!(info.children[2].start_group(), 5);
     }
 }

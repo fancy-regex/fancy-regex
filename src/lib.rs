@@ -1543,6 +1543,13 @@ pub enum Expr {
     BacktrackingControlVerb(BacktrackingControlVerb),
     /// Match while the given expression is absent from the haystack
     Absent(Absent),
+    /// DEFINE group - defines capture groups for subroutines without matching anything
+    /// The expressions inside are parsed and assigned group numbers, but no VM instructions
+    /// are generated for the DEFINE block itself.
+    DefineGroup {
+        /// The expressions/groups being defined
+        definitions: Box<Expr>,
+    },
 }
 
 /// Type of look-around assertion as used for a look-around expression.
@@ -1816,6 +1823,7 @@ macro_rules! children_iter_match {
                 second: Some(exp.$single_method()),
                 third: None,
             },
+            Expr::DefineGroup { definitions } => $iter::Single(Some(definitions.$single_method())),
             _ if $self.is_leaf_node() => $iter::Empty,
             _ => unimplemented!(),
         }
@@ -1975,6 +1983,9 @@ impl Expr {
                 if casei {
                     buf.push(')');
                 }
+            }
+            Expr::DefineGroup { .. } => {
+                // DEFINE groups match nothing - output empty string for delegation
             }
             _ => panic!("attempting to format hard expr {:?}", self),
         }

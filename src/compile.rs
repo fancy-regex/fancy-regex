@@ -319,6 +319,13 @@ impl<'a> Compiler<'a> {
                     CompileError::FeatureNotYetSupported(error_msg.to_string()),
                 )));
             }
+            Expr::DefineGroup { .. } => {
+                // DEFINE groups don't generate any VM instructions themselves.
+                // The groups defined inside are available for subroutine calls,
+                // but the DEFINE block itself doesn't match anything.
+                // Group numbers were already assigned during analysis, and the
+                // subroutine calls will inline the appropriate code when invoked.
+            }
         }
         Ok(())
     }
@@ -1380,6 +1387,16 @@ mod tests {
         assert_delegate_insn(&prog[4], "(.)", Some(CaptureGroupRange(1, 2)));
         assert_matches!(prog[5], Save(1));
         assert_matches!(prog[6], End);
+    }
+
+    #[test]
+    fn define_group_is_delegated_as_empty() {
+        // A standalone DEFINE block is not hard, so it gets delegated as an empty regex
+        let prog = compile_prog(r"(?(DEFINE)(?<word>\w+))");
+
+        assert_eq!(prog.len(), 2, "prog: {:?}", prog);
+        assert_delegate_insn(&prog[0], "", Some(CaptureGroupRange(0, 1)));
+        assert_matches!(prog[1], End);
     }
 
     fn compile_prog(re: &str) -> Vec<Insn> {
