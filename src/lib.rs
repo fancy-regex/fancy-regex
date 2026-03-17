@@ -25,6 +25,7 @@
 #![doc = include_str!("../docs/subroutines/2_flags.md")]
 #![doc = include_str!("../docs/subroutines/3_left_recursion.md")]
 #![doc = include_str!("../docs/subroutines/4_recursion.md")]
+#![doc = include_str!("../docs/absent.md")]
 #![deny(missing_docs)]
 #![deny(missing_debug_implementations)]
 #![cfg_attr(not(feature = "std"), no_std)]
