@@ -1250,7 +1250,6 @@ mod tests {
         prog.body
     }
 
-    #[cfg(feature = "std")]
     fn assert_delegate_insn(insn: &Insn, re: &str, captures: Option<CaptureGroupRange>) {
         match insn {
             Insn::Delegate(delegate) => assert_delegate(delegate, re, captures),
@@ -1260,7 +1259,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "std")]
     fn assert_absent_repeater_insn(insn: &Insn, re: &str, captures: Option<CaptureGroupRange>) {
         match insn {
             Insn::AbsentRepeater(delegate) => assert_delegate(delegate, re, captures),
@@ -1288,5 +1286,5 @@ mod tests {
     }
 
     #[cfg(not(feature = "std"))]
-    fn assert_delegate(_: &Insn, _: &str, _: Option<CaptureGroupRange>) {}
+    fn assert_delegate(_: &crate::vm::Delegate, _: &str, _: Option<CaptureGroupRange>) {}
 }
