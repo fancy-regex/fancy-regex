@@ -259,7 +259,7 @@ impl<'a> Compiler<'a> {
                         // If empty, this is an error in the analysis phase
                         if target_info.children.is_empty() {
                             return Err(Error::CompileError(Box::new(
-                                CompileError::FeatureNotYetSupported(format!(
+                                CompileError::UnexpectedGeneralError(format!(
                                     "Subroutine call to empty group {}",
                                     target_group
                                 )),
@@ -276,10 +276,13 @@ impl<'a> Compiler<'a> {
                     // The target group doesn't exist (invalid group reference)
                     // This should have been caught by analysis, but be defensive
                     return Err(Error::CompileError(Box::new(
-                        CompileError::FeatureNotYetSupported(format!(
-                            "Invalid subroutine call to non-existent group {}",
-                            target_group
-                        )),
+                        CompileError::SubroutineCallTargetNotFound(
+                            format!(
+                                "Invalid subroutine call to non-existent group {}",
+                                target_group
+                            ),
+                            0,
+                        ),
                     )));
                 }
             }
