@@ -128,7 +128,8 @@ In summary, the system efficiently combines backtracking and automaton-based mat
 Still in development, though the basic ideas are in place. Currently,
 the following features are missing:
 
-* Procedure calls and recursive expressions
+* Backreferences at recursion levels
+* Optimizations
 
 ## Acknowledgements
 
@@ -138,8 +139,7 @@ creating the excellent regex crate.
 
 ## Authors
 
-The main author is Raph Levien, with many contributions from Robin Stocker
-and Keith Hall.
+The main authors are Raph Levien, Robin Stocker and Keith Hall.
 
 ## Contributions
 
