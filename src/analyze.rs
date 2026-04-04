@@ -802,6 +802,20 @@ mod tests {
     use super::analyze;
     // use super::literal_const_size;
     use crate::{can_compile_as_anchored, CompileError, Error, Expr};
+    use matches::assert_matches;
+
+    #[cfg_attr(feature = "track_caller", track_caller)]
+    fn assert_invalid_backref(
+        pattern: &str,
+        explicit_capture_group_0: bool,
+        expected_group: usize,
+    ) {
+        let tree = Expr::parse_tree(pattern).unwrap();
+        assert_matches!(
+            analyze(&tree, explicit_capture_group_0).unwrap_err(),
+            Error::CompileError(ref e) if matches!(**e, CompileError::InvalidBackref(g) if g == expected_group)
+        );
+    }
 
     // #[test]
     // fn case_folding_safe() {
@@ -819,103 +833,31 @@ mod tests {
 
     #[test]
     fn invalid_backref_zero() {
-        let tree = Expr::parse_tree(r".\0").unwrap();
-        let result = analyze(&tree, false);
-        assert!(matches!(
-            result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(0))
-        ));
-
-        let result = analyze(&tree, true);
-        assert!(matches!(
-            result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(0))
-        ));
-
-        let tree = Expr::parse_tree(r"(.)\0").unwrap();
-        let result = analyze(&tree, false);
-        assert!(matches!(
-            result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(0))
-        ));
-
-        let result = analyze(&tree, true);
-        assert!(matches!(
-            result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(0))
-        ));
-
-        let tree = Expr::parse_tree(r"(.)\0\1").unwrap();
-        let result = analyze(&tree, false);
-        assert!(matches!(
-            result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(0))
-        ));
+        assert_invalid_backref(r".\0", false, 0);
+        assert_invalid_backref(r".\0", true, 0);
+        assert_invalid_backref(r"(.)\0", false, 0);
+        assert_invalid_backref(r"(.)\0", true, 0);
+        assert_invalid_backref(r"(.)\0\1", false, 0);
     }
 
     #[test]
     fn invalid_backref_no_captures() {
-        let tree = Expr::parse_tree(r"aa\1").unwrap();
-        let result = analyze(&tree, false);
-        assert!(matches!(
-            result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(1))
-        ));
-
-        let tree = Expr::parse_tree(r"aaaa\2").unwrap();
-        let result = analyze(&tree, false);
-        assert!(matches!(
-            result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(2))
-        ));
+        assert_invalid_backref(r"aa\1", false, 1);
+        assert_invalid_backref(r"aaaa\2", false, 2);
     }
 
     #[test]
     fn invalid_backref_with_captures() {
-        let tree = Expr::parse_tree(r"a(a)\2").unwrap();
-        let result = analyze(&tree, false);
-        assert!(matches!(
-            result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(2))
-        ));
-
-        let tree = Expr::parse_tree(r"a(a)\2\1").unwrap();
-        let result = analyze(&tree, false);
-        assert!(matches!(
-            result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(2))
-        ));
+        assert_invalid_backref(r"a(a)\2", false, 2);
+        assert_invalid_backref(r"a(a)\2\1", false, 2);
     }
 
     #[test]
     fn invalid_backref_with_captures_explict_capture_group_zero() {
-        let tree = Expr::parse_tree(r"(a(b)\2)c").unwrap();
-        let result = analyze(&tree, true);
-        assert!(matches!(
-            result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(2))
-        ));
-
-        let tree = Expr::parse_tree(r"(a(b)\1\2)c").unwrap();
-        let result = analyze(&tree, true);
-        assert!(matches!(
-            result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(2))
-        ));
-
-        let tree = Expr::parse_tree(r"(a\1)b").unwrap();
-        let result = analyze(&tree, true);
-        assert!(matches!(
-            result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(1))
-        ));
-
-        let tree = Expr::parse_tree(r"(a(b))\2").unwrap();
-        let result = analyze(&tree, true);
-        assert!(matches!(
-            result.err(),
-            Some(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidBackref(2))
-        ));
+        assert_invalid_backref(r"(a(b)\2)c", true, 2);
+        assert_invalid_backref(r"(a(b)\1\2)c", true, 2);
+        assert_invalid_backref(r"(a\1)b", true, 1);
+        assert_invalid_backref(r"(a(b))\2", true, 2);
     }
 
     #[test]
@@ -1236,8 +1178,6 @@ mod tests {
 
     #[test]
     fn min_pos_in_group_calculated_correctly_with_capture_groups() {
-        use matches::assert_matches;
-
         let tree = Expr::parse_tree(r"a(bc)d(e(f)g)").unwrap();
         let info = analyze(&tree, false).unwrap();
         assert_eq!(info.min_pos_in_group, 0);
