@@ -1,7 +1,7 @@
 use fancy_regex::Regex;
 use fancy_regex::RegexBuilder;
 
-pub fn build_regex(builder: &RegexBuilder) -> Regex {
+fn build_regex(builder: &RegexBuilder) -> Regex {
     let result = builder.build();
     assert!(
         result.is_ok(),
