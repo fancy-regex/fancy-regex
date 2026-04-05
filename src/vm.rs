@@ -224,6 +224,8 @@ pub enum Insn {
     Any,
     /// Match any character (not including newline)
     AnyNoNL,
+    /// Match any character (not including `\r` or `\n`, for CRLF mode)
+    AnyNoCRLF,
     /// Assertions
     Assertion(Assertion),
     /// Match the literal string at the current index
@@ -685,6 +687,13 @@ pub(crate) fn run(
                 }
                 Insn::AnyNoNL => {
                     if ix < s.len() && s.as_bytes()[ix] != b'\n' {
+                        ix += codepoint_len_at(s, ix);
+                    } else {
+                        break 'fail;
+                    }
+                }
+                Insn::AnyNoCRLF => {
+                    if ix < s.len() && s.as_bytes()[ix] != b'\r' && s.as_bytes()[ix] != b'\n' {
                         ix += codepoint_len_at(s, ix);
                     } else {
                         break 'fail;

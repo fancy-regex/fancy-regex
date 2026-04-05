@@ -333,6 +333,59 @@ fn general_newline_not_in_character_class() {
     assert_no_match(r"[\R]", "\r\n");
 }
 
+#[test]
+fn crlf_flag_multiline() {
+    // (?mR) treats \r\n as a single line ending for ^ and $
+    let pattern = r"(?mR)^test$";
+    assert_match(pattern, "test");
+    assert_match(pattern, "\r\ntest\r\n");
+    assert_match(pattern, "test\r\n");
+    assert_match(pattern, "\r\ntest");
+    // In CRLF mode bare \r is also treated as a line ending
+    assert_match(pattern, "\rtest\r");
+    // ^ should not match between \r and \n (they form a single unit)
+    assert_no_match(r"(?mR)^\ntest$", "\r\ntest");
+    // In non-CRLF multiline mode, \r is not a line ending
+    assert_no_match(r"(?m)^test$", "\rtest\r");
+    // Works with a lookahead (hard/fancy regex)
+    assert_match(r"(?mR)(?=^test$)^\w+$", "\r\ntest\r\n");
+}
+
+#[test]
+fn crlf_flag_dot() {
+    // In CRLF mode, `.` does not match `\r` or `\n`
+    assert_no_match(r"(?R).", "\r");
+    assert_no_match(r"(?R).", "\n");
+    assert_no_match(r"(?R).", "\r\n");
+    // But it still matches other characters
+    assert_match(r"(?R).", "a");
+    assert_match(r"(?R).", " ");
+    // Same via the backtracking VM (hard/fancy path)
+    assert_no_match(r"(?R)(?=).", "\r");
+    assert_no_match(r"(?R)(?=).", "\n");
+    // Without CRLF mode, `.` matches `\r` but not `\n`
+    assert_match(r".", "\r");
+    assert_no_match(r".", "\n");
+}
+
+#[test]
+fn crlf_flag_oniguruma_any_char() {
+    // Regardless of mode, \O always matches any character
+    // including newline and carriage return
+    let test_pattern = |pattern: &str| {
+        assert_match(pattern, "\r");
+        assert_match(pattern, "\n");
+        assert_match(pattern, "\t");
+        assert_match(pattern, "╔");
+        assert_match(pattern, "a");
+        assert_match(pattern, "š");
+        assert_no_match(pattern, "");
+    };
+
+    test_pattern(r"(?R)\O");
+    test_pattern(r"\O");
+}
+
 #[cfg_attr(feature = "track_caller", track_caller)]
 fn assert_match(re: &str, text: &str) {
     let result = match_text(re, text);
