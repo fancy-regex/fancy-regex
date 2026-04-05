@@ -25,7 +25,7 @@ variable-lookbehinds = ["regex-automata/dfa-search"]
 regex-set = []
 
 [dependencies.regex-automata]
-version = "0.4"
+version = "0.4.14"
 default-features = false
 features = ["alloc", "syntax", "meta", "nfa", "dfa", "hybrid"]
 

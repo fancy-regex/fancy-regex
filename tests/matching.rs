@@ -706,3 +706,39 @@ fn unicode_property_cntrl_graph_print_combined() {
     assert_match(r"[\p{cntrl}\x21-\x7E]", "a"); // visible ASCII
     assert_no_match(r"[\p{cntrl}\x21-\x7E]", " "); // space (not in cntrl or \x21-\x7E)
 }
+
+#[test]
+fn test_basic_subroutine() {
+    assert_match(r"^(a)\g<1>$", "aa");
+    assert_no_match(r"^(a)\g<1>$", "ab");
+    assert_no_match(r"^(a)\g<1>$", "aab");
+
+    // Named group subroutine
+    assert_match(r"(?<name>ab)\g<name>", "abab");
+    assert_no_match(r"(?<name>ab)\g<name>", "abcd");
+}
+
+#[test]
+fn test_recursive_subroutine() {
+    let balanced_parens = r"^(?<foo>a|\(\g<foo>\))$";
+    assert_match(balanced_parens, "a");
+    assert_match(balanced_parens, "(a)");
+    assert_match(balanced_parens, "(((((a)))))");
+    assert_no_match(balanced_parens, "(a");
+    assert_no_match(balanced_parens, "((a)");
+    assert_no_match(balanced_parens, "(a");
+    assert_no_match(balanced_parens, "((a)");
+}
+
+#[test]
+fn test_forward_reference_subroutine() {
+    // Forward reference: subroutine call before group definition
+    assert_match(r"\g<1>(a)", "aa");
+    assert_match(r"\g<name>(?<name>a)", "aa");
+}
+
+#[test]
+fn test_forward_refrence_subroutine_zero_repetition_capture_group() {
+    // This has a forward reference to group n, which is defined as . with {0} repetition
+    assert_match(r"\g<n>(?<n>.){0}", "X");
+}

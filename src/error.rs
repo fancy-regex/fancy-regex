@@ -86,6 +86,8 @@ pub enum CompileError {
     LeftRecursiveSubroutineCall(String),
     /// Unbounded recursive subroutine call detected
     NeverEndingRecursion,
+    /// Unexpected general error
+    UnexpectedGeneralError(String),
 }
 
 /// An error as the result of executing a regex.
@@ -158,6 +160,9 @@ impl fmt::Display for CompileError {
             }
             CompileError::NeverEndingRecursion => {
                 write!(f, "Never-ending recursive subroutine call detected")
+            }
+            CompileError::UnexpectedGeneralError(s) => {
+                write!(f, "Unexpected general compilation error: {}", s)
             }
         }
     }
