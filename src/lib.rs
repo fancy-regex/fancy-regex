@@ -1536,7 +1536,8 @@ pub enum Expr {
     Any {
         /// Whether it also matches newlines or not
         newline: bool,
-        /// Whether CRLF mode is enabled (dot excludes both `\r` and `\n`)
+        /// Whether CRLF mode is enabled (`\r` also counts as a newline, so dot
+        /// excludes both `\r` and `\n`)
         crlf: bool,
     },
     /// An assertion
@@ -1765,12 +1766,16 @@ pub enum Assertion {
     EndTextIgnoreTrailingNewlines,
     /// Start of a line
     StartLine {
-        /// CRLF mode
+        /// CRLF mode.
+        /// If true, this assertion matches at the starting position of the input text, or at the position immediately
+        /// following either a `\r` or `\n` character, but never after a `\r` when a `\n` follows.
         crlf: bool,
     },
     /// End of a line
     EndLine {
         /// CRLF mode
+        /// If true, this assertion matches at the ending position of the input text, or at the position immediately
+        /// preceding either a `\r` or `\n` character, but never after a `\r` when a `\n` follows.
         crlf: bool,
     },
     /// Left word boundary

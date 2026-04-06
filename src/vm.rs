@@ -222,9 +222,9 @@ pub enum Insn {
     End,
     /// Match any character (including newline)
     Any,
-    /// Match any character (not including newline)
+    /// Match any character except for the line feed character (`\n`)
     AnyNoNL,
-    /// Match any character (not including `\r` or `\n`, for CRLF mode)
+    /// Match any character except for a carriage return or line feed character (`\r` or `\n`)
     AnyNoCRLF,
     /// Assertions
     Assertion(Assertion),
