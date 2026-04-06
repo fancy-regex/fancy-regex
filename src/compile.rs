@@ -296,7 +296,8 @@ impl<'a> Compiler<'a> {
                 let child_info = &info.children[0];
                 if child_info.hard {
                     // Nested absent operators are not yet supported
-                    if matches!(child_info.expr, Expr::Absent(_)) {
+                    let is_absent = |e: &Expr| matches!(e, Expr::Absent(_));
+                    if is_absent(child_info.expr) || child_info.expr.has_descendant(is_absent) {
                         return Err(Error::CompileError(Box::new(
                             CompileError::FeatureNotYetSupported(
                                 "Nested absent operators".to_string(),
@@ -1384,8 +1385,15 @@ mod tests {
 
     #[test]
     fn absent_repeater_nested_absent_error() {
-        // Nested absent operators are not yet supported
+        // Nested absent operators are not yet supported (direct child)
         let tree = Expr::parse_tree(r"(?~(?~abc))").unwrap();
+        let info = analyze(&tree, true).unwrap();
+        assert_compile_error(compile(&info, true, tree.contains_subroutines), |e| {
+            matches!(e, CompileError::FeatureNotYetSupported(_))
+        });
+
+        // Nested absent operators are not yet supported (indirect descendant)
+        let tree = Expr::parse_tree(r"(?~a(?<=b(?~c)))").unwrap();
         let info = analyze(&tree, true).unwrap();
         assert_compile_error(compile(&info, true, tree.contains_subroutines), |e| {
             matches!(e, CompileError::FeatureNotYetSupported(_))
