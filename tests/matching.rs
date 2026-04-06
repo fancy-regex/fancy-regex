@@ -753,15 +753,10 @@ fn test_define_group_subroutine_call() {
 #[test]
 fn test_define_group_multiple_definitions() {
     // DEFINE block with multiple named groups used as subroutines
-    let pattern = r"^(?(DEFINE)(?<year>\d{4})(?<month>\d{2})(?<day>\d{2}))\g<year>-\g<month>-\g<day>$";
-    assert_match(
-        pattern,
-        "2024-03-17",
-    );
-    assert_no_match(
-        pattern,
-        "1-2-3",
-    );
+    let pattern =
+        r"^(?(DEFINE)(?<year>\d{4})(?<month>\d{2})(?<day>\d{2}))\g<year>-\g<month>-\g<day>$";
+    assert_match(pattern, "2024-03-17");
+    assert_no_match(pattern, "1-2-3");
 }
 
 #[test]

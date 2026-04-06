@@ -1712,7 +1712,10 @@ mod tests {
         assert_eq!(info.children[0].end_group(), 3);
 
         // Group numbers are assigned in the usual order
-        let tree = Expr::parse_tree(r"(abc)(?(DEFINE)(?<second>a)ignored: no group(?<third>b(?<fourth>c)))(?<fifth>d)").unwrap();
+        let tree = Expr::parse_tree(
+            r"(abc)(?(DEFINE)(?<second>a)ignored: no group(?<third>b(?<fourth>c)))(?<fifth>d)",
+        )
+        .unwrap();
         let info = analyze(&tree, false).unwrap();
 
         assert_eq!(info.start_group(), 1);
