@@ -110,6 +110,11 @@ const OPTION_TRACE: u32 = 1 << 0;
 /// the fact that we skipped because of an empty match, it would still treat `\G` as matching. So
 /// this option is for communicating that to the VM. Phew.
 pub(crate) const OPTION_SKIPPED_EMPTY_MATCH: u32 = 1 << 1;
+/// When this option is set, the VM will reject any match where the physical consumption is zero.
+/// This is used to implement `find_not_empty`, which causes the regex to ignore empty matches.
+/// Note that this deliberately ignores the effect of `\K` when performing the check, because
+/// that only affects what is output, not the actual match which occurred.
+pub(crate) const OPTION_FIND_NOT_EMPTY: u32 = 1 << 2;
 
 // TODO: make configurable
 const MAX_STACK: usize = 1_000_000;
@@ -675,6 +680,9 @@ pub(crate) fn run(
                         if state.get(0) > slot1 {
                             state.save(0, slot1);
                         }
+                    }
+                    if option_flags & OPTION_FIND_NOT_EMPTY != 0 && ix == pos {
+                        break 'fail;
                     }
                     return Ok(Some(state.saves));
                 }

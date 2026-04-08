@@ -1,5 +1,4 @@
-use fancy_regex::Regex;
-use fancy_regex::RegexBuilder;
+use fancy_regex::{CompileError, Error, Regex, RegexBuilder};
 
 fn build_regex(builder: &RegexBuilder) -> Regex {
     let result = builder.build();
@@ -189,4 +188,98 @@ fn changing_builder_options_has_no_effect_on_already_built_regexes() {
     assert!(!regex2.is_match(test_text1).unwrap());
     assert!(!regex3.is_match(test_text2).unwrap());
     assert!(regex4.is_match(test_text2).unwrap());
+}
+
+#[test]
+fn check_find_not_empty_option() {
+    // \d* can match empty, so without find_not_empty it matches at position 0 with zero length.
+    // With find_not_empty enabled, that zero-length match is rejected and find returns None.
+    let pattern = r"\d*";
+    let text = "hello";
+
+    let normal = build_regex(RegexBuilder::new(pattern).find_not_empty(false));
+    assert_eq!(
+        normal.find(text).unwrap().map(|m| (m.start(), m.end())),
+        Some((0, 0))
+    );
+
+    let not_empty = build_regex(RegexBuilder::new(pattern).find_not_empty(true));
+    assert_eq!(
+        not_empty.find(text).unwrap().map(|m| (m.start(), m.end())),
+        None
+    );
+}
+
+#[test]
+fn check_find_not_empty_rejects_zero_width_only_patterns() {
+    // Patterns that can only ever produce zero-length matches should fail to compile
+    // when find_not_empty is set, since they can never return a result.
+    let zero_width_patterns = vec![
+        r"^", r"$", r"\b", r"(?!bar)", r"(?<=x)", r"(?<!y)", r"(?=.)", r"\G",
+    ];
+
+    for pattern in zero_width_patterns {
+        let result = RegexBuilder::new(pattern).find_not_empty(true).build();
+        assert!(
+            matches!(
+                result,
+                Err(Error::CompileError(ref e)) if matches!(**e, CompileError::PatternCanNeverMatch)
+            ),
+            "Expected PatternCanNeverMatch for pattern {:?}, got {:?}",
+            pattern,
+            result,
+        );
+    }
+}
+
+#[test]
+fn check_find_not_empty_allows_patterns_that_can_match_non_empty() {
+    // Patterns that can produce non-empty matches should compile fine even with find_not_empty
+    let patterns = vec![
+        r"\d*",
+        r"a?",
+        r"\d+",
+        r"[a-z]+",
+        r"(?:foo)?",
+        r"\d*(?=x)",
+        r"a(?=b)",
+    ];
+
+    for pattern in patterns {
+        let result = RegexBuilder::new(pattern).find_not_empty(true).build();
+        assert!(
+            result.is_ok(),
+            "Expected pattern {:?} to compile with find_not_empty, got {:?}",
+            pattern,
+            result.err(),
+        );
+    }
+}
+
+#[test]
+fn check_find_not_empty_is_match() {
+    // is_match should respect find_not_empty: \d* normally matches empty at position 0
+    // in "hello", but with find_not_empty it should return false.
+    let pattern = r"\d*";
+    let text = "hello";
+
+    let normal = build_regex(RegexBuilder::new(pattern).find_not_empty(false));
+    assert!(normal.is_match(text).unwrap());
+
+    let not_empty = build_regex(RegexBuilder::new(pattern).find_not_empty(true));
+    assert!(!not_empty.is_match(text).unwrap());
+}
+
+#[test]
+fn check_find_not_empty_allows_trailing_lookahead_with_content() {
+    // a?(?=b) optimizes to (a?)b — group 0 is "a?" which is not always empty, so it should compile
+    let result = RegexBuilder::new(r"a(?=b)").find_not_empty(true).build();
+    assert!(
+        result.is_ok(),
+        "Expected a?(?=b) to compile with find_not_empty"
+    );
+
+    let regex = result.unwrap();
+    assert!(regex.is_match("ab").unwrap());
+    assert!(!regex.is_match("ac").unwrap());
 }

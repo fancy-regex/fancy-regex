@@ -88,6 +88,10 @@ pub enum CompileError {
     NeverEndingRecursion,
     /// Unexpected general error
     UnexpectedGeneralError(String),
+    /// The pattern combined with the active options can never produce a match. For example,
+    /// setting `find_not_empty` on a pattern whose analysis shows it can only ever produce
+    /// zero-length matches.
+    PatternCanNeverMatch,
 }
 
 /// An error as the result of executing a regex.
@@ -163,6 +167,9 @@ impl fmt::Display for CompileError {
             }
             CompileError::UnexpectedGeneralError(s) => {
                 write!(f, "Unexpected general compilation error: {}", s)
+            }
+            CompileError::PatternCanNeverMatch => {
+                write!(f, "Pattern can never match: the regex is zero-width only but find_not_empty is set")
             }
         }
     }

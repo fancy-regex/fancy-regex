@@ -16,6 +16,7 @@ with the exception that 0.x versions can break between minor versions.
 - Add support for the regex crate's `(?R)` CRLF mode flag (#238)
 - Add support for subroutine calls (including recursion up to 20 levels deep, matching Oniguruma behavior) `\g<1>` (#230)
 - Add support for Oniguruma's absent repeater `(?~abc)` (#233)
+- Add support for ignoring empty matches (#240)
 ### Changed
 - `RegexBuilder` can now build multiple patterns with the same options (#213)
 ### Fixed

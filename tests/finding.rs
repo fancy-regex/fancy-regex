@@ -1,6 +1,6 @@
 mod common;
 
-use fancy_regex::Match;
+use fancy_regex::{Match, RegexBuilder};
 use std::ops::Range;
 
 #[test]
@@ -613,6 +613,183 @@ fn continue_from_previous_match_at_min_position_zero() {
     assert_eq!(find(r"(?=\d)(?=1)\G\d+", text), Some((0, 3)));
     // Atomic group doesn't affect \G position checking
     assert_eq!(find(r"(?>\G)\d+", "123abc"), Some((0, 3)));
+}
+
+#[test]
+fn find_not_empty_skips_zero_length_match() {
+    // \d* on text that doesn't start with a digit: normal mode matches empty at position 0,
+    // find_not_empty mode rejects the zero-length match.
+    let pattern = r"\d*";
+    let text = "hello";
+
+    let normal = common::regex(pattern);
+    assert_eq!(
+        normal.find(text).unwrap().map(|m| (m.start(), m.end())),
+        Some((0, 0)),
+    );
+
+    let not_empty = RegexBuilder::new(pattern)
+        .find_not_empty(true)
+        .build()
+        .unwrap();
+    assert_eq!(
+        not_empty.find(text).unwrap().map(|m| (m.start(), m.end())),
+        None,
+    );
+}
+
+#[test]
+fn find_not_empty_find_iter() {
+    // With find_iter, find_not_empty should keep non-empty matches but stop
+    // when a zero-length match is encountered (returning None stops the iterator).
+    let pattern = r"\d*";
+    let text = "1a2";
+
+    // Normal mode: "1" at 0-1, empty at 1-1 skipped (adjacent to last match end),
+    // "2" at 2-3, empty at 3-3 skipped (adjacent to last match end), done.
+    let normal: Vec<(usize, usize)> = common::regex(pattern)
+        .find_iter(text)
+        .map(|m| {
+            let m = m.unwrap();
+            (m.start(), m.end())
+        })
+        .collect();
+    assert_eq!(normal, vec![(0, 1), (2, 3)]);
+
+    // find_not_empty: "1" at (0,1) is non-empty → kept. Next search at pos 1: \d* matches ""
+    // at (1,1), find_not_empty rejects and advances past the empty match. At pos 2: \d*
+    // matches "2" at (2,3), which is non-empty → kept. Both non-empty matches are yielded.
+    let not_empty = RegexBuilder::new(pattern)
+        .find_not_empty(true)
+        .build()
+        .unwrap();
+    let filtered: Vec<(usize, usize)> = not_empty
+        .find_iter(text)
+        .map(|m| {
+            let m = m.unwrap();
+            (m.start(), m.end())
+        })
+        .collect();
+    assert_eq!(filtered, vec![(0, 1), (2, 3)]);
+}
+
+#[test]
+fn find_not_empty_captures_iter() {
+    // Same as find_not_empty_find_iter but using captures_iter to verify
+    // the captures path also advances past empty matches.
+    let pattern = r"(\d*)";
+    let text = "1a2";
+
+    let not_empty = RegexBuilder::new(pattern)
+        .find_not_empty(true)
+        .build()
+        .unwrap();
+    let filtered: Vec<(usize, usize)> = not_empty
+        .captures_iter(text)
+        .map(|c| {
+            let c = c.unwrap();
+            let m = c.get(0).unwrap();
+            (m.start(), m.end())
+        })
+        .collect();
+    assert_eq!(filtered, vec![(0, 1), (2, 3)]);
+}
+
+#[test]
+fn find_not_empty_fancy_path() {
+    // Use a lookbehind to force the fancy/VM path, then verify find_not_empty works there too.
+    // (?<=^)\d* matches an empty string of digits at the start of text.
+    let pattern = r"(?<=^)\d*";
+    let text = "hello";
+
+    let normal = common::regex(pattern);
+    assert_eq!(
+        normal.find(text).unwrap().map(|m| (m.start(), m.end())),
+        Some((0, 0)),
+    );
+
+    let not_empty = RegexBuilder::new(pattern)
+        .find_not_empty(true)
+        .build()
+        .unwrap();
+    assert_eq!(
+        not_empty.find(text).unwrap().map(|m| (m.start(), m.end())),
+        None,
+    );
+}
+
+#[test]
+fn find_not_empty_fancy_find_iter() {
+    // Atomic group forces the fancy/VM path.
+    // (?>\d*) behaves like \d* but via the backtracking VM.
+    let pattern = r"(?>\d*)";
+    let text = "1a2";
+
+    // Normal mode: same as \d* — "1" at 0-1, "2" at 2-3
+    // (empty matches adjacent to the previous match end are skipped by find_iter)
+    let normal: Vec<(usize, usize)> = common::regex(pattern)
+        .find_iter(text)
+        .map(|m| {
+            let m = m.unwrap();
+            (m.start(), m.end())
+        })
+        .collect();
+    assert_eq!(normal, vec![(0, 1), (2, 3)]);
+
+    // find_not_empty with the fancy/VM path: the VM's unanchored search loop
+    // (Split/Any/Jmp preamble) allows it to advance past positions where the
+    // pattern would produce an empty match. So unlike the Wrap path, the VM
+    // at pos 1 rejects the empty match via OPTION_FIND_NOT_EMPTY but then
+    // advances and finds "2" at (2,3). Both non-empty matches are yielded.
+    let not_empty = RegexBuilder::new(pattern)
+        .find_not_empty(true)
+        .build()
+        .unwrap();
+    let filtered: Vec<(usize, usize)> = not_empty
+        .find_iter(text)
+        .map(|m| {
+            let m = m.unwrap();
+            (m.start(), m.end())
+        })
+        .collect();
+    assert_eq!(filtered, vec![(0, 1), (2, 3)]);
+}
+
+#[test]
+fn find_not_empty_trailing_lookahead_with_variable_group0() {
+    // \d*(?=x) optimizes to (\d*)x with explicit_capture_group_0.
+    // The user-visible match is explicit group 0 (\d*). When \d* matches empty,
+    // find_not_empty should reject the match even though the physical match
+    // (including the "x") is non-empty.
+    let pattern = r"\d*(?=x)";
+    let text = "xhello";
+
+    // Normal mode: matches empty \d* followed by lookahead for x → match at (0, 0)
+    let normal = common::regex(pattern);
+    assert_eq!(
+        normal.find(text).unwrap().map(|m| (m.start(), m.end())),
+        Some((0, 0)),
+    );
+
+    // find_not_empty: the user-visible match (group 0) is empty → rejected
+    let not_empty = RegexBuilder::new(pattern)
+        .find_not_empty(true)
+        .build()
+        .unwrap();
+    assert_eq!(
+        not_empty.find(text).unwrap().map(|m| (m.start(), m.end())),
+        None,
+    );
+
+    // But with digits before the x, the match is non-empty → accepted
+    let text_with_digits = "12xhello";
+    assert_eq!(
+        not_empty
+            .find(text_with_digits)
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
+        Some((0, 2)),
+    );
 }
 
 fn find(re: &str, text: &str) -> Option<(usize, usize)> {
