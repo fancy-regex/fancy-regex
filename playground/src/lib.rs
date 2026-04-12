@@ -306,14 +306,21 @@ fn info_to_tree_node<'a>(
             };
             (kind_str.to_string(), Some(format!("({})", polarity)), None)
         }
-        Expr::Repeat { lo, hi, .. } => {
+        Expr::Repeat { lo, hi, greedy, .. } => {
             let hi_str = if *hi == usize::MAX {
                 "∞".to_string()
             } else {
                 hi.to_string()
             };
             (
-                "Repeat".to_string(),
+                if lo == hi {
+                    "Repeat"
+                } else if *greedy {
+                    "Repeat greedily"
+                } else {
+                    "Repeat non-greedily"
+                }
+                .to_string(),
                 Some(format!("{{{}..{}}}", lo, hi_str)),
                 None,
             )
@@ -603,21 +610,31 @@ mod tests {
     fn test_info_to_tree_node_repeat() {
         // Test repeat ranges
         let test_cases = vec![
-            (r"a*", "{0..∞}"),
-            (r"a+", "{1..∞}"),
-            (r"a?", "{0..1}"),
-            (r"a{2,5}", "{2..5}"),
-            (r"a{3}", "{3..3}"),
+            (r"a*", "{0..∞}", "greedily"),
+            (r"a+", "{1..∞}", "greedily"),
+            (r"a?", "{0..1}", "greedily"),
+            (r"a{2,5}", "{2..5}", "greedily"),
+            (r"a{3}", "{3..3}", ""),
+            (r"a*?", "{0..∞}", "non-greedily"),
+            (r"a+?", "{1..∞}", "non-greedily"),
+            (r"a??", "{0..1}", "non-greedily"),
+            (r"a{2,5}?", "{2..5}", "non-greedily"),
+            (r"a{3}", "{3..3}", ""),
         ];
 
-        for (pattern, expected_summary) in test_cases {
+        for (pattern, expected_summary, expected_suffix) in test_cases {
             let tree = fancy_regex::Expr::parse_tree(pattern).unwrap();
             let info = fancy_regex::internal::analyze(&tree, false).unwrap();
             let group_names = std::collections::HashMap::new();
 
             let node = info_to_tree_node(&info, &group_names);
 
-            assert_eq!(node.kind, "Repeat", "Pattern: {}", pattern);
+            let expected_kind = if expected_suffix.is_empty() {
+                "Repeat".to_string()
+            } else {
+                format!("Repeat {}", expected_suffix)
+            };
+            assert_eq!(node.kind, expected_kind, "Pattern: {}", pattern);
             assert_eq!(
                 node.summary.as_deref(),
                 Some(expected_summary),
