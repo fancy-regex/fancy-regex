@@ -88,3 +88,8 @@ Backtracking control verbs:
 
 `(*FAIL)`
 : fail the current backtracking branch
+
+Absent repeater:
+
+`(?~abc)`
+: match anything until `abc` would match or until the end of the haystack if no match

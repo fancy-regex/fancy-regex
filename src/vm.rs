@@ -316,6 +316,8 @@ pub enum Insn {
     #[cfg(feature = "variable-lookbehinds")]
     /// Reverse lookbehind using regex-automata for variable-sized patterns
     BackwardsDelegate(ReverseBackwardsDelegate),
+    /// Absent repeater operator - matches if delegate does not match from current position
+    AbsentRepeater(Delegate),
 }
 
 /// Sequence of instructions for the VM to execute.
@@ -971,6 +973,32 @@ pub(crate) fn run(
                             Some(m) => ix = m.offset(),
                             _ => break 'fail,
                         }
+                    }
+                }
+                Insn::AbsentRepeater(ref delegate) => {
+                    // The absent operator matches the shortest string not containing the delegate pattern
+                    // We advance one character at a time, checking if delegate matches at each position
+                    // If delegate matches, we've found the boundary and continue to next instruction
+                    // If we reach end of string without delegate matching, we also continue
+
+                    // Check if delegate matches at current position
+                    let input = Input::new(s).span(ix..s.len()).anchored(Anchored::Yes);
+                    // capture groups in the delegate are always ignored, so we can use the quicker search_half method
+                    let delegate_matches_here = delegate.inner.search_half(&input).is_some();
+
+                    if delegate_matches_here {
+                        // Delegate matches at current position - we've reached the boundary
+                        // Continue to next instruction without consuming any characters
+                        // Fall through via pc += 1 below
+                    } else if ix < s.len() {
+                        // Try advancing one character and checking again
+                        state.push(pc + 1, ix)?;
+                        ix += codepoint_len_at(s, ix);
+                        // Stay at same pc to check delegate match at new position
+                        continue;
+                    } else {
+                        // Reached end of string - delegate never matched, so we succeed
+                        // Fall through via pc += 1 below
                     }
                 }
                 Insn::ContinueFromPreviousMatchEnd { at_start } => {
