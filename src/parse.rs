@@ -363,33 +363,71 @@ impl<'a> Parser<'a> {
         close: &str,
         allow_relative: bool,
     ) -> Result<(usize, Expr)> {
-        if let Some(ParsedId { id, relative, skip }) =
-            parse_id(&self.re[ix..], open, close, allow_relative)
-        {
-            let target = match (id.is_empty(), relative) {
-                // subroutine call with nothing before the + or -, so it is purely a relative group subroutine call
-                (true, Some(relative)) => CaptureGroupTarget::Relative(relative),
-                (_, Some(_)) => {
-                    // a non-empty id combined with a +/- suffix (e.g. `\g<1-0>` or `\g<name+1>`)
-                    // is not valid for subroutine calls (unlike backrefs where it denotes a
-                    // recursion level qualifier)
-                    return Err(Error::ParseError(ix, ParseError::InvalidGroupName));
-                }
-                (_, None) => {
-                    if let Ok(num) = id.parse::<usize>() {
-                        self.numeric_capture_group_references = true;
-                        if num == 0 {
-                            self.self_recursive = true;
-                        }
-                        CaptureGroupTarget::ByNumber(num)
-                    } else {
-                        CaptureGroupTarget::ByName(id.to_string())
+        // First: try unrestricted name (no relative suffix)
+        if let Some((name, skip)) = parse_unrestricted_name(&self.re[ix..], open, close) {
+            // Check it's not a +N/-N or bare +/- (those should go through the relative path)
+            let is_pure_relative = name == "+"
+                || name == "-"
+                || ((name.starts_with('+') || name.starts_with('-'))
+                    && name[1..].parse::<usize>().is_ok());
+
+            if !is_pure_relative {
+                let target = if let Ok(num) = name.parse::<usize>() {
+                    self.numeric_capture_group_references = true;
+                    if num == 0 {
+                        self.self_recursive = true;
                     }
+                    CaptureGroupTarget::ByNumber(num)
+                } else {
+                    CaptureGroupTarget::ByName(name.to_string())
+                };
+                self.contains_subroutines = true;
+                return Ok((
+                    ix + skip,
+                    Expr::AstNode(AstNode::SubroutineCall(target), ix),
+                ));
+            }
+        }
+
+        // Second: try as relative reference (+N / -N)
+        if allow_relative {
+            if let Some(ParsedId {
+                id,
+                relative: Some(rel),
+                skip,
+            }) = parse_id(&self.re[ix..], open, close, true)
+            {
+                if id.is_empty() {
+                    let target = CaptureGroupTarget::Relative(rel);
+                    self.contains_subroutines = true;
+                    return Ok((
+                        ix + skip,
+                        Expr::AstNode(AstNode::SubroutineCall(target), ix),
+                    ));
                 }
+            }
+        }
+
+        Err(Error::ParseError(ix, ParseError::InvalidGroupName))
+    }
+
+    fn parse_unrestricted_subroutine_call(
+        &mut self,
+        ix: usize,
+        open: &str,
+        close: &str,
+    ) -> Result<(usize, Expr)> {
+        if let Some((name, skip)) = parse_unrestricted_name(&self.re[ix..], open, close) {
+            let target = if let Ok(num) = name.parse::<usize>() {
+                self.numeric_capture_group_references = true;
+                if num == 0 {
+                    self.self_recursive = true;
+                }
+                CaptureGroupTarget::ByNumber(num)
+            } else {
+                CaptureGroupTarget::ByName(name.to_string())
             };
-
             self.contains_subroutines = true;
-
             Ok((
                 ix + skip,
                 Expr::AstNode(AstNode::SubroutineCall(target), ix),
@@ -879,14 +917,8 @@ impl<'a> Parser<'a> {
             } else {
                 ("'", "'")
             };
-            if let Some(ParsedId {
-                id,
-                relative: None,
-                skip,
-            }) = parse_id(&self.re[ix + 1..], open, close, false)
-            {
-                //self.named_groups.insert(id.to_string(), self.curr_group);
-                group_name = Some(id.to_string());
+            if let Some((name, skip)) = parse_unrestricted_name(&self.re[ix + 1..], open, close) {
+                group_name = Some(name.to_string());
                 (None, skip + 1)
             } else {
                 return Err(Error::ParseError(ix, ParseError::InvalidGroupName));
@@ -894,14 +926,8 @@ impl<'a> Parser<'a> {
         } else if self.re[ix..].starts_with("?P<") {
             // Named capture group using Python syntax: (?P<name>...)
             //self.curr_group += 1; // this is a capture group
-            if let Some(ParsedId {
-                id,
-                relative: None,
-                skip,
-            }) = parse_id(&self.re[ix + 2..], "<", ">", false)
-            {
-                //self.named_groups.insert(id.to_string(), self.curr_group);
-                group_name = Some(id.to_string());
+            if let Some((name, skip)) = parse_unrestricted_name(&self.re[ix + 2..], "<", ">") {
+                group_name = Some(name.to_string());
                 (None, skip + 2)
             } else {
                 return Err(Error::ParseError(ix, ParseError::InvalidGroupName));
@@ -916,8 +942,7 @@ impl<'a> Parser<'a> {
         } else if self.re[ix..].starts_with("?(") {
             return self.parse_conditional(ix + 2, depth);
         } else if self.re[ix..].starts_with("?P>") {
-            return self.parse_delimited_subroutine_call(ix + 3, "", ")", false);
-        // TODO: only allow names?
+            return self.parse_unrestricted_subroutine_call(ix + 3, "", ")");
         } else if self.re[ix..].starts_with("*") {
             return self.parse_backtracking_control_verb(ix);
         } else if self.re[ix..].starts_with('?') {
@@ -1500,7 +1525,7 @@ pub(crate) fn parse_id<'a>(
 
     let id_start = open.len();
     let mut iter = s[id_start..].char_indices().peekable();
-    let after_id = iter.find(|(_, ch)| !is_id_char(*ch)); // TODO: if !allow_relative, also eat - char... Oniguruma example: (?<foo-+a>a)\g<foo-+a>\k<foo-+a>
+    let after_id = iter.find(|(_, ch)| !is_id_char(*ch));
 
     let id_len = match after_id.map(|(i, _)| i) {
         Some(id_len) => id_len,
@@ -1539,6 +1564,26 @@ pub(crate) fn parse_id<'a>(
         }
     }
     None
+}
+
+/// Parse a group name that allows any characters except the closing delimiter.
+/// The name must be non-empty. Returns `(name, total_bytes_consumed)` on success.
+pub(crate) fn parse_unrestricted_name<'a>(
+    s: &'a str,
+    open: &str,
+    close: &str,
+) -> Option<(&'a str, usize)> {
+    if !s.starts_with(open) || s.len() <= open.len() + close.len() {
+        return None;
+    }
+    let after_open = &s[open.len()..];
+    // Find the close delimiter
+    let end = after_open.find(close)?;
+    if end == 0 {
+        return None; // empty name not allowed
+    }
+    let name = &after_open[..end];
+    Some((name, open.len() + end + close.len()))
 }
 
 fn is_id_char(c: char) -> bool {
@@ -1666,7 +1711,7 @@ mod tests {
     use alloc::{format, vec};
 
     use crate::parse::{
-        make_group, make_literal, make_literal_case_insensitive, parse_id,
+        make_group, make_literal, make_literal_case_insensitive, parse_id, parse_unrestricted_name,
         remap_unicode_property_if_necessary,
     };
     use crate::{Absent, Assertion, BacktrackingControlVerb, Expr};
@@ -1829,6 +1874,37 @@ mod tests {
     }
 
     #[test]
+    fn parse_unrestricted_name_test() {
+        assert_eq!(parse_unrestricted_name("<foo>", "<", ">"), Some(("foo", 5)));
+        assert_eq!(
+            parse_unrestricted_name("<foo-bar>", "<", ">"),
+            Some(("foo-bar", 9))
+        );
+        assert_eq!(
+            parse_unrestricted_name("<hello world>", "<", ">"),
+            Some(("hello world", 13))
+        );
+        assert_eq!(parse_unrestricted_name("< >", "<", ">"), Some((" ", 3)));
+        assert_eq!(parse_unrestricted_name("<#!@>", "<", ">"), Some(("#!@", 5)));
+        assert_eq!(
+            parse_unrestricted_name("'foo-bar'", "'", "'"),
+            Some(("foo-bar", 9))
+        );
+        // Empty name rejected
+        assert_eq!(parse_unrestricted_name("<>", "<", ">"), None);
+        assert_eq!(parse_unrestricted_name("''", "'", "'"), None);
+        // Missing close delimiter
+        assert_eq!(parse_unrestricted_name("<foo", "<", ">"), None);
+        // Too short
+        assert_eq!(parse_unrestricted_name("<", "<", ">"), None);
+        // Doesn't start with open
+        assert_eq!(parse_unrestricted_name("foo>", "<", ">"), None);
+        // No open/close delimiters (empty strings)
+        assert_eq!(parse_unrestricted_name("foo)", "", ")"), Some(("foo", 4)));
+        assert_eq!(parse_unrestricted_name(")", "", ")"), None);
+    }
+
+    #[test]
     fn literal_unescaped_opening_curly() {
         // `{` in position where quantifier is not allowed results in literal `{`
         assert_eq!(p("{"), make_literal("{"));
@@ -1939,6 +2015,60 @@ mod tests {
     fn named_group() {
         assert_eq!(p("(?'name'a)"), make_group(make_literal("a"),));
         assert_eq!(p("(?<name>a)"), make_group(make_literal("a"),));
+    }
+
+    #[test]
+    fn unrestricted_named_group() {
+        // Hyphens in group names
+        assert_eq!(p("(?<foo-bar>a)"), make_group(make_literal("a")));
+        assert_eq!(p("(?'foo-bar'a)"), make_group(make_literal("a")));
+        assert_eq!(p("(?P<foo-bar>a)"), make_group(make_literal("a")));
+
+        // Multiple hyphens / CSS-like names
+        assert_eq!(p("(?<data-value-1>a)"), make_group(make_literal("a")));
+
+        // Leading/trailing hyphens
+        assert_eq!(p("(?<-foo>a)"), make_group(make_literal("a")));
+        assert_eq!(p("(?<foo->a)"), make_group(make_literal("a")));
+
+        // Special characters in group names
+        assert_eq!(p("(?<#>a)"), make_group(make_literal("a")));
+        assert_eq!(p("(?<hello, world!>a)"), make_group(make_literal("a")));
+        assert_eq!(p("(?<a b c>a)"), make_group(make_literal("a")));
+
+        // Emoji in group names
+        assert_eq!(p("(?<\u{1F3AF}>a)"), make_group(make_literal("a")));
+
+        // Delimiter chars that don't conflict (single-quote inside angle brackets, etc.)
+        assert_eq!(p("(?<a'b>a)"), make_group(make_literal("a")));
+        assert_eq!(p("(?'a>b'a)"), make_group(make_literal("a")));
+
+        // Name that looks numeric with hyphens (treated as named, not numeric)
+        let tree = Expr::parse_tree("(?<1-2>a)").unwrap();
+        assert_eq!(tree.named_groups.get("1-2"), Some(&1));
+
+        // Verify named_groups map is populated correctly for hyphenated names
+        let tree = Expr::parse_tree("(?<foo-bar>a)").unwrap();
+        assert_eq!(tree.named_groups.get("foo-bar"), Some(&1));
+
+        let tree = Expr::parse_tree("(?P<data-value>a)").unwrap();
+        assert_eq!(tree.named_groups.get("data-value"), Some(&1));
+    }
+
+    #[test]
+    fn unrestricted_named_group_empty_still_rejected() {
+        // Empty names are still rejected
+        fail("(?<>a)");
+        fail("(?P<>a)");
+        fail("(?''a)");
+    }
+
+    #[test]
+    fn unrestricted_named_group_missing_close_still_rejected() {
+        // Missing close delimiter
+        fail("(?<foo-bar");
+        fail("(?'foo-bar");
+        fail("(?P<foo-bar");
     }
 
     #[test]
@@ -2304,7 +2434,8 @@ mod tests {
         // this doesn't count as a numeric reference
         assert!(!tree.numeric_capture_group_references);
 
-        fail("(?P<->.)");
+        // "-" is now a valid unrestricted group name
+        p("(?P<->.)");
         fail("(.)(?P=-)");
         fail(r"(a)\k<-0>(.)");
         fail(r"(a)\k<+0>(.)");
@@ -2692,10 +2823,6 @@ mod tests {
             "Parsing error at position 1: Could not parse group name",
         );
         assert_error(
-            "(?<#>)",
-            "Parsing error at position 1: Could not parse group name",
-        );
-        assert_error(
             "\\kxxx<id>",
             "Parsing error at position 2: Could not parse group name",
         );
@@ -2955,14 +3082,13 @@ mod tests {
 
     #[test]
     fn subroutine_call_name_includes_dash() {
-        assert_error(
-            r"\g<1-0>(a)",
-            "Parsing error at position 2: Could not parse group name",
-        );
-        assert_error(
-            r"\g<name+1>(?'name'a)",
-            "Parsing error at position 2: Could not parse group name",
-        );
+        // With unrestricted names in subroutine calls, these are now valid names
+        // (though they won't resolve to actual groups, that's caught during analysis)
+        let tree = Expr::parse_tree(r"\g<1-0>(?<1-0>a)").unwrap();
+        assert!(tree.contains_subroutines);
+
+        let tree = Expr::parse_tree(r"\g<name+1>(?<name+1>a)").unwrap();
+        assert!(tree.contains_subroutines);
     }
 
     #[test]
@@ -3157,6 +3283,51 @@ mod tests {
         assert_eq!(
             p(r"(?<group_name>a)(?P>group_name)"),
             Expr::Concat(vec![make_group(make_literal("a")), Expr::SubroutineCall(1)])
+        );
+    }
+
+    #[test]
+    fn subroutines_with_unrestricted_names() {
+        // Hyphenated names via \g<name>
+        assert_eq!(
+            p(r"(?<foo-bar>a)\g<foo-bar>"),
+            Expr::Concat(vec![make_group(make_literal("a")), Expr::SubroutineCall(1)])
+        );
+
+        // Hyphenated names via \g'name'
+        assert_eq!(
+            p(r"(?<foo-bar>a)\g'foo-bar'"),
+            Expr::Concat(vec![make_group(make_literal("a")), Expr::SubroutineCall(1)])
+        );
+
+        // Hyphenated names via (?P>name)
+        assert_eq!(
+            p(r"(?<foo-bar>a)(?P>foo-bar)"),
+            Expr::Concat(vec![make_group(make_literal("a")), Expr::SubroutineCall(1)])
+        );
+
+        // Forward reference with hyphenated name
+        assert_eq!(
+            p(r"\g<foo-bar>(?<foo-bar>a)"),
+            Expr::Concat(vec![Expr::SubroutineCall(1), make_group(make_literal("a"))])
+        );
+
+        // Emoji name via \g
+        assert_eq!(
+            p("(?<\u{1F3AF}>a)\\g<\u{1F3AF}>"),
+            Expr::Concat(vec![make_group(make_literal("a")), Expr::SubroutineCall(1)])
+        );
+
+        // Emoji name via (?P>)
+        assert_eq!(
+            p("(?<\u{1F3AF}>a)(?P>\u{1F3AF})"),
+            Expr::Concat(vec![make_group(make_literal("a")), Expr::SubroutineCall(1)])
+        );
+
+        // Space in name via \g
+        assert_eq!(
+            p(r"(?<a b>x)\g<a b>"),
+            Expr::Concat(vec![make_group(make_literal("x")), Expr::SubroutineCall(1)])
         );
     }
 

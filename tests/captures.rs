@@ -693,3 +693,52 @@ fn expander_errors() {
         exp.check("${xx}", &with_names),
         Err(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidGroupNameBackref(ref name) if name == "xx")));
 }
+
+#[test]
+fn captures_with_unrestricted_group_names() {
+    // Hyphenated group name
+    let regex = common::regex(r"(?<foo-bar>\w+)");
+    let cap = regex.captures("hello").unwrap().expect("matched");
+    let m = cap.name("foo-bar").expect("group found");
+    assert_eq!(m.as_str(), "hello");
+
+    // CSS-style name
+    let regex = common::regex(r"(?<data-value>\d+)");
+    let cap = regex.captures("42").unwrap().expect("matched");
+    let m = cap.name("data-value").expect("group found");
+    assert_eq!(m.as_str(), "42");
+
+    // Python syntax with hyphen
+    let regex = common::regex(r"(?P<my-group>[a-z]+)");
+    let cap = regex.captures("hello").unwrap().expect("matched");
+    let m = cap.name("my-group").expect("group found");
+    assert_eq!(m.as_str(), "hello");
+
+    // Single-quote syntax with hyphen
+    let regex = common::regex(r"(?'my-group'[a-z]+)");
+    let cap = regex.captures("hello").unwrap().expect("matched");
+    let m = cap.name("my-group").expect("group found");
+    assert_eq!(m.as_str(), "hello");
+
+    // Name with special characters
+    let regex = common::regex(r"(?<#tag>\w+)");
+    let cap = regex.captures("hello").unwrap().expect("matched");
+    let m = cap.name("#tag").expect("group found");
+    assert_eq!(m.as_str(), "hello");
+
+    // Multiple unrestricted groups
+    let regex = common::regex(r"(?<first-name>\w+)\s+(?<last-name>\w+)");
+    let cap = regex.captures("John Doe").unwrap().expect("matched");
+    assert_eq!(cap.name("first-name").unwrap().as_str(), "John");
+    assert_eq!(cap.name("last-name").unwrap().as_str(), "Doe");
+}
+
+#[test]
+fn capture_names_with_unrestricted_group_names() {
+    let regex = common::regex(r"(?<foo-bar>\w+)\s+(?<baz-qux>\w+)");
+    let names: Vec<_> = regex.capture_names().collect();
+    assert_eq!(names[0], None); // group 0 is unnamed
+                                // The order of named groups is: foo-bar=1, baz-qux=2
+    assert!(names.contains(&Some("foo-bar")));
+    assert!(names.contains(&Some("baz-qux")));
+}

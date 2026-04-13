@@ -795,3 +795,42 @@ fn test_forward_refrence_subroutine_zero_repetition_capture_group() {
     // This has a forward reference to group n, which is defined as . with {0} repetition
     assert_match(r"\g<n>(?<n>.){0}", "X");
 }
+
+#[test]
+fn test_unrestricted_group_names() {
+    // Hyphenated group names
+    assert_match(r"(?<foo-bar>a)b", "ab");
+    assert_match(r"(?'foo-bar'a)b", "ab");
+    assert_match(r"(?P<foo-bar>a)b", "ab");
+
+    // CSS-style names
+    assert_match(r"(?<data-value-1>\d+)", "42");
+
+    // Special characters in names
+    assert_match(r"(?<#tag>\w+)", "hello");
+    assert_match(r"(?<hello!>\w+)", "world");
+}
+
+#[test]
+fn test_subroutine_calls_with_unrestricted_names() {
+    // Subroutine call with hyphenated name via \g<>
+    assert_match(r"(?<foo-bar>a)\g<foo-bar>", "aa");
+    assert_no_match(r"(?<foo-bar>a)\g<foo-bar>", "ab");
+
+    // Subroutine call with hyphenated name via \g''
+    assert_match(r"(?<foo-bar>a)\g'foo-bar'", "aa");
+
+    // Subroutine call with hyphenated name via (?P>)
+    assert_match(r"(?<foo-bar>a)(?P>foo-bar)", "aa");
+    assert_no_match(r"(?<foo-bar>a)(?P>foo-bar)", "ab");
+
+    // Forward reference with hyphenated name
+    assert_match(r"\g<foo-bar>(?<foo-bar>a)", "aa");
+
+    // Recursive subroutine with hyphenated name
+    let balanced = r"^(?<my-group>a|\(\g<my-group>\))$";
+    assert_match(balanced, "a");
+    assert_match(balanced, "(a)");
+    assert_match(balanced, "((a))");
+    assert_no_match(balanced, "(a");
+}
