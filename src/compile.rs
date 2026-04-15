@@ -340,7 +340,7 @@ impl<'a> Compiler<'a> {
                     CompileError::FeatureNotYetSupported(error_msg.to_string()),
                 )));
             }
-            Expr::AstNode { .. } => unreachable!(),
+            Expr::AstNode { .. } => unreachable!("Should have been rejected during analysis"),
         }
         Ok(())
     }
@@ -1056,6 +1056,7 @@ mod tests {
             self_recursive: false,
             total_groups: 0,
             out_of_range_backref: None,
+            numbered_groups_ignored: false,
         };
         let info = analyze(&tree, AnalyzeContext::default()).unwrap();
 
@@ -1280,24 +1281,16 @@ mod tests {
                 },
             )
             .unwrap();
-            let result = compile(
-                &info,
-                CompileOptions {
-                    anchored: true,
-                    contains_subroutines: tree.contains_subroutines,
-                    ..CompileOptions::default()
-                },
-            );
-            assert!(
-                result.is_err(),
-                "Expected compile error for {:?}, but got: {:?}",
-                pattern,
-                result
-            );
-            assert_matches!(
-                result.err().unwrap(),
-                Error::CompileError(box_err)
-                    if matches!(*box_err, CompileError::FeatureNotYetSupported(_))
+            assert_compile_error(
+                compile(
+                    &info,
+                    CompileOptions {
+                        anchored: true,
+                        contains_subroutines: tree.contains_subroutines,
+                        ..CompileOptions::default()
+                    },
+                ),
+                |e| matches!(e, CompileError::FeatureNotYetSupported(_)),
             );
         }
     }

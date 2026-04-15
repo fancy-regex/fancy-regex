@@ -403,6 +403,7 @@ struct RegexOptions {
     delegate_size_limit: Option<usize>,
     delegate_dfa_size_limit: Option<usize>,
     oniguruma_mode: bool,
+    ignore_numbered_groups_when_named_groups_exist: bool,
     hard_regex_runtime_options: HardRegexRuntimeOptions,
 }
 
@@ -430,8 +431,19 @@ impl RegexOptions {
         let unicode = Self::get_flag_value(self.syntaxc.get_unicode(), FLAG_UNICODE);
         let oniguruma_mode = Self::get_flag_value(self.oniguruma_mode, FLAG_ONIGURUMA_MODE);
         let crlf = Self::get_flag_value(self.syntaxc.get_crlf(), FLAG_CRLF);
+        let named_groups_only = Self::get_flag_value(
+            self.ignore_numbered_groups_when_named_groups_exist,
+            FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST,
+        );
 
-        insensitive | multiline | whitespace | dotnl | unicode | oniguruma_mode | crlf
+        insensitive
+            | multiline
+            | whitespace
+            | dotnl
+            | unicode
+            | oniguruma_mode
+            | crlf
+            | named_groups_only
     }
 }
 
@@ -589,6 +601,14 @@ impl RegexOptionsBuilder {
         self
     }
 
+    /// Treat unnamed capture groups as non-capturing when named groups exist.
+    /// Prevents accessing capture groups by number from within the pattern
+    /// (backrefs, subroutine calls) when named groups are present.
+    pub fn ignore_numbered_groups_when_named_groups_exist(&mut self, yes: bool) -> &mut Self {
+        self.options.ignore_numbered_groups_when_named_groups_exist = yes;
+        self
+    }
+
     /// Attempts to better match [Oniguruma](https://github.com/kkos/oniguruma)'s default behavior
     ///
     /// Currently this amounts to changing behavior with:
@@ -717,6 +737,13 @@ impl RegexBuilder {
     /// See [`RegexOptionsBuilder::find_not_empty`]
     pub fn find_not_empty(&mut self, yes: bool) -> &mut Self {
         self.options.find_not_empty(yes);
+        self
+    }
+
+    /// See [`RegexOptionsBuilder::ignore_numbered_groups_when_named_groups_exist`]
+    pub fn ignore_numbered_groups_when_named_groups_exist(&mut self, yes: bool) -> &mut Self {
+        self.options
+            .ignore_numbered_groups_when_named_groups_exist(yes);
         self
     }
 }
@@ -1729,13 +1756,19 @@ pub(crate) enum CaptureGroupTarget {
 pub(crate) enum AstNode {
     /// Group with optional name - name is only present if explicitly specified in pattern
     AstGroup {
+        /// Optional name of the capture group, present only when explicitly named in the pattern
         name: Option<String>,
+        /// The inner expression of the group
         inner: Box<Expr>,
     },
     /// Backreference
     Backref {
+        /// The target capture group being referenced
         target: CaptureGroupTarget,
-        casei: bool, // TODO: move out of Backref and prefer a Flags AstNode
+        /// Whether the matching is case-insensitive or not
+        // TODO: move out of Backref and prefer a Flags AstNode. The resolver can then track the flags and set casei on the resolved Expr accordingly
+        casei: bool,
+        /// Optional relative recursion level for the backreference
         relative_recursion_level: Option<isize>,
     },
     /// Subroutine Call
@@ -1744,7 +1777,9 @@ pub(crate) enum AstNode {
     /// The optional `relative_recursion_level` corresponds to the Oniguruma `+N`/`-N` suffix
     /// (e.g. `(?(name+0)...)`) which qualifies which recursion level's capture is tested.
     BackrefExistsCondition {
+        /// The target capture group being tested for existence
         target: CaptureGroupTarget,
+        /// Optional relative recursion level qualifier (e.g. `+0`, `-1`)
         relative_recursion_level: Option<isize>,
     },
 }

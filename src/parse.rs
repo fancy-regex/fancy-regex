@@ -56,6 +56,8 @@ pub struct ExprTree {
     /// Such numbers are not inserted into `backrefs` (to avoid allocating memory proportional
     /// to an arbitrarily large value); the analyzer reads this field instead to report the error.
     pub(crate) out_of_range_backref: Option<usize>,
+    /// Whether numbered groups were ignored (treated as non-capturing) during parsing
+    pub(crate) numbered_groups_ignored: bool,
 }
 
 #[derive(Debug)]
@@ -65,11 +67,12 @@ pub(crate) struct Parser<'a> {
     numeric_capture_group_references: bool,
     contains_subroutines: bool,
     self_recursive: bool,
+    has_named_groups: bool,
 }
 
 /// anything which involves a capture group name will be parsed into an AstNode
 /// which will then get resolved into a standard Expr variant after parsing is otherwise complete.
-/// This allows us to only have to handle numbered capture groups internally.
+/// This allows us to only have to handle numbered capture groups internally during analysis and compilation.
 impl<'a> Parser<'a> {
     pub(crate) fn parse_with_flags(re: &str, flags: u32) -> Result<ExprTree> {
         let mut p = Parser::new(re, flags);
@@ -84,8 +87,8 @@ impl<'a> Parser<'a> {
         let mut resolver = Resolver {
             named_groups: NamedGroups::default(),
             named_group_positions: NamedGroups::default(),
-            has_named_groups: false,
-            ignore_numbered_groups_if_named_groups_exist: false,
+            ignore_numbered_groups: p.flag(FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST)
+                && p.has_named_groups,
             next_group_index: 1,
             total_groups: 0,
             out_of_range_backref: None,
@@ -107,6 +110,7 @@ impl<'a> Parser<'a> {
             self_recursive: p.self_recursive,
             total_groups: resolver.total_groups,
             out_of_range_backref: resolver.out_of_range_backref,
+            numbered_groups_ignored: resolver.ignore_numbered_groups,
         })
     }
 
@@ -123,6 +127,7 @@ impl<'a> Parser<'a> {
             flags,
             contains_subroutines: false,
             self_recursive: false,
+            has_named_groups: false,
         }
     }
 
@@ -919,6 +924,7 @@ impl<'a> Parser<'a> {
             };
             if let Some((name, skip)) = parse_unrestricted_name(&self.re[ix + 1..], open, close) {
                 group_name = Some(name.to_string());
+                self.has_named_groups = true;
                 (None, skip + 1)
             } else {
                 return Err(Error::ParseError(ix, ParseError::InvalidGroupName));
@@ -928,6 +934,7 @@ impl<'a> Parser<'a> {
             //self.curr_group += 1; // this is a capture group
             if let Some((name, skip)) = parse_unrestricted_name(&self.re[ix + 2..], "<", ">") {
                 group_name = Some(name.to_string());
+                self.has_named_groups = true;
                 (None, skip + 2)
             } else {
                 return Err(Error::ParseError(ix, ParseError::InvalidGroupName));
@@ -1292,7 +1299,7 @@ impl<'a> Parser<'a> {
     }
 }
 
-pub struct Resolver {
+struct Resolver {
     named_groups: NamedGroups,
     backrefs: BitSet,
     /// Maps each named group's name to the byte offset of its opening `(` in the pattern.
@@ -1300,8 +1307,7 @@ pub struct Resolver {
     /// later in the pattern (forward references by name are not supported for backrefs,
     /// only for subroutine calls).
     named_group_positions: NamedGroups,
-    has_named_groups: bool,
-    ignore_numbered_groups_if_named_groups_exist: bool,
+    ignore_numbered_groups: bool,
     next_group_index: usize,
     /// Total number of capture groups in the pattern, set after the first resolution pass.
     /// Used to guard `backrefs` BitSet insertions against unreasonably large group numbers.
@@ -1327,14 +1333,13 @@ impl Resolver {
     // - the analyzer will detect it
     fn resolve_groups(&mut self, expr: &mut Expr) {
         if let Expr::AstNode(AstNode::AstGroup { name, ref inner }, ix) = expr {
-            let mut inner = inner.clone(); //*inner;
+            let mut inner = inner.clone();
             let group_index = if let Some(name) = name {
-                self.has_named_groups = true;
                 self.named_groups
                     .insert(name.to_string(), self.next_group_index);
                 self.named_group_positions.insert(name.to_string(), *ix);
                 Some(self.next_group_index)
-            } else if !self.ignore_numbered_groups_if_named_groups_exist {
+            } else if !self.ignore_numbered_groups {
                 Some(self.next_group_index)
             } else {
                 None
@@ -1411,7 +1416,12 @@ impl Resolver {
                     casei,
                     relative_recursion_level,
                 } => {
-                    // TODO: if multiple groups with the same name, return an Alt with all the backrefs
+                    // TODO: if multiple groups with the same name, ideally we would
+                    // return an Expr::Alt with all the backrefs to be compatible with Oniguruma.
+                    // but it is unclear how the priorities should work, it may need to be a separate VM instruction
+                    // so for now, we will emit a FeatureNotSupported CompileError
+                    // but as this is a parser, we will emit a new AstNode representing a multigroup backref and return the error
+                    // from the analyzer
                     if let Some(resolved_group) = self.resolve_target(target, Some(*ix)) {
                         if resolved_group > self.total_groups {
                             // Don't insert into the BitSet: an out-of-range number could allocate

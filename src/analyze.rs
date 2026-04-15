@@ -752,7 +752,10 @@ pub fn analyze<'a>(tree: &'a ExprTree, ctx: AnalyzeContext) -> Result<Info<'a>> 
     let find_not_empty = ctx.find_not_empty;
 
     // Check that numeric capture group references (backrefs and subroutine calls) and named groups are not mixed
-    if tree.numeric_capture_group_references && !tree.named_groups.is_empty() {
+    if tree.numbered_groups_ignored
+        && tree.numeric_capture_group_references
+        && !tree.named_groups.is_empty()
+    {
         return Err(Error::CompileError(Box::new(
             CompileError::NamedBackrefOnly,
         )));
@@ -835,8 +838,17 @@ pub fn can_compile_as_anchored(root_expr: &Expr) -> bool {
 mod tests {
     use super::{analyze, AnalyzeContext};
     // use super::literal_const_size;
+    use crate::parse::ExprTree;
     use crate::{can_compile_as_anchored, CompileError, Error, Expr};
     use matches::assert_matches;
+
+    #[cfg_attr(feature = "track_caller", track_caller)]
+    fn assert_analyze_ok(tree: &ExprTree, ctx: AnalyzeContext) {
+        match analyze(tree, ctx) {
+            Ok(_) => {}
+            Err(e) => panic!("expected analyze to succeed, but got error: {:?}", e),
+        }
+    }
 
     #[cfg_attr(feature = "track_caller", track_caller)]
     fn assert_compile_error<T, F>(result: crate::Result<T>, check: F)
@@ -1050,50 +1062,84 @@ mod tests {
 
     #[test]
     fn numeric_capture_group_references_cannot_be_used_with_named_groups() {
+        use crate::parse_flags::FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST;
+
         // Test case 1: Named group followed by numeric backref (no alternation)
-        let tree = Expr::parse_tree(r"(?<name>a)\1").unwrap();
+        let tree = Expr::parse_tree_with_flags(
+            r"(?<name>a)\1",
+            FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST,
+        )
+        .unwrap();
         assert_compile_error(analyze(&tree, AnalyzeContext::default()), |e| {
             matches!(e, CompileError::NamedBackrefOnly)
         });
 
         // Test case 2: Numeric backref followed by named group
-        let tree = Expr::parse_tree(r"(a)\1(?<name>b)").unwrap();
+        let tree = Expr::parse_tree_with_flags(
+            r"(a)\1(?<name>b)",
+            FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST,
+        )
+        .unwrap();
         assert_compile_error(analyze(&tree, AnalyzeContext::default()), |e| {
             matches!(e, CompileError::NamedBackrefOnly)
         });
 
         // Test case 3: Alternation with numeric backref and named group in first branch
-        let tree = Expr::parse_tree(r"(?<name>a)\1|b").unwrap();
+        let tree = Expr::parse_tree_with_flags(
+            r"(?<name>a)\1|b",
+            FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST,
+        )
+        .unwrap();
         assert_compile_error(analyze(&tree, AnalyzeContext::default()), |e| {
             matches!(e, CompileError::NamedBackrefOnly)
         });
 
         // Test case 4: Alternation with named group in first branch, numeric backref in second
-        let tree = Expr::parse_tree(r"(?<name>a)|\1").unwrap();
+        let tree = Expr::parse_tree_with_flags(
+            r"(?<name>a)|\1",
+            FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST,
+        )
+        .unwrap();
         assert_compile_error(analyze(&tree, AnalyzeContext::default()), |e| {
             matches!(e, CompileError::NamedBackrefOnly)
         });
 
         // Test case 5: Numbered group containing named group, with numeric backref
-        let tree = Expr::parse_tree(r"(a|(?<name>b))\1").unwrap();
+        let tree = Expr::parse_tree_with_flags(
+            r"(a|(?<name>b))\1",
+            FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST,
+        )
+        .unwrap();
         assert_compile_error(analyze(&tree, AnalyzeContext::default()), |e| {
             matches!(e, CompileError::NamedBackrefOnly)
         });
 
         // Test case 6: Multiple branches with named groups and numeric backrefs
-        let tree = Expr::parse_tree(r"(?<x>a)|(?<y>b)|\1").unwrap();
+        let tree = Expr::parse_tree_with_flags(
+            r"(?<x>a)|(?<y>b)|\1",
+            FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST,
+        )
+        .unwrap();
         assert_compile_error(analyze(&tree, AnalyzeContext::default()), |e| {
             matches!(e, CompileError::NamedBackrefOnly)
         });
 
         // Test case 7: Numeric subroutine call with named group
-        let tree = Expr::parse_tree(r"(?<foo>\w+)\g<1>").unwrap();
+        let tree = Expr::parse_tree_with_flags(
+            r"(?<foo>\w+)\g<1>",
+            FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST,
+        )
+        .unwrap();
         assert_compile_error(analyze(&tree, AnalyzeContext::default()), |e| {
             matches!(e, CompileError::NamedBackrefOnly)
         });
 
         // Test case 8: Named group with numeric subroutine call in alternation
-        let tree = Expr::parse_tree(r"(?<foo>a)|\g<1>").unwrap();
+        let tree = Expr::parse_tree_with_flags(
+            r"(?<foo>a)|\g<1>",
+            FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST,
+        )
+        .unwrap();
         assert_compile_error(analyze(&tree, AnalyzeContext::default()), |e| {
             matches!(e, CompileError::NamedBackrefOnly)
         });
@@ -1101,16 +1147,28 @@ mod tests {
         // Positive cases - these should work
 
         // Only numeric backrefs and subroutine calls, no named groups
-        let tree = Expr::parse_tree(r"(a)(b+)\1\g<2>").unwrap();
-        assert!(analyze(&tree, AnalyzeContext::default()).is_ok());
+        let tree = Expr::parse_tree_with_flags(
+            r"(a)(b+)\1\g<2>",
+            FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST,
+        )
+        .unwrap();
+        assert_analyze_ok(&tree, AnalyzeContext::default());
 
         // Only named groups and named backrefs and named subroutine calls
-        let tree = Expr::parse_tree(r"(?<name>a)\k<name>\g<name>").unwrap();
-        assert!(analyze(&tree, AnalyzeContext::default()).is_ok());
+        let tree = Expr::parse_tree_with_flags(
+            r"(?<name>a)\k<name>\g<name>",
+            FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST,
+        )
+        .unwrap();
+        assert_analyze_ok(&tree, AnalyzeContext::default());
 
         // Multiple named and numbered groups, no backrefs or subroutine calls
-        let tree = Expr::parse_tree(r"(?<a>a)|(?<b>b)(c)(d+)").unwrap();
-        assert!(analyze(&tree, AnalyzeContext::default()).is_ok());
+        let tree = Expr::parse_tree_with_flags(
+            r"(?<a>a)|(?<b>b)(c)(d+)",
+            FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST,
+        )
+        .unwrap();
+        assert_analyze_ok(&tree, AnalyzeContext::default());
     }
 
     #[test]
