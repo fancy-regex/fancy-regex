@@ -810,6 +810,159 @@ fn find_not_empty_trailing_lookahead_with_variable_group0() {
     );
 }
 
+#[test]
+fn find_not_empty_alternation_with_empty_branch() {
+    // (?:|a|b) can match empty, "a", or "b". Without find_not_empty, the empty branch wins
+    // at position 0 (leftmost, first alternative). With find_not_empty, the empty match at
+    // position 0 must be skipped, and the pattern should then find "a" or "b".
+    let pattern = r"(?:|a|b)";
+
+    // Normal mode: empty match at position 0
+    let normal = common::regex(pattern);
+    assert_eq!(
+        normal.find("a").unwrap().map(|m| (m.start(), m.end())),
+        Some((0, 0)),
+    );
+
+    // find_not_empty mode: empty match rejected; "a" found instead
+    let not_empty = RegexBuilder::new(pattern)
+        .find_not_empty(true)
+        .build()
+        .unwrap();
+    assert_eq!(
+        not_empty.find("a").unwrap().map(|m| (m.start(), m.end())),
+        Some((0, 1)),
+    );
+    assert_eq!(
+        not_empty.find("b").unwrap().map(|m| (m.start(), m.end())),
+        Some((0, 1)),
+    );
+    assert_eq!(
+        not_empty.find("c").unwrap().map(|m| (m.start(), m.end())),
+        None,
+    );
+}
+
+#[test]
+fn find_not_empty_with_keep_out() {
+    // The find_not_empty check compares what the engine consumed, regardless of the match reported,
+    // which could be affected by \K.
+    let not_empty = RegexBuilder::new(r"a\Kb")
+        .find_not_empty(true)
+        .build()
+        .unwrap();
+    assert_eq!(
+        not_empty.find("ab").unwrap().map(|m| (m.start(), m.end())),
+        Some((1, 2)),
+    );
+
+    // `ab\K` physically consumes "ab" (ix advances to 2), so it is accepted as non-empty.
+    // `\K` resets saves[0] to 2, giving the reported span (2, 2).
+    let not_empty_abk = RegexBuilder::new(r"ab\K")
+        .find_not_empty(true)
+        .build()
+        .unwrap();
+    assert_eq!(
+        not_empty_abk
+            .find("ab")
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
+        Some((2, 2)),
+    );
+}
+
+#[test]
+fn find_not_empty_with_continue_from_previous_match_end() {
+    // \G\d+ with find_not_empty: only matches where the previous match ended and
+    // the match is non-empty. On "1122 33", \G matches at position 0; "1122" is
+    // consumed (non-empty → accepted). The next call starts at pos=4 (space),
+    // \G succeeds but \d+ fails → no further matches.
+    let not_empty = RegexBuilder::new(r"\G\d+")
+        .find_not_empty(true)
+        .build()
+        .unwrap();
+    let matches: Vec<_> = not_empty
+        .find_iter("1122 33")
+        .map(|m| {
+            let m = m.unwrap();
+            (m.start(), m.end())
+        })
+        .collect();
+    assert_eq!(matches, vec![(0, 4)]);
+
+    // \G\d* can produce an empty match after the digits run out. find_not_empty
+    // must reject that empty match. On "1122 33", after the non-empty "1122"
+    // match the next attempt is at position 4 (space); \G\d* would match empty
+    // there, but find_not_empty rejects it, so no further matches are produced.
+    let not_empty_star = RegexBuilder::new(r"\G\d*")
+        .find_not_empty(true)
+        .build()
+        .unwrap();
+    let matches_star: Vec<_> = not_empty_star
+        .find_iter("1122 33")
+        .map(|m| {
+            let m = m.unwrap();
+            (m.start(), m.end())
+        })
+        .collect();
+    assert_eq!(matches_star, vec![(0, 4)]);
+}
+
+#[test]
+fn find_not_empty_with_continue_from_previous_match_end_and_keep_out() {
+    // \G..\K produces a zero-length reported span (saves[0] reset to after the
+    // two consumed bytes), but physically consumes two characters. With
+    // find_not_empty the check is `ix == match_attempt_start`: since two bytes
+    // were consumed, ix > match_attempt_start and the match is accepted despite
+    // the reported span being zero-length.
+    let not_empty = RegexBuilder::new(r"\G..\K")
+        .find_not_empty(true)
+        .build()
+        .unwrap();
+    let matches: Vec<_> = not_empty
+        .find_iter("aabbcc")
+        .map(|m| {
+            let m = m.unwrap();
+            (m.start(), m.end())
+        })
+        .collect();
+    // Each match physically consumes 2 bytes; \K resets the reported start to
+    // the physical end, yielding zero-length spans. The iterator advances by 1
+    // after each zero-length match (OPTION_SKIPPED_EMPTY_MATCH), so the pattern
+    // matches at positions (2,2) and (5,5), mirroring the behavior without find_not_empty.
+    assert_eq!(matches, vec![(2, 2), (5, 5)]);
+}
+
+#[test]
+fn find_not_empty_with_anchored_pattern() {
+    // ^-anchored patterns with find_not_empty go through the VM path (because
+    // find_not_empty forces the VM) but do NOT emit a SplitUnanchored preamble
+    // (the pattern is compiled as anchored). match_attempt_start stays at pos,
+    // so ix == match_attempt_start still correctly detects the empty match.
+    let not_empty = RegexBuilder::new(r"^\d*")
+        .find_not_empty(true)
+        .build()
+        .unwrap();
+
+    // No leading digits → empty match at position 0 → rejected
+    assert_eq!(
+        not_empty
+            .find("hello")
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
+        None,
+    );
+
+    // Leading digits → non-empty match at position 0 → accepted
+    assert_eq!(
+        not_empty
+            .find("123hello")
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
+        Some((0, 3)),
+    );
+}
+
 fn find(re: &str, text: &str) -> Option<(usize, usize)> {
     find_match(re, text).map(|m| (m.start(), m.end()))
 }

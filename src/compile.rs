@@ -887,7 +887,18 @@ fn populate_group_info_map<'a>(map: &mut Map<usize, &'a Info<'a>>, info: &'a Inf
 }
 
 /// Compile the analyzed expressions into a program.
-pub fn compile(info: &Info<'_>, anchored: bool, contains_subroutines: bool) -> Result<Prog> {
+///
+/// When `hard_context` is `true`, the entire expression is compiled in a hard context, meaning
+/// even easy (non-fancy) subexpressions will be compiled with explicit backtracking VM
+/// instructions rather than being delegated to the NFA engine. This is needed when
+/// `find_not_empty` is set, so that the VM can backtrack through alternation branches to find
+/// a non-empty match instead of accepting the first (possibly empty) match from a delegate.
+pub fn compile(
+    info: &Info<'_>,
+    anchored: bool,
+    contains_subroutines: bool,
+    hard_context: bool,
+) -> Result<Prog> {
     let mut c = Compiler::new(info.end_group());
 
     if contains_subroutines {
@@ -903,7 +914,7 @@ pub fn compile(info: &Info<'_>, anchored: bool, contains_subroutines: bool) -> R
         // so that we bump the haystack index by one when failing to match at the current position
         let current_pc = c.b.pc();
         // we are adding 3 instructions, so the current program counter plus 3 gives us the first real instruction
-        c.b.add(Insn::Split(current_pc + 3, current_pc + 1));
+        c.b.add(Insn::SplitUnanchored(current_pc + 3, current_pc + 1));
         c.b.add(Insn::Any);
         c.b.add(Insn::Jmp(current_pc));
     }
@@ -911,7 +922,7 @@ pub fn compile(info: &Info<'_>, anchored: bool, contains_subroutines: bool) -> R
         // add implicit capture group 0 begin
         c.b.add(Insn::Save(0));
     }
-    c.visit(info, false)?;
+    c.visit(info, hard_context)?;
     if info.start_group() == 1 {
         // add implicit capture group 0 end
         c.b.add(Insn::Save(1));
@@ -1156,27 +1167,31 @@ mod tests {
     fn other_backtracking_control_verbs_error() {
         let tree = Expr::parse_tree(r"(*ACCEPT)").unwrap();
         let info = analyze(&tree, true).unwrap();
-        assert_compile_error(compile(&info, true, tree.contains_subroutines), |e| {
-            matches!(e, CompileError::FeatureNotYetSupported(_))
-        });
+        assert_compile_error(
+            compile(&info, true, tree.contains_subroutines, false),
+            |e| matches!(e, CompileError::FeatureNotYetSupported(_)),
+        );
 
         let tree = Expr::parse_tree(r"(*COMMIT)").unwrap();
         let info = analyze(&tree, true).unwrap();
-        assert_compile_error(compile(&info, true, tree.contains_subroutines), |e| {
-            matches!(e, CompileError::FeatureNotYetSupported(_))
-        });
+        assert_compile_error(
+            compile(&info, true, tree.contains_subroutines, false),
+            |e| matches!(e, CompileError::FeatureNotYetSupported(_)),
+        );
 
         let tree = Expr::parse_tree(r"(*SKIP)").unwrap();
         let info = analyze(&tree, true).unwrap();
-        assert_compile_error(compile(&info, true, tree.contains_subroutines), |e| {
-            matches!(e, CompileError::FeatureNotYetSupported(_))
-        });
+        assert_compile_error(
+            compile(&info, true, tree.contains_subroutines, false),
+            |e| matches!(e, CompileError::FeatureNotYetSupported(_)),
+        );
 
         let tree = Expr::parse_tree(r"(*PRUNE)").unwrap();
         let info = analyze(&tree, true).unwrap();
-        assert_compile_error(compile(&info, true, tree.contains_subroutines), |e| {
-            matches!(e, CompileError::FeatureNotYetSupported(_))
-        });
+        assert_compile_error(
+            compile(&info, true, tree.contains_subroutines, false),
+            |e| matches!(e, CompileError::FeatureNotYetSupported(_)),
+        );
     }
 
     #[test]
@@ -1185,15 +1200,17 @@ mod tests {
         // Without the feature flag, variable-length lookbehinds should error
         let tree = Expr::parse_tree(r"(?<=ab+)x").unwrap();
         let info = analyze(&tree, true).unwrap();
-        assert_compile_error(compile(&info, true, tree.contains_subroutines), |e| {
-            matches!(e, CompileError::VariableLookBehindRequiresFeature)
-        });
+        assert_compile_error(
+            compile(&info, true, tree.contains_subroutines, false),
+            |e| matches!(e, CompileError::VariableLookBehindRequiresFeature),
+        );
 
         let tree = Expr::parse_tree(r"(?<=\bab+)x").unwrap();
         let info = analyze(&tree, true).unwrap();
-        assert_compile_error(compile(&info, true, tree.contains_subroutines), |e| {
-            matches!(e, CompileError::VariableLookBehindRequiresFeature)
-        });
+        assert_compile_error(
+            compile(&info, true, tree.contains_subroutines, false),
+            |e| matches!(e, CompileError::VariableLookBehindRequiresFeature),
+        );
     }
 
     #[test]
@@ -1283,9 +1300,10 @@ mod tests {
         // the backref to a capture group inside the variable lookbehind makes the capture group hard
         let tree = Expr::parse_tree(r"(?<=a(b+))\1").unwrap();
         let info = analyze(&tree, false).unwrap();
-        assert_compile_error(compile(&info, true, tree.contains_subroutines), |e| {
-            matches!(e, CompileError::FeatureNotYetSupported(_))
-        });
+        assert_compile_error(
+            compile(&info, true, tree.contains_subroutines, false),
+            |e| matches!(e, CompileError::FeatureNotYetSupported(_)),
+        );
     }
 
     #[test]
@@ -1304,23 +1322,26 @@ mod tests {
         // Test that absent expression returns feature not supported
         let tree = Expr::parse_tree(r"(?~|abc|\d*)").unwrap();
         let info = analyze(&tree, true).unwrap();
-        assert_compile_error(compile(&info, true, tree.contains_subroutines), |e| {
-            matches!(e, CompileError::FeatureNotYetSupported(_))
-        });
+        assert_compile_error(
+            compile(&info, true, tree.contains_subroutines, false),
+            |e| matches!(e, CompileError::FeatureNotYetSupported(_)),
+        );
 
         // Test that absent stopper returns feature not supported
         let tree = Expr::parse_tree(r"(?~|abc)").unwrap();
         let info = analyze(&tree, true).unwrap();
-        assert_compile_error(compile(&info, true, tree.contains_subroutines), |e| {
-            matches!(e, CompileError::FeatureNotYetSupported(_))
-        });
+        assert_compile_error(
+            compile(&info, true, tree.contains_subroutines, false),
+            |e| matches!(e, CompileError::FeatureNotYetSupported(_)),
+        );
 
         // Test that range clear returns feature not supported
         let tree = Expr::parse_tree(r"(?~|)").unwrap();
         let info = analyze(&tree, true).unwrap();
-        assert_compile_error(compile(&info, true, tree.contains_subroutines), |e| {
-            matches!(e, CompileError::FeatureNotYetSupported(_))
-        });
+        assert_compile_error(
+            compile(&info, true, tree.contains_subroutines, false),
+            |e| matches!(e, CompileError::FeatureNotYetSupported(_)),
+        );
     }
 
     #[test]
@@ -1385,7 +1406,7 @@ mod tests {
     fn compile_prog(re: &str) -> Vec<Insn> {
         let tree = Expr::parse_tree(re).unwrap();
         let info = analyze(&tree, true).unwrap();
-        let prog = compile(&info, true, tree.contains_subroutines).unwrap();
+        let prog = compile(&info, true, tree.contains_subroutines, false).unwrap();
         prog.body
     }
 

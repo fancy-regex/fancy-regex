@@ -93,7 +93,6 @@ pub struct RegexOptionsBuilder {
 pub struct Regex {
     inner: RegexImpl,
     named_groups: Arc<NamedGroups>,
-    find_not_empty: bool,
 }
 
 // Separate enum because we don't want to expose any of this
@@ -404,13 +403,13 @@ struct RegexOptions {
     delegate_size_limit: Option<usize>,
     delegate_dfa_size_limit: Option<usize>,
     oniguruma_mode: bool,
-    find_not_empty: bool,
     hard_regex_runtime_options: HardRegexRuntimeOptions,
 }
 
 #[derive(Copy, Clone, Debug)]
 struct HardRegexRuntimeOptions {
     backtrack_limit: usize,
+    find_not_empty: bool,
 }
 
 impl RegexOptions {
@@ -440,6 +439,7 @@ impl Default for HardRegexRuntimeOptions {
     fn default() -> Self {
         HardRegexRuntimeOptions {
             backtrack_limit: 1_000_000,
+            find_not_empty: false,
         }
     }
 }
@@ -585,7 +585,7 @@ impl RegexOptionsBuilder {
     /// return a result. This catches the user error at compile time rather than allowing the
     /// combination to execute pointlessly at runtime.
     pub fn find_not_empty(&mut self, yes: bool) -> &mut Self {
-        self.options.find_not_empty = yes;
+        self.options.hard_regex_runtime_options.find_not_empty = yes;
         self
     }
 
@@ -755,26 +755,26 @@ impl Regex {
     fn new_options(pattern: String, options: &RegexOptions) -> Result<Regex> {
         let mut tree = Expr::parse_tree_with_flags(&pattern, options.compute_flags())?;
 
-        // try to optimize the expression tree
-        let requires_capture_group_fixup = optimize(&mut tree);
+        let find_not_empty = options.hard_regex_runtime_options.find_not_empty;
+
+        let requires_capture_group_fixup = if find_not_empty {
+            // if the find_not_empty flag is set, we skip optimizations
+            // partially because we have to go though the VM anyway
+            // partially because having the last instruction of the expression not have
+            // ix be at the end of capture group 0 ruins our empty match checking logic.
+            false
+        } else {
+            // try to optimize the expression tree so that a hard pattern could become easy
+            // with a fixup of the capture groups
+            optimize(&mut tree)
+        };
         let info = analyze(&tree, requires_capture_group_fixup)?;
 
-        if options.find_not_empty {
-            // When explicit_capture_group_0 is set (i.e. due to trailing lookahead optimization),
-            // the user-visible match is group 0 (the first child), not the whole expression.
-            // Check group 0's properties instead of the root info's.
-            let (check_const_size, check_min_size) = if requires_capture_group_fixup {
-                let group0_info = &info.children[0];
-                (group0_info.const_size, group0_info.min_size)
-            } else {
-                (info.const_size, info.min_size)
-            };
-            if check_const_size && check_min_size == 0 {
-                return Err(CompileError::PatternCanNeverMatch.into());
-            }
+        if find_not_empty && info.const_size && info.min_size == 0 {
+            return Err(CompileError::PatternCanNeverMatch.into());
         }
 
-        if !info.hard {
+        if !info.hard && !find_not_empty {
             // easy case, wrap regex
 
             // we do our own to_str because escapes are different
@@ -790,7 +790,6 @@ impl Regex {
                     delegated_pattern: re_cooked,
                 },
                 named_groups: Arc::new(tree.named_groups),
-                find_not_empty: options.find_not_empty,
             });
         }
 
@@ -798,6 +797,7 @@ impl Regex {
             &info,
             can_compile_as_anchored(&tree.expr),
             tree.contains_subroutines,
+            find_not_empty,
         )?;
         Ok(Regex {
             inner: RegexImpl::Fancy {
@@ -807,7 +807,6 @@ impl Regex {
                 pattern,
             },
             named_groups: Arc::new(tree.named_groups),
-            find_not_empty: options.find_not_empty,
         })
     }
 
@@ -832,12 +831,14 @@ impl Regex {
     /// assert!(re.is_match("mirror mirror on the wall").unwrap());
     /// ```
     pub fn is_match(&self, text: &str) -> Result<bool> {
-        if self.find_not_empty {
-            return self.find(text).map(|m| m.is_some());
-        }
         match &self.inner {
             RegexImpl::Wrap { inner, .. } => Ok(inner.is_match(text)),
             RegexImpl::Fancy { prog, options, .. } => {
+                if options.find_not_empty {
+                    // find_not_empty requires backtracking to find a non-empty match;
+                    // delegate to find() which sets the OPTION_FIND_NOT_EMPTY flag on the VM.
+                    return self.find(text).map(|m| m.is_some());
+                }
                 let result = vm::run(prog, text, 0, 0, options)?;
                 Ok(result.is_some())
             }
@@ -927,33 +928,21 @@ impl Regex {
                 ..
             } => {
                 let result = if !*explicit_capture_group_0 {
-                    find_not_empty_loop(self.find_not_empty, text, pos, |current_pos| {
-                        let m = inner.search(&RaInput::new(text).span(current_pos..text.len()))?;
-                        Some((Match::new(text, m.start(), m.end()), m.start(), m.end()))
-                    })
+                    inner
+                        .search(&RaInput::new(text).span(pos..text.len()))
+                        .map(|m| Match::new(text, m.start(), m.end()))
                 } else {
                     let mut locations = inner.create_captures();
-                    find_not_empty_loop(self.find_not_empty, text, pos, |current_pos| {
-                        inner.captures(
-                            RaInput::new(text).span(current_pos..text.len()),
-                            &mut locations,
-                        );
-                        if !locations.is_match() {
-                            return None;
-                        }
-                        let group1 = locations.get_group(1).unwrap();
-                        Some((
-                            Match::new(text, group1.start, group1.end),
-                            group1.start,
-                            group1.end,
-                        ))
-                    })
+                    inner.captures(RaInput::new(text).span(pos..text.len()), &mut locations);
+                    locations
+                        .get_group(1)
+                        .map(|group1| Match::new(text, group1.start, group1.end))
                 };
                 Ok(result)
             }
             RegexImpl::Fancy { prog, options, .. } => {
                 let option_flags = option_flags
-                    | if self.find_not_empty {
+                    | if options.find_not_empty {
                         OPTION_FIND_NOT_EMPTY
                     } else {
                         0
@@ -1068,26 +1057,12 @@ impl Regex {
                 explicit_capture_group_0,
                 ..
             } => {
+                // find_not_empty patterns are always compiled as Fancy, so find_not_empty is
+                // always false here.
                 let explicit = *explicit_capture_group_0;
                 let mut locations = inner.create_captures();
-                let found = find_not_empty_loop(self.find_not_empty, text, pos, |current_pos| {
-                    inner.captures(
-                        RaInput::new(text).span(current_pos..text.len()),
-                        &mut locations,
-                    );
-                    if !locations.is_match() {
-                        return None;
-                    }
-                    let (start, end) = if explicit {
-                        let group1 = locations.get_group(1).unwrap();
-                        (group1.start, group1.end)
-                    } else {
-                        let m = locations.get_match().unwrap();
-                        (m.start(), m.end())
-                    };
-                    Some(((), start, end))
-                });
-                Ok(found.map(|()| Captures {
+                inner.captures(RaInput::new(text).span(pos..text.len()), &mut locations);
+                Ok(locations.is_match().then(|| Captures {
                     inner: CapturesImpl::Wrap {
                         text,
                         locations,
@@ -1103,7 +1078,7 @@ impl Regex {
                 ..
             } => {
                 let option_flags = option_flags
-                    | if self.find_not_empty {
+                    | if options.find_not_empty {
                         OPTION_FIND_NOT_EMPTY
                     } else {
                         0
@@ -2188,36 +2163,6 @@ fn codepoint_len(b: u8) -> usize {
         b if b < 0xe0 => 2,
         b if b < 0xf0 => 3,
         _ => 4,
-    }
-}
-
-/// Calls `search_fn` in a loop, skipping empty matches when `find_not_empty` is true.
-///
-/// `search_fn` takes the current search position and returns `Option<(T, usize, usize)>` where
-/// `T` is the search result and the two `usize` values are the user-visible match start and end.
-///
-/// When `find_not_empty` is false, the closure is called once. When true, empty matches
-/// (where start == end) are rejected and the search is retried from the next UTF-8 position.
-fn find_not_empty_loop<T, F>(
-    find_not_empty: bool,
-    text: &str,
-    pos: usize,
-    mut search_fn: F,
-) -> Option<T>
-where
-    F: FnMut(usize) -> Option<(T, usize, usize)>,
-{
-    let mut current_pos = pos;
-    loop {
-        let (result, start, end) = search_fn(current_pos)?;
-        if find_not_empty && start == end {
-            current_pos = next_utf8(text, end);
-            if current_pos > text.len() {
-                return None;
-            }
-            continue;
-        }
-        return Some(result);
     }
 }
 

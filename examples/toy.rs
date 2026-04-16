@@ -90,7 +90,7 @@ fn main() {
             let tree = Expr::parse_tree(&re).unwrap();
             let text = args.next().expect("expected text argument");
             let a = analyze(&tree, false).unwrap();
-            let p = compile(&a, true, tree.contains_subroutines).unwrap();
+            let p = compile(&a, true, tree.contains_subroutines, false).unwrap();
             run_trace(&p, &text, 0).unwrap();
         } else if cmd == "graph" {
             let re = args.next().expect("expected regexp argument");
@@ -110,7 +110,7 @@ fn graph(re: &str, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
             .replace(r#"""#, r#"\""#);
         write!(writer, r#"{:3} [label="{}: {}"];{}"#, i, i, label, "\n")?;
         match *insn {
-            Insn::Split(a, b) => {
+            Insn::Split(a, b) | Insn::SplitUnanchored(a, b) => {
                 write!(writer, "{:3} -> {};\n", i, a)?;
                 write!(writer, "{:3} -> {};\n", i, b)?;
             }
@@ -150,6 +150,7 @@ fn prog(re: &str) -> Prog {
         &result,
         can_compile_as_anchored(&tree.expr),
         tree.contains_subroutines,
+        false,
     )
     .expect("Expected compile to succeed")
 }
@@ -202,7 +203,7 @@ digraph G {
             r"a+(?<b>b*)(?=c)\k<b>",
             "\
 digraph G {
-  0 [label=\"0: Split(3, 1)\"];
+  0 [label=\"0: SplitUnanchored(3, 1)\"];
   0 -> 3;
   0 -> 1;
   1 [label=\"1: Any\"];
@@ -257,7 +258,7 @@ digraph G {
     fn test_compilation_fancy_debug_output() {
         let expected = "  ".to_owned()
             + "\
-  0: Split(3, 1)
+  0: SplitUnanchored(3, 1)
   1: Any
   2: Jmp(0)
   3: Save(0)
@@ -284,7 +285,7 @@ digraph G {
     fn test_compilation_variable_lookbehind_debug_output() {
         let expected = "  ".to_owned()
             + "\
-  0: Split(3, 1)
+  0: SplitUnanchored(3, 1)
   1: Any
   2: Jmp(0)
   3: Save(0)
