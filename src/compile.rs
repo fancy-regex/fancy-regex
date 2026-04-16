@@ -886,22 +886,27 @@ fn populate_group_info_map<'a>(map: &mut Map<usize, &'a Info<'a>>, info: &'a Inf
     }
 }
 
+/// Options for compiling analyzed expressions into a program.
+#[derive(Debug, Clone, Default)]
+pub struct CompileOptions {
+    /// Whether the regex is anchored (starts matching at the beginning of the input).
+    /// When `false`, a `SplitUnanchored` preamble is emitted to allow matching at any position.
+    pub anchored: bool,
+    /// Whether the regex contains subroutine calls, requiring group info to be pre-populated.
+    pub contains_subroutines: bool,
+    /// When `true`, the entire expression is compiled in a hard context, meaning even easy
+    /// (non-fancy) subexpressions will be compiled with explicit backtracking VM instructions
+    /// rather than being delegated to the NFA engine. This is needed when `find_not_empty` is
+    /// set, so that the VM can backtrack through alternation branches to find a non-empty match
+    /// instead of accepting the first (possibly empty) match from a delegate.
+    pub hard_context: bool,
+}
+
 /// Compile the analyzed expressions into a program.
-///
-/// When `hard_context` is `true`, the entire expression is compiled in a hard context, meaning
-/// even easy (non-fancy) subexpressions will be compiled with explicit backtracking VM
-/// instructions rather than being delegated to the NFA engine. This is needed when
-/// `find_not_empty` is set, so that the VM can backtrack through alternation branches to find
-/// a non-empty match instead of accepting the first (possibly empty) match from a delegate.
-pub fn compile(
-    info: &Info<'_>,
-    anchored: bool,
-    contains_subroutines: bool,
-    hard_context: bool,
-) -> Result<Prog> {
+pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
     let mut c = Compiler::new(info.end_group());
 
-    if contains_subroutines {
+    if options.contains_subroutines {
         // Store root info for group 0 subroutine calls
         c.root_info = Some(info);
 
@@ -909,7 +914,7 @@ pub fn compile(
         populate_group_info_map(&mut c.group_info_map, info);
     }
 
-    if !anchored {
+    if !options.anchored {
         // add instructions as if \O*? was used at the start of the expression
         // so that we bump the haystack index by one when failing to match at the current position
         let current_pc = c.b.pc();
@@ -922,7 +927,7 @@ pub fn compile(
         // add implicit capture group 0 begin
         c.b.add(Insn::Save(0));
     }
-    c.visit(info, hard_context)?;
+    c.visit(info, options.hard_context)?;
     if info.start_group() == 1 {
         // add implicit capture group 0 end
         c.b.add(Insn::Save(1));
@@ -1168,28 +1173,56 @@ mod tests {
         let tree = Expr::parse_tree(r"(*ACCEPT)").unwrap();
         let info = analyze(&tree, true).unwrap();
         assert_compile_error(
-            compile(&info, true, tree.contains_subroutines, false),
+            compile(
+                &info,
+                CompileOptions {
+                    anchored: true,
+                    contains_subroutines: tree.contains_subroutines,
+                    ..CompileOptions::default()
+                },
+            ),
             |e| matches!(e, CompileError::FeatureNotYetSupported(_)),
         );
 
         let tree = Expr::parse_tree(r"(*COMMIT)").unwrap();
         let info = analyze(&tree, true).unwrap();
         assert_compile_error(
-            compile(&info, true, tree.contains_subroutines, false),
+            compile(
+                &info,
+                CompileOptions {
+                    anchored: true,
+                    contains_subroutines: tree.contains_subroutines,
+                    ..CompileOptions::default()
+                },
+            ),
             |e| matches!(e, CompileError::FeatureNotYetSupported(_)),
         );
 
         let tree = Expr::parse_tree(r"(*SKIP)").unwrap();
         let info = analyze(&tree, true).unwrap();
         assert_compile_error(
-            compile(&info, true, tree.contains_subroutines, false),
+            compile(
+                &info,
+                CompileOptions {
+                    anchored: true,
+                    contains_subroutines: tree.contains_subroutines,
+                    ..CompileOptions::default()
+                },
+            ),
             |e| matches!(e, CompileError::FeatureNotYetSupported(_)),
         );
 
         let tree = Expr::parse_tree(r"(*PRUNE)").unwrap();
         let info = analyze(&tree, true).unwrap();
         assert_compile_error(
-            compile(&info, true, tree.contains_subroutines, false),
+            compile(
+                &info,
+                CompileOptions {
+                    anchored: true,
+                    contains_subroutines: tree.contains_subroutines,
+                    ..CompileOptions::default()
+                },
+            ),
             |e| matches!(e, CompileError::FeatureNotYetSupported(_)),
         );
     }
@@ -1201,14 +1234,28 @@ mod tests {
         let tree = Expr::parse_tree(r"(?<=ab+)x").unwrap();
         let info = analyze(&tree, true).unwrap();
         assert_compile_error(
-            compile(&info, true, tree.contains_subroutines, false),
+            compile(
+                &info,
+                CompileOptions {
+                    anchored: true,
+                    contains_subroutines: tree.contains_subroutines,
+                    ..CompileOptions::default()
+                },
+            ),
             |e| matches!(e, CompileError::VariableLookBehindRequiresFeature),
         );
 
         let tree = Expr::parse_tree(r"(?<=\bab+)x").unwrap();
         let info = analyze(&tree, true).unwrap();
         assert_compile_error(
-            compile(&info, true, tree.contains_subroutines, false),
+            compile(
+                &info,
+                CompileOptions {
+                    anchored: true,
+                    contains_subroutines: tree.contains_subroutines,
+                    ..CompileOptions::default()
+                },
+            ),
             |e| matches!(e, CompileError::VariableLookBehindRequiresFeature),
         );
     }
@@ -1301,7 +1348,14 @@ mod tests {
         let tree = Expr::parse_tree(r"(?<=a(b+))\1").unwrap();
         let info = analyze(&tree, false).unwrap();
         assert_compile_error(
-            compile(&info, true, tree.contains_subroutines, false),
+            compile(
+                &info,
+                CompileOptions {
+                    anchored: true,
+                    contains_subroutines: tree.contains_subroutines,
+                    ..CompileOptions::default()
+                },
+            ),
             |e| matches!(e, CompileError::FeatureNotYetSupported(_)),
         );
     }
@@ -1323,7 +1377,14 @@ mod tests {
         let tree = Expr::parse_tree(r"(?~|abc|\d*)").unwrap();
         let info = analyze(&tree, true).unwrap();
         assert_compile_error(
-            compile(&info, true, tree.contains_subroutines, false),
+            compile(
+                &info,
+                CompileOptions {
+                    anchored: true,
+                    contains_subroutines: tree.contains_subroutines,
+                    ..CompileOptions::default()
+                },
+            ),
             |e| matches!(e, CompileError::FeatureNotYetSupported(_)),
         );
 
@@ -1331,7 +1392,14 @@ mod tests {
         let tree = Expr::parse_tree(r"(?~|abc)").unwrap();
         let info = analyze(&tree, true).unwrap();
         assert_compile_error(
-            compile(&info, true, tree.contains_subroutines, false),
+            compile(
+                &info,
+                CompileOptions {
+                    anchored: true,
+                    contains_subroutines: tree.contains_subroutines,
+                    ..CompileOptions::default()
+                },
+            ),
             |e| matches!(e, CompileError::FeatureNotYetSupported(_)),
         );
 
@@ -1339,7 +1407,14 @@ mod tests {
         let tree = Expr::parse_tree(r"(?~|)").unwrap();
         let info = analyze(&tree, true).unwrap();
         assert_compile_error(
-            compile(&info, true, tree.contains_subroutines, false),
+            compile(
+                &info,
+                CompileOptions {
+                    anchored: true,
+                    contains_subroutines: tree.contains_subroutines,
+                    ..CompileOptions::default()
+                },
+            ),
             |e| matches!(e, CompileError::FeatureNotYetSupported(_)),
         );
     }
@@ -1406,7 +1481,15 @@ mod tests {
     fn compile_prog(re: &str) -> Vec<Insn> {
         let tree = Expr::parse_tree(re).unwrap();
         let info = analyze(&tree, true).unwrap();
-        let prog = compile(&info, true, tree.contains_subroutines, false).unwrap();
+        let prog = compile(
+            &info,
+            CompileOptions {
+                anchored: true,
+                contains_subroutines: tree.contains_subroutines,
+                ..CompileOptions::default()
+            },
+        )
+        .unwrap();
         prog.body
     }
 

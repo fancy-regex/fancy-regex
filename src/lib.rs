@@ -61,7 +61,7 @@ mod vm;
 
 use crate::analyze::analyze;
 use crate::analyze::can_compile_as_anchored;
-use crate::compile::compile;
+use crate::compile::{compile, CompileOptions};
 use crate::optimize::optimize;
 use crate::parse::{ExprTree, NamedGroups, Parser};
 use crate::parse_flags::*;
@@ -795,9 +795,11 @@ impl Regex {
 
         let prog = compile(
             &info,
-            can_compile_as_anchored(&tree.expr),
-            tree.contains_subroutines,
-            find_not_empty,
+            CompileOptions {
+                anchored: can_compile_as_anchored(&tree.expr),
+                contains_subroutines: tree.contains_subroutines,
+                hard_context: find_not_empty,
+            },
         )?;
         Ok(Regex {
             inner: RegexImpl::Fancy {
@@ -2213,7 +2215,7 @@ pub fn detect_possible_backref(re: &str) -> bool {
 #[doc(hidden)]
 pub mod internal {
     pub use crate::analyze::{analyze, can_compile_as_anchored, Info};
-    pub use crate::compile::compile;
+    pub use crate::compile::{compile, CompileOptions};
     pub use crate::optimize::optimize;
     pub use crate::parse_flags::{
         FLAG_CASEI, FLAG_CRLF, FLAG_DOTNL, FLAG_IGNORE_SPACE, FLAG_MULTI, FLAG_ONIGURUMA_MODE,
