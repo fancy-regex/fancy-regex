@@ -47,6 +47,7 @@ pub struct RegexFlags {
     pub ignore_whitespace: bool,
     pub unicode: bool,
     pub oniguruma_mode: bool,
+    pub find_not_empty: bool,
 }
 
 impl Default for RegexFlags {
@@ -58,6 +59,7 @@ impl Default for RegexFlags {
             ignore_whitespace: false,
             unicode: true,
             oniguruma_mode: true,
+            find_not_empty: false,
         }
     }
 }
@@ -81,6 +83,7 @@ fn build_regex(pattern: &str, flags: &RegexFlags) -> Result<Regex, String> {
     builder.ignore_whitespace(flags.ignore_whitespace);
     builder.unicode_mode(flags.unicode);
     builder.oniguruma_mode(flags.oniguruma_mode);
+    builder.find_not_empty(flags.find_not_empty);
 
     builder
         .build()
