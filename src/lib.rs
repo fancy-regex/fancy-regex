@@ -1064,7 +1064,7 @@ impl Regex {
                 let explicit = *explicit_capture_group_0;
                 let mut locations = inner.create_captures();
                 inner.captures(RaInput::new(text).span(pos..text.len()), &mut locations);
-                Ok(locations.is_match().then(|| Captures {
+                Ok(locations.is_match().then_some(Captures {
                     inner: CapturesImpl::Wrap {
                         text,
                         locations,
