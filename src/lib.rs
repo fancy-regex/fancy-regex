@@ -139,6 +139,7 @@ pub struct Matches<'r, 't> {
     text: &'t str,
     last_end: usize,
     last_match: Option<usize>,
+    last_skipped_empty: bool,
 }
 
 impl<'r, 't> Matches<'r, 't> {
@@ -163,17 +164,14 @@ impl<'r, 't> Matches<'r, 't> {
             return None;
         }
 
-        let option_flags = if let Some(last_match) = self.last_match {
-            if self.last_end > last_match {
-                OPTION_SKIPPED_EMPTY_MATCH
-            } else {
-                0
-            }
+        let option_flags = if self.last_skipped_empty {
+            OPTION_SKIPPED_EMPTY_MATCH
         } else {
             0
         };
 
-        let (result, mat) = match search(self.re, self.last_end, option_flags) {
+        let pos = self.last_end;
+        let (result, mat) = match search(self.re, pos, option_flags) {
             Err(error) => {
                 // Stop on first error: If an error is encountered, return it, and set the "last match position"
                 // to the string length, so that the next next() call will return None, to prevent an infinite loop.
@@ -189,6 +187,10 @@ impl<'r, 't> Matches<'r, 't> {
             // the next search at the smallest possible starting position
             // of the next match following this one.
             self.last_end = next_utf8(self.text, mat.end);
+            // Only set OPTION_SKIPPED_EMPTY_MATCH on the next call if this was a
+            // truly zero-length match (the VM consumed no bytes from `pos`).
+            // This means that \K won't prevent \G from matching.
+            self.last_skipped_empty = mat.end == pos;
             // Don't accept empty matches immediately following a match.
             // Just move on to the next match.
             if Some(mat.end) == self.last_match {
@@ -196,6 +198,7 @@ impl<'r, 't> Matches<'r, 't> {
             }
         } else {
             self.last_end = mat.end;
+            self.last_skipped_empty = false;
         }
 
         self.last_match = Some(mat.end);
@@ -866,6 +869,7 @@ impl Regex {
             text,
             last_end: 0,
             last_match: None,
+            last_skipped_empty: false,
         }
     }
 

@@ -616,6 +616,24 @@ fn continue_from_previous_match_at_min_position_zero() {
 }
 
 #[test]
+fn find_iter_continue_from_previous_match_end_with_keepout() {
+    // \G..\K produces zero-length matches because \K resets the reported start to
+    // after the two consumed characters. Iteration should continue matching across
+    // the whole string, advancing two bytes at a time, not stop after the first match.
+    let text = "aabbcc";
+
+    for (i, mat) in common::regex(r"\G..\K").find_iter(text).enumerate() {
+        let mat = mat.unwrap();
+
+        match i {
+            0 => assert_eq!((mat.start(), mat.end()), (2, 2)),
+            1 => assert_eq!((mat.start(), mat.end()), (5, 5)),
+            i => panic!("Expected 2 results, got {}", i + 1),
+        }
+    }
+}
+
+#[test]
 fn find_not_empty_skips_zero_length_match() {
     // \d* on text that doesn't start with a digit: normal mode matches empty at position 0,
     // find_not_empty mode rejects the zero-length match.

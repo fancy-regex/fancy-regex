@@ -366,6 +366,39 @@ fn captures_iter_continue_from_previous_match_end_single_match() {
 }
 
 #[test]
+fn captures_iter_continue_from_previous_match_end_with_keepout() {
+    // \G..\K(?=(.)) — \K resets the match start to after two consumed bytes, producing
+    // zero-length group 0 matches. Iteration must not stop after the first match because
+    // the VM actually consumed real bytes before \K fired, so \G should keep succeeding.
+    let text = "aabbcc";
+
+    // Each match: group 0 is zero-length at the position after the two consumed chars,
+    // group 1 captures the next single char via the lookahead.
+    for (i, caps) in common::regex(r"\G..\K(?=(.))")
+        .captures_iter(text)
+        .enumerate()
+    {
+        let caps = caps.unwrap();
+
+        match i {
+            0 => {
+                assert_eq!(caps.get(0).unwrap().start(), 2);
+                assert_eq!(caps.get(0).unwrap().end(), 2);
+                assert_eq!(caps.get(1).unwrap().start(), 2);
+                assert_eq!(caps.get(1).unwrap().end(), 3);
+            }
+            1 => {
+                assert_eq!(caps.get(0).unwrap().start(), 5);
+                assert_eq!(caps.get(0).unwrap().end(), 5);
+                assert_eq!(caps.get(1).unwrap().start(), 5);
+                assert_eq!(caps.get(1).unwrap().end(), 6);
+            }
+            i => panic!("Expected 2 results, got {}", i + 1),
+        }
+    }
+}
+
+#[test]
 fn captures_from_pos() {
     let text = "11 21 33";
 
