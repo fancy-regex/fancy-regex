@@ -1332,32 +1332,37 @@ impl Resolver {
     // It is okay if a backref or subroutine call is to a capture group index which doesn't exist
     // - the analyzer will detect it
     fn resolve_groups(&mut self, expr: &mut Expr) {
-        if let Expr::AstNode(AstNode::AstGroup { name, ref inner }, ix) = expr {
-            let mut inner = inner.clone();
-            let group_index = if let Some(name) = name {
-                self.named_groups
-                    .insert(name.to_string(), self.next_group_index);
-                self.named_group_positions.insert(name.to_string(), *ix);
-                Some(self.next_group_index)
-            } else if !self.ignore_numbered_groups {
-                Some(self.next_group_index)
-            } else {
-                None
-            };
+        if let Expr::AstNode(AstNode::AstGroup { .. }, _) = expr {
+            // Move the AstNode out of `expr` by swapping in a sentinel, freeing the borrow so
+            // we can destructure and move the inner Box<Expr> without cloning.
+            let node = core::mem::replace(expr, Expr::Empty);
+            if let Expr::AstNode(AstNode::AstGroup { name, inner }, ix) = node {
+                let group_index = if let Some(ref name) = name {
+                    self.named_groups
+                        .insert(name.to_string(), self.next_group_index);
+                    self.named_group_positions.insert(name.to_string(), ix);
+                    Some(self.next_group_index)
+                } else if !self.ignore_numbered_groups {
+                    Some(self.next_group_index)
+                } else {
+                    None
+                };
 
-            if group_index.is_some() {
-                self.next_group_index += 1;
+                if group_index.is_some() {
+                    self.next_group_index += 1;
+                }
+
+                let mut inner = inner;
+                self.resolve_groups(&mut inner);
+
+                // If we have a group index, create a capturing group
+                // If not, just use the resolved inner expression directly
+                *expr = if group_index.is_some() {
+                    Expr::Group(Arc::new(*inner))
+                } else {
+                    *inner // Use the inner expression directly
+                };
             }
-
-            self.resolve_groups(&mut inner);
-
-            // If we have a group index, create a capturing group
-            // If not, just use the resolved inner expression directly
-            *expr = if group_index.is_some() {
-                Expr::Group(Arc::new(*inner))
-            } else {
-                *inner // Use the inner expression directly
-            };
         } else if !expr.is_leaf_node() {
             // recursively resolve in inner expressions
             for child in expr.children_iter_mut() {
