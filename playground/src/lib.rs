@@ -195,7 +195,7 @@ pub fn analyze_regex(pattern: &str, flags: JsValue) -> Result<String, String> {
                 &tree,
                 AnalyzeContext {
                     explicit_capture_group_0: requires_capture_group_fixup,
-                    ..Default::default()
+                    find_not_empty: flags.find_not_empty,
                 },
             ) {
                 Ok(info) => Ok(format!("{:#?}", info)),
@@ -435,7 +435,7 @@ pub fn analyze_regex_tree(pattern: &str, flags: JsValue) -> Result<JsValue, Stri
                 &tree,
                 AnalyzeContext {
                     explicit_capture_group_0: requires_capture_group_fixup,
-                    ..Default::default()
+                    find_not_empty: flags.find_not_empty,
                 },
             ) {
                 Ok(info) => {
