@@ -21,7 +21,8 @@
 //! A simple test app for exercising and debugging the regex engine.
 
 use fancy_regex::internal::{
-    analyze, can_compile_as_anchored, compile, optimize, run_trace, CompileOptions, Insn, Prog,
+    analyze, can_compile_as_anchored, compile, optimize, run_trace, AnalyzeContext, CompileOptions,
+    Insn, Prog,
 };
 use fancy_regex::*;
 use std::env;
@@ -89,7 +90,7 @@ fn main() {
             let re = args.next().expect("expected regexp argument");
             let tree = Expr::parse_tree(&re).unwrap();
             let text = args.next().expect("expected text argument");
-            let a = analyze(&tree, false, false).unwrap();
+            let a = analyze(&tree, AnalyzeContext::default()).unwrap();
             let p = compile(
                 &a,
                 CompileOptions {
@@ -137,7 +138,13 @@ fn graph(re: &str, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
 fn show_analysis(re: &str, writer: &mut Formatter<'_>) -> Result {
     let mut tree = Expr::parse_tree(&re).unwrap();
     let requires_capture_group_fixup = optimize(&mut tree);
-    let a = analyze(&tree, requires_capture_group_fixup, false);
+    let a = analyze(
+        &tree,
+        AnalyzeContext {
+            explicit_capture_group_0: requires_capture_group_fixup,
+            ..Default::default()
+        },
+    );
     writeln!(writer, "{:#?}", a)
 }
 
@@ -152,8 +159,14 @@ fn prog(re: &str) -> Prog {
     // which means that "toy" behaves differently to tests etc.
     let mut tree = Expr::parse_tree(re).expect("Expected parsing regex to work");
     let requires_capture_group_fixup = optimize(&mut tree);
-    let result =
-        analyze(&tree, requires_capture_group_fixup, false).expect("Expected analyze to succeed");
+    let result = analyze(
+        &tree,
+        AnalyzeContext {
+            explicit_capture_group_0: requires_capture_group_fixup,
+            ..Default::default()
+        },
+    )
+    .expect("Expected analyze to succeed");
     compile(
         &result,
         CompileOptions {

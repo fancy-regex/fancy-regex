@@ -998,7 +998,7 @@ impl DelegateBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analyze::analyze;
+    use crate::analyze::{analyze, AnalyzeContext};
     use crate::parse::ExprTree;
     use crate::vm::Insn::*;
     use alloc::vec;
@@ -1042,7 +1042,7 @@ mod tests {
             contains_subroutines: false,
             self_recursive: false,
         };
-        let info = analyze(&tree, false, false).unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
 
         let mut c = Compiler::new(0);
         // Force "hard" so that compiler doesn't just delegate
@@ -1165,7 +1165,14 @@ mod tests {
     #[test]
     fn other_backtracking_control_verbs_error() {
         let tree = Expr::parse_tree(r"(*ACCEPT)").unwrap();
-        let info = analyze(&tree, true, false).unwrap();
+        let info = analyze(
+            &tree,
+            AnalyzeContext {
+                explicit_capture_group_0: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert_compile_error(
             compile(
                 &info,
@@ -1179,7 +1186,14 @@ mod tests {
         );
 
         let tree = Expr::parse_tree(r"(*COMMIT)").unwrap();
-        let info = analyze(&tree, true, false).unwrap();
+        let info = analyze(
+            &tree,
+            AnalyzeContext {
+                explicit_capture_group_0: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert_compile_error(
             compile(
                 &info,
@@ -1193,7 +1207,14 @@ mod tests {
         );
 
         let tree = Expr::parse_tree(r"(*SKIP)").unwrap();
-        let info = analyze(&tree, true, false).unwrap();
+        let info = analyze(
+            &tree,
+            AnalyzeContext {
+                explicit_capture_group_0: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert_compile_error(
             compile(
                 &info,
@@ -1207,7 +1228,14 @@ mod tests {
         );
 
         let tree = Expr::parse_tree(r"(*PRUNE)").unwrap();
-        let info = analyze(&tree, true, false).unwrap();
+        let info = analyze(
+            &tree,
+            AnalyzeContext {
+                explicit_capture_group_0: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert_compile_error(
             compile(
                 &info,
@@ -1226,7 +1254,14 @@ mod tests {
     fn variable_lookbehind_requires_feature() {
         // Without the feature flag, variable-length lookbehinds should error
         let tree = Expr::parse_tree(r"(?<=ab+)x").unwrap();
-        let info = analyze(&tree, true, false).unwrap();
+        let info = analyze(
+            &tree,
+            AnalyzeContext {
+                explicit_capture_group_0: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert_compile_error(
             compile(
                 &info,
@@ -1240,7 +1275,14 @@ mod tests {
         );
 
         let tree = Expr::parse_tree(r"(?<=\bab+)x").unwrap();
-        let info = analyze(&tree, true, false).unwrap();
+        let info = analyze(
+            &tree,
+            AnalyzeContext {
+                explicit_capture_group_0: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert_compile_error(
             compile(
                 &info,
@@ -1340,7 +1382,7 @@ mod tests {
         // currently hard variable lookbehinds are unsupported.
         // the backref to a capture group inside the variable lookbehind makes the capture group hard
         let tree = Expr::parse_tree(r"(?<=a(b+))\1").unwrap();
-        let info = analyze(&tree, false, false).unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
         assert_compile_error(
             compile(
                 &info,
@@ -1369,7 +1411,14 @@ mod tests {
     fn absent_operators_error() {
         // Test that absent expression returns feature not supported
         let tree = Expr::parse_tree(r"(?~|abc|\d*)").unwrap();
-        let info = analyze(&tree, true, false).unwrap();
+        let info = analyze(
+            &tree,
+            AnalyzeContext {
+                explicit_capture_group_0: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert_compile_error(
             compile(
                 &info,
@@ -1384,7 +1433,14 @@ mod tests {
 
         // Test that absent stopper returns feature not supported
         let tree = Expr::parse_tree(r"(?~|abc)").unwrap();
-        let info = analyze(&tree, true, false).unwrap();
+        let info = analyze(
+            &tree,
+            AnalyzeContext {
+                explicit_capture_group_0: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert_compile_error(
             compile(
                 &info,
@@ -1399,7 +1455,14 @@ mod tests {
 
         // Test that range clear returns feature not supported
         let tree = Expr::parse_tree(r"(?~|)").unwrap();
-        let info = analyze(&tree, true, false).unwrap();
+        let info = analyze(
+            &tree,
+            AnalyzeContext {
+                explicit_capture_group_0: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert_compile_error(
             compile(
                 &info,
@@ -1474,7 +1537,14 @@ mod tests {
 
     fn compile_prog(re: &str) -> Vec<Insn> {
         let tree = Expr::parse_tree(re).unwrap();
-        let info = analyze(&tree, true, false).unwrap();
+        let info = analyze(
+            &tree,
+            AnalyzeContext {
+                explicit_capture_group_0: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         let prog = compile(
             &info,
             CompileOptions {

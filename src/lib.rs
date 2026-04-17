@@ -59,8 +59,8 @@ mod parse_flags;
 mod replacer;
 mod vm;
 
-use crate::analyze::analyze;
 use crate::analyze::can_compile_as_anchored;
+use crate::analyze::{analyze, AnalyzeContext};
 use crate::compile::{compile, CompileOptions};
 use crate::optimize::optimize;
 use crate::parse::{ExprTree, NamedGroups, Parser};
@@ -768,7 +768,13 @@ impl Regex {
             // with a fixup of the capture groups
             optimize(&mut tree)
         };
-        let info = analyze(&tree, requires_capture_group_fixup, find_not_empty)?;
+        let info = analyze(
+            &tree,
+            AnalyzeContext {
+                explicit_capture_group_0: requires_capture_group_fixup,
+                find_not_empty,
+            },
+        )?;
 
         if find_not_empty && info.const_size && info.min_size == 0 {
             return Err(CompileError::PatternCanNeverMatch.into());
@@ -2213,7 +2219,7 @@ pub fn detect_possible_backref(re: &str) -> bool {
 /// experimenting.
 #[doc(hidden)]
 pub mod internal {
-    pub use crate::analyze::{analyze, can_compile_as_anchored, Info};
+    pub use crate::analyze::{analyze, can_compile_as_anchored, AnalyzeContext, Info};
     pub use crate::compile::{compile, CompileOptions};
     pub use crate::optimize::optimize;
     pub use crate::parse_flags::{
