@@ -127,6 +127,9 @@ struct Analyzer<'a> {
     group_exprs: Map<usize, &'a Expr>,
     /// Track groups currently being analyzed to prevent infinite recursion
     analyzing_groups: BitSet,
+    /// When true, nodes that could produce empty matches (min size 0 and not const size)
+    /// are promoted to hard so the VM can backtrack past them to find a non-empty match.
+    find_not_empty: bool,
 }
 
 impl<'a> Analyzer<'a> {
@@ -471,6 +474,12 @@ impl<'a> Analyzer<'a> {
             }
         };
 
+        // When find_not_empty is active, any node that could produce an empty match
+        // must be handled by the VM so it can backtrack past it to find a non-empty match.
+        if self.find_not_empty && min_size == 0 && !const_size {
+            hard = true;
+        }
+
         Ok(Info {
             expr,
             children,
@@ -721,7 +730,11 @@ fn collect_groups<'a>(
 }
 
 /// Analyze the parsed expression to determine whether it requires fancy features.
-pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result<Info<'a>> {
+pub fn analyze<'a>(
+    tree: &'a ExprTree,
+    explicit_capture_group_0: bool,
+    find_not_empty: bool,
+) -> Result<Info<'a>> {
     // Check that numeric capture group references (backrefs and subroutine calls) and named groups are not mixed
     if tree.numeric_capture_group_references && !tree.named_groups.is_empty() {
         return Err(Error::CompileError(Box::new(
@@ -749,6 +762,7 @@ pub fn analyze<'a>(tree: &'a ExprTree, explicit_capture_group_0: bool) -> Result
         root_groups: BitSet::new(),
         group_exprs,
         analyzing_groups: BitSet::new(),
+        find_not_empty,
     };
 
     let analyzed = analyzer.visit(&tree.expr, 0, false, 0)?;
@@ -826,7 +840,7 @@ mod tests {
     ) {
         let tree = Expr::parse_tree(pattern).unwrap();
         assert_compile_error(
-            analyze(&tree, explicit_capture_group_0),
+            analyze(&tree, explicit_capture_group_0, false),
             |e| matches!(e, CompileError::InvalidBackref(g) if *g == expected_group),
         );
     }
@@ -881,7 +895,7 @@ mod tests {
         // This would then cause a misleading "Invalid back reference" error instead of
         // the correct error.
         let tree = Expr::parse_tree(r"(?<a>a)(?<b>b)\g<no_exist>(?<c>c)\k<a>\k<c>").unwrap();
-        let result = analyze(&tree, false);
+        let result = analyze(&tree, false, false);
 
         // Should get the unresolved subroutine call error, not an invalid backref error
         assert_compile_error(
@@ -893,36 +907,46 @@ mod tests {
     #[test]
     fn allow_analysis_of_self_backref() {
         // even if it will never match, see issue 103
-        assert!(!analyze(&Expr::parse_tree(r"(.\1)").unwrap(), false).is_err());
-        assert!(!analyze(&Expr::parse_tree(r"((.\1))").unwrap(), true).is_err());
-        assert!(!analyze(&Expr::parse_tree(r"(([ab]+)\1b)").unwrap(), false).is_err());
+        assert!(!analyze(&Expr::parse_tree(r"(.\1)").unwrap(), false, false).is_err());
+        assert!(!analyze(&Expr::parse_tree(r"((.\1))").unwrap(), true, false).is_err());
+        assert!(!analyze(&Expr::parse_tree(r"(([ab]+)\1b)").unwrap(), false, false).is_err());
         // in the following scenario it can match
-        assert!(!analyze(&Expr::parse_tree(r"(([ab]+?)(?(1)\1| )c)+").unwrap(), false).is_err());
+        assert!(!analyze(
+            &Expr::parse_tree(r"(([ab]+?)(?(1)\1| )c)+").unwrap(),
+            false,
+            false
+        )
+        .is_err());
     }
 
     #[test]
     fn allow_backref_even_when_capture_group_occurs_after_backref() {
-        assert!(!analyze(&Expr::parse_tree(r"\1(.)").unwrap(), false).is_err());
-        assert!(!analyze(&Expr::parse_tree(r"(\1(.))").unwrap(), true).is_err());
+        assert!(!analyze(&Expr::parse_tree(r"\1(.)").unwrap(), false, false).is_err());
+        assert!(!analyze(&Expr::parse_tree(r"(\1(.))").unwrap(), true, false).is_err());
     }
 
     #[test]
     fn valid_backref_occurs_after_capture_group() {
-        assert!(!analyze(&Expr::parse_tree(r"(.)\1").unwrap(), false).is_err());
-        assert!(!analyze(&Expr::parse_tree(r"((.)\1)").unwrap(), true).is_err());
+        assert!(!analyze(&Expr::parse_tree(r"(.)\1").unwrap(), false, false).is_err());
+        assert!(!analyze(&Expr::parse_tree(r"((.)\1)").unwrap(), true, false).is_err());
 
-        assert!(!analyze(&Expr::parse_tree(r"((.)\2\2)\1").unwrap(), false).is_err());
-        assert!(!analyze(&Expr::parse_tree(r"(.)\1(.)\2").unwrap(), false).is_err());
-        assert!(!analyze(&Expr::parse_tree(r"(.)foo(.)\2").unwrap(), false).is_err());
-        assert!(!analyze(&Expr::parse_tree(r"(.)(foo)(.)\3\2\1").unwrap(), false).is_err());
-        assert!(!analyze(&Expr::parse_tree(r"(.)(foo)(.)\3\1").unwrap(), false).is_err());
-        assert!(!analyze(&Expr::parse_tree(r"(.)(foo)(.)\2\1").unwrap(), false).is_err());
+        assert!(!analyze(&Expr::parse_tree(r"((.)\2\2)\1").unwrap(), false, false).is_err());
+        assert!(!analyze(&Expr::parse_tree(r"(.)\1(.)\2").unwrap(), false, false).is_err());
+        assert!(!analyze(&Expr::parse_tree(r"(.)foo(.)\2").unwrap(), false, false).is_err());
+        assert!(!analyze(
+            &Expr::parse_tree(r"(.)(foo)(.)\3\2\1").unwrap(),
+            false,
+            false
+        )
+        .is_err());
+        assert!(!analyze(&Expr::parse_tree(r"(.)(foo)(.)\3\1").unwrap(), false, false).is_err());
+        assert!(!analyze(&Expr::parse_tree(r"(.)(foo)(.)\2\1").unwrap(), false, false).is_err());
     }
 
     #[test]
     fn feature_not_yet_supported() {
         let tree = &Expr::parse_tree(r"(a)\k<1-0>").unwrap();
-        assert_compile_error(analyze(tree, false), |e| {
+        assert_compile_error(analyze(tree, false, false), |e| {
             matches!(e, CompileError::FeatureNotYetSupported(_))
         });
     }
@@ -930,7 +954,7 @@ mod tests {
     #[test]
     fn subroutine_call_undefined() {
         let tree = &Expr::parse_tree(r"\g<wrong_name>(?<different_name>a)").unwrap();
-        assert_compile_error(analyze(tree, false), |e| {
+        assert_compile_error(analyze(tree, false, false), |e| {
             matches!(e, CompileError::SubroutineCallTargetNotFound(_, _))
         });
     }
@@ -939,49 +963,49 @@ mod tests {
     fn numeric_capture_group_references_cannot_be_used_with_named_groups() {
         // Test case 1: Named group followed by numeric backref (no alternation)
         let tree = Expr::parse_tree(r"(?<name>a)\1").unwrap();
-        assert_compile_error(analyze(&tree, false), |e| {
+        assert_compile_error(analyze(&tree, false, false), |e| {
             matches!(e, CompileError::NamedBackrefOnly)
         });
 
         // Test case 2: Numeric backref followed by named group
         let tree = Expr::parse_tree(r"(a)\1(?<name>b)").unwrap();
-        assert_compile_error(analyze(&tree, false), |e| {
+        assert_compile_error(analyze(&tree, false, false), |e| {
             matches!(e, CompileError::NamedBackrefOnly)
         });
 
         // Test case 3: Alternation with numeric backref and named group in first branch
         let tree = Expr::parse_tree(r"(?<name>a)\1|b").unwrap();
-        assert_compile_error(analyze(&tree, false), |e| {
+        assert_compile_error(analyze(&tree, false, false), |e| {
             matches!(e, CompileError::NamedBackrefOnly)
         });
 
         // Test case 4: Alternation with named group in first branch, numeric backref in second
         let tree = Expr::parse_tree(r"(?<name>a)|\1").unwrap();
-        assert_compile_error(analyze(&tree, false), |e| {
+        assert_compile_error(analyze(&tree, false, false), |e| {
             matches!(e, CompileError::NamedBackrefOnly)
         });
 
         // Test case 5: Numbered group containing named group, with numeric backref
         let tree = Expr::parse_tree(r"(a|(?<name>b))\1").unwrap();
-        assert_compile_error(analyze(&tree, false), |e| {
+        assert_compile_error(analyze(&tree, false, false), |e| {
             matches!(e, CompileError::NamedBackrefOnly)
         });
 
         // Test case 6: Multiple branches with named groups and numeric backrefs
         let tree = Expr::parse_tree(r"(?<x>a)|(?<y>b)|\1").unwrap();
-        assert_compile_error(analyze(&tree, false), |e| {
+        assert_compile_error(analyze(&tree, false, false), |e| {
             matches!(e, CompileError::NamedBackrefOnly)
         });
 
         // Test case 7: Numeric subroutine call with named group
         let tree = Expr::parse_tree(r"(?<foo>\w+)\g<1>").unwrap();
-        assert_compile_error(analyze(&tree, false), |e| {
+        assert_compile_error(analyze(&tree, false, false), |e| {
             matches!(e, CompileError::NamedBackrefOnly)
         });
 
         // Test case 8: Named group with numeric subroutine call in alternation
         let tree = Expr::parse_tree(r"(?<foo>a)|\g<1>").unwrap();
-        assert_compile_error(analyze(&tree, false), |e| {
+        assert_compile_error(analyze(&tree, false, false), |e| {
             matches!(e, CompileError::NamedBackrefOnly)
         });
 
@@ -989,28 +1013,28 @@ mod tests {
 
         // Only numeric backrefs and subroutine calls, no named groups
         let tree = Expr::parse_tree(r"(a)(b+)\1\g<2>").unwrap();
-        assert!(analyze(&tree, false).is_ok());
+        assert!(analyze(&tree, false, false).is_ok());
 
         // Only named groups and named backrefs and named subroutine calls
         let tree = Expr::parse_tree(r"(?<name>a)\k<name>\g<name>").unwrap();
-        assert!(analyze(&tree, false).is_ok());
+        assert!(analyze(&tree, false, false).is_ok());
 
         // Multiple named and numbered groups, no backrefs or subroutine calls
         let tree = Expr::parse_tree(r"(?<a>a)|(?<b>b)(c)(d+)").unwrap();
-        assert!(analyze(&tree, false).is_ok());
+        assert!(analyze(&tree, false, false).is_ok());
     }
 
     #[test]
     fn is_literal() {
         let tree = Expr::parse_tree("abc").unwrap();
-        let info = analyze(&tree, false).unwrap();
+        let info = analyze(&tree, false, false).unwrap();
         assert_eq!(info.is_literal(), true);
     }
 
     #[test]
     fn is_literal_with_repeat() {
         let tree = Expr::parse_tree("abc*").unwrap();
-        let info = analyze(&tree, false).unwrap();
+        let info = analyze(&tree, false, false).unwrap();
         assert_eq!(info.is_literal(), false);
     }
 
@@ -1033,14 +1057,14 @@ mod tests {
     fn backref_inherits_group_size_info() {
         // Test that backrefs properly inherit min_size and const_size from referenced groups
         let tree = Expr::parse_tree(r"(abc)\1").unwrap();
-        let info = analyze(&tree, false).unwrap();
+        let info = analyze(&tree, false, false).unwrap();
         // The concatenation should have min_size = 3 + 3 = 6 (group + backref)
         assert_eq!(info.min_size, 6);
         assert!(info.const_size);
 
         // Test with a variable-length group
         let tree = Expr::parse_tree(r"(a+)\1").unwrap();
-        let info = analyze(&tree, false).unwrap();
+        let info = analyze(&tree, false, false).unwrap();
         // The group has min_size = 1, but const_size = false due to the +
         // So the total should be min_size = 2, const_size = false
         assert_eq!(info.min_size, 2);
@@ -1048,7 +1072,7 @@ mod tests {
 
         // Test with optional group
         let tree = Expr::parse_tree(r"(a?)\1").unwrap();
-        let info = analyze(&tree, false).unwrap();
+        let info = analyze(&tree, false, false).unwrap();
         // Both group and backref can be empty, so min_size = 0
         assert_eq!(info.min_size, 0);
         assert!(!info.const_size);
@@ -1059,7 +1083,7 @@ mod tests {
         // Test forward references (backref before group definition)
         // These should use conservative defaults but still work
         let tree = Expr::parse_tree(r"\1(abc)").unwrap();
-        let info = analyze(&tree, false).unwrap();
+        let info = analyze(&tree, false, false).unwrap();
         // Forward ref gets min_size=0, group gets min_size=3, total=3
         assert_eq!(info.min_size, 3);
         // Forward ref sets const_size=false, so overall is false
@@ -1068,30 +1092,35 @@ mod tests {
 
     #[test]
     fn backref_in_lookbehind() {
-        assert!(!analyze(&Expr::parse_tree(r"(hello)(?<=\b\1)").unwrap(), false).is_err());
-        assert!(!analyze(&Expr::parse_tree(r"(..)(?<=\1\1)").unwrap(), false).is_err());
-        assert!(!analyze(&Expr::parse_tree(r"(abc)(?<=\1)def").unwrap(), false).is_err());
+        assert!(!analyze(
+            &Expr::parse_tree(r"(hello)(?<=\b\1)").unwrap(),
+            false,
+            false
+        )
+        .is_err());
+        assert!(!analyze(&Expr::parse_tree(r"(..)(?<=\1\1)").unwrap(), false, false).is_err());
+        assert!(!analyze(&Expr::parse_tree(r"(abc)(?<=\1)def").unwrap(), false, false).is_err());
     }
 
     #[test]
     fn backref_inside_recursed_group_not_supported() {
         let tree = Expr::parse_tree(r"(?<foo>a|\(\g<foo>\)\k<foo>?)").unwrap();
         assert_compile_error(
-            analyze(&tree, false),
+            analyze(&tree, false, false),
             |e| matches!(e, CompileError::FeatureNotYetSupported(s) if s.contains("Backreference") && s.contains("recursed")),
         );
 
         // Test with numbered groups
         let tree = Expr::parse_tree(r"(\g<1>\1)").unwrap();
         assert_compile_error(
-            analyze(&tree, false),
+            analyze(&tree, false, false),
             |e| matches!(e, CompileError::FeatureNotYetSupported(s) if s.contains("Backreference") && s.contains("recursed")),
         );
 
         // Another example with alternation inside recursed group
         let tree = Expr::parse_tree(r"(a|\g<1>b\1)").unwrap();
         assert_compile_error(
-            analyze(&tree, false),
+            analyze(&tree, false, false),
             |e| matches!(e, CompileError::FeatureNotYetSupported(s) if s.contains("Backreference") && s.contains("recursed")),
         );
     }
@@ -1099,7 +1128,7 @@ mod tests {
     #[test]
     fn backref_outside_recursed_group_is_allowed() {
         let tree = Expr::parse_tree(r"(?<foo>a|\(\g<foo>\))\k<foo>").unwrap();
-        let result = analyze(&tree, false);
+        let result = analyze(&tree, false, false);
         assert!(
             result.is_ok(),
             "Backref outside recursed group should pass analysis"
@@ -1115,13 +1144,13 @@ mod tests {
     #[test]
     fn min_pos_in_group_calculated_correctly_with_no_groups() {
         let tree = Expr::parse_tree(r"\G").unwrap();
-        let info = analyze(&tree, false).unwrap();
+        let info = analyze(&tree, false, false).unwrap();
         assert_eq!(info.min_size, 0);
         assert_eq!(info.min_pos_in_group, 0);
         assert!(info.const_size);
 
         let tree = Expr::parse_tree(r"\G(?=abc)\w+").unwrap();
-        let info = analyze(&tree, false).unwrap();
+        let info = analyze(&tree, false, false).unwrap();
         // the lookahead itself has min size 0
         assert_eq!(info.children[1].min_size, 0);
         assert!(info.children[1].const_size);
@@ -1135,7 +1164,7 @@ mod tests {
         assert!(!info.const_size);
 
         let tree = Expr::parse_tree(r"(?:ab*|cd){2}(?=bar)\w").unwrap();
-        let info = analyze(&tree, false).unwrap();
+        let info = analyze(&tree, false, false).unwrap();
         // the whole expression has min size 3 (a times 2 plus \w)
         assert_eq!(info.min_size, 3);
         // the min pos of the lookahead is 2
@@ -1149,7 +1178,7 @@ mod tests {
     #[test]
     fn backtracking_control_verb_is_hard_and_const_size() {
         let tree = Expr::parse_tree(r"(*FAIL)").unwrap();
-        let info = analyze(&tree, false).unwrap();
+        let info = analyze(&tree, false, false).unwrap();
         assert_eq!(info.min_size, 0);
         assert_eq!(info.min_pos_in_group, 0);
         assert!(info.const_size);
@@ -1158,7 +1187,7 @@ mod tests {
     #[test]
     fn min_pos_in_group_calculated_correctly_with_capture_groups() {
         let tree = Expr::parse_tree(r"a(bc)d(e(f)g)").unwrap();
-        let info = analyze(&tree, false).unwrap();
+        let info = analyze(&tree, false, false).unwrap();
         assert_eq!(info.min_pos_in_group, 0);
         // before the capture begins, the min pos in group 0 is 1
         assert_eq!(info.children[1].min_pos_in_group, 1);
@@ -1184,7 +1213,7 @@ mod tests {
     #[test]
     fn absent_repeater_is_hard_and_not_const_size() {
         let tree = Expr::parse_tree(r"(?~abc)").unwrap();
-        let info = analyze(&tree, false).unwrap();
+        let info = analyze(&tree, false, false).unwrap();
         assert_eq!(info.min_size, 0);
         assert!(!info.const_size);
         assert!(info.hard);
@@ -1193,7 +1222,7 @@ mod tests {
     #[test]
     fn absent_expression_is_hard_and_not_const_size() {
         let tree = Expr::parse_tree(r"(?~|abc|\d+)").unwrap();
-        let info = analyze(&tree, false).unwrap();
+        let info = analyze(&tree, false, false).unwrap();
         // min_size comes from exp part (\d+ has min_size 1)
         assert_eq!(info.min_size, 1);
         assert!(!info.const_size);
@@ -1203,7 +1232,7 @@ mod tests {
     #[test]
     fn range_clear_is_hard_and_const_size() {
         let tree = Expr::parse_tree(r"(?~|)").unwrap();
-        let info = analyze(&tree, false).unwrap();
+        let info = analyze(&tree, false, false).unwrap();
         assert_eq!(info.min_size, 0);
         assert!(info.const_size);
         assert!(info.hard);
@@ -1213,12 +1242,12 @@ mod tests {
     fn left_recursive_subroutine_direct() {
         // Direct left recursion: group 1 calls itself at position 0
         let tree = Expr::parse_tree(r"(\g<1>a)").unwrap();
-        assert_compile_error(analyze(&tree, false), |e| {
+        assert_compile_error(analyze(&tree, false, false), |e| {
             matches!(e, CompileError::LeftRecursiveSubroutineCall(_))
         });
 
         let tree = Expr::parse_tree(r"abc(\g<1>a)").unwrap();
-        assert_compile_error(analyze(&tree, false), |e| {
+        assert_compile_error(analyze(&tree, false, false), |e| {
             matches!(e, CompileError::LeftRecursiveSubroutineCall(_))
         });
     }
@@ -1226,11 +1255,11 @@ mod tests {
     #[test]
     fn not_left_recursive_subroutine_after_group() {
         let tree = Expr::parse_tree(r"(a)\g<1>").unwrap();
-        let result = analyze(&tree, false);
+        let result = analyze(&tree, false, false);
         assert!(result.is_ok());
 
         let tree = Expr::parse_tree(r"(?<test>a)\g<test>").unwrap();
-        let result = analyze(&tree, false);
+        let result = analyze(&tree, false, false);
         assert!(result.is_ok());
     }
 
@@ -1238,12 +1267,12 @@ mod tests {
     fn left_recursive_subroutine_at_start() {
         // Left recursion at start of group: (\g<1>a)
         let tree = Expr::parse_tree(r"(\g<1>a)").unwrap();
-        assert_compile_error(analyze(&tree, false), |e| {
+        assert_compile_error(analyze(&tree, false, false), |e| {
             matches!(e, CompileError::LeftRecursiveSubroutineCall(_))
         });
 
         let tree = Expr::parse_tree(r"(?<test>\g<test>a)").unwrap();
-        assert_compile_error(analyze(&tree, false), |e| {
+        assert_compile_error(analyze(&tree, false, false), |e| {
             matches!(e, CompileError::LeftRecursiveSubroutineCall(_))
         });
     }
@@ -1252,12 +1281,12 @@ mod tests {
     fn left_recursive_subroutine_indirect() {
         // Indirect left recursion: non-nested subroutine calls to each other
         let tree = Expr::parse_tree(r"(\g<2>)(\g<1>)").unwrap();
-        assert_compile_error(analyze(&tree, false), |e| {
+        assert_compile_error(analyze(&tree, false, false), |e| {
             matches!(e, CompileError::LeftRecursiveSubroutineCall(_))
         });
 
         let tree = Expr::parse_tree(r"(\g<2>)(\g<1>a)").unwrap();
-        assert_compile_error(analyze(&tree, false), |e| {
+        assert_compile_error(analyze(&tree, false, false), |e| {
             matches!(e, CompileError::LeftRecursiveSubroutineCall(_))
         });
     }
@@ -1266,7 +1295,7 @@ mod tests {
     fn left_recursive_subroutine_with_alternation() {
         // Left recursion through alternation, depending which branch is taken it could be left-recursive
         let tree = Expr::parse_tree(r"(a|\g<1>)").unwrap();
-        assert_compile_error(analyze(&tree, false), |e| {
+        assert_compile_error(analyze(&tree, false, false), |e| {
             matches!(e, CompileError::LeftRecursiveSubroutineCall(_))
         });
     }
@@ -1276,7 +1305,7 @@ mod tests {
         // Not left recursive because subroutine call is after a character was consumed,
         // but still never-ending because the recursive call is mandatory.
         let tree = Expr::parse_tree(r"(a\g<1>)").unwrap();
-        assert_compile_error(analyze(&tree, false), |e| {
+        assert_compile_error(analyze(&tree, false, false), |e| {
             matches!(e, CompileError::NeverEndingRecursion)
         });
     }
@@ -1284,7 +1313,7 @@ mod tests {
     #[test]
     fn bounded_recursive_after_char_is_allowed() {
         let tree = Expr::parse_tree(r"(a\g<1>?)").unwrap();
-        let result = analyze(&tree, false);
+        let result = analyze(&tree, false, false);
         assert!(result.is_ok());
     }
 
@@ -1292,7 +1321,7 @@ mod tests {
     fn not_left_recursive_zero_repetition() {
         // Not left recursive because subroutine call is unreachable
         let tree = Expr::parse_tree(r"(a?\g<1>){0}").unwrap();
-        let result = analyze(&tree, false);
+        let result = analyze(&tree, false, false);
         assert!(result.is_ok());
     }
 
@@ -1300,7 +1329,7 @@ mod tests {
     fn left_recursive_with_both_positions() {
         // Left recursive because \g<1> appears at position 0 in the group even though also at end at position 1
         let tree = Expr::parse_tree(r"(\g<1>a\g<1>)").unwrap();
-        assert_compile_error(analyze(&tree, false), |e| {
+        assert_compile_error(analyze(&tree, false, false), |e| {
             matches!(e, CompileError::LeftRecursiveSubroutineCall(_))
         });
     }
@@ -1308,7 +1337,7 @@ mod tests {
     #[test]
     fn left_recursive_with_lookahead() {
         let tree = Expr::parse_tree(r"((?=a)\g<1>)").unwrap();
-        assert_compile_error(analyze(&tree, false), |e| {
+        assert_compile_error(analyze(&tree, false, false), |e| {
             matches!(e, CompileError::LeftRecursiveSubroutineCall(_))
         });
     }
@@ -1318,7 +1347,7 @@ mod tests {
         // Self-recursive on group 0 after a character
         let tree = Expr::parse_tree(r"a\g<0>").unwrap();
         // Group 0 calls itself at position 1 (after 'a'), so this is NOT left recursive
-        assert_compile_error(analyze(&tree, false), |e| {
+        assert_compile_error(analyze(&tree, false, false), |e| {
             matches!(e, CompileError::NeverEndingRecursion)
         });
     }
@@ -1327,7 +1356,7 @@ mod tests {
     fn not_left_recursive_forward_call() {
         // Forward subroutine call - not left recursive: \g<1>(a)
         let tree = Expr::parse_tree(r"\g<1>(a)").unwrap();
-        let result = analyze(&tree, false);
+        let result = analyze(&tree, false, false);
         // The call happens before the group is defined, but it's at position 0 of group 0 (implicit)
         // which calls group 1. Group 1 doesn't call anything, so no cycle.
         assert!(result.is_ok());
@@ -1337,7 +1366,7 @@ mod tests {
     fn not_left_recursive_group_zero_explicit() {
         // Self-recursive on explicit group 0: (a\g<0>)
         let tree = Expr::parse_tree(r"(a\g<0>)").unwrap();
-        assert_compile_error(analyze(&tree, true), |e| {
+        assert_compile_error(analyze(&tree, true, false), |e| {
             matches!(e, CompileError::NeverEndingRecursion)
         });
     }
@@ -1345,7 +1374,7 @@ mod tests {
     #[test]
     fn not_left_recursive_group_zero_subroutine_call_unreachable() {
         let tree = Expr::parse_tree(r"\g<0>{0}abc").unwrap();
-        let result = analyze(&tree, true);
+        let result = analyze(&tree, true, false);
         assert!(result.is_ok());
     }
 
@@ -1353,7 +1382,7 @@ mod tests {
     fn left_recursive_group_zero_at_start() {
         // Self-recursive on explicit group 0 at start: (\g<0>a)
         let tree = Expr::parse_tree(r"(\g<0>a)").unwrap();
-        let result = analyze(&tree, true);
+        let result = analyze(&tree, true, false);
         // With explicit group 0, \g<0> at position 0 is left-recursive
         assert!(result.is_err());
     }
@@ -1367,7 +1396,7 @@ mod tests {
         // Group 3 -> Group 1 (at pos 1, after 'a')
         // This forms a cycle, but the call from group 3 to group 1 is at position 1
         // So it's not left-recursive
-        assert_compile_error(analyze(&tree, false), |e| {
+        assert_compile_error(analyze(&tree, false, false), |e| {
             matches!(e, CompileError::NeverEndingRecursion)
         });
     }
@@ -1376,7 +1405,7 @@ mod tests {
     fn three_way_left_recursive() {
         // Three-way left recursion
         let tree = Expr::parse_tree(r"(\g<2>)(\g<3>)(\g<1>)").unwrap();
-        let result = analyze(&tree, false);
+        let result = analyze(&tree, false, false);
         // Group 1 -> Group 2 (at pos 0)
         // Group 2 -> Group 3 (at pos 0)
         // Group 3 -> Group 1 (at pos 0)
@@ -1384,7 +1413,7 @@ mod tests {
         assert!(result.is_err());
 
         let tree = Expr::parse_tree(r"(\g<2>a)(\g<3>b)(\g<1>c)").unwrap();
-        let result = analyze(&tree, false);
+        let result = analyze(&tree, false, false);
         assert!(result.is_err());
     }
 
@@ -1396,7 +1425,7 @@ mod tests {
         // Group 2 contains \g<1> - calls group 1 at position 0
         // This creates a cycle: Group 2 -> Group 1 (at pos 0) -> Group 2 (at pos 0)
         let tree = Expr::parse_tree(r"(a?\g<2>){0}(\g<1>)").unwrap();
-        assert_compile_error(analyze(&tree, false), |e| {
+        assert_compile_error(analyze(&tree, false, false), |e| {
             matches!(e, CompileError::LeftRecursiveSubroutineCall(_))
         });
     }
@@ -1406,7 +1435,7 @@ mod tests {
         // Group n (1): |\g<m>\g<n> - calls m then itself, but m has min_size > 0
         // Group m (2): a(b)\g<m> - calls itself after 'ab'
         let tree = Expr::parse_tree(r"(?<n>|\g<m>\g<n>)\z|\zEND (?<m>a(b)\g<m>)").unwrap();
-        let result = analyze(&tree, false);
+        let result = analyze(&tree, false, false);
 
         assert!(
             result.is_ok(),
@@ -1422,7 +1451,7 @@ mod tests {
     fn forward_subroutine_call_single_group() {
         // Forward reference: calls group 1 before it's defined
         let tree = Expr::parse_tree(r"\g<1>(.a.)").unwrap();
-        let info = analyze(&tree, false).unwrap();
+        let info = analyze(&tree, false, false).unwrap();
 
         // The pattern should have 1 capture group
         assert_eq!(info.start_group(), 1);
@@ -1458,7 +1487,7 @@ mod tests {
     fn forward_subroutine_call_with_multiple_groups() {
         // Forward reference with multiple groups defined after the subroutine call
         let tree = Expr::parse_tree(r"\g<2>(a)(bc+)").unwrap();
-        let info = analyze(&tree, false).unwrap();
+        let info = analyze(&tree, false, false).unwrap();
 
         // The pattern should have 2 capture groups
         assert_eq!(info.start_group(), 1);
@@ -1496,7 +1525,7 @@ mod tests {
     fn forward_subroutine_call_with_nested_groups() {
         // Forward reference with multiple nested groups defined after the subroutine call
         let tree = Expr::parse_tree(r"(foo)\g<4>(a(b)?)(c(d))(?!e)").unwrap();
-        let info = analyze(&tree, false).unwrap();
+        let info = analyze(&tree, false, false).unwrap();
 
         // The pattern should have 5 capture groups
         assert_eq!(info.start_group(), 1);

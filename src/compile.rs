@@ -894,12 +894,6 @@ pub struct CompileOptions {
     pub anchored: bool,
     /// Whether the regex contains subroutine calls, requiring group info to be pre-populated.
     pub contains_subroutines: bool,
-    /// When `true`, the entire expression is compiled in a hard context, meaning even easy
-    /// (non-fancy) subexpressions will be compiled with explicit backtracking VM instructions
-    /// rather than being delegated to the NFA engine. This is needed when `find_not_empty` is
-    /// set, so that the VM can backtrack through alternation branches to find a non-empty match
-    /// instead of accepting the first (possibly empty) match from a delegate.
-    pub hard_context: bool,
 }
 
 /// Compile the analyzed expressions into a program.
@@ -927,7 +921,7 @@ pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
         // add implicit capture group 0 begin
         c.b.add(Insn::Save(0));
     }
-    c.visit(info, options.hard_context)?;
+    c.visit(info, false)?;
     if info.start_group() == 1 {
         // add implicit capture group 0 end
         c.b.add(Insn::Save(1));
@@ -1048,7 +1042,7 @@ mod tests {
             contains_subroutines: false,
             self_recursive: false,
         };
-        let info = analyze(&tree, false).unwrap();
+        let info = analyze(&tree, false, false).unwrap();
 
         let mut c = Compiler::new(0);
         // Force "hard" so that compiler doesn't just delegate
@@ -1171,7 +1165,7 @@ mod tests {
     #[test]
     fn other_backtracking_control_verbs_error() {
         let tree = Expr::parse_tree(r"(*ACCEPT)").unwrap();
-        let info = analyze(&tree, true).unwrap();
+        let info = analyze(&tree, true, false).unwrap();
         assert_compile_error(
             compile(
                 &info,
@@ -1185,7 +1179,7 @@ mod tests {
         );
 
         let tree = Expr::parse_tree(r"(*COMMIT)").unwrap();
-        let info = analyze(&tree, true).unwrap();
+        let info = analyze(&tree, true, false).unwrap();
         assert_compile_error(
             compile(
                 &info,
@@ -1199,7 +1193,7 @@ mod tests {
         );
 
         let tree = Expr::parse_tree(r"(*SKIP)").unwrap();
-        let info = analyze(&tree, true).unwrap();
+        let info = analyze(&tree, true, false).unwrap();
         assert_compile_error(
             compile(
                 &info,
@@ -1213,7 +1207,7 @@ mod tests {
         );
 
         let tree = Expr::parse_tree(r"(*PRUNE)").unwrap();
-        let info = analyze(&tree, true).unwrap();
+        let info = analyze(&tree, true, false).unwrap();
         assert_compile_error(
             compile(
                 &info,
@@ -1232,7 +1226,7 @@ mod tests {
     fn variable_lookbehind_requires_feature() {
         // Without the feature flag, variable-length lookbehinds should error
         let tree = Expr::parse_tree(r"(?<=ab+)x").unwrap();
-        let info = analyze(&tree, true).unwrap();
+        let info = analyze(&tree, true, false).unwrap();
         assert_compile_error(
             compile(
                 &info,
@@ -1246,7 +1240,7 @@ mod tests {
         );
 
         let tree = Expr::parse_tree(r"(?<=\bab+)x").unwrap();
-        let info = analyze(&tree, true).unwrap();
+        let info = analyze(&tree, true, false).unwrap();
         assert_compile_error(
             compile(
                 &info,
@@ -1346,7 +1340,7 @@ mod tests {
         // currently hard variable lookbehinds are unsupported.
         // the backref to a capture group inside the variable lookbehind makes the capture group hard
         let tree = Expr::parse_tree(r"(?<=a(b+))\1").unwrap();
-        let info = analyze(&tree, false).unwrap();
+        let info = analyze(&tree, false, false).unwrap();
         assert_compile_error(
             compile(
                 &info,
@@ -1375,7 +1369,7 @@ mod tests {
     fn absent_operators_error() {
         // Test that absent expression returns feature not supported
         let tree = Expr::parse_tree(r"(?~|abc|\d*)").unwrap();
-        let info = analyze(&tree, true).unwrap();
+        let info = analyze(&tree, true, false).unwrap();
         assert_compile_error(
             compile(
                 &info,
@@ -1390,7 +1384,7 @@ mod tests {
 
         // Test that absent stopper returns feature not supported
         let tree = Expr::parse_tree(r"(?~|abc)").unwrap();
-        let info = analyze(&tree, true).unwrap();
+        let info = analyze(&tree, true, false).unwrap();
         assert_compile_error(
             compile(
                 &info,
@@ -1405,7 +1399,7 @@ mod tests {
 
         // Test that range clear returns feature not supported
         let tree = Expr::parse_tree(r"(?~|)").unwrap();
-        let info = analyze(&tree, true).unwrap();
+        let info = analyze(&tree, true, false).unwrap();
         assert_compile_error(
             compile(
                 &info,
@@ -1480,7 +1474,7 @@ mod tests {
 
     fn compile_prog(re: &str) -> Vec<Insn> {
         let tree = Expr::parse_tree(re).unwrap();
-        let info = analyze(&tree, true).unwrap();
+        let info = analyze(&tree, true, false).unwrap();
         let prog = compile(
             &info,
             CompileOptions {

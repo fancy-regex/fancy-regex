@@ -768,13 +768,13 @@ impl Regex {
             // with a fixup of the capture groups
             optimize(&mut tree)
         };
-        let info = analyze(&tree, requires_capture_group_fixup)?;
+        let info = analyze(&tree, requires_capture_group_fixup, find_not_empty)?;
 
         if find_not_empty && info.const_size && info.min_size == 0 {
             return Err(CompileError::PatternCanNeverMatch.into());
         }
 
-        if !info.hard && !find_not_empty {
+        if !info.hard {
             // easy case, wrap regex
 
             // we do our own to_str because escapes are different
@@ -798,7 +798,6 @@ impl Regex {
             CompileOptions {
                 anchored: can_compile_as_anchored(&tree.expr),
                 contains_subroutines: tree.contains_subroutines,
-                hard_context: find_not_empty,
             },
         )?;
         Ok(Regex {

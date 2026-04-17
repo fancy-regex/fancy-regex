@@ -89,13 +89,12 @@ fn main() {
             let re = args.next().expect("expected regexp argument");
             let tree = Expr::parse_tree(&re).unwrap();
             let text = args.next().expect("expected text argument");
-            let a = analyze(&tree, false).unwrap();
+            let a = analyze(&tree, false, false).unwrap();
             let p = compile(
                 &a,
                 CompileOptions {
                     anchored: true,
                     contains_subroutines: tree.contains_subroutines,
-                    hard_context: false,
                 },
             )
             .unwrap();
@@ -138,7 +137,7 @@ fn graph(re: &str, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
 fn show_analysis(re: &str, writer: &mut Formatter<'_>) -> Result {
     let mut tree = Expr::parse_tree(&re).unwrap();
     let requires_capture_group_fixup = optimize(&mut tree);
-    let a = analyze(&tree, requires_capture_group_fixup);
+    let a = analyze(&tree, requires_capture_group_fixup, false);
     writeln!(writer, "{:#?}", a)
 }
 
@@ -153,13 +152,13 @@ fn prog(re: &str) -> Prog {
     // which means that "toy" behaves differently to tests etc.
     let mut tree = Expr::parse_tree(re).expect("Expected parsing regex to work");
     let requires_capture_group_fixup = optimize(&mut tree);
-    let result = analyze(&tree, requires_capture_group_fixup).expect("Expected analyze to succeed");
+    let result =
+        analyze(&tree, requires_capture_group_fixup, false).expect("Expected analyze to succeed");
     compile(
         &result,
         CompileOptions {
             anchored: can_compile_as_anchored(&tree.expr),
             contains_subroutines: tree.contains_subroutines,
-            hard_context: false,
         },
     )
     .expect("Expected compile to succeed")
