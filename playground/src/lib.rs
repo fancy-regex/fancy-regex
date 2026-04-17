@@ -373,11 +373,19 @@ fn info_to_tree_node<'a>(
         Expr::ContinueFromPreviousMatchEnd => {
             ("ContinueFromPreviousMatchEnd".to_string(), None, None)
         }
-        Expr::BackrefExistsCondition { group, relative_recursion_level: _ } => (
-            "BackrefExistsCondition".to_string(),
-            Some(format!("{}", group)),
-            None,
-        ),
+        Expr::BackrefExistsCondition { group, relative_recursion_level } => {
+            let relative_level = if let Some(relative_recursion_level) = relative_recursion_level {
+                format!(" level={}", relative_recursion_level)
+            } else {
+                "".to_string()
+            };
+            let summary = if let Some(name) = group_names.get(group) {
+                Some(format!("({}){}", name, relative_level))
+            } else {
+                Some(format!("{}{}", group, relative_level))
+            };
+            ("BackrefExistsCondition".to_string(), summary, None)
+        },
         Expr::Conditional { .. } => ("Conditional".to_string(), None, None),
         Expr::SubroutineCall(group) => (
             "SubroutineCall".to_string(),
@@ -637,6 +645,13 @@ mod tests {
         let node = parse_and_analyze(r"a|b|c");
         assert_eq!(node.kind, "Alt");
         assert_eq!(node.summary.as_deref(), Some("(3)"));
+    }
+
+    #[test]
+    fn test_info_to_tree_node_empty() {
+        let node = parse_and_analyze(r"");
+        assert_eq!(node.kind, "Empty");
+        assert_eq!(node.summary, None);
     }
 
     #[test]
