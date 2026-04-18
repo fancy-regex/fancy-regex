@@ -38,6 +38,7 @@ class FancyRegexPlayground {
                 ignoreWhitespace: document.getElementById('flag-ignore-whitespace'),
                 onigurumaMode: document.getElementById('flag-oniguruma-mode'),
                 findNotEmpty: document.getElementById('flag-find-not-empty'),
+                ignoreNumberedGroups: document.getElementById('flag-ignore-numbered-groups'),
             }
         };
 
@@ -75,6 +76,7 @@ class FancyRegexPlayground {
             unicode: true,
             oniguruma_mode: this.elements.flags.onigurumaMode.checked,
             find_not_empty: this.elements.flags.findNotEmpty.checked,
+            ignore_numbered_groups_when_named_groups_exist: this.elements.flags.ignoreNumberedGroups.checked,
         };
     }
 
