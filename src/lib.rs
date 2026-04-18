@@ -1734,13 +1734,12 @@ pub enum Expr {
     Absent(Absent),
     /// Abstract Syntax Tree node - will be resolved into an Expr before analysis.
     /// Contains the position in the pattern where the node was parsed from
-    #[allow(private_interfaces)]
     AstNode(AstNode, usize),
 }
 
 /// Target of a backreference or subroutine call
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub(crate) enum CaptureGroupTarget {
+pub enum CaptureGroupTarget {
     /// Direct numbered reference
     ByNumber(usize),
 
@@ -1753,7 +1752,7 @@ pub(crate) enum CaptureGroupTarget {
 
 /// Abstract Syntax Tree node - will be resolved into an Expr before analysis
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub(crate) enum AstNode {
+pub enum AstNode {
     /// Group with optional name - name is only present if explicitly specified in pattern
     AstGroup {
         /// Optional name of the capture group, present only when explicitly named in the pattern
