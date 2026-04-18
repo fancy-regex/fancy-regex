@@ -17,8 +17,10 @@ with the exception that 0.x versions can break between minor versions.
 - Add support for subroutine calls (including recursion up to 20 levels deep, matching Oniguruma behavior) `\g<1>` (#230)
 - Add support for Oniguruma's absent repeater `(?~abc)` (#233)
 - Add support for ignoring empty matches (#240)
+- Add support for treating unnamed capture groups as non-capturing when named groups exist (#241)
 ### Changed
 - `RegexBuilder` can now build multiple patterns with the same options (#213)
+- Parsing of capture group names is now more lenient (#241)
 ### Fixed
 - Fixed bug with parsing nested character classes containing unescaped `]` (#211)
 
