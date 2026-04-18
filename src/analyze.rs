@@ -422,14 +422,42 @@ impl<'a> Analyzer<'a> {
             }
             Expr::AstNode(ref astnode, ix) => {
                 // An unresolved AstNode means the resolver couldn't find the target (e.g. a
-                // subroutine call to an unknown name). Extract the name for the error message.
-                let (name, pos) = match astnode {
-                    AstNode::SubroutineCall(CaptureGroupTarget::ByName(name)) => (name.clone(), ix),
-                    _ => ("unknown".to_string(), ix),
-                };
-                return Err(Error::CompileError(Box::new(
-                    CompileError::SubroutineCallTargetNotFound(name, pos),
-                )));
+                // subroutine call to an unknown name). Match each SubroutineCall variant to
+                // produce an accurate error message; any other AstNode variant is an internal
+                // error and gets a distinct UnresolvedAstNode error.
+                match astnode {
+                    AstNode::SubroutineCall(CaptureGroupTarget::ByName(name)) => {
+                        return Err(Error::CompileError(Box::new(
+                            CompileError::SubroutineCallTargetNotFound(
+                                format!("named group '{}'", name),
+                                ix,
+                            ),
+                        )));
+                    }
+                    AstNode::SubroutineCall(CaptureGroupTarget::ByNumber(n)) => {
+                        return Err(Error::CompileError(Box::new(
+                            CompileError::SubroutineCallTargetNotFound(
+                                format!("group number {}", n),
+                                ix,
+                            ),
+                        )));
+                    }
+                    AstNode::SubroutineCall(CaptureGroupTarget::Relative(n)) => {
+                        return Err(Error::CompileError(Box::new(
+                            CompileError::SubroutineCallTargetNotFound(
+                                format!("relative group {}{}", if *n >= 0 { "+" } else { "" }, n),
+                                ix,
+                            ),
+                        )));
+                    }
+                    AstNode::AstGroup { .. }
+                    | AstNode::Backref { .. }
+                    | AstNode::BackrefExistsCondition { .. } => {
+                        return Err(Error::CompileError(Box::new(
+                            CompileError::UnresolvedAstNode(ix, format!("{:?}", astnode)),
+                        )));
+                    }
+                }
             }
             Expr::BackrefWithRelativeRecursionLevel { .. } => {
                 return Err(Error::CompileError(Box::new(
@@ -946,7 +974,7 @@ mod tests {
         // Should get the unresolved subroutine call error, not an invalid backref error
         assert_compile_error(
             result,
-            |e| matches!(e, CompileError::SubroutineCallTargetNotFound(s, _) if s == "no_exist"),
+            |e| matches!(e, CompileError::SubroutineCallTargetNotFound(s, _) if s.contains("no_exist")),
         );
     }
 
@@ -1058,6 +1086,96 @@ mod tests {
         assert_compile_error(analyze(tree, AnalyzeContext::default()), |e| {
             matches!(e, CompileError::SubroutineCallTargetNotFound(_, _))
         });
+    }
+
+    #[test]
+    fn subroutine_call_undefined_by_name_message() {
+        let tree = &Expr::parse_tree(r"\g<wrong_name>(?<different_name>a)").unwrap();
+        assert_compile_error(
+            analyze(tree, AnalyzeContext::default()),
+            |e| matches!(e, CompileError::SubroutineCallTargetNotFound(s, _) if s.contains("wrong_name")),
+        );
+    }
+
+    #[test]
+    fn subroutine_call_undefined_by_number() {
+        use crate::parse::NamedGroups;
+        use bit_set::BitSet;
+        // ByNumber is always resolved by the parser so we must construct the ExprTree directly
+        let tree = ExprTree {
+            expr: Expr::AstNode(
+                crate::AstNode::SubroutineCall(crate::CaptureGroupTarget::ByNumber(99)),
+                0,
+            ),
+            backrefs: BitSet::new(),
+            named_groups: NamedGroups::default(),
+            numeric_capture_group_references: false,
+            contains_subroutines: true,
+            self_recursive: false,
+            total_groups: 0,
+            out_of_range_backref: None,
+            numbered_groups_ignored: false,
+        };
+        assert_compile_error(
+            analyze(&tree, AnalyzeContext::default()),
+            |e| matches!(e, CompileError::SubroutineCallTargetNotFound(s, _) if s.contains("99")),
+        );
+    }
+
+    #[test]
+    fn subroutine_call_undefined_by_relative() {
+        use crate::parse::NamedGroups;
+        use bit_set::BitSet;
+        // Relative can only fail to resolve on integer overflow (essentially never),
+        // so we must construct the ExprTree directly
+        let tree = ExprTree {
+            expr: Expr::AstNode(
+                crate::AstNode::SubroutineCall(crate::CaptureGroupTarget::Relative(-1)),
+                0,
+            ),
+            backrefs: BitSet::new(),
+            named_groups: NamedGroups::default(),
+            numeric_capture_group_references: false,
+            contains_subroutines: true,
+            self_recursive: false,
+            total_groups: 0,
+            out_of_range_backref: None,
+            numbered_groups_ignored: false,
+        };
+        assert_compile_error(
+            analyze(&tree, AnalyzeContext::default()),
+            |e| matches!(e, CompileError::SubroutineCallTargetNotFound(s, _) if s.contains("-1")),
+        );
+    }
+
+    #[test]
+    fn unresolved_ast_node_error() {
+        use crate::parse::NamedGroups;
+        use bit_set::BitSet;
+        // Construct a tree with an unresolved Backref AstNode (not a SubroutineCall),
+        // which should produce an UnresolvedAstNode error containing the node's debug representation
+        let tree = ExprTree {
+            expr: Expr::AstNode(
+                crate::AstNode::Backref {
+                    target: crate::CaptureGroupTarget::ByNumber(1),
+                    casei: false,
+                    relative_recursion_level: None,
+                },
+                0,
+            ),
+            backrefs: BitSet::new(),
+            named_groups: NamedGroups::default(),
+            numeric_capture_group_references: false,
+            contains_subroutines: false,
+            self_recursive: false,
+            total_groups: 0,
+            out_of_range_backref: None,
+            numbered_groups_ignored: false,
+        };
+        assert_compile_error(
+            analyze(&tree, AnalyzeContext::default()),
+            |e| matches!(e, CompileError::UnresolvedAstNode(_, s) if s.contains("Backref")),
+        );
     }
 
     #[test]

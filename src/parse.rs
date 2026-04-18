@@ -916,7 +916,6 @@ impl<'a> Parser<'a> {
             (Some(LookBehindNeg), 3)
         } else if self.re[ix..].starts_with("?<") || self.re[ix..].starts_with("?'") {
             // Named capture group using Oniguruma syntax: (?<name>...) or (?'name'...)
-            //self.curr_group += 1;
             let (open, close) = if self.re[ix..].starts_with("?<") {
                 ("<", ">")
             } else {
@@ -931,7 +930,6 @@ impl<'a> Parser<'a> {
             }
         } else if self.re[ix..].starts_with("?P<") {
             // Named capture group using Python syntax: (?P<name>...)
-            //self.curr_group += 1; // this is a capture group
             if let Some((name, skip)) = parse_unrestricted_name(&self.re[ix + 2..], "<", ">") {
                 group_name = Some(name.to_string());
                 self.has_named_groups = true;
@@ -955,7 +953,6 @@ impl<'a> Parser<'a> {
         } else if self.re[ix..].starts_with('?') {
             return self.parse_flags(ix, depth);
         } else {
-            //self.curr_group += 1; // this is a capture group
             (None, 0)
         };
         let ix = ix + skip;
@@ -1424,9 +1421,9 @@ impl Resolver {
                     // TODO: if multiple groups with the same name, ideally we would
                     // return an Expr::Alt with all the backrefs to be compatible with Oniguruma.
                     // but it is unclear how the priorities should work, it may need to be a separate VM instruction
-                    // so for now, we will emit a FeatureNotSupported CompileError
-                    // but as this is a parser, we will emit a new AstNode representing a multigroup backref and return the error
-                    // from the analyzer
+                    // so for now, we could emit a FeatureNotSupported CompileError
+                    // but as this is a parser, we could emit a new AstNode representing a multigroup backref.
+                    // Then when the analyzer sees it, it could return the error
                     if let Some(resolved_group) = self.resolve_target(target, Some(*ix)) {
                         if resolved_group > self.total_groups {
                             // Don't insert into the BitSet: an out-of-range number could allocate
@@ -3456,20 +3453,6 @@ mod tests {
         assert!(!tree.self_recursive);
         assert!(!tree.numeric_capture_group_references);
     }
-
-    /*#[test]
-    fn named_subroutine_not_defined_later() {
-        assert_eq!(
-            p(r"\g<wrong_name>(?<different_name>a)"),
-            Expr::Concat(vec![
-                Expr::UnresolvedNamedSubroutineCall {
-                    name: "wrong_name".to_string(),
-                    ix: 2
-                },
-                make_group(make_literal("a")),
-            ])
-        );
-    }*/
 
     // found by cargo fuzz, then minimized
     #[test]
