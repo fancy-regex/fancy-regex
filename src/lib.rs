@@ -840,15 +840,7 @@ impl Regex {
     pub fn is_match(&self, text: &str) -> Result<bool> {
         match &self.inner {
             RegexImpl::Wrap { inner, .. } => Ok(inner.is_match(text)),
-            RegexImpl::Fancy { prog, options, .. } => {
-                if options.find_not_empty {
-                    // find_not_empty requires backtracking to find a non-empty match;
-                    // delegate to find() which sets the OPTION_FIND_NOT_EMPTY flag on the VM.
-                    return self.find(text).map(|m| m.is_some());
-                }
-                let result = vm::run(prog, text, 0, 0, options)?;
-                Ok(result.is_some())
-            }
+            RegexImpl::Fancy { .. } => self.find(text).map(|m| m.is_some()),
         }
     }
 
