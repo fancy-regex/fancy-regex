@@ -201,6 +201,35 @@ impl<'a> Parser<'a> {
         Ok((ix, child))
     }
 
+    /// Advance past a quantifier (and optional non-greedy / possessive
+    /// modifiers) immediately following the current position. Used when the
+    /// preceding token was a genuinely-empty group in Oniguruma mode, which
+    /// Oniguruma accepts as zero-width regardless of the trailing quantifier.
+    fn skip_empty_group_quantifier(&self, ix: usize) -> usize {
+        let bytes = self.re.as_bytes();
+        let Some(&b) = bytes.get(ix) else {
+            return ix;
+        };
+        let after_main = match b {
+            b'*' | b'+' | b'?' => ix + 1,
+            b'{' => match self.parse_repeat(ix) {
+                Ok((next, _, _)) => next,
+                Err(_) => return ix,
+            },
+            _ => return ix,
+        };
+        let after_ng = if bytes.get(after_main) == Some(&b'?') {
+            after_main + 1
+        } else {
+            after_main
+        };
+        if bytes.get(after_ng) == Some(&b'+') {
+            after_ng + 1
+        } else {
+            after_ng
+        }
+    }
+
     fn is_repeatable(&self, child: &Expr) -> bool {
         match child {
             Expr::LookAround(_, _) => false,
@@ -1054,6 +1083,14 @@ impl<'a> Parser<'a> {
                         ));
                     };
                     self.flags = oldflags;
+                    // In Oniguruma mode, `(?:)` followed by a quantifier is a
+                    // zero-width no-op that Oniguruma accepts but that our
+                    // delegate regex engine rejects as `RepetitionMissing`.
+                    // Swallow the trailing quantifier here so the expression
+                    // collapses to plain Empty.
+                    if child == Expr::Empty && self.flag(FLAG_ONIGURUMA_MODE) {
+                        return Ok((self.skip_empty_group_quantifier(ix + 1), child));
+                    }
                     return Ok((ix + 1, child));
                 }
                 _ => return Err(unknown_flag(self.re, start, ix)),
