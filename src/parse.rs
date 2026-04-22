@@ -502,7 +502,9 @@ impl<'a> Parser<'a> {
             // \Z matches at the end of the string, or before any number of newlines at the end
             (
                 end,
-                Expr::Assertion(Assertion::EndTextIgnoreTrailingNewlines),
+                Expr::Assertion(Assertion::EndTextIgnoreTrailingNewlines {
+                    crlf: self.flag(FLAG_CRLF),
+                }),
             )
         } else if (b == b'b' || b == b'B') && !in_class {
             let check_pos = self.optional_whitespace(end)?;
@@ -1562,7 +1564,7 @@ mod tests {
     fn end_text_before_empty_lines() {
         assert_eq!(
             p("\\Z"),
-            Expr::Assertion(Assertion::EndTextIgnoreTrailingNewlines)
+            Expr::Assertion(Assertion::EndTextIgnoreTrailingNewlines { crlf: false })
         );
     }
 

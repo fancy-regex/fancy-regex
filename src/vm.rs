@@ -710,11 +710,14 @@ pub(crate) fn run(
                     if !match assertion {
                         Assertion::StartText => look_matcher.is_start(s.as_bytes(), ix),
                         Assertion::EndText => look_matcher.is_end(s.as_bytes(), ix),
-                        Assertion::EndTextIgnoreTrailingNewlines => {
+                        Assertion::EndTextIgnoreTrailingNewlines { crlf } => {
                             let bytes = s.as_bytes();
                             if ix == bytes.len() {
                                 // At the end of string
                                 true
+                            } else if crlf {
+                                // In CRLF mode, trailing \r\n pairs and bare \n are ignored
+                                bytes[ix..].iter().all(|&b| b == b'\n' || b == b'\r')
                             } else {
                                 // Check if all remaining bytes are newlines
                                 bytes[ix..].iter().all(|&b| b == b'\n')
