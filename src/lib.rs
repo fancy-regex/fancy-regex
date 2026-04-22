@@ -928,6 +928,9 @@ impl Regex {
         pos: usize,
         option_flags: u32,
     ) -> Result<Option<Match<'t>>> {
+        if pos > text.len() {
+            return Ok(None);
+        }
         match &self.inner {
             RegexImpl::Wrap {
                 inner,
@@ -1057,6 +1060,9 @@ impl Regex {
         pos: usize,
         option_flags: u32,
     ) -> Result<Option<Captures<'t>>> {
+        if pos > text.len() {
+            return Ok(None);
+        }
         let named_groups = self.named_groups.clone();
         match &self.inner {
             RegexImpl::Wrap {
