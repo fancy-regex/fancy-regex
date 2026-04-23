@@ -784,11 +784,7 @@ mod tests {
 
     #[test]
     fn test_info_to_tree_node_define_group() {
-        let tree = fancy_regex::Expr::parse_tree(r"(?(DEFINE)(a)(b))").unwrap();
-        let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-        let group_names = std::collections::HashMap::new();
-
-        let node = info_to_tree_node(&info, &group_names);
+        let node = parse_and_analyze(r"(?(DEFINE)(a)(b))");
 
         assert_eq!(node.kind, "DefineGroup");
     }
