@@ -135,6 +135,44 @@ fn check_oniguruma_mode_changes_wordbounds() {
 }
 
 #[test]
+fn empty_noncapturing_group_with_quantifier_oniguruma_mode() {
+    // Oniguruma silently accepts quantifiers on empty non-capturing groups.
+    // These patterns should compile and match any input (they are zero-width).
+    let patterns = ["(?:)*", "(?:)+", "(?:)?", "(?:){3}", "(?:)*?", "(?:)++"];
+    for pat in patterns {
+        let regex = build_regex(RegexBuilder::new(pat).oniguruma_mode(true));
+        assert!(
+            regex.is_match("anything").unwrap(),
+            "Expected '{}' to match",
+            pat
+        );
+        assert!(
+            regex.is_match("").unwrap(),
+            "Expected '{}' to match empty",
+            pat
+        );
+    }
+}
+
+#[test]
+fn empty_noncapturing_group_with_quantifier_default_mode_errors() {
+    // In default mode, quantifiers on empty non-capturing groups should fail.
+    let result = RegexBuilder::new("(?:)*").build();
+    assert!(result.is_err(), "Expected (?:)* to fail in default mode");
+}
+
+#[test]
+fn markdown_fenced_code_block_empty_group_oniguruma_mode() {
+    // Repro of a real-world pattern that syntect produces for markdown
+    // fenced-code-block closing, where a backreference substitution
+    // expands to the empty string.
+    let pattern =
+        "^(?x:\n  [ \\t]*\n  (\n    ```\n    (?:(?:`)*|(?:)*)\n  )\n  (\\s*(?m:$)\\n?)\n)";
+    let regex = build_regex(RegexBuilder::new(pattern).oniguruma_mode(true));
+    assert!(regex.is_match("   ```\n").unwrap());
+}
+
+#[test]
 fn check_crlf_option() {
     // With CRLF mode and multi-line enabled, ^ and $ should treat \r\n as a single line ending
     let regex = build_regex(RegexBuilder::new(r"^test$").multi_line(true).crlf(true));

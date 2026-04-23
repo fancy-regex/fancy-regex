@@ -444,6 +444,42 @@ fn captures_from_pos() {
 }
 
 #[test]
+fn captures_from_pos_past_end_wrap() {
+    let re = fancy_regex::RegexBuilder::new(r"^(<{7})(?:\s+(\S.*?))?$\n?")
+        .oniguruma_mode(true)
+        .build()
+        .unwrap();
+    let result = re.captures_from_pos("ab", 12);
+    assert!(
+        matches!(result, Ok(None)),
+        "expected Ok(None) for pos past end, got {result:?}"
+    );
+}
+
+#[test]
+fn captures_from_pos_past_end_fancy() {
+    let re = fancy_regex::RegexBuilder::new(r"(?<=a)b")
+        .oniguruma_mode(true)
+        .build()
+        .unwrap();
+    let result = re.captures_from_pos("ab", 12);
+    assert!(
+        matches!(result, Ok(None)),
+        "expected Ok(None) for pos past end, got {result:?}"
+    );
+}
+
+#[test]
+fn captures_from_pos_at_end_still_runs() {
+    let re = fancy_regex::RegexBuilder::new("$")
+        .oniguruma_mode(true)
+        .build()
+        .unwrap();
+    let result = re.captures_from_pos("ab", 2).unwrap();
+    assert!(result.is_some(), "pattern `$` must match at end-of-text");
+}
+
+#[test]
 fn captures_from_pos_looking_left() {
     let regex = common::regex(r"\b(\w)");
 
@@ -692,6 +728,33 @@ fn expander_errors() {
     assert!(matches!(
         exp.check("${xx}", &with_names),
         Err(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidGroupNameBackref(ref name) if name == "xx")));
+}
+
+#[test]
+fn absent_repeater_hard_captures_opening_fence() {
+    // Matches a markdown code fence where the opening backticks are captured in group 1,
+    // then the body is matched while those backticks are absent, then the same backticks close.
+    // Pattern: (`{3,})(?~\1)\1  - capture 3+ backticks, absent-repeat until those backticks,
+    // then match the same backticks to close.
+    let re = common::regex(r"(`{3,})(?~\1)\1");
+
+    // Three-backtick fence
+    let cap = re.captures("```code```").unwrap().unwrap();
+    assert_match(cap.get(0), "```code```", 0, 10);
+    assert_match(cap.get(1), "```", 0, 3);
+
+    // Four-backtick fence - allows backticks inside
+    let cap = re.captures("````has ``` inside````").unwrap().unwrap();
+    assert_match(cap.get(0), "````has ``` inside````", 0, 22);
+    assert_match(cap.get(1), "````", 0, 4);
+
+    // Three backticks should match the shorter fence and stop at the first ``` occurrence
+    let cap = re
+        .captures("```first``` and ```second```")
+        .unwrap()
+        .unwrap();
+    assert_match(cap.get(0), "```first```", 0, 11);
+    assert_match(cap.get(1), "```", 0, 3);
 }
 
 #[test]

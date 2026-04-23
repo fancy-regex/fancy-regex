@@ -2,7 +2,7 @@ use fancy_regex::internal::{
     FLAG_CASEI, FLAG_DOTNL, FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST, FLAG_IGNORE_SPACE,
     FLAG_MULTI, FLAG_ONIGURUMA_MODE, FLAG_UNICODE,
 };
-use fancy_regex::{Absent, Expr, LookAround, Regex, RegexBuilder};
+use fancy_regex::{Absent, Assertion, Expr, LookAround, Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
@@ -297,7 +297,30 @@ fn info_to_tree_node<'a>(
                 ("Any".to_string(), Some("(no newline)".to_string()), None)
             }
         }
-        Expr::Assertion(_) => ("Assertion".to_string(), None, None),
+        Expr::Assertion(assertion) => {
+            use Assertion::*;
+            let (name, summary): (&str, Option<String>) = match assertion {
+                StartText => ("StartText", None),
+                EndText => ("EndText", None),
+                EndTextIgnoreTrailingNewlines { crlf: true } => {
+                    ("EndTextIgnoreTrailingNewlines", Some("(crlf)".to_string()))
+                }
+                EndTextIgnoreTrailingNewlines { crlf: false } => {
+                    ("EndTextIgnoreTrailingNewlines", None)
+                }
+                StartLine { crlf: true } => ("StartLine", Some("(crlf)".to_string())),
+                StartLine { crlf: false } => ("StartLine", None),
+                EndLine { crlf: true } => ("EndLine", Some("(crlf)".to_string())),
+                EndLine { crlf: false } => ("EndLine", None),
+                LeftWordBoundary => ("LeftWordBoundary", None),
+                LeftWordHalfBoundary => ("LeftWordHalfBoundary", None),
+                RightWordBoundary => ("RightWordBoundary", None),
+                RightWordHalfBoundary => ("RightWordHalfBoundary", None),
+                WordBoundary => ("WordBoundary", None),
+                NotWordBoundary => ("NotWordBoundary", None),
+            };
+            (name.to_string(), summary, None)
+        }
         Expr::GeneralNewline { .. } => {
             ("GeneralNewline".to_string(), Some("\\R".to_string()), None)
         }
@@ -414,6 +437,7 @@ fn info_to_tree_node<'a>(
                 Clear => ("AbsentClear".to_string(), None, None),
             }
         }
+        Expr::DefineGroup { .. } => ("DefineGroup".to_string(), None, None),
         Expr::AstNode { .. } => unreachable!(
             "Any AstNode left after the parser's resolver stage causes an error upon analysis"
         ),
@@ -750,5 +774,43 @@ mod tests {
         let node = parse_and_analyze(r"(?s).");
         assert_eq!(node.kind, "Any");
         assert_eq!(node.summary.as_deref(), None);
+    }
+
+    #[test]
+    fn test_info_to_tree_node_assertion() {
+        let test_cases: Vec<(&str, &str, Option<&str>)> = vec![
+            ("^", "StartText", None),
+            ("$", "EndText", None),
+            (r"\Z", "EndTextIgnoreTrailingNewlines", None),
+            (r"(?R)\Z", "EndTextIgnoreTrailingNewlines", Some("(crlf)")),
+            (r"(?m:^)", "StartLine", None),
+            (r"(?mR:^)", "StartLine", Some("(crlf)")),
+            (r"(?m:$)", "EndLine", None),
+            (r"(?mR:$)", "EndLine", Some("(crlf)")),
+            (r"\b{start}", "LeftWordBoundary", None),
+            (r"\b{start-half}", "LeftWordHalfBoundary", None),
+            (r"\b{end}", "RightWordBoundary", None),
+            (r"\b{end-half}", "RightWordHalfBoundary", None),
+            (r"\b", "WordBoundary", None),
+            (r"\B", "NotWordBoundary", None),
+        ];
+
+        for (pattern, expected_kind, expected_summary) in test_cases {
+            let node = parse_and_analyze(pattern);
+            assert_eq!(node.kind, expected_kind, "Pattern: {}", pattern);
+            assert_eq!(
+                node.summary.as_deref(),
+                expected_summary,
+                "Pattern: {}",
+                pattern
+            );
+        }
+    }
+
+    #[test]
+    fn test_info_to_tree_node_define_group() {
+        let node = parse_and_analyze(r"(?(DEFINE)(a)(b))");
+
+        assert_eq!(node.kind, "DefineGroup");
     }
 }
