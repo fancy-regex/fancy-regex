@@ -444,6 +444,42 @@ fn captures_from_pos() {
 }
 
 #[test]
+fn captures_from_pos_past_end_wrap() {
+    let re = fancy_regex::RegexBuilder::new(r"^(<{7})(?:\s+(\S.*?))?$\n?")
+        .oniguruma_mode(true)
+        .build()
+        .unwrap();
+    let result = re.captures_from_pos("ab", 12);
+    assert!(
+        matches!(result, Ok(None)),
+        "expected Ok(None) for pos past end, got {result:?}"
+    );
+}
+
+#[test]
+fn captures_from_pos_past_end_fancy() {
+    let re = fancy_regex::RegexBuilder::new(r"(?<=a)b")
+        .oniguruma_mode(true)
+        .build()
+        .unwrap();
+    let result = re.captures_from_pos("ab", 12);
+    assert!(
+        matches!(result, Ok(None)),
+        "expected Ok(None) for pos past end, got {result:?}"
+    );
+}
+
+#[test]
+fn captures_from_pos_at_end_still_runs() {
+    let re = fancy_regex::RegexBuilder::new("$")
+        .oniguruma_mode(true)
+        .build()
+        .unwrap();
+    let result = re.captures_from_pos("ab", 2).unwrap();
+    assert!(result.is_some(), "pattern `$` must match at end-of-text");
+}
+
+#[test]
 fn captures_from_pos_looking_left() {
     let regex = common::regex(r"\b(\w)");
 
