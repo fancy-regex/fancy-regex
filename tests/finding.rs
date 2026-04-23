@@ -1,6 +1,7 @@
 mod common;
 
 use fancy_regex::{Match, RegexBuilder};
+use matches::assert_matches;
 use std::ops::Range;
 
 #[test]
@@ -1017,10 +1018,7 @@ fn find_from_pos_past_end_wrap() {
         .build()
         .unwrap();
     let result = re.find_from_pos("ab", 12);
-    assert!(
-        matches!(result, Ok(None)),
-        "expected Ok(None) for pos past end, got {result:?}"
-    );
+    assert_matches!(result, Ok(None));
 }
 
 #[test]
@@ -1030,10 +1028,7 @@ fn find_from_pos_past_end_fancy() {
         .build()
         .unwrap();
     let result = re.find_from_pos("ab", 12);
-    assert!(
-        matches!(result, Ok(None)),
-        "expected Ok(None) for pos past end, got {result:?}"
-    );
+    assert_matches!(result, Ok(None));
 }
 
 #[test]

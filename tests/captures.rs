@@ -1,5 +1,6 @@
 use fancy_regex::{Captures, CompileError, Error, Expander, Match, Result};
 use std::borrow::Cow;
+use matches::assert_matches;
 use std::ops::Index;
 use std::ops::Range;
 
@@ -450,10 +451,7 @@ fn captures_from_pos_past_end_wrap() {
         .build()
         .unwrap();
     let result = re.captures_from_pos("ab", 12);
-    assert!(
-        matches!(result, Ok(None)),
-        "expected Ok(None) for pos past end, got {result:?}"
-    );
+    assert_matches!(result, Ok(None));
 }
 
 #[test]
@@ -463,10 +461,7 @@ fn captures_from_pos_past_end_fancy() {
         .build()
         .unwrap();
     let result = re.captures_from_pos("ab", 12);
-    assert!(
-        matches!(result, Ok(None)),
-        "expected Ok(None) for pos past end, got {result:?}"
-    );
+    assert_matches!(result, Ok(None));
 }
 
 #[test]
