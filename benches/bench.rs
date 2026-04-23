@@ -25,8 +25,8 @@ use criterion::Criterion;
 use std::time::Duration;
 
 use fancy_regex::internal::{analyze, compile, run_default, AnalyzeContext, CompileOptions};
-use fancy_regex::Expr;
 use fancy_regex::seek_pattern_is_useful;
+use fancy_regex::Expr;
 use regex::Regex;
 
 fn parse_lifetime_re(c: &mut Criterion) {
@@ -270,7 +270,11 @@ fn bench_backref_in_long_haystack(c: &mut Criterion, name: &str, seek: bool, wit
         &a,
         CompileOptions {
             contains_subroutines: tree.contains_subroutines,
-            seek_filter: if seek { Some(seek_pattern_is_useful) } else { None },
+            seek_filter: if seek {
+                Some(seek_pattern_is_useful)
+            } else {
+                None
+            },
             ..CompileOptions::default()
         },
     )
