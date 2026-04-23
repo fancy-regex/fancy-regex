@@ -1,7 +1,7 @@
 use fancy_regex::internal::{
     FLAG_CASEI, FLAG_DOTNL, FLAG_IGNORE_SPACE, FLAG_MULTI, FLAG_ONIGURUMA_MODE, FLAG_UNICODE,
 };
-use fancy_regex::{Absent, Expr, LookAround, Regex, RegexBuilder};
+use fancy_regex::{Absent, Assertion, Expr, LookAround, Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
@@ -266,14 +266,43 @@ fn info_to_tree_node<'a>(
 ) -> AnalysisTreeNode {
     let (kind, summary, group_info) = match info.expr {
         Expr::Empty => ("Empty".to_string(), None, None),
-        Expr::Any { newline } => {
+        Expr::Any { newline, crlf } => {
             if *newline {
                 ("Any".to_string(), None, None)
+            } else if *crlf {
+                (
+                    "Any".to_string(),
+                    Some("(no newline or carriage return)".to_string()),
+                    None,
+                )
             } else {
                 ("Any".to_string(), Some("(no newline)".to_string()), None)
             }
         }
-        Expr::Assertion(_) => ("Assertion".to_string(), None, None),
+        Expr::Assertion(assertion) => {
+            use Assertion::*;
+            let (name, summary): (&str, Option<String>) = match assertion {
+                StartText => ("StartText", None),
+                EndText => ("EndText", None),
+                EndTextIgnoreTrailingNewlines { crlf: true } => {
+                    ("EndTextIgnoreTrailingNewlines", Some("(crlf)".to_string()))
+                }
+                EndTextIgnoreTrailingNewlines { crlf: false } => {
+                    ("EndTextIgnoreTrailingNewlines", None)
+                }
+                StartLine { crlf: true } => ("StartLine", Some("(crlf)".to_string())),
+                StartLine { crlf: false } => ("StartLine", None),
+                EndLine { crlf: true } => ("EndLine", Some("(crlf)".to_string())),
+                EndLine { crlf: false } => ("EndLine", None),
+                LeftWordBoundary => ("LeftWordBoundary", None),
+                LeftWordHalfBoundary => ("LeftWordHalfBoundary", None),
+                RightWordBoundary => ("RightWordBoundary", None),
+                RightWordHalfBoundary => ("RightWordHalfBoundary", None),
+                WordBoundary => ("WordBoundary", None),
+                NotWordBoundary => ("NotWordBoundary", None),
+            };
+            (name.to_string(), summary, None)
+        }
         Expr::GeneralNewline { .. } => {
             ("GeneralNewline".to_string(), Some("\\R".to_string()), None)
         }
@@ -440,6 +469,15 @@ pub fn main() {
 mod tests {
     use super::*;
 
+    /// Parse a pattern, analyze it, and convert to an AnalysisTreeNode.
+    /// Builds a group names lookup from the parse tree's named_groups (for patterns with named captures).
+    fn parse_and_analyze(pattern: &str) -> AnalysisTreeNode {
+        let tree = fancy_regex::Expr::parse_tree(pattern).unwrap();
+        let group_names = build_group_names_lookup(&tree.named_groups);
+        let info = fancy_regex::internal::analyze(&tree, false).unwrap();
+        info_to_tree_node(&info, &group_names)
+    }
+
     #[test]
     fn test_escape_delegate_basic() {
         assert_eq!(escape_delegate("abc"), "abc");
@@ -464,11 +502,7 @@ mod tests {
 
     #[test]
     fn test_info_to_tree_node_literal_newline() {
-        let tree = fancy_regex::Expr::parse_tree("test\n").unwrap();
-        let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-        let group_names = std::collections::HashMap::new();
-
-        let node = info_to_tree_node(&info, &group_names);
+        let node = parse_and_analyze("test\n");
 
         assert_eq!(node.kind, "Concat");
         assert_eq!(node.children.len(), 5); // "test\n" as separate literals
@@ -479,11 +513,7 @@ mod tests {
 
     #[test]
     fn test_info_to_tree_node_literal_slash_n() {
-        let tree = fancy_regex::Expr::parse_tree(r"test\n").unwrap();
-        let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-        let group_names = std::collections::HashMap::new();
-
-        let node = info_to_tree_node(&info, &group_names);
+        let node = parse_and_analyze(r"test\n");
 
         assert_eq!(node.kind, "Concat");
         assert_eq!(node.children.len(), 5); // "test\n" as separate literals
@@ -494,14 +524,10 @@ mod tests {
 
     #[test]
     fn test_info_to_tree_node_literal_slash() {
-        let tree = fancy_regex::Expr::parse_tree("test\\\\").unwrap();
-        let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-        let group_names = std::collections::HashMap::new();
-
-        let node = info_to_tree_node(&info, &group_names);
+        let node = parse_and_analyze("test\\\\");
 
         assert_eq!(node.kind, "Concat");
-        assert_eq!(node.children.len(), 5); // "test\n" as separate literals
+        assert_eq!(node.children.len(), 5); // "test\\" as separate literals
         assert_eq!(node.children[0].kind, "Literal");
         assert_eq!(node.children[0].summary.as_deref(), Some("\"t\""));
         assert_eq!(node.children[4].summary.as_deref(), Some("\"\\\\\""));
@@ -510,11 +536,7 @@ mod tests {
     #[test]
     fn test_info_to_tree_node_delegate() {
         // Test that Delegate shows the pattern
-        let tree = fancy_regex::Expr::parse_tree(r"\w").unwrap();
-        let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-        let group_names = std::collections::HashMap::new();
-
-        let node = info_to_tree_node(&info, &group_names);
+        let node = parse_and_analyze(r"\w");
 
         // The root should be a Delegate node
         assert_eq!(node.kind, "Delegate");
@@ -530,14 +552,8 @@ mod tests {
 
     #[test]
     fn test_info_to_tree_node_group_named() {
-        // Test named capture group
-        let tree = fancy_regex::Expr::parse_tree(r"(?<word>\w+)").unwrap();
-        let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-        let group_names = build_group_names_lookup(&tree.named_groups);
+        let node = parse_and_analyze(r"(?<word>\w+)");
 
-        let node = info_to_tree_node(&info, &group_names);
-
-        // Find the Group node (should be a child of root)
         assert_eq!(node.kind, "Group");
         assert!(
             node.summary.as_deref().unwrap_or("").contains("word"),
@@ -548,12 +564,7 @@ mod tests {
 
     #[test]
     fn test_info_to_tree_node_group_unnamed() {
-        // Test unnamed capture group
-        let tree = fancy_regex::Expr::parse_tree(r"(\w+)").unwrap();
-        let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-        let group_names = std::collections::HashMap::new();
-
-        let node = info_to_tree_node(&info, &group_names);
+        let node = parse_and_analyze(r"(\w+)");
 
         assert_eq!(node.kind, "Group");
         assert_eq!(node.group.as_ref().unwrap().index, 1);
@@ -562,15 +573,8 @@ mod tests {
 
     #[test]
     fn test_info_to_tree_node_backref_named() {
-        // Test named backref
-        let tree = fancy_regex::Expr::parse_tree(r"(?<word>\w+)\s+\k<word>").unwrap();
-        let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-        // Build reverse lookup map from named_groups
-        let group_names = build_group_names_lookup(&tree.named_groups);
+        let node = parse_and_analyze(r"(?<word>\w+)\s+\k<word>");
 
-        let node = info_to_tree_node(&info, &group_names);
-
-        // Navigate to find Backref node (it's in Concat children)
         assert_eq!(node.kind, "Concat");
         let backref_node = node
             .children
@@ -590,14 +594,8 @@ mod tests {
 
     #[test]
     fn test_info_to_tree_node_backref_numeric() {
-        // Test numeric backref
-        let tree = fancy_regex::Expr::parse_tree(r"(\w+)\s+\1").unwrap();
-        let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-        let group_names = std::collections::HashMap::new();
+        let node = parse_and_analyze(r"(\w+)\s+\1");
 
-        let node = info_to_tree_node(&info, &group_names);
-
-        // Navigate to find Backref node
         let backref_node = node
             .children
             .iter()
@@ -624,11 +622,7 @@ mod tests {
         ];
 
         for (pattern, expected_summary, expected_suffix) in test_cases {
-            let tree = fancy_regex::Expr::parse_tree(pattern).unwrap();
-            let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-            let group_names = std::collections::HashMap::new();
-
-            let node = info_to_tree_node(&info, &group_names);
+            let node = parse_and_analyze(pattern);
 
             let expected_kind = if expected_suffix.is_empty() {
                 "Repeat".to_string()
@@ -647,23 +641,11 @@ mod tests {
 
     #[test]
     fn test_info_to_tree_node_concat_alt() {
-        // Test Concat and Alt count
-        let tree = fancy_regex::Expr::parse_tree(r"abc").unwrap();
-        let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-        let group_names = std::collections::HashMap::new();
-
-        let node = info_to_tree_node(&info, &group_names);
-
+        let node = parse_and_analyze(r"abc");
         assert_eq!(node.kind, "Concat");
         assert_eq!(node.summary.as_deref(), Some("(3)"));
 
-        // Test Alt
-        let tree = fancy_regex::Expr::parse_tree(r"a|b|c").unwrap();
-        let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-        let group_names = std::collections::HashMap::new();
-
-        let node = info_to_tree_node(&info, &group_names);
-
+        let node = parse_and_analyze(r"a|b|c");
         assert_eq!(node.kind, "Alt");
         assert_eq!(node.summary.as_deref(), Some("(3)"));
     }
@@ -678,11 +660,7 @@ mod tests {
         ];
 
         for (pattern, expected_kind, expected_summary) in test_cases {
-            let tree = fancy_regex::Expr::parse_tree(pattern).unwrap();
-            let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-            let group_names = std::collections::HashMap::new();
-
-            let node = info_to_tree_node(&info, &group_names);
+            let node = parse_and_analyze(pattern);
 
             assert_eq!(node.kind, expected_kind, "Pattern: {}", pattern);
             assert_eq!(
@@ -698,31 +676,17 @@ mod tests {
     fn test_info_to_tree_node_hard_easy() {
         // Test that hard flag is correctly set
         // Backref should be hard
-        let tree = fancy_regex::Expr::parse_tree(r"(\w+)\1").unwrap();
-        let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-        let group_names = std::collections::HashMap::new();
-
-        let node = info_to_tree_node(&info, &group_names);
-
+        let node = parse_and_analyze(r"(\w+)\1");
         assert!(node.hard, "Pattern with backref should be hard");
 
         // Simple literal should be easy
-        let tree = fancy_regex::Expr::parse_tree(r"abc").unwrap();
-        let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-        let group_names = std::collections::HashMap::new();
-
-        let node = info_to_tree_node(&info, &group_names);
-
+        let node = parse_and_analyze(r"abc");
         assert!(!node.hard, "Simple literal pattern should be easy");
     }
 
     #[test]
     fn test_info_to_tree_node_absent_repeater() {
-        let tree = fancy_regex::Expr::parse_tree(r"(?~abc)").unwrap();
-        let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-        let group_names = std::collections::HashMap::new();
-
-        let node = info_to_tree_node(&info, &group_names);
+        let node = parse_and_analyze(r"(?~abc)");
 
         assert_eq!(node.kind, "AbsentRepeater");
         // Should have 1 children: concat
@@ -733,11 +697,7 @@ mod tests {
 
     #[test]
     fn test_info_to_tree_node_absent_expression() {
-        let tree = fancy_regex::Expr::parse_tree(r"(?~|abc|\d+)").unwrap();
-        let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-        let group_names = std::collections::HashMap::new();
-
-        let node = info_to_tree_node(&info, &group_names);
+        let node = parse_and_analyze(r"(?~|abc|\d+)");
 
         assert_eq!(node.kind, "AbsentExpression");
         // Should have 2 children: absent and exp
@@ -746,24 +706,63 @@ mod tests {
 
     #[test]
     fn test_info_to_tree_node_absent_stopper() {
-        let tree = fancy_regex::Expr::parse_tree(r"(?~|abc)").unwrap();
-        let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-        let group_names = std::collections::HashMap::new();
-
-        let node = info_to_tree_node(&info, &group_names);
-
+        let node = parse_and_analyze(r"(?~|abc)");
         assert_eq!(node.kind, "AbsentStopper");
     }
 
     #[test]
     fn test_info_to_tree_node_absent_clear() {
-        let tree = fancy_regex::Expr::parse_tree(r"(?~|)").unwrap();
-        let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-        let group_names = std::collections::HashMap::new();
-
-        let node = info_to_tree_node(&info, &group_names);
-
+        let node = parse_and_analyze(r"(?~|)");
         assert_eq!(node.kind, "AbsentClear");
+    }
+
+    #[test]
+    fn test_info_to_tree_node_any() {
+        let node = parse_and_analyze(r"(?R).");
+        assert_eq!(node.kind, "Any");
+        assert_eq!(
+            node.summary.as_deref(),
+            Some("(no newline or carriage return)")
+        );
+
+        let node = parse_and_analyze(r"(?-R).");
+        assert_eq!(node.kind, "Any");
+        assert_eq!(node.summary.as_deref(), Some("(no newline)"));
+
+        let node = parse_and_analyze(r"(?s).");
+        assert_eq!(node.kind, "Any");
+        assert_eq!(node.summary.as_deref(), None);
+    }
+
+    #[test]
+    fn test_info_to_tree_node_assertion() {
+        let test_cases: Vec<(&str, &str, Option<&str>)> = vec![
+            ("^", "StartText", None),
+            ("$", "EndText", None),
+            (r"\Z", "EndTextIgnoreTrailingNewlines", None),
+            (r"(?R)\Z", "EndTextIgnoreTrailingNewlines", Some("(crlf)")),
+            (r"(?m:^)", "StartLine", None),
+            (r"(?mR:^)", "StartLine", Some("(crlf)")),
+            (r"(?m:$)", "EndLine", None),
+            (r"(?mR:$)", "EndLine", Some("(crlf)")),
+            (r"\b{start}", "LeftWordBoundary", None),
+            (r"\b{start-half}", "LeftWordHalfBoundary", None),
+            (r"\b{end}", "RightWordBoundary", None),
+            (r"\b{end-half}", "RightWordHalfBoundary", None),
+            (r"\b", "WordBoundary", None),
+            (r"\B", "NotWordBoundary", None),
+        ];
+
+        for (pattern, expected_kind, expected_summary) in test_cases {
+            let node = parse_and_analyze(pattern);
+            assert_eq!(node.kind, expected_kind, "Pattern: {}", pattern);
+            assert_eq!(
+                node.summary.as_deref(),
+                expected_summary,
+                "Pattern: {}",
+                pattern
+            );
+        }
     }
 
     #[test]

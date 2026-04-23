@@ -136,6 +136,26 @@ fn check_oniguruma_mode_changes_wordbounds() {
 }
 
 #[test]
+fn check_crlf_option() {
+    // With CRLF mode and multi-line enabled, ^ and $ should treat \r\n as a single line ending
+    let regex = build_regex(RegexBuilder::new(r"^test$").multi_line(true).crlf(true));
+    assert!(regex.is_match("test").unwrap_or_default());
+    assert!(regex.is_match("\r\ntest\r\n").unwrap_or_default());
+    assert!(regex.is_match("test\r\n").unwrap_or_default());
+    assert!(regex.is_match("\r\ntest").unwrap_or_default());
+}
+
+#[test]
+fn check_crlf_flag_in_pattern() {
+    // The (?mR) flag combination in the pattern itself should enable CRLF mode
+    let regex = build_regex(&RegexBuilder::new(r"(?mR)^test$"));
+    assert!(regex.is_match("test").unwrap_or_default());
+    assert!(regex.is_match("\r\ntest\r\n").unwrap_or_default());
+    assert!(regex.is_match("test\r\n").unwrap_or_default());
+    assert!(regex.is_match("\r\ntest").unwrap_or_default());
+}
+
+#[test]
 fn can_build_multiple_regexes_with_same_options() {
     let mut builder = RegexBuilder::new(r"^[a-z@.]+$");
     builder.case_insensitive(true);

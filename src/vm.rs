@@ -222,8 +222,10 @@ pub enum Insn {
     End,
     /// Match any character (including newline)
     Any,
-    /// Match any character (not including newline)
+    /// Match any character except for the line feed character (`\n`)
     AnyNoNL,
+    /// Match any character except for a carriage return or line feed character (`\r` or `\n`)
+    AnyNoCRLF,
     /// Assertions
     Assertion(Assertion),
     /// Match the literal string at the current index
@@ -690,6 +692,13 @@ pub(crate) fn run(
                         break 'fail;
                     }
                 }
+                Insn::AnyNoCRLF => {
+                    if ix < s.len() && s.as_bytes()[ix] != b'\r' && s.as_bytes()[ix] != b'\n' {
+                        ix += codepoint_len_at(s, ix);
+                    } else {
+                        break 'fail;
+                    }
+                }
                 Insn::Lit(ref val) => {
                     let ix_end = ix + val.len();
                     if !matches_literal(s, ix, ix_end, val) {
@@ -701,11 +710,14 @@ pub(crate) fn run(
                     if !match assertion {
                         Assertion::StartText => look_matcher.is_start(s.as_bytes(), ix),
                         Assertion::EndText => look_matcher.is_end(s.as_bytes(), ix),
-                        Assertion::EndTextIgnoreTrailingNewlines => {
+                        Assertion::EndTextIgnoreTrailingNewlines { crlf } => {
                             let bytes = s.as_bytes();
                             if ix == bytes.len() {
                                 // At the end of string
                                 true
+                            } else if crlf {
+                                // In CRLF mode, trailing \r\n pairs and bare \n are ignored
+                                bytes[ix..].iter().all(|&b| b == b'\n' || b == b'\r')
                             } else {
                                 // Check if all remaining bytes are newlines
                                 bytes[ix..].iter().all(|&b| b == b'\n')

@@ -12,3 +12,5 @@ pub const FLAG_IGNORE_SPACE: u32 = 1 << 4;
 pub const FLAG_UNICODE: u32 = 1 << 5;
 /// Flag bit for parsing in Oniguruma compatibility mode
 pub const FLAG_ONIGURUMA_MODE: u32 = 1 << 6;
+/// Flag bit for CRLF mode (treat `\r\n` as a single line ending)
+pub const FLAG_CRLF: u32 = 1 << 7;

@@ -150,10 +150,19 @@ impl<'a> Compiler<'a> {
                     self.compile_delegate(info)?;
                 }
             }
-            Expr::Any { newline: true } => {
+            Expr::Any { newline: true, .. } => {
                 self.b.add(Insn::Any);
             }
-            Expr::Any { newline: false } => {
+            Expr::Any {
+                newline: false,
+                crlf: true,
+            } => {
+                self.b.add(Insn::AnyNoCRLF);
+            }
+            Expr::Any {
+                newline: false,
+                crlf: false,
+            } => {
                 self.b.add(Insn::AnyNoNL);
             }
             Expr::GeneralNewline { unicode } => {

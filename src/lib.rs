@@ -425,8 +425,9 @@ impl RegexOptions {
         let dotnl = Self::get_flag_value(self.syntaxc.get_dot_matches_new_line(), FLAG_DOTNL);
         let unicode = Self::get_flag_value(self.syntaxc.get_unicode(), FLAG_UNICODE);
         let oniguruma_mode = Self::get_flag_value(self.oniguruma_mode, FLAG_ONIGURUMA_MODE);
+        let crlf = Self::get_flag_value(self.syntaxc.get_crlf(), FLAG_CRLF);
 
-        insensitive | multiline | whitespace | dotnl | unicode | oniguruma_mode
+        insensitive | multiline | whitespace | dotnl | unicode | oniguruma_mode | crlf
     }
 }
 
@@ -488,6 +489,18 @@ impl RegexOptionsBuilder {
     /// except for a new line character.
     pub fn dot_matches_new_line(&mut self, yes: bool) -> &mut Self {
         self.set_config(|x| x.dot_matches_new_line(yes))
+    }
+
+    /// Enable or disable the CRLF mode flag (`R`).
+    ///
+    /// When enabled, `\r\n` is treated as a single line ending for the purposes of
+    /// `^` and `$` in multi-line mode, instead of treating `\r` and `\n` as separate
+    /// line endings.
+    ///
+    /// By default, this is disabled. It may be selectively enabled in the regular
+    /// expression by using the `R` flag, e.g. `(?mR)` or `(?Rm)`.
+    pub fn crlf(&mut self, yes: bool) -> &mut Self {
+        self.set_config(|x| x.crlf(yes))
     }
 
     /// Enable verbose mode in the regular expression.
@@ -670,6 +683,12 @@ impl RegexBuilder {
     /// See [`RegexOptionsBuilder::oniguruma_mode`]
     pub fn oniguruma_mode(&mut self, yes: bool) -> &mut Self {
         self.options.oniguruma_mode(yes);
+        self
+    }
+
+    /// See [`RegexOptionsBuilder::crlf`]
+    pub fn crlf(&mut self, yes: bool) -> &mut Self {
+        self.options.crlf(yes);
         self
     }
 }
@@ -1517,6 +1536,9 @@ pub enum Expr {
     Any {
         /// Whether it also matches newlines or not
         newline: bool,
+        /// Whether CRLF mode is enabled (`\r` also counts as a newline, so dot
+        /// excludes both `\r` and `\n`)
+        crlf: bool,
     },
     /// An assertion
     Assertion(Assertion),
@@ -1748,15 +1770,23 @@ pub enum Assertion {
     /// End of input text
     EndText,
     /// End of input text, or before any trailing newlines at the end (Oniguruma's `\Z`)
-    EndTextIgnoreTrailingNewlines,
+    EndTextIgnoreTrailingNewlines {
+        /// Whether CRLF mode is enabled.
+        /// If `true`, trailing `\r\n` pairs (in addition to bare `\n`) are also ignored.
+        crlf: bool,
+    },
     /// Start of a line
     StartLine {
-        /// CRLF mode
+        /// CRLF mode.
+        /// If true, this assertion matches at the starting position of the input text, or at the position immediately
+        /// following either a `\r` or `\n` character, but never after a `\r` when a `\n` follows.
         crlf: bool,
     },
     /// End of a line
     EndLine {
         /// CRLF mode
+        /// If true, this assertion matches at the ending position of the input text, or at the position immediately
+        /// preceding either a `\r` or `\n` character, but never after a `\r` when a `\n` follows.
         crlf: bool,
     },
     /// Left word boundary
@@ -1785,7 +1815,7 @@ impl Assertion {
                 | RightWordHalfBoundary
                 | WordBoundary
                 | NotWordBoundary
-                | EndTextIgnoreTrailingNewlines
+                | EndTextIgnoreTrailingNewlines { .. }
         )
     }
 }
@@ -1981,7 +2011,11 @@ impl Expr {
     pub fn to_str(&self, buf: &mut String, precedence: u8) {
         match *self {
             Expr::Empty => (),
-            Expr::Any { newline } => buf.push_str(if newline { "(?s:.)" } else { "." }),
+            Expr::Any { newline, crlf } => buf.push_str(match (newline, crlf) {
+                (true, _) => "(?s:.)",
+                (false, true) => "(?R-s:.)",
+                (false, false) => ".",
+            }),
             Expr::Literal { ref val, casei } => {
                 if casei {
                     buf.push_str("(?i:");
@@ -2154,7 +2188,8 @@ pub mod internal {
     pub use crate::compile::compile;
     pub use crate::optimize::optimize;
     pub use crate::parse_flags::{
-        FLAG_CASEI, FLAG_DOTNL, FLAG_IGNORE_SPACE, FLAG_MULTI, FLAG_ONIGURUMA_MODE, FLAG_UNICODE,
+        FLAG_CASEI, FLAG_CRLF, FLAG_DOTNL, FLAG_IGNORE_SPACE, FLAG_MULTI, FLAG_ONIGURUMA_MODE,
+        FLAG_UNICODE,
     };
     pub use crate::vm::{run_default, run_trace, Insn, Prog};
 }
@@ -2323,8 +2358,16 @@ mod tests {
     fn test_is_leaf_node_leaf_nodes() {
         // Test all leaf node variants
         assert!(Expr::Empty.is_leaf_node());
-        assert!(Expr::Any { newline: false }.is_leaf_node());
-        assert!(Expr::Any { newline: true }.is_leaf_node());
+        assert!(Expr::Any {
+            newline: false,
+            crlf: false
+        }
+        .is_leaf_node());
+        assert!(Expr::Any {
+            newline: true,
+            crlf: false
+        }
+        .is_leaf_node());
         assert!(Expr::Assertion(crate::Assertion::StartText).is_leaf_node());
         assert!(Expr::Literal {
             val: "test".to_string(),
@@ -2390,7 +2433,10 @@ mod tests {
         assert!(!Expr::Absent(Absent::Expression {
             absent: Box::new(make_literal("/*")),
             exp: Box::new(Expr::Repeat {
-                child: Box::new(Expr::Any { newline: true }),
+                child: Box::new(Expr::Any {
+                    newline: true,
+                    crlf: false
+                }),
                 lo: 0,
                 hi: usize::MAX,
                 greedy: true
@@ -2458,7 +2504,10 @@ mod tests {
         let expr = Expr::Absent(Absent::Expression {
             absent: Box::new(make_literal("/*")),
             exp: Box::new(Expr::Repeat {
-                child: Box::new(Expr::Any { newline: true }),
+                child: Box::new(Expr::Any {
+                    newline: true,
+                    crlf: false,
+                }),
                 lo: 0,
                 hi: usize::MAX,
                 greedy: true,
