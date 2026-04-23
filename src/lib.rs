@@ -399,7 +399,7 @@ impl<'r, 'h> Iterator for SplitN<'r, 'h> {
 
 impl<'r, 'h> core::iter::FusedIterator for SplitN<'r, 'h> {}
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct RegexOptions {
     syntaxc: SyntaxConfig,
     delegate_size_limit: Option<usize>,
@@ -408,6 +408,33 @@ struct RegexOptions {
     ignore_numbered_groups_when_named_groups_exist: bool,
     hard_regex_runtime_options: HardRegexRuntimeOptions,
     seek_filter: Option<fn(&str) -> bool>,
+}
+
+impl fmt::Debug for RegexOptions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let seek_filter_desc = match self.seek_filter {
+            None => "None",
+            Some(f_ptr) if f_ptr as usize == seek_pattern_is_useful as usize => {
+                "Some(seek_pattern_is_useful)"
+            }
+            Some(_) => "Some(<custom>)",
+        };
+        f.debug_struct("RegexOptions")
+            .field("syntaxc", &self.syntaxc)
+            .field("delegate_size_limit", &self.delegate_size_limit)
+            .field("delegate_dfa_size_limit", &self.delegate_dfa_size_limit)
+            .field("oniguruma_mode", &self.oniguruma_mode)
+            .field(
+                "ignore_numbered_groups_when_named_groups_exist",
+                &self.ignore_numbered_groups_when_named_groups_exist,
+            )
+            .field(
+                "hard_regex_runtime_options",
+                &self.hard_regex_runtime_options,
+            )
+            .field("seek_filter", &seek_filter_desc)
+            .finish()
+    }
 }
 
 impl Default for RegexOptions {
