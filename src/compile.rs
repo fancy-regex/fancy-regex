@@ -330,6 +330,13 @@ impl<'a> Compiler<'a> {
                     CompileError::FeatureNotYetSupported(error_msg.to_string()),
                 )));
             }
+            Expr::DefineGroup { .. } => {
+                // DEFINE groups don't generate any VM instructions themselves.
+                // The groups defined inside are available for subroutine calls,
+                // but the DEFINE block itself doesn't match anything.
+                // Group numbers were already assigned during analysis, and the
+                // subroutine calls will inline the appropriate code when invoked.
+            }
         }
         Ok(())
     }
@@ -807,21 +814,28 @@ impl<'a> Compiler<'a> {
         for info in infos {
             delegate_builder.push(info);
         }
-        let delegate = delegate_builder.build(&self.options)?;
-
-        self.b.add(delegate);
+        // Skip emitting a delegate for an empty regex (e.g. a batch of
+        // only DefineGroups), as it would just match the empty string.
+        if !delegate_builder.is_empty() {
+            self.b.add(delegate_builder.build(&self.options)?);
+        }
         Ok(())
     }
 
     fn compile_delegate(&mut self, info: &Info) -> Result<()> {
-        let insn = if info.is_literal() {
+        if info.is_literal() {
             let mut val = String::new();
             info.push_literal(&mut val);
-            Insn::Lit(val)
+            self.b.add(Insn::Lit(val));
         } else {
-            DelegateBuilder::new().push(info).build(&self.options)?
-        };
-        self.b.add(insn);
+            let mut builder = DelegateBuilder::new();
+            builder.push(info);
+            // Skip emitting a delegate for an empty regex (e.g. DefineGroup),
+            // as it would just match the empty string and is a no-op.
+            if !builder.is_empty() {
+                self.b.add(builder.build(&self.options)?);
+            }
+        }
         Ok(())
     }
 
@@ -882,17 +896,9 @@ impl<'a> Compiler<'a> {
 static PATTERN_MAPPING: RwLock<BTreeMap<String, String>> = RwLock::new(BTreeMap::new());
 
 pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<RaRegex> {
-    let mut config = RaConfig::new();
-    if let Some(size_limit) = options.delegate_size_limit {
-        config = config.nfa_size_limit(Some(size_limit));
-    }
-    if let Some(dfa_size_limit) = options.delegate_dfa_size_limit {
-        config = config.dfa_size_limit(Some(dfa_size_limit));
-    }
+    let builder = options_to_rabuilder(options);
 
-    let re = RaBuilder::new()
-        .configure(config)
-        .syntax(options.syntaxc)
+    let re = builder
         .build(inner_re)
         .map_err(CompileError::InnerError)
         .map_err(|e| Error::CompileError(Box::new(e)))?;
@@ -904,6 +910,21 @@ pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<Ra
         .insert(format!("{:?}", re), inner_re.to_owned());
 
     Ok(re)
+}
+
+pub(crate) fn options_to_rabuilder(options: &RegexOptions) -> RaBuilder {
+    let mut config = RaConfig::new();
+    if let Some(limit) = options.delegate_size_limit {
+        config = config.nfa_size_limit(Some(limit));
+    }
+    if let Some(limit) = options.delegate_dfa_size_limit {
+        config = config.dfa_size_limit(Some(limit));
+    }
+
+    let mut builder = RaBuilder::new();
+    builder.configure(config);
+    builder.syntax(options.syntaxc);
+    builder
 }
 
 /// Recursively populate the group_info_map with all capture groups in the Info tree
@@ -975,6 +996,11 @@ impl DelegateBuilder {
             const_size: true,
             capture_groups: None,
         }
+    }
+
+    /// Returns true if the regex string built so far is empty.
+    fn is_empty(&self) -> bool {
+        self.re.is_empty()
     }
 
     fn push(&mut self, info: &Info<'_>) -> &mut DelegateBuilder {
@@ -1481,6 +1507,16 @@ mod tests {
         assert_delegate_insn(&prog[4], "(.)", Some(CaptureGroupRange(1, 2)));
         assert_matches!(prog[5], Save(1));
         assert_matches!(prog[6], End);
+    }
+
+    #[test]
+    fn define_group_is_a_no_op() {
+        // A DEFINE block is not hard but produces an empty delegate regex,
+        // so compilation skips it entirely — only the End instruction remains.
+        let prog = compile_prog(r"(?(DEFINE)(?<word>\w+))");
+
+        assert_eq!(prog.len(), 1, "prog: {:?}", prog);
+        assert_matches!(prog[0], End);
     }
 
     fn compile_prog(re: &str) -> Vec<Insn> {
