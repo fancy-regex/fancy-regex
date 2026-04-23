@@ -52,9 +52,7 @@ pub(crate) fn expr_contains_positional_anchor(expr: &Expr) -> bool {
             | Assertion::StartLine { .. }
             | Assertion::EndLine { .. },
         ) => true,
-        _ => expr
-            .children_iter()
-            .any(|child| expr_contains_positional_anchor(child)),
+        _ => expr.children_iter().any(expr_contains_positional_anchor),
     }
 }
 
@@ -368,7 +366,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
             let mut cond_pat = String::new();
             let mut true_pat = String::new();
             let mut false_pat = String::new();
-            if info.children.len() >= 1 {
+            if !info.children.is_empty() {
                 build_seek_pattern_impl(
                     &info.children[0],
                     group_info_map,
