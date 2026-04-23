@@ -1696,7 +1696,7 @@ mod tests {
         // A DEFINE block should be analyzed as: min_size=0, const_size=true, hard=false
         // It matches nothing itself, so it doesn't need backtracking.
         let tree = Expr::parse_tree(r"(?(DEFINE)(?<word>\w+))").unwrap();
-        let info = analyze(&tree, false).unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
 
         assert!(matches!(info.expr, Expr::DefineGroup { .. }));
         assert_eq!(info.min_size, 0);
@@ -1709,7 +1709,7 @@ mod tests {
         // Groups inside a DEFINE block should still be assigned group numbers,
         // so that subroutine calls can reference them.
         let tree = Expr::parse_tree(r"(?(DEFINE)(?<first>a)(?<second>b))").unwrap();
-        let info = analyze(&tree, false).unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
 
         // The definitions child: a Concat of two groups (groups 1 and 2)
         assert_eq!(info.children[0].start_group(), 1);
@@ -1720,7 +1720,7 @@ mod tests {
             r"(abc)(?(DEFINE)(?<second>a)ignored: no group(?<third>b(?<fourth>c)))(?<fifth>d)",
         )
         .unwrap();
-        let info = analyze(&tree, false).unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
 
         assert_eq!(info.start_group(), 1);
         assert_eq!(info.end_group(), 6);

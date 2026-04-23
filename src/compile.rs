@@ -1490,7 +1490,7 @@ mod tests {
 
         assert_eq!(prog.len(), 20, "prog: {:?}", prog);
 
-        assert_matches!(prog[0], Split(3, 1));
+        assert_matches!(prog[0], SplitUnanchored(3, 1));
         assert_matches!(prog[1], Any);
         assert_matches!(prog[2], Jmp(0));
         assert_matches!(prog[3], Save(0));
@@ -1530,17 +1530,33 @@ mod tests {
     fn absent_repeater_nested_absent_error() {
         // Nested absent operators are not yet supported (direct child)
         let tree = Expr::parse_tree(r"(?~(?~abc))").unwrap();
-        let info = analyze(&tree, true).unwrap();
-        assert_compile_error(compile(&info, true, tree.contains_subroutines), |e| {
-            matches!(e, CompileError::FeatureNotYetSupported(_))
-        });
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_compile_error(
+            compile(
+                &info,
+                CompileOptions {
+                    anchored: true,
+                    contains_subroutines: tree.contains_subroutines,
+                    ..CompileOptions::default()
+                },
+            ),
+            |e| matches!(e, CompileError::FeatureNotYetSupported(_)),
+        );
 
         // Nested absent operators are not yet supported (indirect descendant)
         let tree = Expr::parse_tree(r"(?~a(?<=b(?~c)))").unwrap();
-        let info = analyze(&tree, true).unwrap();
-        assert_compile_error(compile(&info, true, tree.contains_subroutines), |e| {
-            matches!(e, CompileError::FeatureNotYetSupported(_))
-        });
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_compile_error(
+            compile(
+                &info,
+                CompileOptions {
+                    anchored: true,
+                    contains_subroutines: tree.contains_subroutines,
+                    ..CompileOptions::default()
+                },
+            ),
+            |e| matches!(e, CompileError::FeatureNotYetSupported(_)),
+        );
     }
 
     #[test]
@@ -1705,8 +1721,16 @@ mod tests {
 
     fn compile_prog_no_explicit_group0(re: &str) -> Vec<Insn> {
         let tree = Expr::parse_tree(re).unwrap();
-        let info = analyze(&tree, false).unwrap();
-        let prog = compile(&info, false, tree.contains_subroutines).unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        let prog = compile(
+            &info,
+            CompileOptions {
+                anchored: false,
+                contains_subroutines: tree.contains_subroutines,
+                ..CompileOptions::default()
+            },
+        )
+        .unwrap();
         prog.body
     }
 
