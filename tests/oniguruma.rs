@@ -154,6 +154,7 @@ fn run_test(test: &Test) -> Option<String> {
     let compile_result = RegexBuilder::new(pattern)
         .multi_line(true)
         .oniguruma_mode(true)
+        .ignore_numbered_groups_when_named_groups_exist(true)
         .build();
     let Ok(regex) = compile_result else {
         let error = format!("{:?}", compile_result.unwrap_err());

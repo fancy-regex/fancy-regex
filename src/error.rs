@@ -92,6 +92,8 @@ pub enum CompileError {
     /// setting `find_not_empty` on a pattern whose analysis shows it can only ever produce
     /// zero-length matches.
     PatternCanNeverMatch,
+    /// An unresolved AST node was encountered during analysis (internal error)
+    UnresolvedAstNode(usize, String),
 }
 
 /// An error as the result of executing a regex.
@@ -170,6 +172,9 @@ impl fmt::Display for CompileError {
             }
             CompileError::PatternCanNeverMatch => {
                 write!(f, "Pattern can never match: the regex is zero-width only but find_not_empty is set")
+            }
+            CompileError::UnresolvedAstNode(ix, node) => {
+                write!(f, "Unresolved AST node encountered during analysis at position {}: {}", ix, node)
             }
         }
     }

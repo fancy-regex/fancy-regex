@@ -196,8 +196,21 @@ impl<'a> Compiler<'a> {
                     casei,
                 });
             }
-            Expr::BackrefExistsCondition(group) => {
+            Expr::BackrefExistsCondition {
+                group,
+                relative_recursion_level: None,
+            } => {
                 self.b.add(Insn::BackrefExistsCondition(group));
+            }
+            Expr::BackrefExistsCondition {
+                relative_recursion_level: Some(_),
+                ..
+            } => {
+                return Err(Error::CompileError(Box::new(
+                    CompileError::FeatureNotYetSupported(
+                        "Backref exists condition with relative recursion level".to_string(),
+                    ),
+                )));
             }
             Expr::BacktrackingControlVerb(BacktrackingControlVerb::Fail) => {
                 self.b.add(Insn::Fail);
@@ -325,7 +338,6 @@ impl<'a> Compiler<'a> {
                     self.b.add(Insn::AbsentRepeater(delegate));
                 }
             }
-            Expr::UnresolvedNamedSubroutineCall { .. } => unreachable!(),
             Expr::BackrefWithRelativeRecursionLevel { .. } => unreachable!(),
             Expr::Absent(ref absent) => {
                 use crate::Absent::*;
@@ -346,6 +358,7 @@ impl<'a> Compiler<'a> {
                 // Group numbers were already assigned during analysis, and the
                 // subroutine calls will inline the appropriate code when invoked.
             }
+            Expr::AstNode { .. } => unreachable!("Should have been rejected during analysis"),
         }
         Ok(())
     }
@@ -1116,6 +1129,9 @@ mod tests {
             numeric_capture_group_references: false,
             contains_subroutines: false,
             self_recursive: false,
+            total_groups: 0,
+            out_of_range_backref: None,
+            numbered_groups_ignored: false,
         };
         let info = analyze(&tree, AnalyzeContext::default()).unwrap();
 
@@ -1322,6 +1338,36 @@ mod tests {
             ),
             |e| matches!(e, CompileError::FeatureNotYetSupported(_)),
         );
+    }
+
+    #[test]
+    fn backref_exists_condition_with_recursion_level_not_yet_supported() {
+        for pattern in &[
+            r"(a)(?(1+0)b|c)d",
+            r"(?<n>a)(?(<n+0>)b|c)d",
+            r"(?<n>a)(?('n+0')b|c)d",
+        ] {
+            let tree = Expr::parse_tree(pattern).unwrap();
+            let info = analyze(
+                &tree,
+                AnalyzeContext {
+                    explicit_capture_group_0: false,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_compile_error(
+                compile(
+                    &info,
+                    CompileOptions {
+                        anchored: true,
+                        contains_subroutines: tree.contains_subroutines,
+                        ..CompileOptions::default()
+                    },
+                ),
+                |e| matches!(e, CompileError::FeatureNotYetSupported(_)),
+            );
+        }
     }
 
     #[test]

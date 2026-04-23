@@ -31,7 +31,7 @@ use bit_set::BitSet;
 use crate::alloc::string::ToString;
 use crate::parse::ExprTree;
 use crate::vm::CaptureGroupRange;
-use crate::{CompileError, Error, Expr, Result};
+use crate::{AstNode, CaptureGroupTarget, CompileError, Error, Expr, Result};
 
 #[cfg(not(feature = "std"))]
 use alloc::collections::BTreeMap as Map;
@@ -315,7 +315,7 @@ impl<'a> Analyzer<'a> {
                 hard = true;
                 const_size = true;
             }
-            Expr::BackrefExistsCondition(_) => {
+            Expr::BackrefExistsCondition { .. } => {
                 hard = true;
                 const_size = true;
             }
@@ -420,10 +420,44 @@ impl<'a> Analyzer<'a> {
                 }
                 hard = true;
             }
-            Expr::UnresolvedNamedSubroutineCall { ref name, ix } => {
-                return Err(Error::CompileError(Box::new(
-                    CompileError::SubroutineCallTargetNotFound(name.to_string(), ix),
-                )));
+            Expr::AstNode(ref astnode, ix) => {
+                // An unresolved AstNode means the resolver couldn't find the target (e.g. a
+                // subroutine call to an unknown name). Match each SubroutineCall variant to
+                // produce an accurate error message; any other AstNode variant is an internal
+                // error and gets a distinct UnresolvedAstNode error.
+                match astnode {
+                    AstNode::SubroutineCall(CaptureGroupTarget::ByName(name)) => {
+                        return Err(Error::CompileError(Box::new(
+                            CompileError::SubroutineCallTargetNotFound(
+                                format!("named group '{}'", name),
+                                ix,
+                            ),
+                        )));
+                    }
+                    AstNode::SubroutineCall(CaptureGroupTarget::ByNumber(n)) => {
+                        return Err(Error::CompileError(Box::new(
+                            CompileError::SubroutineCallTargetNotFound(
+                                format!("group number {}", n),
+                                ix,
+                            ),
+                        )));
+                    }
+                    AstNode::SubroutineCall(CaptureGroupTarget::Relative(n)) => {
+                        return Err(Error::CompileError(Box::new(
+                            CompileError::SubroutineCallTargetNotFound(
+                                format!("relative group {}{}", if *n >= 0 { "+" } else { "" }, n),
+                                ix,
+                            ),
+                        )));
+                    }
+                    AstNode::AstGroup { .. }
+                    | AstNode::Backref { .. }
+                    | AstNode::BackrefExistsCondition { .. } => {
+                        return Err(Error::CompileError(Box::new(
+                            CompileError::UnresolvedAstNode(ix, format!("{:?}", astnode)),
+                        )));
+                    }
+                }
             }
             Expr::BackrefWithRelativeRecursionLevel { .. } => {
                 return Err(Error::CompileError(Box::new(
@@ -628,8 +662,7 @@ impl<'a> Analyzer<'a> {
                     Clear => true,
                 }
             }
-            Expr::UnresolvedNamedSubroutineCall { .. }
-            | Expr::BackrefWithRelativeRecursionLevel { .. } => true,
+            Expr::BackrefWithRelativeRecursionLevel { .. } => true,
             Expr::DefineGroup { definitions } => {
                 self.expr_can_terminate(definitions, root_expr, recursion_stack, memo)
             }
@@ -760,7 +793,10 @@ pub fn analyze<'a>(tree: &'a ExprTree, ctx: AnalyzeContext) -> Result<Info<'a>> 
     let find_not_empty = ctx.find_not_empty;
 
     // Check that numeric capture group references (backrefs and subroutine calls) and named groups are not mixed
-    if tree.numeric_capture_group_references && !tree.named_groups.is_empty() {
+    if tree.numbered_groups_ignored
+        && tree.numeric_capture_group_references
+        && !tree.named_groups.is_empty()
+    {
         return Err(Error::CompileError(Box::new(
             CompileError::NamedBackrefOnly,
         )));
@@ -790,21 +826,25 @@ pub fn analyze<'a>(tree: &'a ExprTree, ctx: AnalyzeContext) -> Result<Info<'a>> 
     };
 
     let analyzed = analyzer.visit(&tree.expr, 0, false, 0)?;
-    if analyzer.backrefs.contains(0) {
+    // With start_group == 1 (no explicit group 0) the valid backref range is 1..=total_groups.
+    // With start_group == 0 (explicit group 0) group 0 is the whole match and inner groups are
+    // numbered 1..=total_groups-1, so the valid range is 0..=total_groups-1.
+    let max_valid_group = if explicit_capture_group_0 {
+        tree.total_groups.saturating_sub(1)
+    } else {
+        tree.total_groups
+    };
+    // Out-of-range group numbers are not in the BitSet (to avoid huge allocations), so check the
+    // dedicated field first.
+    if let Some(group) = tree.out_of_range_backref {
         return Err(Error::CompileError(Box::new(CompileError::InvalidBackref(
-            0,
+            group,
         ))));
     }
-    if let Some(highest_backref) = analyzer.backrefs.into_iter().last() {
-        if highest_backref > analyzer.next_group_number - start_group
-            // if we have an explicit capture group 0, and the highest backref is the number of capture groups
-            // then that backref refers to an invalid group
-            // i.e. `(a\1)b`   has no capture group 1
-            //      `(a(b))\2` has no capture group 2
-            || highest_backref == analyzer.next_group_number && start_group == 0
-        {
+    for group in tree.backrefs.iter() {
+        if group < start_group || group > max_valid_group {
             return Err(Error::CompileError(Box::new(CompileError::InvalidBackref(
-                highest_backref,
+                group,
             ))));
         }
     }
@@ -839,8 +879,17 @@ pub fn can_compile_as_anchored(root_expr: &Expr) -> bool {
 mod tests {
     use super::{analyze, AnalyzeContext};
     // use super::literal_const_size;
+    use crate::parse::ExprTree;
     use crate::{can_compile_as_anchored, CompileError, Error, Expr};
     use matches::assert_matches;
+
+    #[cfg_attr(feature = "track_caller", track_caller)]
+    fn assert_analyze_ok(tree: &ExprTree, ctx: AnalyzeContext) {
+        match analyze(tree, ctx) {
+            Ok(_) => {}
+            Err(e) => panic!("expected analyze to succeed, but got error: {:?}", e),
+        }
+    }
 
     #[cfg_attr(feature = "track_caller", track_caller)]
     fn assert_compile_error<T, F>(result: crate::Result<T>, check: F)
@@ -905,6 +954,14 @@ mod tests {
     }
 
     #[test]
+    fn invalid_backref_unreasonably_large_number() {
+        // A group number that is a valid usize but far exceeds the number of groups in the
+        // pattern. The resolver inserts it into the BitSet as-is; the analyzer catches it via
+        // the total_groups bound check.
+        assert_invalid_backref(r".\1999999999", false, 1999999999);
+    }
+
+    #[test]
     fn invalid_backref_with_captures() {
         assert_invalid_backref(r"a(a)\2", false, 2);
         assert_invalid_backref(r"a(a)\2\1", false, 2);
@@ -930,7 +987,7 @@ mod tests {
         // Should get the unresolved subroutine call error, not an invalid backref error
         assert_compile_error(
             result,
-            |e| matches!(e, CompileError::SubroutineCallTargetNotFound(s, _) if s == "no_exist"),
+            |e| matches!(e, CompileError::SubroutineCallTargetNotFound(s, _) if s.contains("no_exist")),
         );
     }
 
@@ -1045,51 +1102,175 @@ mod tests {
     }
 
     #[test]
+    fn subroutine_call_undefined_by_name_message() {
+        let tree = &Expr::parse_tree(r"\g<wrong_name>(?<different_name>a)").unwrap();
+        assert_compile_error(
+            analyze(tree, AnalyzeContext::default()),
+            |e| matches!(e, CompileError::SubroutineCallTargetNotFound(s, _) if s.contains("wrong_name")),
+        );
+    }
+
+    #[test]
+    fn subroutine_call_undefined_by_number() {
+        use crate::parse::NamedGroups;
+        use bit_set::BitSet;
+        // ByNumber is always resolved by the parser so we must construct the ExprTree directly
+        let tree = ExprTree {
+            expr: Expr::AstNode(
+                crate::AstNode::SubroutineCall(crate::CaptureGroupTarget::ByNumber(99)),
+                0,
+            ),
+            backrefs: BitSet::new(),
+            named_groups: NamedGroups::default(),
+            numeric_capture_group_references: false,
+            contains_subroutines: true,
+            self_recursive: false,
+            total_groups: 0,
+            out_of_range_backref: None,
+            numbered_groups_ignored: false,
+        };
+        assert_compile_error(
+            analyze(&tree, AnalyzeContext::default()),
+            |e| matches!(e, CompileError::SubroutineCallTargetNotFound(s, _) if s.contains("99")),
+        );
+    }
+
+    #[test]
+    fn subroutine_call_undefined_by_relative() {
+        use crate::parse::NamedGroups;
+        use bit_set::BitSet;
+        // Relative can only fail to resolve on integer overflow (essentially never),
+        // so we must construct the ExprTree directly
+        let tree = ExprTree {
+            expr: Expr::AstNode(
+                crate::AstNode::SubroutineCall(crate::CaptureGroupTarget::Relative(-1)),
+                0,
+            ),
+            backrefs: BitSet::new(),
+            named_groups: NamedGroups::default(),
+            numeric_capture_group_references: false,
+            contains_subroutines: true,
+            self_recursive: false,
+            total_groups: 0,
+            out_of_range_backref: None,
+            numbered_groups_ignored: false,
+        };
+        assert_compile_error(
+            analyze(&tree, AnalyzeContext::default()),
+            |e| matches!(e, CompileError::SubroutineCallTargetNotFound(s, _) if s.contains("-1")),
+        );
+    }
+
+    #[test]
+    fn unresolved_ast_node_error() {
+        use crate::parse::NamedGroups;
+        use bit_set::BitSet;
+        // Construct a tree with an unresolved Backref AstNode (not a SubroutineCall),
+        // which should produce an UnresolvedAstNode error containing the node's debug representation
+        let tree = ExprTree {
+            expr: Expr::AstNode(
+                crate::AstNode::Backref {
+                    target: crate::CaptureGroupTarget::ByNumber(1),
+                    casei: false,
+                    relative_recursion_level: None,
+                },
+                0,
+            ),
+            backrefs: BitSet::new(),
+            named_groups: NamedGroups::default(),
+            numeric_capture_group_references: false,
+            contains_subroutines: false,
+            self_recursive: false,
+            total_groups: 0,
+            out_of_range_backref: None,
+            numbered_groups_ignored: false,
+        };
+        assert_compile_error(
+            analyze(&tree, AnalyzeContext::default()),
+            |e| matches!(e, CompileError::UnresolvedAstNode(_, s) if s.contains("Backref")),
+        );
+    }
+
+    #[test]
     fn numeric_capture_group_references_cannot_be_used_with_named_groups() {
+        use crate::parse_flags::FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST;
+
         // Test case 1: Named group followed by numeric backref (no alternation)
-        let tree = Expr::parse_tree(r"(?<name>a)\1").unwrap();
+        let tree = Expr::parse_tree_with_flags(
+            r"(?<name>a)\1",
+            FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST,
+        )
+        .unwrap();
         assert_compile_error(analyze(&tree, AnalyzeContext::default()), |e| {
             matches!(e, CompileError::NamedBackrefOnly)
         });
 
         // Test case 2: Numeric backref followed by named group
-        let tree = Expr::parse_tree(r"(a)\1(?<name>b)").unwrap();
+        let tree = Expr::parse_tree_with_flags(
+            r"(a)\1(?<name>b)",
+            FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST,
+        )
+        .unwrap();
         assert_compile_error(analyze(&tree, AnalyzeContext::default()), |e| {
             matches!(e, CompileError::NamedBackrefOnly)
         });
 
         // Test case 3: Alternation with numeric backref and named group in first branch
-        let tree = Expr::parse_tree(r"(?<name>a)\1|b").unwrap();
+        let tree = Expr::parse_tree_with_flags(
+            r"(?<name>a)\1|b",
+            FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST,
+        )
+        .unwrap();
         assert_compile_error(analyze(&tree, AnalyzeContext::default()), |e| {
             matches!(e, CompileError::NamedBackrefOnly)
         });
 
         // Test case 4: Alternation with named group in first branch, numeric backref in second
-        let tree = Expr::parse_tree(r"(?<name>a)|\1").unwrap();
+        let tree = Expr::parse_tree_with_flags(
+            r"(?<name>a)|\1",
+            FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST,
+        )
+        .unwrap();
         assert_compile_error(analyze(&tree, AnalyzeContext::default()), |e| {
             matches!(e, CompileError::NamedBackrefOnly)
         });
 
         // Test case 5: Numbered group containing named group, with numeric backref
-        let tree = Expr::parse_tree(r"(a|(?<name>b))\1").unwrap();
+        let tree = Expr::parse_tree_with_flags(
+            r"(a|(?<name>b))\1",
+            FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST,
+        )
+        .unwrap();
         assert_compile_error(analyze(&tree, AnalyzeContext::default()), |e| {
             matches!(e, CompileError::NamedBackrefOnly)
         });
 
         // Test case 6: Multiple branches with named groups and numeric backrefs
-        let tree = Expr::parse_tree(r"(?<x>a)|(?<y>b)|\1").unwrap();
+        let tree = Expr::parse_tree_with_flags(
+            r"(?<x>a)|(?<y>b)|\1",
+            FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST,
+        )
+        .unwrap();
         assert_compile_error(analyze(&tree, AnalyzeContext::default()), |e| {
             matches!(e, CompileError::NamedBackrefOnly)
         });
 
         // Test case 7: Numeric subroutine call with named group
-        let tree = Expr::parse_tree(r"(?<foo>\w+)\g<1>").unwrap();
+        let tree = Expr::parse_tree_with_flags(
+            r"(?<foo>\w+)\g<1>",
+            FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST,
+        )
+        .unwrap();
         assert_compile_error(analyze(&tree, AnalyzeContext::default()), |e| {
             matches!(e, CompileError::NamedBackrefOnly)
         });
 
         // Test case 8: Named group with numeric subroutine call in alternation
-        let tree = Expr::parse_tree(r"(?<foo>a)|\g<1>").unwrap();
+        let tree = Expr::parse_tree_with_flags(
+            r"(?<foo>a)|\g<1>",
+            FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST,
+        )
+        .unwrap();
         assert_compile_error(analyze(&tree, AnalyzeContext::default()), |e| {
             matches!(e, CompileError::NamedBackrefOnly)
         });
@@ -1097,16 +1278,28 @@ mod tests {
         // Positive cases - these should work
 
         // Only numeric backrefs and subroutine calls, no named groups
-        let tree = Expr::parse_tree(r"(a)(b+)\1\g<2>").unwrap();
-        assert!(analyze(&tree, AnalyzeContext::default()).is_ok());
+        let tree = Expr::parse_tree_with_flags(
+            r"(a)(b+)\1\g<2>",
+            FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST,
+        )
+        .unwrap();
+        assert_analyze_ok(&tree, AnalyzeContext::default());
 
         // Only named groups and named backrefs and named subroutine calls
-        let tree = Expr::parse_tree(r"(?<name>a)\k<name>\g<name>").unwrap();
-        assert!(analyze(&tree, AnalyzeContext::default()).is_ok());
+        let tree = Expr::parse_tree_with_flags(
+            r"(?<name>a)\k<name>\g<name>",
+            FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST,
+        )
+        .unwrap();
+        assert_analyze_ok(&tree, AnalyzeContext::default());
 
         // Multiple named and numbered groups, no backrefs or subroutine calls
-        let tree = Expr::parse_tree(r"(?<a>a)|(?<b>b)(c)(d+)").unwrap();
-        assert!(analyze(&tree, AnalyzeContext::default()).is_ok());
+        let tree = Expr::parse_tree_with_flags(
+            r"(?<a>a)|(?<b>b)(c)(d+)",
+            FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST,
+        )
+        .unwrap();
+        assert_analyze_ok(&tree, AnalyzeContext::default());
     }
 
     #[test]

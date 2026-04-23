@@ -3,7 +3,7 @@ use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use crate::parse::{parse_decimal, parse_id, ParsedId};
+use crate::parse::{parse_id, parse_usize, ParsedId};
 use crate::{Captures, CompileError, Error, ParseError, Regex};
 
 /// A set of options for expanding a template string using the contents
@@ -248,7 +248,7 @@ impl Expander {
                 }) {
                     f(Step::GroupName(id))?;
                     skip
-                } else if let Some((skip, num)) = parse_decimal(tail, 0) {
+                } else if let Some((skip, num)) = parse_usize(tail, 0) {
                     f(Step::GroupNum(num))?;
                     skip
                 } else {

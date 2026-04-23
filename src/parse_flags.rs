@@ -14,3 +14,5 @@ pub const FLAG_UNICODE: u32 = 1 << 5;
 pub const FLAG_ONIGURUMA_MODE: u32 = 1 << 6;
 /// Flag bit for CRLF mode (treat `\r\n` as a single line ending)
 pub const FLAG_CRLF: u32 = 1 << 7;
+/// Flag bit for treating numbered groups as non-capturing when named groups exist
+pub const FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST: u32 = 1 << 8;

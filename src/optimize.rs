@@ -63,6 +63,7 @@ fn optimize_trailing_lookahead(tree: &mut ExprTree) -> bool {
                 // compose new Concat: [Group0, lookahead inner expr]
                 let new_concat = Expr::Concat(vec![group0, *inner]);
                 tree.expr = new_concat;
+                tree.total_groups += 1;
                 return true;
             } else {
                 unreachable!("already checked it is a lookahead");
@@ -74,6 +75,7 @@ fn optimize_trailing_lookahead(tree: &mut ExprTree) -> bool {
         mem::swap(&mut swap, inner);
         // compose new Concat: [Group0, lookahead inner expr]
         tree.expr = Expr::Concat(vec![group0, swap]);
+        tree.total_groups += 1;
         return true;
     }
     false

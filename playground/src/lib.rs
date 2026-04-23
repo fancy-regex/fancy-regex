@@ -1,5 +1,6 @@
 use fancy_regex::internal::{
-    FLAG_CASEI, FLAG_DOTNL, FLAG_IGNORE_SPACE, FLAG_MULTI, FLAG_ONIGURUMA_MODE, FLAG_UNICODE,
+    FLAG_CASEI, FLAG_DOTNL, FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST, FLAG_IGNORE_SPACE,
+    FLAG_MULTI, FLAG_ONIGURUMA_MODE, FLAG_UNICODE,
 };
 use fancy_regex::{Absent, Assertion, Expr, LookAround, Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
@@ -48,6 +49,7 @@ pub struct RegexFlags {
     pub unicode: bool,
     pub oniguruma_mode: bool,
     pub find_not_empty: bool,
+    pub ignore_numbered_groups_when_named_groups_exist: bool,
 }
 
 impl Default for RegexFlags {
@@ -60,6 +62,7 @@ impl Default for RegexFlags {
             unicode: true,
             oniguruma_mode: true,
             find_not_empty: false,
+            ignore_numbered_groups_when_named_groups_exist: false,
         }
     }
 }
@@ -84,6 +87,9 @@ fn build_regex(pattern: &str, flags: &RegexFlags) -> Result<Regex, String> {
     builder.unicode_mode(flags.unicode);
     builder.oniguruma_mode(flags.oniguruma_mode);
     builder.find_not_empty(flags.find_not_empty);
+    builder.ignore_numbered_groups_when_named_groups_exist(
+        flags.ignore_numbered_groups_when_named_groups_exist,
+    );
 
     builder
         .build()
@@ -110,6 +116,9 @@ fn compute_regex_flags(flags: &RegexFlags) -> u32 {
     }
     if flags.oniguruma_mode {
         result |= FLAG_ONIGURUMA_MODE;
+    }
+    if flags.ignore_numbered_groups_when_named_groups_exist {
+        result |= FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST;
     }
     result
 }
@@ -396,20 +405,26 @@ fn info_to_tree_node<'a>(
         Expr::ContinueFromPreviousMatchEnd => {
             ("ContinueFromPreviousMatchEnd".to_string(), None, None)
         }
-        Expr::BackrefExistsCondition(group) => (
-            "BackrefExistsCondition".to_string(),
-            Some(format!("{}", group)),
-            None,
-        ),
+        Expr::BackrefExistsCondition {
+            group,
+            relative_recursion_level,
+        } => {
+            let relative_level = if let Some(relative_recursion_level) = relative_recursion_level {
+                format!(" level={}", relative_recursion_level)
+            } else {
+                "".to_string()
+            };
+            let summary = if let Some(name) = group_names.get(group) {
+                Some(format!("({}){}", name, relative_level))
+            } else {
+                Some(format!("{}{}", group, relative_level))
+            };
+            ("BackrefExistsCondition".to_string(), summary, None)
+        }
         Expr::Conditional { .. } => ("Conditional".to_string(), None, None),
         Expr::SubroutineCall(group) => (
             "SubroutineCall".to_string(),
             Some(format!("{}", group)),
-            None,
-        ),
-        Expr::UnresolvedNamedSubroutineCall { name, .. } => (
-            "UnresolvedNamedSubroutineCall".to_string(),
-            Some(format!("({})", name)),
             None,
         ),
         Expr::BacktrackingControlVerb(_) => ("BacktrackingControlVerb".to_string(), None, None),
@@ -423,6 +438,9 @@ fn info_to_tree_node<'a>(
             }
         }
         Expr::DefineGroup { .. } => ("DefineGroup".to_string(), None, None),
+        Expr::AstNode { .. } => unreachable!(
+            "Any AstNode left after the parser's resolver stage causes an error upon analysis"
+        ),
     };
 
     let children = info
@@ -665,6 +683,13 @@ mod tests {
         let node = parse_and_analyze(r"a|b|c");
         assert_eq!(node.kind, "Alt");
         assert_eq!(node.summary.as_deref(), Some("(3)"));
+    }
+
+    #[test]
+    fn test_info_to_tree_node_empty() {
+        let node = parse_and_analyze(r"");
+        assert_eq!(node.kind, "Empty");
+        assert_eq!(node.summary, None);
     }
 
     #[test]

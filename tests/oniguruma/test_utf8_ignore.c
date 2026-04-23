@@ -16,13 +16,13 @@
   // Compile failed: ParseError(2, InvalidEscape("\\c"))
   x2("q[\\c\\\\]", "q\034", 0, 2);
 
-  // Compile failed: ParseError(1, InvalidBackref)
+  // Compile failed: CompileError(InvalidBackref(17))
   x2("\\17", "\017", 0, 1);
 
   // No match found
   x2("(?x)  G (o O(?-x)oO) g L", "GoOoOgLe", 0, 7);
 
-  // Compile failed: ParseError(2, InvalidBackref)
+  // Compile failed: ParseError(1, InvalidClass)
   x2("[\\044-\\047]", "\046", 0, 1);
 
   // Compile failed: CompileError(InnerError(BuildError { kind: Syntax { pid: PatternID(0), err: Parse(Error { kind: ClassRangeInvalid, pattern: "[a-&&-a]", span: Span(Position(o: 1, l: 1, c: 2), Position(o: 4, l: 1, c: 5)) }) } }))
@@ -82,17 +82,11 @@
   // No match found
   x3("((?m:a.c))", "a\nc", 0, 3, 1);
 
-  // Match found at start 0 and end 1 (expected 2 and 3)
-  x3("(z)()()(?<_9>a)\\g<_9>", "zaa", 2, 3, 1);
-
   // No match found
   x2("(?:(?<x>)|(?<x>efg))\\k<x>", "", 0, 0);
 
   // No match found
   x2("(?:(?<n1>.)|(?<n1>..)|(?<n1>...)|(?<n1>....)|(?<n1>.....)|(?<n1>......)|(?<n1>.......)|(?<n1>........)|(?<n1>.........)|(?<n1>..........)|(?<n1>...........)|(?<n1>............)|(?<n1>.............)|(?<n1>..............))\\k<n1>$", "a-pyumpyum", 2, 10);
-
-  // Expected group to exist
-  x3("\\g<_A>\\g<_A>|\\zEND(.a.)(?<_A>.b.)", "xbxyby", 3, 6, 1);
   
   // No match found
   x2("(?:()|())*\\1\\2", "", 0, 0);
@@ -111,7 +105,7 @@
   // Compile failed: CompileError(FeatureNotYetSupported("Backref at recursion level"))
   x2("(?i)\\A(a|b\\g<1>c)\\k<1+2>\\z", "bBACcbac", 0, 8);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Backref at recursion level"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Backref exists condition with relative recursion level"))
   x2("(a)(?(1+0)b|c)d", "abd", 0, 3);
 
   // No match found
