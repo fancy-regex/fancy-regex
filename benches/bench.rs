@@ -24,7 +24,7 @@ extern crate criterion;
 use criterion::Criterion;
 use std::time::Duration;
 
-use fancy_regex::internal::{analyze, compile, run_default};
+use fancy_regex::internal::{analyze, compile, run_default, AnalyzeContext, CompileOptions};
 use fancy_regex::Expr;
 use regex::Regex;
 
@@ -56,14 +56,29 @@ fn analyze_literal_re(c: &mut Criterion) {
     let re = "^\\\\([!-/:-@\\[-`\\{-~aftnrv]|[0-7]{1,3}|x[0-9a-fA-F]{2}|x\\{[0-9a-fA-F]{1,6}\\})";
     let tree = Expr::parse_tree(re).unwrap();
     c.bench_function("analyze_literal_re", |b| {
-        b.iter(|| analyze(&tree, false).unwrap())
+        b.iter(|| analyze(&tree, AnalyzeContext::default()).unwrap())
     });
 }
 
 fn run_backtrack(c: &mut Criterion) {
     let tree = Expr::parse_tree("^.*?(([ab]+)\\1b)").unwrap();
-    let a = analyze(&tree, true).unwrap();
-    let p = compile(&a, true, tree.contains_subroutines).unwrap();
+    let a = analyze(
+        &tree,
+        AnalyzeContext {
+            explicit_capture_group_0: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let p = compile(
+        &a,
+        CompileOptions {
+            anchored: true,
+            contains_subroutines: tree.contains_subroutines,
+            ..CompileOptions::default()
+        },
+    )
+    .unwrap();
     c.bench_function("run_backtrack", |b| {
         b.iter(|| {
             let result = run_default(&p, "babab", 0).unwrap();
@@ -77,8 +92,15 @@ fn run_backtrack(c: &mut Criterion) {
 // implementations, see README.md:
 fn run_tricky(c: &mut Criterion) {
     let tree = Expr::parse_tree("(a|b|ab)*bc").unwrap();
-    let a = analyze(&tree, false).unwrap();
-    let p = compile(&a, false, tree.contains_subroutines).unwrap();
+    let a = analyze(&tree, AnalyzeContext::default()).unwrap();
+    let p = compile(
+        &a,
+        CompileOptions {
+            contains_subroutines: tree.contains_subroutines,
+            ..CompileOptions::default()
+        },
+    )
+    .unwrap();
     let mut s = String::new();
     for _ in 0..28 {
         s.push_str("ab");
@@ -89,8 +111,15 @@ fn run_tricky(c: &mut Criterion) {
 
 fn run_backtrack_limit(c: &mut Criterion) {
     let tree = Expr::parse_tree("(?i)(a|b|ab)*(?>c)").unwrap();
-    let a = analyze(&tree, false).unwrap();
-    let p = compile(&a, false, tree.contains_subroutines).unwrap();
+    let a = analyze(&tree, AnalyzeContext::default()).unwrap();
+    let p = compile(
+        &a,
+        CompileOptions {
+            contains_subroutines: tree.contains_subroutines,
+            ..CompileOptions::default()
+        },
+    )
+    .unwrap();
     let s = "abababababababababababababababababababababababababababab";
     c.bench_function("run_backtrack_limit", |b| {
         b.iter(|| run_default(&p, &s, 0).unwrap_err())
@@ -101,8 +130,15 @@ fn run_backtrack_limit(c: &mut Criterion) {
 fn const_size_lookbehind(c: &mut Criterion) {
     // Benchmark const-size lookbehind (should use simple GoBack)
     let tree = Expr::parse_tree(r"(?<=ab)x").unwrap();
-    let a = analyze(&tree, false).unwrap();
-    let p = compile(&a, false, tree.contains_subroutines).unwrap();
+    let a = analyze(&tree, AnalyzeContext::default()).unwrap();
+    let p = compile(
+        &a,
+        CompileOptions {
+            contains_subroutines: tree.contains_subroutines,
+            ..CompileOptions::default()
+        },
+    )
+    .unwrap();
     let input = "abx";
     c.bench_function("const_size_lookbehind", |b| {
         b.iter(|| run_default(&p, input, 0).unwrap())
@@ -113,8 +149,15 @@ fn const_size_lookbehind(c: &mut Criterion) {
 fn variable_size_lookbehind(c: &mut Criterion) {
     // Benchmark variable-size lookbehind (uses reverse DFA)
     let tree = Expr::parse_tree(r"(?<=a+b+)x").unwrap();
-    let a = analyze(&tree, false).unwrap();
-    let p = compile(&a, false, tree.contains_subroutines).unwrap();
+    let a = analyze(&tree, AnalyzeContext::default()).unwrap();
+    let p = compile(
+        &a,
+        CompileOptions {
+            contains_subroutines: tree.contains_subroutines,
+            ..CompileOptions::default()
+        },
+    )
+    .unwrap();
     let input = "aaabbbbx";
     c.bench_function("variable_size_lookbehind", |b| {
         b.iter(|| run_default(&p, input, 0).unwrap())
@@ -125,8 +168,15 @@ fn variable_size_lookbehind(c: &mut Criterion) {
 fn variable_size_alt_lookbehind(c: &mut Criterion) {
     // Benchmark variable-size lookbehind with alternation
     let tree = Expr::parse_tree(r"(?<=a|bc)x").unwrap();
-    let a = analyze(&tree, false).unwrap();
-    let p = compile(&a, false, tree.contains_subroutines).unwrap();
+    let a = analyze(&tree, AnalyzeContext::default()).unwrap();
+    let p = compile(
+        &a,
+        CompileOptions {
+            contains_subroutines: tree.contains_subroutines,
+            ..CompileOptions::default()
+        },
+    )
+    .unwrap();
     let input = "bcx";
     c.bench_function("variable_size_alt_lookbehind", |b| {
         b.iter(|| run_default(&p, input, 0).unwrap())
@@ -162,8 +212,15 @@ criterion_group!(
 fn continue_from_end_of_prev_match_short_haystack(c: &mut Criterion) {
     // Benchmark \G with a short haystack that doesn't match
     let tree = Expr::parse_tree(r"\Gfoo").unwrap();
-    let a = analyze(&tree, false).unwrap();
-    let p = compile(&a, false, tree.contains_subroutines).unwrap();
+    let a = analyze(&tree, AnalyzeContext::default()).unwrap();
+    let p = compile(
+        &a,
+        CompileOptions {
+            contains_subroutines: tree.contains_subroutines,
+            ..CompileOptions::default()
+        },
+    )
+    .unwrap();
     let input = "bar"; // 3 bytes, doesn't match
     c.bench_function("continue_from_end_of_prev_match_short_haystack", |b| {
         b.iter(|| run_default(&p, input, 0).unwrap())
@@ -173,8 +230,15 @@ fn continue_from_end_of_prev_match_short_haystack(c: &mut Criterion) {
 fn continue_from_end_of_prev_match_long_haystack(c: &mut Criterion) {
     // Benchmark \G with a long haystack that doesn't match
     let tree = Expr::parse_tree(r"\Gfoo").unwrap();
-    let a = analyze(&tree, false).unwrap();
-    let p = compile(&a, false, tree.contains_subroutines).unwrap();
+    let a = analyze(&tree, AnalyzeContext::default()).unwrap();
+    let p = compile(
+        &a,
+        CompileOptions {
+            contains_subroutines: tree.contains_subroutines,
+            ..CompileOptions::default()
+        },
+    )
+    .unwrap();
     let mut input = String::new();
     for _ in 0..10000 {
         input.push('x');

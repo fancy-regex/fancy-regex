@@ -110,6 +110,10 @@ const OPTION_TRACE: u32 = 1 << 0;
 /// the fact that we skipped because of an empty match, it would still treat `\G` as matching. So
 /// this option is for communicating that to the VM. Phew.
 pub(crate) const OPTION_SKIPPED_EMPTY_MATCH: u32 = 1 << 1;
+/// When this option is set, the VM will reject any match where the engine consumed no characters.
+/// \K is ignored as part of this check - so empty matches can still be reported if the engine
+/// consumed characters and then \K was used afterwards.
+pub(crate) const OPTION_FIND_NOT_EMPTY: u32 = 1 << 2;
 
 // TODO: make configurable
 const MAX_STACK: usize = 1_000_000;
@@ -233,6 +237,9 @@ pub enum Insn {
     /// Split execution into two threads. The two fields are positions of instructions. Execution
     /// first tries the first thread. If that fails, the second position is tried.
     Split(usize, usize),
+    /// Like `Split`, but also updates `match_attempt_start` for `OPTION_FIND_NOT_EMPTY` tracking.
+    /// Used exclusively for the unanchored search preamble.
+    SplitUnanchored(usize, usize),
     /// Jump to instruction at position
     Jmp(usize),
     /// Save the current string index into the specified slot
@@ -652,6 +659,7 @@ pub(crate) fn run(
     let mut backtrack_count = 0;
     let mut pc = 0;
     let mut ix = pos;
+    let mut match_attempt_start = pos;
     loop {
         // break from this loop to fail, causes stack to pop
         'fail: loop {
@@ -668,6 +676,13 @@ pub(crate) fn run(
                     #[cfg(feature = "std")]
                     if option_flags & OPTION_TRACE != 0 {
                         println!("saves: {:?}", state.saves);
+                    }
+                    // Reject the match if it is empty and the flag to do so is enabled.
+                    // `match_attempt_start` is set by `SplitUnanchored` each time the unanchored
+                    // preamble begins a new match attempt at a fresh position, so this correctly
+                    // rejects empty matches regardless of where in the haystack the attempt starts.
+                    if option_flags & OPTION_FIND_NOT_EMPTY != 0 && ix == match_attempt_start {
+                        break 'fail;
                     }
                     if let Some(&slot1) = state.saves.get(1) {
                         // With some features like keep out (\K), the match start can be after
@@ -758,6 +773,12 @@ pub(crate) fn run(
                     }
                 }
                 Insn::Split(x, y) => {
+                    state.push(y, ix)?;
+                    pc = x;
+                    continue;
+                }
+                Insn::SplitUnanchored(x, y) => {
+                    match_attempt_start = ix;
                     state.push(y, ix)?;
                     pc = x;
                     continue;
@@ -1019,7 +1040,7 @@ pub(crate) fn run(
                         // instead of checking at each position in the haystack
                         // because \G will never match at any other position
                         if at_start && state.stack.len() == 1 {
-                            // The only item on the stack is from the Split instruction for non-anchored search
+                            // The only item on the stack is from the SplitUnanchored instruction for non-anchored search
                             // We can safely return None immediately
                             return Ok(None);
                         }

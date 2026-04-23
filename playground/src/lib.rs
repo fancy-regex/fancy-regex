@@ -47,6 +47,7 @@ pub struct RegexFlags {
     pub ignore_whitespace: bool,
     pub unicode: bool,
     pub oniguruma_mode: bool,
+    pub find_not_empty: bool,
 }
 
 impl Default for RegexFlags {
@@ -58,6 +59,7 @@ impl Default for RegexFlags {
             ignore_whitespace: false,
             unicode: true,
             oniguruma_mode: true,
+            find_not_empty: false,
         }
     }
 }
@@ -81,6 +83,7 @@ fn build_regex(pattern: &str, flags: &RegexFlags) -> Result<Regex, String> {
     builder.ignore_whitespace(flags.ignore_whitespace);
     builder.unicode_mode(flags.unicode);
     builder.oniguruma_mode(flags.oniguruma_mode);
+    builder.find_not_empty(flags.find_not_empty);
 
     builder
         .build()
@@ -183,12 +186,18 @@ pub fn analyze_regex(pattern: &str, flags: JsValue) -> Result<String, String> {
     let flags = get_flags(flags)?;
     let regex_flags = compute_regex_flags(&flags);
 
-    use fancy_regex::internal::{analyze, optimize};
+    use fancy_regex::internal::{analyze, optimize, AnalyzeContext};
 
     match fancy_regex::Expr::parse_tree_with_flags(pattern, regex_flags) {
         Ok(mut tree) => {
             let requires_capture_group_fixup = optimize(&mut tree);
-            match analyze(&tree, requires_capture_group_fixup) {
+            match analyze(
+                &tree,
+                AnalyzeContext {
+                    explicit_capture_group_0: requires_capture_group_fixup,
+                    find_not_empty: flags.find_not_empty,
+                },
+            ) {
                 Ok(info) => Ok(format!("{:#?}", info)),
                 Err(e) => Err(format!("Analysis error: {}", e)),
             }
@@ -438,7 +447,7 @@ pub fn analyze_regex_tree(pattern: &str, flags: JsValue) -> Result<JsValue, Stri
     let flags = get_flags(flags)?;
     let regex_flags = compute_regex_flags(&flags);
 
-    use fancy_regex::internal::{analyze, optimize};
+    use fancy_regex::internal::{analyze, optimize, AnalyzeContext};
 
     match fancy_regex::Expr::parse_tree_with_flags(pattern, regex_flags) {
         Ok(mut tree) => {
@@ -446,7 +455,13 @@ pub fn analyze_regex_tree(pattern: &str, flags: JsValue) -> Result<JsValue, Stri
             // Build reverse lookup map from group index to name once
             let group_names = build_group_names_lookup(&named_groups);
             let requires_capture_group_fixup = optimize(&mut tree);
-            match analyze(&tree, requires_capture_group_fixup) {
+            match analyze(
+                &tree,
+                AnalyzeContext {
+                    explicit_capture_group_0: requires_capture_group_fixup,
+                    find_not_empty: flags.find_not_empty,
+                },
+            ) {
                 Ok(info) => {
                     let tree_node = info_to_tree_node(&info, &group_names);
                     serde_wasm_bindgen::to_value(&tree_node)
@@ -474,7 +489,9 @@ mod tests {
     fn parse_and_analyze(pattern: &str) -> AnalysisTreeNode {
         let tree = fancy_regex::Expr::parse_tree(pattern).unwrap();
         let group_names = build_group_names_lookup(&tree.named_groups);
-        let info = fancy_regex::internal::analyze(&tree, false).unwrap();
+        let info =
+            fancy_regex::internal::analyze(&tree, fancy_regex::internal::AnalyzeContext::default())
+                .unwrap();
         info_to_tree_node(&info, &group_names)
     }
 
@@ -767,11 +784,7 @@ mod tests {
 
     #[test]
     fn test_info_to_tree_node_define_group() {
-        let tree = fancy_regex::Expr::parse_tree(r"(?(DEFINE)(a)(b))").unwrap();
-        let info = fancy_regex::internal::analyze(&tree, false).unwrap();
-        let group_names = std::collections::HashMap::new();
-
-        let node = info_to_tree_node(&info, &group_names);
+        let node = parse_and_analyze(r"(?(DEFINE)(a)(b))");
 
         assert_eq!(node.kind, "DefineGroup");
     }
