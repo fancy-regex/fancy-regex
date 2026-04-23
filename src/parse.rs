@@ -153,6 +153,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_piece(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
+        let start = ix;
         let (ix, child) = self.parse_atom(ix, depth)?;
         let mut ix = self.optional_whitespace(ix)?;
         if ix < self.re.len() {
@@ -175,28 +176,46 @@ impl<'a> Parser<'a> {
                 }
                 _ => return Ok((ix, child)),
             };
+            let mut skip = false;
             if !self.is_repeatable(&child) {
-                return Err(Error::ParseError(ix, ParseError::TargetNotRepeatable));
+                // In Oniguruma mode, `(?:)` followed by a quantifier is a
+                // zero-width no-op that Oniguruma silently accepts. Skip
+                // past the quantifier and its modifiers, returning Empty.
+                // We check `ix > start` to ensure the atom actually consumed
+                // input (e.g. a `(?:)` group), as opposed to a bare
+                // quantifier with no preceding atom.
+                if child == Expr::Empty && ix > start && self.flag(FLAG_ONIGURUMA_MODE) {
+                    skip = true;
+                } else {
+                    return Err(Error::ParseError(ix, ParseError::TargetNotRepeatable));
+                }
             }
-            ix += 1;
-            ix = self.optional_whitespace(ix)?;
+            ix = self.optional_whitespace(ix + 1)?;
             let mut greedy = true;
             if ix < self.re.len() && self.re.as_bytes()[ix] == b'?' {
                 greedy = false;
                 ix += 1;
             }
             greedy ^= self.flag(FLAG_SWAP_GREED);
-            let mut node = Expr::Repeat {
-                child: Box::new(child),
-                lo,
-                hi,
-                greedy,
-            };
+            let mut atomic_group = false;
             if ix < self.re.len() && self.re.as_bytes()[ix] == b'+' {
                 ix += 1;
-                node = Expr::AtomicGroup(Box::new(node));
+                atomic_group = true;
             }
-            return Ok((ix, node));
+            if skip {
+                return Ok((ix, child));
+            } else {
+                let mut node = Expr::Repeat {
+                    child: Box::new(child),
+                    lo,
+                    hi,
+                    greedy,
+                };
+                if atomic_group {
+                    node = Expr::AtomicGroup(Box::new(node));
+                }
+                return Ok((ix, node));
+            }
         }
         Ok((ix, child))
     }
@@ -2656,6 +2675,87 @@ mod tests {
             r"\G*",
             "Parsing error at position 2: Target of repeat operator is invalid",
         );
+    }
+
+    #[test]
+    fn empty_noncapturing_group_with_quantifier_default_mode() {
+        // In default mode, quantifiers on empty non-capturing groups are errors.
+        assert_error(
+            "(?:)*",
+            "Parsing error at position 4: Target of repeat operator is invalid",
+        );
+        assert_error(
+            "(?:)+",
+            "Parsing error at position 4: Target of repeat operator is invalid",
+        );
+        assert_error(
+            "(?:)?",
+            "Parsing error at position 4: Target of repeat operator is invalid",
+        );
+        assert_error(
+            "(?:){3}",
+            "Parsing error at position 6: Target of repeat operator is invalid",
+        );
+    }
+
+    #[test]
+    fn empty_noncapturing_group_with_quantifier_oniguruma_mode() {
+        // Oniguruma silently accepts quantifiers on empty non-capturing groups
+        // as zero-width no-ops, collapsing them to Expr::Empty.
+        assert_eq!(parse_oniguruma("(?:)*").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?:)+").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?:)?").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?:){3}").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?:){2,5}").unwrap(), Expr::Empty);
+        // Non-greedy modifier
+        assert_eq!(parse_oniguruma("(?:)*?").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?:)+?").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?:)??").unwrap(), Expr::Empty);
+        // Possessive modifier
+        assert_eq!(parse_oniguruma("(?:)*+").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?:)++").unwrap(), Expr::Empty);
+        // Both non-greedy and possessive
+        assert_eq!(parse_oniguruma("(?:)*?+").unwrap(), Expr::Empty);
+    }
+
+    #[test]
+    fn empty_noncapturing_group_with_quantifier_extended_mode() {
+        // In (?x) mode, whitespace between the group and quantifier (and
+        // between the quantifier and its modifiers) should be handled
+        // correctly.
+        assert_eq!(parse_oniguruma("(?x: (?:) * )").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?x: (?:) + )").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?x: (?:) ? )").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?x: (?:) {3} )").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?x: (?:) {2,5} )").unwrap(), Expr::Empty);
+        // Non-greedy modifier with whitespace
+        assert_eq!(parse_oniguruma("(?x: (?:) * ? )").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?x: (?:) + ? )").unwrap(), Expr::Empty);
+        // Possessive modifier with whitespace
+        assert_eq!(parse_oniguruma("(?x: (?:) * + )").unwrap(), Expr::Empty);
+    }
+
+    #[test]
+    fn empty_noncapturing_group_with_quantifier_in_concat() {
+        // Empty group + quantifier in the middle of a larger pattern should
+        // parse correctly, with the empty group collapsing away.
+        assert_eq!(
+            parse_oniguruma("a(?:)*b").unwrap(),
+            Expr::Concat(vec![make_literal("a"), make_literal("b")])
+        );
+        assert_eq!(
+            parse_oniguruma("(?x: a (?:) * b )").unwrap(),
+            Expr::Concat(vec![make_literal("a"), make_literal("b")])
+        );
+    }
+
+    #[test]
+    fn empty_noncapturing_group_with_flags_and_quantifier_oniguruma_mode() {
+        // Non-capturing groups with flags like (?i:) that are empty should
+        // also be handled.
+        assert_eq!(parse_oniguruma("(?i:)*").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?s:)+").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?x: (?i:) * )").unwrap(), Expr::Empty);
     }
 
     #[test]
