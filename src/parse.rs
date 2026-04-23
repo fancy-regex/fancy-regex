@@ -176,6 +176,7 @@ impl<'a> Parser<'a> {
                 }
                 _ => return Ok((ix, child)),
             };
+            let mut skip = false;
             if !self.is_repeatable(&child) {
                 // In Oniguruma mode, `(?:)` followed by a quantifier is a
                 // zero-width no-op that Oniguruma silently accepts. Skip
@@ -184,38 +185,37 @@ impl<'a> Parser<'a> {
                 // input (e.g. a `(?:)` group), as opposed to a bare
                 // quantifier with no preceding atom.
                 if child == Expr::Empty && ix > start && self.flag(FLAG_ONIGURUMA_MODE) {
-                    ix = self.optional_whitespace(ix + 1)?;
-                    // ignore lazy modifier
-                    if ix < self.re.len() && self.re.as_bytes()[ix] == b'?' {
-                        ix += 1;
-                    }
-                    // ignore atomic modifier
-                    if ix < self.re.len() && self.re.as_bytes()[ix] == b'+' {
-                        ix += 1;
-                    }
-                    return Ok((ix, child));
+                    skip = true;
+                } else {
+                    return Err(Error::ParseError(ix, ParseError::TargetNotRepeatable));
                 }
-                return Err(Error::ParseError(ix, ParseError::TargetNotRepeatable));
             }
-            ix += 1;
-            ix = self.optional_whitespace(ix)?;
+            ix = self.optional_whitespace(ix + 1)?;
             let mut greedy = true;
             if ix < self.re.len() && self.re.as_bytes()[ix] == b'?' {
                 greedy = false;
                 ix += 1;
             }
             greedy ^= self.flag(FLAG_SWAP_GREED);
-            let mut node = Expr::Repeat {
-                child: Box::new(child),
-                lo,
-                hi,
-                greedy,
-            };
+            let mut atomic_group = false;
             if ix < self.re.len() && self.re.as_bytes()[ix] == b'+' {
                 ix += 1;
-                node = Expr::AtomicGroup(Box::new(node));
+                atomic_group = true;
             }
-            return Ok((ix, node));
+            if skip {
+                return Ok((ix, child));
+            } else {
+                let mut node = Expr::Repeat {
+                    child: Box::new(child),
+                    lo,
+                    hi,
+                    greedy,
+                };
+                if atomic_group {
+                    node = Expr::AtomicGroup(Box::new(node));
+                }
+                return Ok((ix, node));
+            }
         }
         Ok((ix, child))
     }
