@@ -621,6 +621,11 @@ impl RegexOptionsBuilder {
     /// When this option is set using `\<` and `\>` in the pattern will match the literals
     /// `<` and `>` instead of word bounds.
     ///
+    /// # Repetition/Quantifiers on empty groups
+    ///
+    /// `fancy-regex` would normally reject patterns like `(?:)+` because the `+` has nothing
+    /// to target. In Oniguruma mode, the empty repeat is silently dropped at parse time.
+    ///
     /// ## Example
     ///
     /// ```
