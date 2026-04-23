@@ -234,7 +234,11 @@ impl<'a> Compiler<'a> {
                 });
             }
             Expr::Conditional { .. } => {
-                self.compile_conditional(|compiler, i| compiler.visit(&info.children[i], hard))?;
+                self.compile_conditional(
+                    |compiler| compiler.visit(&info.children[0], hard),
+                    |compiler| compiler.visit(&info.children[1], hard),
+                    |compiler| compiler.visit(&info.children[2], hard),
+                )?;
             }
             Expr::SubroutineCall(target_group) => {
                 // Check if we're already expanding this specific group (direct/indirect recursion)
@@ -300,19 +304,26 @@ impl<'a> Compiler<'a> {
             Expr::Absent(Absent::Repeater(_)) => {
                 let child_info = &info.children[0];
                 if child_info.hard {
-                    return Err(Error::CompileError(Box::new(
-                        CompileError::FeatureNotYetSupported(
-                            "Absent repeater containing hard patterns".to_string(),
-                        ),
-                    )));
-                }
-                // Compile the child expression as a delegate
-                let delegate = DelegateBuilder::new()
-                    .push(child_info)
-                    .build_delegate(&self.options)?;
+                    // Nested absent operators are not yet supported
+                    let is_absent = |e: &Expr| matches!(e, Expr::Absent(_));
+                    if is_absent(child_info.expr) || child_info.expr.has_descendant(is_absent) {
+                        return Err(Error::CompileError(Box::new(
+                            CompileError::FeatureNotYetSupported(
+                                "Nested absent operators".to_string(),
+                            ),
+                        )));
+                    }
+                    // Expand (?~hard) to (?((?!hard))\O|)* using the VM's conditional machinery
+                    self.compile_hard_absent_repeater(child_info)?;
+                } else {
+                    // Compile the child expression as a delegate
+                    let delegate = DelegateBuilder::new()
+                        .push(child_info)
+                        .build_delegate(&self.options)?;
 
-                // Add the Absent instruction
-                self.b.add(Insn::AbsentRepeater(delegate));
+                    // Add the Absent instruction
+                    self.b.add(Insn::AbsentRepeater(delegate));
+                }
             }
             Expr::UnresolvedNamedSubroutineCall { .. } => unreachable!(),
             Expr::BackrefWithRelativeRecursionLevel { .. } => unreachable!(),
@@ -327,6 +338,13 @@ impl<'a> Compiler<'a> {
                 return Err(Error::CompileError(Box::new(
                     CompileError::FeatureNotYetSupported(error_msg.to_string()),
                 )));
+            }
+            Expr::DefineGroup { .. } => {
+                // DEFINE groups don't generate any VM instructions themselves.
+                // The groups defined inside are available for subroutine calls,
+                // but the DEFINE block itself doesn't match anything.
+                // Group numbers were already assigned during analysis, and the
+                // subroutine calls will inline the appropriate code when invoked.
             }
         }
         Ok(())
@@ -367,9 +385,16 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
-    fn compile_conditional<F>(&mut self, mut handle_child: F) -> Result<()>
+    fn compile_conditional<C, T, F>(
+        &mut self,
+        mut condition: C,
+        mut truth: T,
+        mut false_branch: F,
+    ) -> Result<()>
     where
-        F: FnMut(&mut Compiler, usize) -> Result<()>,
+        C: FnMut(&mut Compiler) -> Result<()>,
+        T: FnMut(&mut Compiler) -> Result<()>,
+        F: FnMut(&mut Compiler) -> Result<()>,
     {
         // here we use atomic group functionality to be able to remove the program counter
         // relating to the split instruction's second position if the conditional succeeds
@@ -382,24 +407,62 @@ impl<'a> Compiler<'a> {
         self.b.add(Insn::Split(split_pc + 1, usize::MAX));
 
         // add the conditional expression
-        handle_child(self, 0)?;
+        condition(self)?;
 
         // mark it as successful to remove the state we added as a split earlier
         self.b.add(Insn::EndAtomic);
 
         // add the truth branch
-        handle_child(self, 1)?;
+        truth(self)?;
         // add an instruction to jump over the false branch - we will update the jump target later
         let jump_over_false_pc = self.b.pc();
         self.b.add(Insn::Jmp(0));
 
         // add the false branch, update the split target
         self.b.set_split_target(split_pc, self.b.pc(), true);
-        handle_child(self, 2)?;
+        false_branch(self)?;
 
         // update the jump target for jumping over the false branch
         self.b.set_jmp_target(jump_over_false_pc, self.b.pc());
 
+        Ok(())
+    }
+
+    /// Compile a hard absent repeater `(?~inner)` by expanding it to its equivalent
+    /// conditional form: `(?((?!inner))\O|)*`
+    ///
+    /// This is a greedy loop that:
+    /// - When `inner` does not match at the current position: consumes one character (`\O`,
+    ///   which matches any character including newlines)
+    /// - When `inner` matches: consumes nothing and exits the loop
+    fn compile_hard_absent_repeater(&mut self, inner: &Info<'_>) -> Result<()> {
+        let repeat = self.b.newsave();
+        let check = self.b.newsave();
+        self.b.add(Insn::Save0(repeat));
+        let loop_pc = self.b.pc();
+        self.b.add(Insn::RepeatEpsilonGr {
+            lo: 0,
+            next: usize::MAX,
+            repeat,
+            check,
+        });
+
+        // Compile the body as: (?((?!inner))\O|)
+        // Condition: negative lookahead - succeeds when inner does NOT match
+        // Truth branch: consume one character (including newlines)
+        // False branch: empty - when inner matches, consume nothing (triggers epsilon exit)
+        self.compile_conditional(
+            |compiler| compiler.compile_negative_lookaround(inner, LookAheadNeg),
+            |compiler| {
+                compiler.b.add(Insn::Any);
+                Ok(())
+            },
+            |_| Ok(()),
+        )?;
+
+        self.b.add(Insn::Jmp(loop_pc));
+        let next_pc = self.b.pc();
+        self.b.set_repeat_target(loop_pc, next_pc);
         Ok(())
     }
 
@@ -760,21 +823,28 @@ impl<'a> Compiler<'a> {
         for info in infos {
             delegate_builder.push(info);
         }
-        let delegate = delegate_builder.build(&self.options)?;
-
-        self.b.add(delegate);
+        // Skip emitting a delegate for an empty regex (e.g. a batch of
+        // only DefineGroups), as it would just match the empty string.
+        if !delegate_builder.is_empty() {
+            self.b.add(delegate_builder.build(&self.options)?);
+        }
         Ok(())
     }
 
     fn compile_delegate(&mut self, info: &Info) -> Result<()> {
-        let insn = if info.is_literal() {
+        if info.is_literal() {
             let mut val = String::new();
             info.push_literal(&mut val);
-            Insn::Lit(val)
+            self.b.add(Insn::Lit(val));
         } else {
-            DelegateBuilder::new().push(info).build(&self.options)?
-        };
-        self.b.add(insn);
+            let mut builder = DelegateBuilder::new();
+            builder.push(info);
+            // Skip emitting a delegate for an empty regex (e.g. DefineGroup),
+            // as it would just match the empty string and is a no-op.
+            if !builder.is_empty() {
+                self.b.add(builder.build(&self.options)?);
+            }
+        }
         Ok(())
     }
 
@@ -945,6 +1015,11 @@ impl DelegateBuilder {
             const_size: true,
             capture_groups: None,
         }
+    }
+
+    /// Returns true if the regex string built so far is empty.
+    fn is_empty(&self) -> bool {
+        self.re.is_empty()
     }
 
     fn push(&mut self, info: &Info<'_>) -> &mut DelegateBuilder {
@@ -1408,6 +1483,67 @@ mod tests {
     }
 
     #[test]
+    fn absent_repeater_with_hard_inner_compiles() {
+        // A hard absent repeater (?~\1) expands to (?((?!\1))\O|)*
+        // Use explicit_capture_group_0=false so that (\w) = group 1 and \1 refers to it
+        let prog = compile_prog_no_explicit_group0(r"(\w)(?~\1)");
+
+        assert_eq!(prog.len(), 20, "prog: {:?}", prog);
+
+        assert_matches!(prog[0], Split(3, 1));
+        assert_matches!(prog[1], Any);
+        assert_matches!(prog[2], Jmp(0));
+        assert_matches!(prog[3], Save(0));
+        assert_matches!(prog[4], SaveCaptureGroupStart(1));
+        assert_delegate_insn(&prog[5], r"\w", None);
+        assert_matches!(prog[6], Save(3));
+        assert_matches!(prog[7], Save0(4));
+        assert_matches!(
+            prog[8],
+            RepeatEpsilonGr {
+                lo: 0,
+                next: 18,
+                repeat: 4,
+                check: 5
+            }
+        );
+        assert_matches!(prog[9], BeginAtomic);
+        assert_matches!(prog[10], Split(11, 17));
+        assert_matches!(prog[11], Split(12, 14));
+        assert_matches!(
+            prog[12],
+            Backref {
+                slot: 2,
+                casei: false
+            }
+        );
+        assert_matches!(prog[13], FailNegativeLookAround);
+        assert_matches!(prog[14], EndAtomic);
+        assert_matches!(prog[15], Any);
+        assert_matches!(prog[16], Jmp(17));
+        assert_matches!(prog[17], Jmp(8));
+        assert_matches!(prog[18], Save(1));
+        assert_matches!(prog[19], End);
+    }
+
+    #[test]
+    fn absent_repeater_nested_absent_error() {
+        // Nested absent operators are not yet supported (direct child)
+        let tree = Expr::parse_tree(r"(?~(?~abc))").unwrap();
+        let info = analyze(&tree, true).unwrap();
+        assert_compile_error(compile(&info, true, tree.contains_subroutines), |e| {
+            matches!(e, CompileError::FeatureNotYetSupported(_))
+        });
+
+        // Nested absent operators are not yet supported (indirect descendant)
+        let tree = Expr::parse_tree(r"(?~a(?<=b(?~c)))").unwrap();
+        let info = analyze(&tree, true).unwrap();
+        assert_compile_error(compile(&info, true, tree.contains_subroutines), |e| {
+            matches!(e, CompileError::FeatureNotYetSupported(_))
+        });
+    }
+
+    #[test]
     fn absent_operators_error() {
         // Test that absent expression returns feature not supported
         let tree = Expr::parse_tree(r"(?~|abc|\d*)").unwrap();
@@ -1535,6 +1671,16 @@ mod tests {
         assert_matches!(prog[6], End);
     }
 
+    #[test]
+    fn define_group_is_a_no_op() {
+        // A DEFINE block is not hard but produces an empty delegate regex,
+        // so compilation skips it entirely — only the End instruction remains.
+        let prog = compile_prog(r"(?(DEFINE)(?<word>\w+))");
+
+        assert_eq!(prog.len(), 1, "prog: {:?}", prog);
+        assert_matches!(prog[0], End);
+    }
+
     fn compile_prog(re: &str) -> Vec<Insn> {
         let tree = Expr::parse_tree(re).unwrap();
         let info = analyze(
@@ -1554,6 +1700,13 @@ mod tests {
             },
         )
         .unwrap();
+        prog.body
+    }
+
+    fn compile_prog_no_explicit_group0(re: &str) -> Vec<Insn> {
+        let tree = Expr::parse_tree(re).unwrap();
+        let info = analyze(&tree, false).unwrap();
+        let prog = compile(&info, false, tree.contains_subroutines).unwrap();
         prog.body
     }
 

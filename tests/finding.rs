@@ -535,7 +535,6 @@ fn find_iter_empty_repeat_anchored_non_greedy_issue70() {
 #[test]
 fn find_iter_collect_when_backtrack_limit_hit() {
     use fancy_regex::Error;
-    use fancy_regex::RegexBuilder;
     use fancy_regex::RuntimeError;
 
     let r = RegexBuilder::new("(x+x+)+(?>y)")
@@ -561,6 +560,54 @@ fn find_conditional() {
 #[test]
 fn find_endtext_before_newlines() {
     assert_eq!(find(r"\Z", "hello\nworld\n\n\n"), Some((11, 11)));
+}
+
+#[test]
+fn find_endtext_ignore_trailing_newlines_non_crlf() {
+    // \Z without CRLF mode: only bare \n chars are skipped at the end.
+    // "abc\n\n" — \Z matches at position 3 (before the trailing newlines)
+    assert_eq!(find(r"\Z", "abc\n\n"), Some((3, 3)));
+    // No trailing newlines: \Z matches at the very end
+    assert_eq!(find(r"\Z", "abc"), Some((3, 3)));
+    // \r\n at the end: in non-CRLF mode the \r is NOT treated as a newline for \Z,
+    // so \Z matches just before the trailing \n, not before the \r\n pair.
+    assert_eq!(find(r"\Z", "abc\r\n"), Some((4, 4)));
+}
+
+#[test]
+fn find_endtext_ignore_trailing_newlines_crlf() {
+    // (?R) enables CRLF mode; \Z should then treat \r as part of trailing newlines too.
+    assert_eq!(
+        RegexBuilder::new(r"\Z")
+            .crlf(true)
+            .build()
+            .unwrap()
+            .find("abc\r\n")
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
+        Some((3, 3))
+    );
+    assert_eq!(
+        RegexBuilder::new(r"\Z")
+            .crlf(true)
+            .build()
+            .unwrap()
+            .find("abc\r\r")
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
+        Some((3, 3))
+    );
+    // bare \n still works in CRLF mode
+    assert_eq!(
+        RegexBuilder::new(r"\Z")
+            .crlf(true)
+            .build()
+            .unwrap()
+            .find("abc\n")
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
+        Some((3, 3))
+    );
 }
 
 #[test]

@@ -1697,6 +1697,13 @@ pub enum Expr {
     BacktrackingControlVerb(BacktrackingControlVerb),
     /// Match while the given expression is absent from the haystack
     Absent(Absent),
+    /// DEFINE group - defines capture groups for subroutines without matching anything
+    /// The expressions inside are parsed and assigned group numbers, but no VM instructions
+    /// are generated for the DEFINE block itself.
+    DefineGroup {
+        /// The expressions/groups being defined
+        definitions: Box<Expr>,
+    },
 }
 
 /// Type of look-around assertion as used for a look-around expression.
@@ -1820,7 +1827,11 @@ pub enum Assertion {
     /// End of input text
     EndText,
     /// End of input text, or before any trailing newlines at the end (Oniguruma's `\Z`)
-    EndTextIgnoreTrailingNewlines,
+    EndTextIgnoreTrailingNewlines {
+        /// Whether CRLF mode is enabled.
+        /// If `true`, trailing `\r\n` pairs (in addition to bare `\n`) are also ignored.
+        crlf: bool,
+    },
     /// Start of a line
     StartLine {
         /// CRLF mode.
@@ -1861,7 +1872,7 @@ impl Assertion {
                 | RightWordHalfBoundary
                 | WordBoundary
                 | NotWordBoundary
-                | EndTextIgnoreTrailingNewlines
+                | EndTextIgnoreTrailingNewlines { .. }
         )
     }
 }
@@ -1974,6 +1985,7 @@ macro_rules! children_iter_match {
                 second: Some(exp.$single_method()),
                 third: None,
             },
+            Expr::DefineGroup { definitions } => $iter::Single(Some(definitions.$single_method())),
             _ if $self.is_leaf_node() => $iter::Empty,
             _ => unimplemented!(),
         }
@@ -2015,6 +2027,21 @@ impl Expr {
                 | Expr::UnresolvedNamedSubroutineCall { .. }
                 | Expr::Absent(Absent::Clear),
         )
+    }
+
+    /// Returns `true` if any descendant of this expression (not including itself)
+    /// satisfies the given predicate.
+    ///
+    /// This performs an iterative depth-first search using [`children_iter`](Self::children_iter).
+    pub fn has_descendant(&self, predicate: impl Fn(&Expr) -> bool) -> bool {
+        let mut stack: Vec<&Expr> = self.children_iter().collect();
+        while let Some(expr) = stack.pop() {
+            if predicate(expr) {
+                return true;
+            }
+            stack.extend(expr.children_iter());
+        }
+        false
     }
 
     /// Returns an iterator over the immediate children of this expression.
@@ -2137,6 +2164,9 @@ impl Expr {
                 if casei {
                     buf.push(')');
                 }
+            }
+            Expr::DefineGroup { .. } => {
+                // DEFINE groups match nothing - output empty string for delegation
             }
             _ => panic!("attempting to format hard expr {:?}", self),
         }
