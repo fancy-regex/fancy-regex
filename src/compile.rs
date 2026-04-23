@@ -1016,22 +1016,19 @@ pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
                 build_seek_pattern(info, group_info_map, 0, &mut seek_pat, 0);
 
                 if filter(&seek_pat) {
-                    match compile_inner(&seek_pat, &c.options) {
-                        Ok(inner) => {
-                            c.b.add(Insn::Seek(Seek {
-                                inner,
-                                pattern: seek_pat,
-                            }));
-                            used_seek = true;
-                        }
-                        // If compilation of the seek pattern fails for any reason, fall back to the
-                        // standard SplitUnanchored preamble.
-                        Err(_) => {}
+                    if let Ok(inner) = compile_inner(&seek_pat, &c.options) {
+                        c.b.add(Insn::Seek(Seek {
+                            inner,
+                            pattern: seek_pat,
+                        }));
+                        used_seek = true;
                     }
                 }
             }
         }
 
+        // If compilation of the seek pattern fails for any reason, or seeking for this
+        // pattern is disabled, fall back to the standard SplitUnanchored preamble.
         if !used_seek {
             // add instructions as if \O*? was used at the start of the expression
             // so that we bump the haystack index by one when failing to match at the current position

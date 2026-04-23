@@ -399,7 +399,7 @@ impl<'r, 'h> Iterator for SplitN<'r, 'h> {
 
 impl<'r, 'h> core::iter::FusedIterator for SplitN<'r, 'h> {}
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct RegexOptions {
     syntaxc: SyntaxConfig,
     delegate_size_limit: Option<usize>,
@@ -434,20 +434,6 @@ impl fmt::Debug for RegexOptions {
             )
             .field("seek_filter", &seek_filter_desc)
             .finish()
-    }
-}
-
-impl Default for RegexOptions {
-    fn default() -> Self {
-        Self {
-            syntaxc: SyntaxConfig::default(),
-            delegate_size_limit: None,
-            delegate_dfa_size_limit: None,
-            oniguruma_mode: false,
-            ignore_numbered_groups_when_named_groups_exist: false,
-            hard_regex_runtime_options: HardRegexRuntimeOptions::default(),
-            seek_filter: None, // when we are ready to enable seek by default, use: `Some(seek_pattern_is_useful)`
-        }
     }
 }
 
