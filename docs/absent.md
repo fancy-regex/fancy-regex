@@ -69,6 +69,39 @@ With the absent repeater, the intention becomes a lot easier to understand - mat
 [*]{2}(?:In|Out)put:[*]{2}\n```(?~```)```
 ```
 
+Where it really shines is when you need more complicated expressions, like to match a variable number of backticks from the code fence boundaries, it becomes a lot easier to read than an expanded alternative which would avoid catastrophic backtracking.
+
+```rust
+use fancy_regex::Regex;
+
+// Match a code fence: opening backticks (3+), content (absent the same backticks), closing backticks
+let re = Regex::new(r"(?<!`)(`{3,}(?!`))\w*\n(?~\1)\n(\1)")?;
+
+// A code fence with 4 backticks, where the inner code contains 3 backticks
+let input = "````text\nsome code with ``` backticks\n````";
+let captures = re.captures(input)?.expect("should match");
+
+// The overall match spans the entire input
+let m = captures.get(0).unwrap();
+assert_eq!(m.start(), 0);
+assert_eq!(m.end(), input.len());
+assert_eq!(m.as_str(), input);
+
+// Group 1: the opening 4 backticks
+let open = captures.get(1).unwrap();
+assert_eq!(open.as_str(), "````");
+assert_eq!(open.start(), 0);
+assert_eq!(open.end(), 4);
+
+// Group 2: the closing 4 backticks
+let close = captures.get(2).unwrap();
+assert_eq!(close.as_str(), "````");
+assert_eq!(close.start(), input.len() - 4);
+assert_eq!(close.end(), input.len());
+
+# Ok::<(), fancy_regex::Error>(())
+```
+
 It also allows the engine to optimize it accordingly.
 
 ### Other ways of looking at it

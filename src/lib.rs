@@ -1972,6 +1972,21 @@ impl Expr {
         )
     }
 
+    /// Returns `true` if any descendant of this expression (not including itself)
+    /// satisfies the given predicate.
+    ///
+    /// This performs an iterative depth-first search using [`children_iter`](Self::children_iter).
+    pub fn has_descendant(&self, predicate: impl Fn(&Expr) -> bool) -> bool {
+        let mut stack: Vec<&Expr> = self.children_iter().collect();
+        while let Some(expr) = stack.pop() {
+            if predicate(expr) {
+                return true;
+            }
+            stack.extend(expr.children_iter());
+        }
+        false
+    }
+
     /// Returns an iterator over the immediate children of this expression.
     ///
     /// For leaf nodes, this returns an empty iterator. For non-leaf nodes, it returns

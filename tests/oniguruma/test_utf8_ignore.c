@@ -126,7 +126,7 @@
   // Compile failed: ParseError(1, InvalidEscape("\\o"))
   x2("[\\o{101}]", "A", 0, 1);
 
-  // Compile failed: CompileError(FeatureNotYetSupported("Absent repeater containing hard patterns"))
+  // Compile failed: CompileError(FeatureNotYetSupported("Nested absent operators"))
   x2("a(?~(?~)).", "abcdefghijklmnopqrstuvwxyz", 0, 26);
 
   // Compile failed: CompileError(FeatureNotYetSupported("Absent expression"))

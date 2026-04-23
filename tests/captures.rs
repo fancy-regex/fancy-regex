@@ -660,3 +660,30 @@ fn expander_errors() {
         exp.check("${xx}", &with_names),
         Err(Error::CompileError(ref box_err)) if matches!(**box_err, CompileError::InvalidGroupNameBackref(ref name) if name == "xx")));
 }
+
+#[test]
+fn absent_repeater_hard_captures_opening_fence() {
+    // Matches a markdown code fence where the opening backticks are captured in group 1,
+    // then the body is matched while those backticks are absent, then the same backticks close.
+    // Pattern: (`{3,})(?~\1)\1  - capture 3+ backticks, absent-repeat until those backticks,
+    // then match the same backticks to close.
+    let re = common::regex(r"(`{3,})(?~\1)\1");
+
+    // Three-backtick fence
+    let cap = re.captures("```code```").unwrap().unwrap();
+    assert_match(cap.get(0), "```code```", 0, 10);
+    assert_match(cap.get(1), "```", 0, 3);
+
+    // Four-backtick fence - allows backticks inside
+    let cap = re.captures("````has ``` inside````").unwrap().unwrap();
+    assert_match(cap.get(0), "````has ``` inside````", 0, 22);
+    assert_match(cap.get(1), "````", 0, 4);
+
+    // Three backticks should match the shorter fence and stop at the first ``` occurrence
+    let cap = re
+        .captures("```first``` and ```second```")
+        .unwrap()
+        .unwrap();
+    assert_match(cap.get(0), "```first```", 0, 11);
+    assert_match(cap.get(1), "```", 0, 3);
+}
