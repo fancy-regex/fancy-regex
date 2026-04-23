@@ -153,6 +153,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_piece(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
+        let start = ix;
         let (ix, child) = self.parse_atom(ix, depth)?;
         let mut ix = self.optional_whitespace(ix)?;
         if ix < self.re.len() {
@@ -176,6 +177,24 @@ impl<'a> Parser<'a> {
                 _ => return Ok((ix, child)),
             };
             if !self.is_repeatable(&child) {
+                // In Oniguruma mode, `(?:)` followed by a quantifier is a
+                // zero-width no-op that Oniguruma silently accepts. Skip
+                // past the quantifier and its modifiers, returning Empty.
+                // We check `ix > start` to ensure the atom actually consumed
+                // input (e.g. a `(?:)` group), as opposed to a bare
+                // quantifier with no preceding atom.
+                if child == Expr::Empty && ix > start && self.flag(FLAG_ONIGURUMA_MODE) {
+                    ix = self.optional_whitespace(ix + 1)?;
+                    // ignore lazy modifier
+                    if ix < self.re.len() && self.re.as_bytes()[ix] == b'?' {
+                        ix += 1;
+                    }
+                    // ignore atomic modifier
+                    if ix < self.re.len() && self.re.as_bytes()[ix] == b'+' {
+                        ix += 1;
+                    }
+                    return Ok((ix, child));
+                }
                 return Err(Error::ParseError(ix, ParseError::TargetNotRepeatable));
             }
             ix += 1;
@@ -199,35 +218,6 @@ impl<'a> Parser<'a> {
             return Ok((ix, node));
         }
         Ok((ix, child))
-    }
-
-    /// Advance past a quantifier (and optional non-greedy / possessive
-    /// modifiers) immediately following the current position. Used when the
-    /// preceding token was a genuinely-empty group in Oniguruma mode, which
-    /// Oniguruma accepts as zero-width regardless of the trailing quantifier.
-    fn skip_empty_group_quantifier(&self, ix: usize) -> usize {
-        let bytes = self.re.as_bytes();
-        let Some(&b) = bytes.get(ix) else {
-            return ix;
-        };
-        let after_main = match b {
-            b'*' | b'+' | b'?' => ix + 1,
-            b'{' => match self.parse_repeat(ix) {
-                Ok((next, _, _)) => next,
-                Err(_) => return ix,
-            },
-            _ => return ix,
-        };
-        let after_ng = if bytes.get(after_main) == Some(&b'?') {
-            after_main + 1
-        } else {
-            after_main
-        };
-        if bytes.get(after_ng) == Some(&b'+') {
-            after_ng + 1
-        } else {
-            after_ng
-        }
     }
 
     fn is_repeatable(&self, child: &Expr) -> bool {
@@ -1081,14 +1071,6 @@ impl<'a> Parser<'a> {
                         ));
                     };
                     self.flags = oldflags;
-                    // In Oniguruma mode, `(?:)` followed by a quantifier is a
-                    // zero-width no-op that Oniguruma accepts but that our
-                    // delegate regex engine rejects as `RepetitionMissing`.
-                    // Swallow the trailing quantifier here so the expression
-                    // collapses to plain Empty.
-                    if child == Expr::Empty && self.flag(FLAG_ONIGURUMA_MODE) {
-                        return Ok((self.skip_empty_group_quantifier(ix + 1), child));
-                    }
                     return Ok((ix + 1, child));
                 }
                 _ => return Err(unknown_flag(self.re, start, ix)),
@@ -2677,6 +2659,87 @@ mod tests {
             r"\G*",
             "Parsing error at position 2: Target of repeat operator is invalid",
         );
+    }
+
+    #[test]
+    fn empty_noncapturing_group_with_quantifier_default_mode() {
+        // In default mode, quantifiers on empty non-capturing groups are errors.
+        assert_error(
+            "(?:)*",
+            "Parsing error at position 4: Target of repeat operator is invalid",
+        );
+        assert_error(
+            "(?:)+",
+            "Parsing error at position 4: Target of repeat operator is invalid",
+        );
+        assert_error(
+            "(?:)?",
+            "Parsing error at position 4: Target of repeat operator is invalid",
+        );
+        assert_error(
+            "(?:){3}",
+            "Parsing error at position 6: Target of repeat operator is invalid",
+        );
+    }
+
+    #[test]
+    fn empty_noncapturing_group_with_quantifier_oniguruma_mode() {
+        // Oniguruma silently accepts quantifiers on empty non-capturing groups
+        // as zero-width no-ops, collapsing them to Expr::Empty.
+        assert_eq!(parse_oniguruma("(?:)*").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?:)+").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?:)?").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?:){3}").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?:){2,5}").unwrap(), Expr::Empty);
+        // Non-greedy modifier
+        assert_eq!(parse_oniguruma("(?:)*?").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?:)+?").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?:)??").unwrap(), Expr::Empty);
+        // Possessive modifier
+        assert_eq!(parse_oniguruma("(?:)*+").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?:)++").unwrap(), Expr::Empty);
+        // Both non-greedy and possessive
+        assert_eq!(parse_oniguruma("(?:)*?+").unwrap(), Expr::Empty);
+    }
+
+    #[test]
+    fn empty_noncapturing_group_with_quantifier_extended_mode() {
+        // In (?x) mode, whitespace between the group and quantifier (and
+        // between the quantifier and its modifiers) should be handled
+        // correctly.
+        assert_eq!(parse_oniguruma("(?x: (?:) * )").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?x: (?:) + )").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?x: (?:) ? )").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?x: (?:) {3} )").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?x: (?:) {2,5} )").unwrap(), Expr::Empty);
+        // Non-greedy modifier with whitespace
+        assert_eq!(parse_oniguruma("(?x: (?:) * ? )").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?x: (?:) + ? )").unwrap(), Expr::Empty);
+        // Possessive modifier with whitespace
+        assert_eq!(parse_oniguruma("(?x: (?:) * + )").unwrap(), Expr::Empty);
+    }
+
+    #[test]
+    fn empty_noncapturing_group_with_quantifier_in_concat() {
+        // Empty group + quantifier in the middle of a larger pattern should
+        // parse correctly, with the empty group collapsing away.
+        assert_eq!(
+            parse_oniguruma("a(?:)*b").unwrap(),
+            Expr::Concat(vec![make_literal("a"), make_literal("b")])
+        );
+        assert_eq!(
+            parse_oniguruma("(?x: a (?:) * b )").unwrap(),
+            Expr::Concat(vec![make_literal("a"), make_literal("b")])
+        );
+    }
+
+    #[test]
+    fn empty_noncapturing_group_with_flags_and_quantifier_oniguruma_mode() {
+        // Non-capturing groups with flags like (?i:) that are empty should
+        // also be handled.
+        assert_eq!(parse_oniguruma("(?i:)*").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?s:)+").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?x: (?i:) * )").unwrap(), Expr::Empty);
     }
 
     #[test]
