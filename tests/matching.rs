@@ -110,7 +110,7 @@ fn atomic_group() {
 }
 
 #[test]
-fn backtrack_limit() {
+fn backtrack_limit_hit_when_not_seeking() {
     // Disable the seek pre-filter so the backtracking VM actually explores all positions and
     // hits the limit.  With seek enabled the engine would correctly determine there is no `c`
     // in the haystack and return `None` immediately without backtracking.
@@ -126,6 +126,34 @@ fn backtrack_limit() {
         Some(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded)) => {}
         _ => panic!("Expected RuntimeError::BacktrackLimitExceeded"),
     }
+}
+
+#[test]
+fn backtrack_limit_not_applicable_when_seeking() {
+    // Enable the seek pre-filter so the backtracking VM would only explore all positions
+    // which could match.  With seek enabled the engine will correctly determine there is no `c`
+    // in the haystack and return `None` immediately without backtracking.
+    let re = RegexBuilder::new(r"(?i)(a|b|ab)*(?>c)")
+        .backtrack_limit(1)
+        .seek(true)
+        .build()
+        .expect("regex to compile successfully");
+    let s = "abababababababababababababababababababababababababababab";
+    let result = re.is_match(s);
+    assert!(result.is_ok());
+    assert!(!result.unwrap());
+}
+
+#[test]
+fn can_find_matches_when_seeking() {
+    let re = RegexBuilder::new(r"(abc|def)\1")
+        .seek(true)
+        .build()
+        .expect("regex to compile successfully");
+    let s = "abcdefabcdefabcdefdef";
+    let result = re.is_match(s);
+    assert!(result.is_ok());
+    assert!(result.unwrap());
 }
 
 #[test]
