@@ -41,16 +41,17 @@ use alloc::collections::BTreeMap as Map;
 use std::collections::HashMap as Map;
 
 use crate::analyze::Info;
+use crate::seek::build_seek_pattern;
 #[cfg(feature = "variable-lookbehinds")]
 use crate::vm::{CachePoolFn, ReverseBackwardsDelegate};
-use crate::vm::{CaptureGroupRange, Delegate, Insn, Prog};
+use crate::vm::{CaptureGroupRange, Delegate, Insn, Prog, Seek};
 use crate::LookAround::*;
 use crate::{
     Absent, BacktrackingControlVerb, CompileError, Error, Expr, LookAround, RegexOptions, Result,
 };
 
 /// Maximum recursion depth for subroutine calls (matches Oniguruma's limit)
-const MAX_SUBROUTINE_RECURSION_DEPTH: usize = 19;
+pub(crate) const MAX_SUBROUTINE_RECURSION_DEPTH: usize = 19;
 
 // I'm thinking it probably doesn't make a lot of sense having this split
 // out from Compiler.
@@ -950,7 +951,7 @@ pub(crate) fn options_to_rabuilder(options: &RegexOptions) -> RaBuilder {
 }
 
 /// Recursively populate the group_info_map with all capture groups in the Info tree
-fn populate_group_info_map<'a>(map: &mut Map<usize, &'a Info<'a>>, info: &'a Info<'a>) {
+pub(crate) fn populate_group_info_map<'a>(map: &mut Map<usize, &'a Info<'a>>, info: &'a Info<'a>) {
     match info.expr {
         Expr::Group(_) => {
             let group = info.start_group();
@@ -977,6 +978,11 @@ pub struct CompileOptions {
     pub anchored: bool,
     /// Whether the regex contains subroutine calls, requiring group info to be pre-populated.
     pub contains_subroutines: bool,
+    /// Optional filter function for the Seek pre-filter optimization.
+    /// When `Some(f)` and a seek pattern can be derived, `f` is called with the pattern string
+    /// to decide whether it is useful enough to replace the `SplitUnanchored` preamble with a
+    /// `Seek` instruction. When `None`, seek is disabled entirely.
+    pub seek_filter: Option<fn(&str) -> bool>,
 }
 
 /// Compile the analyzed expressions into a program.
@@ -992,13 +998,49 @@ pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
     }
 
     if !options.anchored {
-        // add instructions as if \O*? was used at the start of the expression
-        // so that we bump the haystack index by one when failing to match at the current position
-        let current_pc = c.b.pc();
-        // we are adding 3 instructions, so the current program counter plus 3 gives us the first real instruction
-        c.b.add(Insn::SplitUnanchored(current_pc + 3, current_pc + 1));
-        c.b.add(Insn::Any);
-        c.b.add(Insn::Jmp(current_pc));
+        // Attempt to build a Seek pre-filter when requested.
+        let mut used_seek = false;
+        if let Some(filter) = options.seek_filter {
+            if info.hard {
+                // Build the group_info_map if not already populated (needed for backref inlining).
+                let mut local_group_info_map: Map<usize, &Info<'_>>;
+                let group_info_map: &Map<usize, &Info<'_>> = if options.contains_subroutines {
+                    &c.group_info_map
+                } else {
+                    local_group_info_map = Map::new();
+                    populate_group_info_map(&mut local_group_info_map, info);
+                    &local_group_info_map
+                };
+
+                let mut seek_pat = String::new();
+                build_seek_pattern(info, group_info_map, 0, &mut seek_pat, 0);
+
+                if filter(&seek_pat) {
+                    match compile_inner(&seek_pat, &c.options) {
+                        Ok(inner) => {
+                            c.b.add(Insn::Seek(Seek {
+                                inner,
+                                pattern: seek_pat,
+                            }));
+                            used_seek = true;
+                        }
+                        // If compilation of the seek pattern fails for any reason, fall back to the
+                        // standard SplitUnanchored preamble.
+                        Err(_) => {}
+                    }
+                }
+            }
+        }
+
+        if !used_seek {
+            // add instructions as if \O*? was used at the start of the expression
+            // so that we bump the haystack index by one when failing to match at the current position
+            let current_pc = c.b.pc();
+            // we are adding 3 instructions, so the current program counter plus 3 gives us the first real instruction
+            c.b.add(Insn::SplitUnanchored(current_pc + 3, current_pc + 1));
+            c.b.add(Insn::Any);
+            c.b.add(Insn::Jmp(current_pc));
+        }
     }
     if info.start_group() == 1 {
         // add implicit capture group 0 begin

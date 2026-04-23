@@ -111,8 +111,12 @@ fn atomic_group() {
 
 #[test]
 fn backtrack_limit() {
+    // Disable the seek pre-filter so the backtracking VM actually explores all positions and
+    // hits the limit.  With seek enabled the engine would correctly determine there is no `c`
+    // in the haystack and return `None` immediately without backtracking.
     let re = RegexBuilder::new(r"(?i)(a|b|ab)*(?>c)")
         .backtrack_limit(100_000)
+        .seek(false)
         .build()
         .expect("regex to compile successfully");
     let s = "abababababababababababababababababababababababababababab";

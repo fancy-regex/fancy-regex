@@ -57,6 +57,7 @@ mod optimize;
 mod parse;
 mod parse_flags;
 mod replacer;
+mod seek;
 mod vm;
 
 use crate::analyze::can_compile_as_anchored;
@@ -70,6 +71,7 @@ use crate::vm::{Prog, OPTION_FIND_NOT_EMPTY, OPTION_SKIPPED_EMPTY_MATCH};
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
 pub use crate::expand::Expander;
 pub use crate::replacer::{NoExpand, Replacer, ReplacerRef};
+pub use crate::seek::seek_pattern_is_useful;
 
 const MAX_RECURSION: usize = 64;
 
@@ -397,7 +399,7 @@ impl<'r, 'h> Iterator for SplitN<'r, 'h> {
 
 impl<'r, 'h> core::iter::FusedIterator for SplitN<'r, 'h> {}
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 struct RegexOptions {
     syntaxc: SyntaxConfig,
     delegate_size_limit: Option<usize>,
@@ -405,6 +407,21 @@ struct RegexOptions {
     oniguruma_mode: bool,
     ignore_numbered_groups_when_named_groups_exist: bool,
     hard_regex_runtime_options: HardRegexRuntimeOptions,
+    seek_filter: Option<fn(&str) -> bool>,
+}
+
+impl Default for RegexOptions {
+    fn default() -> Self {
+        Self {
+            syntaxc: SyntaxConfig::default(),
+            delegate_size_limit: None,
+            delegate_dfa_size_limit: None,
+            oniguruma_mode: false,
+            ignore_numbered_groups_when_named_groups_exist: false,
+            hard_regex_runtime_options: HardRegexRuntimeOptions::default(),
+            seek_filter: None, // when we are ready to enable seek by default, use: `Some(seek_pattern_is_useful)`
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -609,6 +626,60 @@ impl RegexOptionsBuilder {
         self
     }
 
+    /// ⚠️ Experimental: This API may change, be removed without notice, or cause matches to be
+    /// skipped. This requires more real-world testing to prove correctness and observe in which
+    /// circumstances it brings performance benefits and in which it has the opposite effect.
+    /// Feedback (and benchmarks on real-world patterns/haystacks) would be very welcome!
+    ///
+    /// Enable the Seek pre-filter optimization for hard (backtracking) patterns.
+    ///
+    /// When enabled, the compiler attempts to derive a regular approximation of the pattern
+    /// which is used to skip to the earliest plausible match position in the haystack before
+    /// invoking the backtracking VM. This can dramatically speed up searches in long haystacks
+    /// when the pattern can only match at infrequent positions.
+    ///
+    /// The seek pattern is always a conservative over-approximation — it may report false-positive
+    /// positions but will never skip a true match.
+    ///
+    /// When `yes` is `true`, uses the default [`seek_pattern_is_useful`] filter to decide
+    /// whether the derived pattern is worth using. When `false`, disables seek entirely.
+    ///
+    /// To supply a custom filter, use [`seek_filter`](Self::seek_filter) instead.
+    pub fn seek(&mut self, yes: bool) -> &mut Self {
+        self.options.seek_filter = if yes {
+            Some(seek_pattern_is_useful)
+        } else {
+            None
+        };
+        self
+    }
+
+    /// Set a custom filter function that decides whether the derived seek pattern is useful.
+    ///
+    /// The function receives the seek pattern string and returns `true` if the pattern should
+    /// be used as a pre-filter, or `false` to fall back to the standard unanchored search.
+    ///
+    /// Calling this method implicitly enables seek. Pass [`seek_pattern_is_useful`] to restore
+    /// the default behavior.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use fancy_regex::{RegexOptionsBuilder, seek_pattern_is_useful};
+    ///
+    /// // Use the default filter (equivalent to seek(true))
+    /// let mut builder = RegexOptionsBuilder::new();
+    /// builder.seek_filter(seek_pattern_is_useful);
+    ///
+    /// // Use a custom filter that additionally requires the pattern to be longer than 3 bytes
+    /// let mut builder = RegexOptionsBuilder::new();
+    /// builder.seek_filter(|pat| pat.len() > 3 && seek_pattern_is_useful(pat));
+    /// ```
+    pub fn seek_filter(&mut self, filter: fn(&str) -> bool) -> &mut Self {
+        self.options.seek_filter = Some(filter);
+        self
+    }
+
     /// Attempts to better match [Oniguruma](https://github.com/kkos/oniguruma)'s default behavior
     ///
     /// Currently this amounts to changing behavior with:
@@ -751,6 +822,18 @@ impl RegexBuilder {
             .ignore_numbered_groups_when_named_groups_exist(yes);
         self
     }
+
+    /// See [`RegexOptionsBuilder::seek`]
+    pub fn seek(&mut self, yes: bool) -> &mut Self {
+        self.options.seek(yes);
+        self
+    }
+
+    /// See [`RegexOptionsBuilder::seek_filter`]
+    pub fn seek_filter(&mut self, filter: fn(&str) -> bool) -> &mut Self {
+        self.options.seek_filter(filter);
+        self
+    }
 }
 
 impl fmt::Debug for Regex {
@@ -836,6 +919,7 @@ impl Regex {
             CompileOptions {
                 anchored: can_compile_as_anchored(&tree.expr),
                 contains_subroutines: tree.contains_subroutines,
+                seek_filter: options.seek_filter,
             },
         )?;
         Ok(Regex {
@@ -1875,6 +1959,31 @@ fn push_usize(s: &mut String, x: usize) {
     }
 }
 
+/// Emit a repeat quantifier `?`, `*`, `+`, or `{lo,hi}` (optionally non-greedy) into `buf`.
+///
+/// This is shared between [`Expr::to_str`] and `build_seek_pattern` in the compiler.
+pub(crate) fn write_quantifier(buf: &mut String, lo: usize, hi: usize, greedy: bool) {
+    match (lo, hi) {
+        (0, 1) => buf.push('?'),
+        (0, usize::MAX) => buf.push('*'),
+        (1, usize::MAX) => buf.push('+'),
+        (lo, hi) => {
+            buf.push('{');
+            push_usize(buf, lo);
+            if lo != hi {
+                buf.push(',');
+                if hi != usize::MAX {
+                    push_usize(buf, hi);
+                }
+            }
+            buf.push('}');
+        }
+    }
+    if !greedy {
+        buf.push('?');
+    }
+}
+
 fn is_special(c: char) -> bool {
     matches!(
         c,
@@ -2220,25 +2329,7 @@ impl Expr {
                     buf.push_str("(?:");
                 }
                 child.to_str(buf, 3);
-                match (lo, hi) {
-                    (0, 1) => buf.push('?'),
-                    (0, usize::MAX) => buf.push('*'),
-                    (1, usize::MAX) => buf.push('+'),
-                    (lo, hi) => {
-                        buf.push('{');
-                        push_usize(buf, lo);
-                        if lo != hi {
-                            buf.push(',');
-                            if hi != usize::MAX {
-                                push_usize(buf, hi);
-                            }
-                        }
-                        buf.push('}');
-                    }
-                }
-                if !greedy {
-                    buf.push('?');
-                }
+                write_quantifier(buf, lo, hi, greedy);
                 if precedence > 2 {
                     buf.push(')');
                 }
@@ -2338,7 +2429,7 @@ pub mod internal {
         FLAG_CASEI, FLAG_CRLF, FLAG_DOTNL, FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST,
         FLAG_IGNORE_SPACE, FLAG_MULTI, FLAG_ONIGURUMA_MODE, FLAG_UNICODE,
     };
-    pub use crate::vm::{run_default, run_trace, Insn, Prog};
+    pub use crate::vm::{run_default, run_trace, Insn, Prog, Seek};
 }
 
 #[cfg(test)]
