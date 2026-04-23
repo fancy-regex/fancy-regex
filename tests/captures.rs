@@ -1,6 +1,6 @@
 use fancy_regex::{Captures, CompileError, Error, Expander, Match, Result};
-use std::borrow::Cow;
 use matches::assert_matches;
+use std::borrow::Cow;
 use std::ops::Index;
 use std::ops::Range;
 
