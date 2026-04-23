@@ -1693,12 +1693,10 @@ fn remap_unicode_property_if_necessary(
                 } else {
                     inner.to_string()
                 }
+            } else if n {
+                format!("[^{}]", inner)
             } else {
-                if n {
-                    format!("[^{}]", inner)
-                } else {
-                    format!("[{}]", inner)
-                }
+                format!("[{}]", inner)
             }
         };
         match (p.to_lowercase().as_ref(), unicode_flag, in_class, neg) {
