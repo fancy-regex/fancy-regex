@@ -971,7 +971,7 @@ pub(crate) fn populate_group_info_map<'a>(map: &mut Map<usize, &'a Info<'a>>, in
 }
 
 /// Options for compiling analyzed expressions into a program.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct CompileOptions {
     /// Whether the regex is anchored (starts matching at the beginning of the input).
     /// When `false`, a `SplitUnanchored` preamble is emitted to allow matching at any position.
@@ -983,6 +983,16 @@ pub struct CompileOptions {
     /// to decide whether it is useful enough to replace the `SplitUnanchored` preamble with a
     /// `Seek` instruction. When `None`, seek is disabled entirely.
     pub seek_filter: Option<fn(&str) -> bool>,
+}
+
+impl std::fmt::Debug for CompileOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CompileOptions")
+            .field("anchored", &self.anchored)
+            .field("contains_subroutines", &self.contains_subroutines)
+            .field("seek_filter", &self.seek_filter.map(|f| f as *const ()))
+            .finish()
+    }
 }
 
 /// Compile the analyzed expressions into a program.
