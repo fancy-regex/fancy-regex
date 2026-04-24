@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
+## [Unreleased]
+### Added
+- Add experimental seek optimization to only invoke the VM at candidate positions where a match could occur (#246)
+### Changed
+### Fixed
+
 ## [0.18.0] - 2026-04-24
 ### Added
 - Add support for `\N` to mean any character except newline, for Oniguruma compatibility (#206)
@@ -18,7 +24,6 @@ with the exception that 0.x versions can break between minor versions.
 - Add support for Oniguruma's absent repeater `(?~abc)` (#233)
 - Add support for ignoring empty matches (#240)
 - Add support for treating unnamed capture groups as non-capturing when named groups exist (#241)
-- Add experimental seek optimization to only invoke the VM at candidate positions where a match could occur (#246)
 ### Changed
 - `RegexBuilder` can now build multiple patterns with the same options (#213)
 - Parsing of capture group names is now more lenient (#241)
