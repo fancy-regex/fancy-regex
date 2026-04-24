@@ -987,10 +987,17 @@ pub struct CompileOptions {
 
 impl std::fmt::Debug for CompileOptions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let seek_filter_desc = match self.seek_filter {
+            None => "None",
+            Some(f_ptr) if f_ptr as usize == crate::seek::seek_pattern_is_useful as usize => {
+                "Some(seek_pattern_is_useful)"
+            }
+            Some(_) => "Some(<custom>)",
+        };
         f.debug_struct("CompileOptions")
             .field("anchored", &self.anchored)
             .field("contains_subroutines", &self.contains_subroutines)
-            .field("seek_filter", &self.seek_filter.map(|f| f as *const ()))
+            .field("seek_filter", &seek_filter_desc)
             .finish()
     }
 }
