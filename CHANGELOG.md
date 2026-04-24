@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
-## [Unreleased]
+## [0.18.0] - 2026-04-24
 ### Added
 - Add support for `\N` to mean any character except newline, for Oniguruma compatibility (#206)
 - Add support for `(*FAIL)` backtracking control verb (#210)
