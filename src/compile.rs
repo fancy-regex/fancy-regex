@@ -985,8 +985,8 @@ pub struct CompileOptions {
     pub seek_filter: Option<fn(&str) -> bool>,
 }
 
-impl std::fmt::Debug for CompileOptions {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for CompileOptions {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let seek_filter_desc = match self.seek_filter {
             None => "None",
             Some(f_ptr) if f_ptr as usize == crate::seek::seek_pattern_is_useful as usize => {
