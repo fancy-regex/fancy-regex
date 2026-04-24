@@ -129,7 +129,6 @@ Still in development, though the basic ideas are in place. Currently,
 the following features are missing:
 
 * Backreferences at recursion levels
-* Optimizations
 
 ## Acknowledgements
 

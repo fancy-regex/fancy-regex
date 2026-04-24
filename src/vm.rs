@@ -170,6 +170,24 @@ impl core::fmt::Debug for Delegate {
     }
 }
 
+/// Seek pre-filter: find the next plausible match position using a simplified approximation of the
+/// pattern, then hand off to the backtracking VM at that position.
+pub struct Seek {
+    /// The compiled seek pre-filter regex (un-anchored, finds leftmost match).
+    pub inner: Regex,
+    /// The seek-pattern string (for debug display).
+    pub pattern: String,
+}
+
+impl core::fmt::Debug for Seek {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        // Ensures it fails to compile if the struct changes
+        let Self { inner: _, pattern } = self;
+
+        f.debug_struct("Seek").field("pattern", pattern).finish()
+    }
+}
+
 #[cfg(feature = "variable-lookbehinds")]
 /// Delegate matching in reverse to regex-automata
 pub struct ReverseBackwardsDelegate {
@@ -327,6 +345,17 @@ pub enum Insn {
     BackwardsDelegate(ReverseBackwardsDelegate),
     /// Absent repeater operator - matches if delegate does not match from current position
     AbsentRepeater(Delegate),
+    /// Seek pre-filter: advance `ix` to the next position where the pattern could plausibly match,
+    /// using an over-approximating regular expression.  Replaces the `SplitUnanchored` / `Any` /
+    /// `Jmp` preamble for hard patterns when a useful seek approximation is available.
+    ///
+    /// Execution:
+    /// 1. Search `s[ix..]` un-anchored for the seek regex.
+    /// 2. If no match exists, return `None` immediately (the full pattern can never match).
+    /// 3. Otherwise push a backtrack branch `(pc, next_seek_start)` where `next_seek_start` is
+    ///    one codepoint past the match start (or end for zero-width matches), set
+    ///    `match_attempt_start = m.start()`, and continue from `pc+1` with `ix = m.start()`.
+    Seek(Seek),
 }
 
 /// Sequence of instructions for the VM to execute.
@@ -1040,11 +1069,48 @@ pub(crate) fn run(
                         // instead of checking at each position in the haystack
                         // because \G will never match at any other position
                         if at_start && state.stack.len() == 1 {
-                            // The only item on the stack is from the SplitUnanchored instruction for non-anchored search
-                            // We can safely return None immediately
+                            // The only item on the stack is from the SplitUnanchored (or Seek)
+                            // instruction for non-anchored search.
+                            // We can safely return None immediately.
                             return Ok(None);
                         }
                         break 'fail;
+                    }
+                }
+                Insn::Seek(Seek { ref inner, .. }) => {
+                    // A sentinel value greater than s.len() is pushed onto the backtrack stack
+                    // when the seek found a zero-width match at end-of-string.  On re-entry with
+                    // that sentinel, there are no more positions to try.
+                    if ix > s.len() {
+                        return Ok(None);
+                    }
+
+                    let input = Input::new(s).span(ix..s.len());
+                    match inner.search(&input) {
+                        None => return Ok(None),
+                        Some(m) => {
+                            // Compute the next position to retry the seek from on backtrack:
+                            // one codepoint past the start of this match (or past the end for
+                            // zero-width matches) so we make progress.
+                            let next_seek_start = if m.start() == m.end() {
+                                if m.end() < s.len() {
+                                    m.end() + codepoint_len_at(s, m.end())
+                                } else {
+                                    // Zero-width match at end-of-string.  Push a sentinel value
+                                    // (s.len() + 1) so that if the main pattern fails and we
+                                    // backtrack here, the `ix > s.len()` guard above returns None
+                                    // immediately instead of looping.
+                                    s.len() + 1
+                                }
+                            } else {
+                                m.start() + codepoint_len_at(s, m.start())
+                            };
+                            state.push(pc, next_seek_start)?;
+                            ix = m.start();
+                            match_attempt_start = ix;
+                            pc += 1;
+                            continue;
+                        }
                     }
                 }
             }

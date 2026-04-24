@@ -1052,3 +1052,84 @@ fn find_match<'t>(re: &str, text: &'t str) -> Option<Match<'t>> {
     );
     result.unwrap()
 }
+
+/// Build a regex with the seek pre-filter enabled.
+fn seek_regex(re: &str) -> fancy_regex::Regex {
+    let result = RegexBuilder::new(re).seek(true).build();
+    assert!(
+        result.is_ok(),
+        "Expected regex '{}' to compile successfully with seek enabled, got {:?}",
+        re,
+        result.err()
+    );
+    result.unwrap()
+}
+
+/// Assert that `seek(true)` produces the same first match as the default.
+fn assert_seek_same(re: &str, text: &str) {
+    let default_result = common::regex(re).find(text).unwrap();
+    let seek_result = seek_regex(re).find(text).unwrap();
+    assert_eq!(
+        default_result.map(|m| (m.start(), m.end())),
+        seek_result.map(|m| (m.start(), m.end())),
+        "seek=true gave different result for /{re}/ on {:?}",
+        text
+    );
+}
+
+#[test]
+fn seek_backref_finds_match() {
+    // The seek pattern inlines the group body ("abc") and jumps past irrelevant text.
+    assert_seek_same(r"(abc)\1", "xxxabcabcyyy");
+    assert_seek_same(r"(abc)\1", "xabcabcx");
+}
+
+#[test]
+fn seek_backref_no_match() {
+    assert_seek_same(r"(abc)\1", "xxxyyy");
+    assert_seek_same(r"(abc)\1", "abcxabc");
+}
+
+#[test]
+fn seek_matches_identical_to_default() {
+    let cases: &[(&str, &str)] = &[
+        // backref patterns
+        (r"(\w+) \1", "hello hello world"),
+        (r"(\w+) \1", "no match here"),
+        (r"(a|b)\1", "aabb"),
+        // lookahead
+        (r"foo(?=bar)", "foobar"),
+        (r"foo(?=bar)", "foobaz"),
+        // lookbehind
+        (r"(?<=foo)bar", "foobar"),
+        (r"(?<=foo)bar", "bazbar"),
+        // long haystack with rare match
+        (
+            r"(xyz)\1",
+            &format!("{}{}", "abcdefghij".repeat(1000), "xyzxyz"),
+        ),
+        // long haystack with no match
+        (r"(xyz)\1", &"abcdefghij".repeat(1000)),
+    ];
+    for (re, text) in cases {
+        assert_seek_same(re, text);
+    }
+}
+
+#[test]
+fn seek_find_iter_matches_identical_to_default() {
+    let re = r"(\w+) \1";
+    let text = "the the cat sat on on the mat mat";
+
+    let default_matches: Vec<_> = common::regex(re)
+        .find_iter(text)
+        .map(|m| m.unwrap())
+        .map(|m| (m.start(), m.end()))
+        .collect();
+    let seek_matches: Vec<_> = seek_regex(re)
+        .find_iter(text)
+        .map(|m| m.unwrap())
+        .map(|m| (m.start(), m.end()))
+        .collect();
+    assert_eq!(default_matches, seek_matches);
+}
