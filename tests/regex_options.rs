@@ -1,5 +1,7 @@
 use fancy_regex::{CompileError, Error, Regex, RegexBuilder};
 
+mod common;
+
 fn build_regex(builder: &RegexBuilder) -> Regex {
     let result = builder.build();
     assert!(
@@ -25,6 +27,12 @@ fn check_override_casing_option() {
     assert!(!regex.is_match("FoObarQuUx").unwrap_or_default());
     assert!(!regex.is_match("fooBARquux").unwrap_or_default());
     assert!(regex.is_match("FOObarquux").unwrap_or_default());
+
+    let regex = build_regex(RegexBuilder::new(r"FOO(?-i:bar)quux").case_insensitive(true));
+
+    assert!(regex.is_match("FoObarQuUx").unwrap_or_default());
+    assert!(!regex.is_match("fooBARquux").unwrap_or_default());
+    assert!(regex.is_match("FOObarquuX").unwrap_or_default());
 }
 
 #[test]
@@ -36,12 +44,25 @@ fn check_casing_insensitive_option() {
 
 #[test]
 fn check_multi_line_option() {
-    let test_text = r"test
-hugo
-test";
+    let test_text = "test\nhugo\ntest";
 
     let regex = build_regex(RegexBuilder::new(r"^test$").multi_line(true));
     assert!(regex.is_match(test_text).unwrap_or_default());
+
+    let test_text = "foo\nbar\ntest";
+
+    let regex = build_regex(RegexBuilder::new(r"^test\z").multi_line(true));
+    assert!(regex.is_match(test_text).unwrap_or_default());
+
+    let test_text = "foo\nbar\ntest";
+
+    let regex = build_regex(RegexBuilder::new(r"^foo\z").multi_line(true));
+    assert!(!regex.is_match(test_text).unwrap_or_default());
+
+    let regex = build_regex(RegexBuilder::new(r"^foo\z").multi_line(false));
+    assert!(!regex.is_match(test_text).unwrap_or_default());
+    let regex = build_regex(RegexBuilder::new(r"^foo$").multi_line(false));
+    assert!(!regex.is_match(test_text).unwrap_or_default());
 }
 
 #[test]
@@ -311,13 +332,80 @@ fn check_find_not_empty_is_match() {
 #[test]
 fn check_find_not_empty_allows_trailing_lookahead_with_content() {
     // a?(?=b) optimizes to (a?)b — group 0 is "a?" which is not always empty, so it should compile
-    let result = RegexBuilder::new(r"a(?=b)").find_not_empty(true).build();
-    assert!(
-        result.is_ok(),
-        "Expected a?(?=b) to compile with find_not_empty"
-    );
-
-    let regex = result.unwrap();
+    let regex = build_regex(RegexBuilder::new(r"a(?=b)").find_not_empty(true));
     assert!(regex.is_match("ab").unwrap());
     assert!(!regex.is_match("ac").unwrap());
+}
+
+#[test]
+fn disallow_empty_match_at_eof_after_newline_does_as_it_says() {
+    fn find_all_matches(regex: &Regex, text: &'static str) -> Vec<usize> {
+        regex.find_iter(text).map(|m| m.unwrap().start()).collect()
+    }
+
+    fn create_regex(pattern: &str, disallow: bool) -> Regex {
+        let regex = build_regex(
+            RegexBuilder::new(pattern)
+                .multi_line(true)
+                .disallow_empty_match_at_eof_after_newline(disallow),
+        );
+        println!("{}", common::DebugRegex(&regex));
+        regex
+    }
+
+    let haystack = "a\nb\n";
+    assert_eq!(
+        find_all_matches(&create_regex(r"^", true), haystack),
+        [0, 2]
+    );
+    assert_eq!(
+        find_all_matches(&create_regex(r"$", true), haystack),
+        [1, 3]
+    );
+    assert_eq!(
+        find_all_matches(&create_regex(r"(?=)", true), haystack),
+        [0, 1, 2, 3]
+    );
+
+    // to demonstrate the difference, here is how it looks without this option
+    assert_eq!(
+        find_all_matches(&create_regex(r"^", false), haystack),
+        [0, 2, 4]
+    );
+    assert_eq!(
+        find_all_matches(&create_regex(r"$", false), haystack),
+        [1, 3, 4]
+    );
+    assert_eq!(
+        find_all_matches(&create_regex(r"(?=)", false), haystack),
+        [0, 1, 2, 3, 4]
+    );
+}
+
+#[test]
+fn disallow_empty_match_at_eof_after_newline_still_allows_slash_z() {
+    fn find_all_matches(regex: &Regex, text: &'static str) -> Vec<usize> {
+        // only collect the start of the match because they are empty anyway
+        regex.find_iter(text).map(|m| m.unwrap().start()).collect()
+    }
+
+    fn create_regex(pattern: &str, disallow: bool) -> Regex {
+        let regex = build_regex(
+            RegexBuilder::new(pattern)
+                .multi_line(true)
+                .disallow_empty_match_at_eof_after_newline(disallow),
+        );
+        println!("{}", common::DebugRegex(&regex));
+        regex
+    }
+
+    let haystack = "a\nb\n";
+    assert_eq!(find_all_matches(&create_regex(r"\z", true), haystack), [4]);
+    assert_eq!(find_all_matches(&create_regex(r"$\z", true), haystack), [4]);
+
+    assert_eq!(find_all_matches(&create_regex(r"\z", false), haystack), [4]);
+    assert_eq!(
+        find_all_matches(&create_regex(r"$\z", false), haystack),
+        [4]
+    );
 }
