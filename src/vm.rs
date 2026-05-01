@@ -356,6 +356,10 @@ pub enum Insn {
     ///    one codepoint past the match start (or end for zero-width matches), set
     ///    `match_attempt_start = m.start()`, and continue from `pc+1` with `ix = m.start()`.
     Seek(Seek),
+    /// For compatibility with Oniguruma, which ignores empty matches at the end of the input
+    /// if the previous character was a line break. So ^/$ and (?=) all fail to match, unless
+    /// \z was used and matched at this position.
+    RejectEmptyMatchAtEOFFollowingNewline,
 }
 
 /// Sequence of instructions for the VM to execute.
@@ -688,6 +692,7 @@ pub(crate) fn run(
     let mut backtrack_count = 0;
     let mut pc = 0;
     let mut ix = pos;
+    let mut slash_z_matched = false;
     let mut match_attempt_start = pos;
     loop {
         // break from this loop to fail, causes stack to pop
@@ -753,10 +758,14 @@ pub(crate) fn run(
                 Insn::Assertion(assertion) => {
                     if !match assertion {
                         Assertion::StartText => look_matcher.is_start(s.as_bytes(), ix),
-                        Assertion::EndText => look_matcher.is_end(s.as_bytes(), ix),
+                        Assertion::EndText => {
+                            let matched = look_matcher.is_end(s.as_bytes(), ix);
+                            slash_z_matched |= matched;
+                            matched
+                        }
                         Assertion::EndTextIgnoreTrailingNewlines { crlf } => {
                             let bytes = s.as_bytes();
-                            if ix == bytes.len() {
+                            let matched = if ix == bytes.len() {
                                 // At the end of string
                                 true
                             } else if crlf {
@@ -765,7 +774,9 @@ pub(crate) fn run(
                             } else {
                                 // Check if all remaining bytes are newlines
                                 bytes[ix..].iter().all(|&b| b == b'\n')
-                            }
+                            };
+                            slash_z_matched |= matched;
+                            matched
                         }
                         Assertion::StartLine { crlf: false } => {
                             look_matcher.is_start_lf(s.as_bytes(), ix)
@@ -808,6 +819,7 @@ pub(crate) fn run(
                 }
                 Insn::SplitUnanchored(x, y) => {
                     match_attempt_start = ix;
+                    slash_z_matched = false;
                     state.push(y, ix)?;
                     pc = x;
                     continue;
@@ -1108,8 +1120,16 @@ pub(crate) fn run(
                             state.push(pc, next_seek_start)?;
                             ix = m.start();
                             match_attempt_start = ix;
+                            slash_z_matched = false;
                             pc += 1;
                             continue;
+                        }
+                    }
+                }
+                Insn::RejectEmptyMatchAtEOFFollowingNewline => {
+                    if ix == s.len() && ix > 0 && matches_literal(s, ix - 1, ix, "\n") {
+                        if !slash_z_matched && match_attempt_start == ix {
+                            break 'fail;
                         }
                     }
                 }
