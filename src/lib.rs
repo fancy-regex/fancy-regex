@@ -494,7 +494,7 @@ impl<'r, 'h> Iterator for SplitN<'r, 'h> {
 
 impl<'r, 'h> core::iter::FusedIterator for SplitN<'r, 'h> {}
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 struct RegexOptions {
     syntaxc: SyntaxConfig,
     delegate_size_limit: Option<usize>,
@@ -503,6 +503,20 @@ struct RegexOptions {
     ignore_numbered_groups_when_named_groups_exist: bool,
     hard_regex_runtime_options: HardRegexRuntimeOptions,
     bytes_mode: BytesMode,
+}
+
+impl Default for RegexOptions {
+    fn default() -> Self {
+        RegexOptions {
+            syntaxc: SyntaxConfig::new().unicode(true),
+            delegate_size_limit: None,
+            delegate_dfa_size_limit: None,
+            oniguruma_mode: false,
+            ignore_numbered_groups_when_named_groups_exist: false,
+            hard_regex_runtime_options: HardRegexRuntimeOptions::default(),
+            bytes_mode: BytesMode::default(),
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
