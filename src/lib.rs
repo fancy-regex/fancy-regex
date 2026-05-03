@@ -50,6 +50,7 @@ use regex_automata::util::syntax::Config as SyntaxConfig;
 use regex_automata::Input as RaInput;
 
 mod analyze;
+mod bytes;
 mod compile;
 mod error;
 mod expand;
@@ -67,9 +68,67 @@ use crate::parse::{ExprTree, NamedGroups, Parser};
 use crate::parse_flags::*;
 use crate::vm::{Prog, OPTION_FIND_NOT_EMPTY, OPTION_SKIPPED_EMPTY_MATCH};
 
+pub use crate::bytes::MatchBytes;
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
 pub use crate::expand::Expander;
 pub use crate::replacer::{NoExpand, Replacer, ReplacerRef};
+pub use crate::vm::RegexInput;
+
+/// Controls how the regex engine handles input encoding.
+///
+/// This enum represents the three valid combinations of the `utf8` and `unicode`
+/// flags in the underlying regex engine. Each variant has different trade-offs
+/// between input flexibility and character class semantics.
+///
+/// The default is [`BytesMode::Unicode`].
+///
+/// # Variants
+///
+/// ## `BytesMode::Unicode` (default)
+///
+/// - Input is expected to be valid UTF-8
+/// - `.` matches any Unicode scalar value (except `\n` unless `dot_matches_new_line` is set)
+/// - `\w`, `\d`, `\s` match Unicode characters
+/// - Unicode properties like `\p{Letter}` are available
+/// - Word boundaries (`\b`) are Unicode-aware
+///
+/// ## `BytesMode::Ascii`
+///
+/// - Input can be arbitrary bytes (no UTF-8 requirement)
+/// - `.` matches any single **byte** (except `\n` unless `dot_matches_new_line` is set)
+/// - `\w` matches `[a-zA-Z0-9_]` only (ASCII)
+/// - `\d` matches `[0-9]` only (ASCII)
+/// - `\s` matches ASCII whitespace only
+/// - Unicode properties are **not available**
+/// - Word boundaries (`\b`) use ASCII-only word characters
+///
+/// Use this mode when matching raw binary data or filenames that may contain
+/// non-UTF-8 bytes and you don't need Unicode character classes.
+///
+/// ## `BytesMode::UnicodeBytes`
+///
+/// - Input can be arbitrary bytes (no UTF-8 requirement)
+/// - `.` matches Unicode scalar values (sequences of valid UTF-8 bytes)
+/// - `\w`, `\d`, `\s` match Unicode characters
+/// - Unicode properties like `\p{Letter}` are available
+///
+/// Use this mode when the input may contain non-UTF-8 bytes but you still want
+/// Unicode-aware character classes. Note that `.` will **not** match individual
+/// non-UTF-8 bytes — it only matches valid UTF-8 codepoint sequences.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum BytesMode {
+    /// Unicode mode: input must be valid UTF-8, full Unicode support.
+    /// (utf8=true, unicode=true)
+    #[default]
+    Unicode,
+    /// ASCII bytes mode: `.` matches any byte, character classes are ASCII-only.
+    /// (utf8=false, unicode=false)
+    Ascii,
+    /// Unicode-aware bytes mode: input can be non-UTF-8, character classes
+    /// remain Unicode-aware. `.` matches Unicode scalar values only.
+    /// (utf8=false, unicode=true)
+    UnicodeBytes,
+}
 
 const MAX_RECURSION: usize = 64;
 
@@ -125,6 +184,8 @@ pub struct Match<'t> {
     end: usize,
 }
 
+/// A single match of a regex in a byte slice.
+///
 /// An iterator over all non-overlapping matches for a particular string.
 ///
 /// The iterator yields a `Result<Match>`. The iterator stops when no more
@@ -212,8 +273,8 @@ impl<'r, 't> Iterator for Matches<'r, 't> {
     fn next(&mut self) -> Option<Self::Item> {
         let text = self.text;
         self.next_with(move |re, pos, flags| {
-            re.find_from_pos_with_option_flags(text, pos, flags)
-                .map(|opt| opt.map(|m| (m, m)))
+            re.find_from_pos_raw(text, pos, flags)
+                .map(|opt| opt.map(|(s, e)| (Match::new(text, s, e), Match::new(text, s, e))))
         })
     }
 }
@@ -405,6 +466,7 @@ struct RegexOptions {
     oniguruma_mode: bool,
     ignore_numbered_groups_when_named_groups_exist: bool,
     hard_regex_runtime_options: HardRegexRuntimeOptions,
+    bytes_mode: BytesMode,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -648,6 +710,36 @@ impl RegexOptionsBuilder {
         self.options.oniguruma_mode = yes;
         self
     }
+
+    /// Set the input encoding mode for the regex.
+    ///
+    /// Controls how the regex engine handles input encoding. See [`BytesMode`]
+    /// for details on each variant.
+    ///
+    /// Default is [`BytesMode::Unicode`].
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use fancy_regex::{BytesMode, RegexBuilder};
+    ///
+    /// // ASCII bytes mode: . matches any byte including non-UTF-8
+    /// let re = RegexBuilder::new(r".+")
+    ///     .bytes_mode(BytesMode::Ascii)
+    ///     .build()
+    ///     .unwrap();
+    /// assert!(re.is_match(b"\x80\x81\x82").unwrap());
+    ///
+    /// // Default Unicode mode: . only matches valid UTF-8 codepoints
+    /// let re = RegexBuilder::new(r".+")
+    ///     .build()
+    ///     .unwrap();
+    /// assert!(!re.is_match(b"\x80\x81\x82").unwrap());
+    /// ```
+    pub fn bytes_mode(&mut self, mode: BytesMode) -> &mut Self {
+        self.options.bytes_mode = mode;
+        self
+    }
 }
 
 impl RegexBuilder {
@@ -730,6 +822,13 @@ impl RegexBuilder {
     /// See [`RegexOptionsBuilder::oniguruma_mode`]
     pub fn oniguruma_mode(&mut self, yes: bool) -> &mut Self {
         self.options.oniguruma_mode(yes);
+        self
+    }
+
+    /// See [`RegexOptionsBuilder::bytes_mode`]
+    /// See [`RegexOptionsBuilder::bytes_mode`]
+    pub fn bytes_mode(&mut self, mode: BytesMode) -> &mut Self {
+        self.options.bytes_mode(mode);
         self
     }
 
@@ -857,7 +956,9 @@ impl Regex {
         }
     }
 
-    /// Check if the regex matches the input text.
+    /// Check if the regex matches the input.
+    ///
+    /// Accepts any type implementing [`RegexInput`]: `&str`, `&String`, or `&[u8]`.
     ///
     /// # Example
     ///
@@ -869,10 +970,24 @@ impl Regex {
     /// let re = Regex::new(r"(\w+) \1").unwrap();
     /// assert!(re.is_match("mirror mirror on the wall").unwrap());
     /// ```
-    pub fn is_match(&self, text: &str) -> Result<bool> {
+    ///
+    /// Match against raw bytes:
+    ///
+    /// ```rust
+    /// # use fancy_regex::{BytesMode, RegexBuilder};
+    ///
+    /// let re = RegexBuilder::new(r"\d+")
+    ///     .bytes_mode(BytesMode::Ascii)
+    ///     .build()
+    ///     .unwrap();
+    /// assert!(re.is_match(b"abc 123").unwrap());
+    /// ```
+    pub fn is_match<S: vm::RegexInput + ?Sized>(&self, input: &S) -> Result<bool> {
         match &self.inner {
-            RegexImpl::Wrap { inner, .. } => Ok(inner.is_match(text)),
-            RegexImpl::Fancy { .. } => self.find(text).map(|m| m.is_some()),
+            RegexImpl::Wrap { inner, .. } => Ok(inner.is_match(RaInput::new(input.as_bytes()))),
+            RegexImpl::Fancy { .. } => {
+                self.find_from_pos_raw(input, 0, 0).map(|m| m.is_some())
+            }
         }
     }
 
@@ -943,16 +1058,16 @@ impl Regex {
     /// Note that in some cases this is not the same as using the `find`
     /// method and passing a slice of the string, see [Regex::captures_from_pos()] for details.
     pub fn find_from_pos<'t>(&self, text: &'t str, pos: usize) -> Result<Option<Match<'t>>> {
-        self.find_from_pos_with_option_flags(text, pos, 0)
+        Ok(self.find_from_pos_raw(text, pos, 0)?.map(|(s, e)| Match::new(text, s, e)))
     }
 
-    fn find_from_pos_with_option_flags<'t>(
+    fn find_from_pos_raw<S: vm::RegexInput + ?Sized>(
         &self,
-        text: &'t str,
+        input: &S,
         pos: usize,
         option_flags: u32,
-    ) -> Result<Option<Match<'t>>> {
-        if pos > text.len() {
+    ) -> Result<Option<(usize, usize)>> {
+        if pos > input.len() {
             return Ok(None);
         }
         match &self.inner {
@@ -963,14 +1078,14 @@ impl Regex {
             } => {
                 let result = if !*explicit_capture_group_0 {
                     inner
-                        .search(&RaInput::new(text).span(pos..text.len()))
-                        .map(|m| Match::new(text, m.start(), m.end()))
+                        .search(&RaInput::new(input.as_bytes()).span(pos..input.len()))
+                        .map(|m| (m.start(), m.end()))
                 } else {
                     let mut locations = inner.create_captures();
-                    inner.captures(RaInput::new(text).span(pos..text.len()), &mut locations);
+                    inner.captures(RaInput::new(input.as_bytes()).span(pos..input.len()), &mut locations);
                     locations
                         .get_group(1)
-                        .map(|group1| Match::new(text, group1.start, group1.end))
+                        .map(|group1| (group1.start, group1.end))
                 };
                 Ok(result)
             }
@@ -981,10 +1096,38 @@ impl Regex {
                     } else {
                         0
                     };
-                let result = vm::run(prog, text, pos, option_flags, options)?;
-                Ok(result.map(|saves| Match::new(text, saves[0], saves[1])))
+                let result = vm::run(prog, input, pos, option_flags, options)?;
+                Ok(result.map(|saves| (saves[0], saves[1])))
             }
         }
+    }
+
+    /// Returns the first match in `bytes`, starting from the specified byte position `pos`.
+    ///
+    /// Unlike [`find_from_pos`], this method works on raw bytes and does not
+    /// require the input to be valid UTF-8.
+    ///
+    /// [`find_from_pos`]: Regex::find_from_pos
+    ///
+    /// # Examples
+    ///
+    /// Finding a match in bytes starting at a position:
+    ///
+    /// ```
+    /// # use fancy_regex::Regex;
+    /// let re = Regex::new(r"\d+").unwrap();
+    /// let bytes = b"abc 123";
+    /// let mat = re.find_from_pos_bytes(bytes, 4).unwrap().unwrap();
+    /// assert_eq!(mat.start(), 4);
+    /// assert_eq!(mat.end(), 7);
+    /// assert_eq!(mat.as_bytes(), b"123");
+    /// ```
+    pub fn find_from_pos_bytes<'t>(
+        &self,
+        bytes: &'t [u8],
+        pos: usize,
+    ) -> Result<Option<MatchBytes<'t>>> {
+        Ok(self.find_from_pos_raw(bytes, pos, 0)?.map(|(s, e)| MatchBytes::new(bytes, s, e)))
     }
 
     /// Returns an iterator over all the non-overlapping capture groups matched in `text`.
