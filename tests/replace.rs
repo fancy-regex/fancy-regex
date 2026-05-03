@@ -54,7 +54,7 @@ fn replacer_callback() {
     let regex = common::regex(r"\b([aA])p(?:p[or]|ro)x\.?(?=[ \)\n])");
 
     // Replacer impl for FnMut(&Captures)
-    let result = regex.replace("a Aprox b", |cap: &Captures| {
+    let result = regex.replace("a Aprox b", |cap: &Captures<'_, str>| {
         format!("{}pprox.", cap.get(1).unwrap().as_str())
     });
     assert_eq!(result, "a Approx. b");

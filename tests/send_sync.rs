@@ -19,7 +19,7 @@ fn test_regex_is_sync() {
 
 #[test]
 fn test_matches_is_send() {
-    assert_send::<Matches>();
+    assert_send::<Matches<'static, 'static, str>>();
 }
 
 #[cfg(all(feature = "std", feature = "variable-lookbehinds"))]

@@ -94,7 +94,7 @@ pub(crate) type CachePoolFn = alloc::boxed::Box<
 >;
 
 use crate::error::RuntimeError;
-use crate::prev_codepoint_ix;
+use crate::input::RegexInput;
 use crate::Assertion;
 use crate::Error;
 use crate::Formatter;
@@ -537,33 +537,19 @@ impl State {
     }
 }
 
-fn codepoint_len_at(s: &str, ix: usize) -> usize {
+fn codepoint_len_at<S: RegexInput + ?Sized>(s: &S, ix: usize) -> usize {
     codepoint_len(s.as_bytes()[ix])
 }
 
 #[inline]
-fn matches_literal(s: &str, ix: usize, end: usize, literal: &str) -> bool {
+fn matches_literal<S: RegexInput + ?Sized>(s: &S, ix: usize, end: usize, literal: &[u8]) -> bool {
     // Compare as bytes because the literal might be a single byte char whereas ix
     // points to a multibyte char. Comparing with str would result in an error like
     // "byte index N is not a char boundary".
-    end <= s.len() && &s.as_bytes()[ix..end] == literal.as_bytes()
+    end <= s.len() && &s.as_bytes()[ix..end] == literal
 }
 
-fn matches_literal_casei(s: &str, ix: usize, end: usize, literal: &str) -> bool {
-    if end > s.len() {
-        return false;
-    }
-    if matches_literal(s, ix, end, literal) {
-        return true;
-    }
-    if !s.is_char_boundary(ix) || !s.is_char_boundary(end) {
-        return false;
-    }
-    if s[ix..end].is_ascii() {
-        return s[ix..end].eq_ignore_ascii_case(literal);
-    }
-
-    // text captured and being backreferenced is not ascii, so we utilize regex-automata's case insensitive matching
+fn matches_literal_casei_unicode(text: &str, literal: &str) -> bool {
     use regex_syntax::ast::*;
     let span = Span::splat(Position::new(0, 0, 0));
     let literals = literal
@@ -590,7 +576,36 @@ fn matches_literal_casei(s: &str, ix: usize, end: usize, literal: &str) -> bool 
     let re = RaBuilder::new()
         .build_from_hir(&hir)
         .expect("literal hir should get built successfully");
-    re.find(&s[ix..end]).is_some()
+    re.find(text).is_some()
+}
+
+fn matches_literal_casei<S: RegexInput + ?Sized>(
+    s: &S,
+    ix: usize,
+    end: usize,
+    literal: &[u8],
+) -> bool {
+    if end > s.len() {
+        return false;
+    }
+    if matches_literal(s, ix, end, literal) {
+        return true;
+    }
+    if !s.is_char_boundary(ix) || !s.is_char_boundary(end) {
+        return false;
+    }
+    let text_bytes = &s.as_bytes()[ix..end];
+    if text_bytes.is_ascii() && literal.is_ascii() {
+        return text_bytes.eq_ignore_ascii_case(literal);
+    }
+    // text captured and being backreferenced is not ascii, so we utilize regex-automata's case insensitive matching
+    if let (Ok(text_str), Ok(lit_str)) = (
+        core::str::from_utf8(text_bytes),
+        core::str::from_utf8(literal),
+    ) {
+        return matches_literal_casei_unicode(text_str, lit_str);
+    }
+    false
 }
 
 /// Helper function to store capture group positions from inner_slots into state.
@@ -642,9 +657,9 @@ pub fn run_default(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>
 
 /// Run the program with options.
 #[allow(clippy::cognitive_complexity)]
-pub(crate) fn run(
+pub(crate) fn run<S: RegexInput + ?Sized>(
     prog: &Prog,
-    s: &str,
+    s: &S,
     pos: usize,
     option_flags: u32,
     options: &HardRegexRuntimeOptions,
@@ -716,7 +731,7 @@ pub(crate) fn run(
                 }
                 Insn::Lit(ref val) => {
                     let ix_end = ix + val.len();
-                    if !matches_literal(s, ix, ix_end, val) {
+                    if !matches_literal(s, ix, ix_end, val.as_bytes()) {
                         break 'fail;
                     }
                     ix = ix_end
@@ -877,7 +892,7 @@ pub(crate) fn run(
                         if ix == 0 {
                             break 'fail;
                         }
-                        ix = prev_codepoint_ix(s, ix);
+                        ix = s.prev_codepoint_ix(ix);
                     }
                 }
                 Insn::FailNegativeLookAround => {
@@ -909,7 +924,7 @@ pub(crate) fn run(
                         // Referenced group hasn't matched, so the backref doesn't match either
                         break 'fail;
                     }
-                    let ref_text = &s[lo..hi];
+                    let ref_text = &s.as_bytes()[lo..hi];
                     let ix_end = ix + ref_text.len();
                     if casei {
                         if !matches_literal_casei(s, ix, ix_end, ref_text) {
@@ -941,7 +956,9 @@ pub(crate) fn run(
                 }) => {
                     // Use regex-automata to search backwards from current position
                     let mut cache_guard = cache_pool.get();
-                    let input = Input::new(s).anchored(Anchored::Yes).range(0..ix);
+                    let input = Input::new(s.as_bytes())
+                        .anchored(Anchored::Yes)
+                        .range(0..ix);
 
                     match dfa.try_search_rev(&mut cache_guard, &input) {
                         Ok(Some(match_result)) => {
@@ -951,8 +968,9 @@ pub(crate) fn run(
                             if let Some(inner) = capture_group_extraction_inner {
                                 if let Some(range) = capture_groups {
                                     // There are capture groups, need to search forward to populate them
-                                    let forward_input =
-                                        Input::new(s).span(match_start..ix).anchored(Anchored::Yes);
+                                    let forward_input = Input::new(s.as_bytes())
+                                        .span(match_start..ix)
+                                        .anchored(Anchored::Yes);
                                     inner_slots.resize((range.end() - range.start() + 1) * 2, None);
 
                                     if inner
@@ -989,7 +1007,9 @@ pub(crate) fn run(
                     pattern: _,
                     capture_groups,
                 }) => {
-                    let input = Input::new(s).span(ix..s.len()).anchored(Anchored::Yes);
+                    let input = Input::new(s.as_bytes())
+                        .span(ix..s.len())
+                        .anchored(Anchored::Yes);
                     if let Some(range) = capture_groups {
                         // Has capture groups, need to extract them
                         inner_slots.resize((range.end() - range.start() + 1) * 2, None);
@@ -1015,7 +1035,9 @@ pub(crate) fn run(
                     // If we reach end of string without delegate matching, we also continue
 
                     // Check if delegate matches at current position
-                    let input = Input::new(s).span(ix..s.len()).anchored(Anchored::Yes);
+                    let input = Input::new(s.as_bytes())
+                        .span(ix..s.len())
+                        .anchored(Anchored::Yes);
                     // capture groups in the delegate are always ignored, so we can use the quicker search_half method
                     let delegate_matches_here = delegate.inner.search_half(&input).is_some();
 
