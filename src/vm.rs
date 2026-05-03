@@ -94,121 +94,12 @@ pub(crate) type CachePoolFn = alloc::boxed::Box<
 >;
 
 use crate::error::RuntimeError;
+use crate::input::RegexInput;
 use crate::Assertion;
 use crate::Error;
 use crate::Formatter;
 use crate::Result;
 use crate::{codepoint_len, HardRegexRuntimeOptions};
-
-/// A trait abstracting over input types for regex matching.
-///
-/// This trait is implemented for `str`, `String`, and `[u8]`, allowing
-/// regex methods to work with both UTF-8 text and raw byte slices.
-///
-/// When the regex is compiled with [`BytesMode::Ascii`](crate::BytesMode),
-/// patterns like `.` will match any byte in `[u8]` input. Without bytes mode,
-/// `.` only matches valid UTF-8 codepoints even in byte slices.
-pub trait RegexInput {
-    /// Returns the length of the input in bytes.
-    fn len(&self) -> usize;
-    /// Returns the input as a raw byte slice.
-    fn as_bytes(&self) -> &[u8];
-    /// Returns `true` if `ix` is a valid position between UTF-8 codepoints.
-    ///
-    /// For `str`/`String` this uses proper UTF-8 boundary checking.
-    /// For `[u8]` this approximates by checking for continuation bytes.
-    fn is_char_boundary(&self, ix: usize) -> bool;
-    /// Returns `true` if the entire input is ASCII.
-    fn is_ascii(&self) -> bool;
-    /// Steps back one codepoint from position `i`, returning the start position.
-    fn prev_codepoint_ix(&self, i: usize) -> usize;
-    /// Returns `true` if the input is empty.
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-}
-
-impl RegexInput for str {
-    fn len(&self) -> usize {
-        str::len(self)
-    }
-    fn as_bytes(&self) -> &[u8] {
-        str::as_bytes(self)
-    }
-    fn is_char_boundary(&self, ix: usize) -> bool {
-        str::is_char_boundary(self, ix)
-    }
-    fn is_ascii(&self) -> bool {
-        str::is_ascii(self)
-    }
-    fn prev_codepoint_ix(&self, i: usize) -> usize {
-        crate::prev_codepoint_ix(self, i)
-    }
-}
-
-impl RegexInput for String {
-
-    fn len(&self) -> usize {
-        String::len(self)
-    }
-    fn as_bytes(&self) -> &[u8] {
-        String::as_bytes(self)
-    }
-    fn is_char_boundary(&self, ix: usize) -> bool {
-        str::is_char_boundary(self, ix)
-    }
-    fn is_ascii(&self) -> bool {
-        str::is_ascii(self)
-    }
-    fn prev_codepoint_ix(&self, i: usize) -> usize {
-        crate::prev_codepoint_ix(self, i)
-    }
-}
-
-impl RegexInput for [u8] {
-
-    fn len(&self) -> usize {
-        <[u8]>::len(self)
-    }
-    fn as_bytes(&self) -> &[u8] {
-        self
-    }
-    fn is_char_boundary(&self, ix: usize) -> bool {
-        ix == 0 || ix >= <[u8]>::len(self) || self[ix] & 0xC0 != 0x80
-    }
-    fn is_ascii(&self) -> bool {
-        <[u8]>::is_ascii(self)
-    }
-    fn prev_codepoint_ix(&self, mut i: usize) -> usize {
-        i -= 1;
-        while i > 0 && self[i] & 0xC0 == 0x80 {
-            i -= 1;
-        }
-        i
-    }
-}
-
-impl<const N: usize> RegexInput for [u8; N] {
-    fn len(&self) -> usize {
-        N
-    }
-    fn as_bytes(&self) -> &[u8] {
-        self
-    }
-    fn is_char_boundary(&self, ix: usize) -> bool {
-        ix == 0 || ix >= N || self[ix] & 0xC0 != 0x80
-    }
-    fn is_ascii(&self) -> bool {
-        <[u8]>::is_ascii(self)
-    }
-    fn prev_codepoint_ix(&self, mut i: usize) -> usize {
-        i -= 1;
-        while i > 0 && self[i] & 0xC0 == 0x80 {
-            i -= 1;
-        }
-        i
-    }
-}
 
 /// Enable tracing of VM execution. Only for debugging/investigating.
 const OPTION_TRACE: u32 = 1 << 0;
@@ -707,6 +598,7 @@ fn matches_literal_casei<S: RegexInput + ?Sized>(
     if s.is_ascii() && literal.is_ascii() {
         return text_bytes.eq_ignore_ascii_case(literal);
     }
+    // text captured and being backreferenced is not ascii, so we utilize regex-automata's case insensitive matching
     if let (Ok(text_str), Ok(lit_str)) = (
         core::str::from_utf8(text_bytes),
         core::str::from_utf8(literal),
@@ -762,7 +654,6 @@ pub fn run_trace(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>>
 pub fn run_default(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
     run(prog, s, pos, 0, &HardRegexRuntimeOptions::default())
 }
-
 
 /// Run the program with options.
 #[allow(clippy::cognitive_complexity)]

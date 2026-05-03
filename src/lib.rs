@@ -54,6 +54,7 @@ mod bytes;
 mod compile;
 mod error;
 mod expand;
+mod input;
 mod optimize;
 mod parse;
 mod parse_flags;
@@ -71,8 +72,8 @@ use crate::vm::{Prog, OPTION_FIND_NOT_EMPTY, OPTION_SKIPPED_EMPTY_MATCH};
 pub use crate::bytes::MatchBytes;
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
 pub use crate::expand::Expander;
+pub use crate::input::RegexInput;
 pub use crate::replacer::{NoExpand, Replacer, ReplacerRef};
-pub use crate::vm::RegexInput;
 
 /// Controls how the regex engine handles input encoding.
 ///
@@ -184,33 +185,31 @@ pub struct Match<'t> {
     end: usize,
 }
 
-/// A single match of a regex in a byte slice.
+/// An iterator over all non-overlapping matches for a particular input.
 ///
-/// An iterator over all non-overlapping matches for a particular string.
-///
-/// The iterator yields a `Result<Match>`. The iterator stops when no more
+/// The iterator yields a `Result<S::Match>`. The iterator stops when no more
 /// matches can be found.
 ///
 /// `'r` is the lifetime of the compiled regular expression and `'t` is the
-/// lifetime of the matched string.
+/// lifetime of the matched input.
 #[derive(Debug)]
-pub struct Matches<'r, 't> {
+pub struct Matches<'r, 't, S: input::RegexInput + ?Sized> {
     re: &'r Regex,
-    text: &'t str,
+    text: &'t S,
     last_end: usize,
     last_match: Option<usize>,
     last_skipped_empty: bool,
 }
 
-impl<'r, 't> Matches<'r, 't> {
-    /// Return the text being searched.
-    pub fn text(&self) -> &'t str {
-        self.text
-    }
-
+impl<'r, 't, S: input::RegexInput + ?Sized> Matches<'r, 't, S> {
     /// Return the underlying regex.
     pub fn regex(&self) -> &'r Regex {
         self.re
+    }
+
+    /// Return the text being searched.
+    pub fn text(&self) -> &'t S {
+        self.text
     }
 
     /// Adapted from the `regex` crate. Calls `find_from_pos`/`captures_from_pos` repeatedly.
@@ -218,7 +217,7 @@ impl<'r, 't> Matches<'r, 't> {
     /// Also passes a flag when skipping an empty match, so that \G wouldn't match at the new start position.
     fn next_with<F, R>(&mut self, mut search: F) -> Option<Result<R>>
     where
-        F: FnMut(&Regex, usize, u32) -> Result<Option<(R, Match<'t>)>>,
+        F: FnMut(&Regex, usize, u32) -> Result<Option<(R, (usize, usize))>>,
     {
         if self.last_end > self.text.len() {
             return None;
@@ -231,7 +230,7 @@ impl<'r, 't> Matches<'r, 't> {
         };
 
         let pos = self.last_end;
-        let (result, mat) = match search(self.re, pos, option_flags) {
+        let (result, (match_start, match_end)) = match search(self.re, pos, option_flags) {
             Err(error) => {
                 // Stop on first error: If an error is encountered, return it, and set the "last match position"
                 // to the string length, so that the next next() call will return None, to prevent an infinite loop.
@@ -242,39 +241,39 @@ impl<'r, 't> Matches<'r, 't> {
             Ok(Some(pair)) => pair,
         };
 
-        if mat.start == mat.end {
+        if match_start == match_end {
             // This is an empty match. To ensure we make progress, start
             // the next search at the smallest possible starting position
             // of the next match following this one.
-            self.last_end = next_utf8(self.text, mat.end);
+            self.last_end = self.text.advance_position(match_end);
             // Only set OPTION_SKIPPED_EMPTY_MATCH on the next call if this was a
             // truly zero-length match (the VM consumed no bytes from `pos`).
             // This means that \K won't prevent \G from matching.
-            self.last_skipped_empty = mat.end == pos;
+            self.last_skipped_empty = match_end == pos;
             // Don't accept empty matches immediately following a match.
             // Just move on to the next match.
-            if Some(mat.end) == self.last_match {
+            if Some(match_end) == self.last_match {
                 return self.next_with(search);
             }
         } else {
-            self.last_end = mat.end;
+            self.last_end = match_end;
             self.last_skipped_empty = false;
         }
 
-        self.last_match = Some(mat.end);
+        self.last_match = Some(match_end);
 
         Some(Ok(result))
     }
 }
 
-impl<'r, 't> Iterator for Matches<'r, 't> {
-    type Item = Result<Match<'t>>;
+impl<'r, 't, S: input::RegexInput + ?Sized> Iterator for Matches<'r, 't, S> {
+    type Item = Result<S::Match<'t>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let text = self.text;
         self.next_with(move |re, pos, flags| {
             re.find_from_pos_raw(text, pos, flags)
-                .map(|opt| opt.map(|(s, e)| (Match::new(text, s, e), Match::new(text, s, e))))
+                .map(|opt| opt.map(|(s, e)| (text.make_match(s, e), (s, e))))
         })
     }
 }
@@ -287,11 +286,11 @@ impl<'r, 't> Iterator for Matches<'r, 't> {
 /// `'r` is the lifetime of the compiled regular expression and `'t` is the
 /// lifetime of the matched string.
 #[derive(Debug)]
-pub struct CaptureMatches<'r, 't>(Matches<'r, 't>);
+pub struct CaptureMatches<'r, 't, S: input::RegexInput + ?Sized>(Matches<'r, 't, S>);
 
-impl<'r, 't> CaptureMatches<'r, 't> {
+impl<'r, 't, S: input::RegexInput + ?Sized> CaptureMatches<'r, 't, S> {
     /// Return the text being searched.
-    pub fn text(&self) -> &'t str {
+    pub fn text(&self) -> &'t S {
         self.0.text
     }
 
@@ -301,34 +300,37 @@ impl<'r, 't> CaptureMatches<'r, 't> {
     }
 }
 
-impl<'r, 't> Iterator for CaptureMatches<'r, 't> {
-    type Item = Result<Captures<'t>>;
+impl<'r, 't, S: input::RegexInput + ?Sized> Iterator for CaptureMatches<'r, 't, S> {
+    type Item = Result<Captures<'t, S>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let text = self.0.text;
         self.0.next_with(move |re, pos, flags| {
             let captures = re.captures_from_pos_with_option_flags(text, pos, flags)?;
             Ok(captures.map(|c| {
-                let mat = c
-                    .get(0)
+                let (start, end) = c
+                    .inner
+                    .get_span(0)
                     .expect("`Captures` is expected to have entire match at 0th position");
-                (c, mat)
+                (c, (start, end))
             }))
         })
     }
 }
 
 /// A set of capture groups found for a regex.
+///
+/// `S` is the input type (`str` or `[u8]`).
 #[derive(Debug)]
-pub struct Captures<'t> {
-    inner: CapturesImpl<'t>,
+pub struct Captures<'t, S: input::RegexInput + ?Sized> {
+    inner: CapturesImpl,
     named_groups: Arc<NamedGroups>,
+    input: &'t S,
 }
 
 #[derive(Debug)]
-enum CapturesImpl<'t> {
+enum CapturesImpl {
     Wrap {
-        text: &'t str,
         locations: RaCaptures,
         /// Some optimizations avoid the VM but need an extra capture group to represent the match boundaries.
         /// Therefore what is actually capture group 1 should be treated as capture group 0, and all other
@@ -336,15 +338,49 @@ enum CapturesImpl<'t> {
         explicit_capture_group_0: bool,
     },
     Fancy {
-        text: &'t str,
         saves: Vec<usize>,
     },
 }
 
+impl CapturesImpl {
+    fn get_span(&self, i: usize) -> Option<(usize, usize)> {
+        match self {
+            CapturesImpl::Wrap {
+                locations,
+                explicit_capture_group_0,
+            } => locations
+                .get_group(i + if *explicit_capture_group_0 { 1 } else { 0 })
+                .map(|span| (span.start, span.end)),
+            CapturesImpl::Fancy { saves } => {
+                let slot = i * 2;
+                if slot >= saves.len() {
+                    return None;
+                }
+                let lo = saves[slot];
+                if lo == usize::MAX {
+                    return None;
+                }
+                let hi = saves[slot + 1];
+                Some((lo, hi))
+            }
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            CapturesImpl::Wrap {
+                locations,
+                explicit_capture_group_0,
+            } => locations.group_len() - if *explicit_capture_group_0 { 1 } else { 0 },
+            CapturesImpl::Fancy { saves } => saves.len() / 2,
+        }
+    }
+}
+
 /// Iterator for captured groups in order in which they appear in the regex.
 #[derive(Debug)]
-pub struct SubCaptureMatches<'c, 't> {
-    caps: &'c Captures<'t>,
+pub struct SubCaptureMatches<'c, 't, S: input::RegexInput + ?Sized> {
+    data: &'c Captures<'t, S>,
     i: usize,
 }
 
@@ -360,7 +396,7 @@ pub struct SubCaptureMatches<'c, 't> {
 /// This iterator can be created by the [`Regex::split`] method.
 #[derive(Debug)]
 pub struct Split<'r, 'h> {
-    matches: Matches<'r, 'h>,
+    matches: Matches<'r, 'h, str>,
     next_start: usize,
     target: &'h str,
 }
@@ -982,12 +1018,10 @@ impl Regex {
     ///     .unwrap();
     /// assert!(re.is_match(b"abc 123").unwrap());
     /// ```
-    pub fn is_match<S: vm::RegexInput + ?Sized>(&self, input: &S) -> Result<bool> {
+    pub fn is_match<S: input::RegexInput + ?Sized>(&self, input: &S) -> Result<bool> {
         match &self.inner {
             RegexImpl::Wrap { inner, .. } => Ok(inner.is_match(RaInput::new(input.as_bytes()))),
-            RegexImpl::Fancy { .. } => {
-                self.find_from_pos_raw(input, 0, 0).map(|m| m.is_some())
-            }
+            RegexImpl::Fancy { .. } => self.find_from_pos_raw(input, 0, 0).map(|m| m.is_some()),
         }
     }
 
@@ -1010,7 +1044,10 @@ impl Regex {
     /// assert_eq!(matches.next().unwrap().unwrap().as_str(), "iterators");
     /// assert!(matches.next().is_none());
     /// ```
-    pub fn find_iter<'r, 't>(&'r self, text: &'t str) -> Matches<'r, 't> {
+    pub fn find_iter<'r, 't, S: input::RegexInput + ?Sized>(
+        &'r self,
+        text: &'t S,
+    ) -> Matches<'r, 't, S> {
         Matches {
             re: self,
             text,
@@ -1020,10 +1057,9 @@ impl Regex {
         }
     }
 
-    /// Find the first match in the input text.
+    /// Find the first match in the input.
     ///
-    /// If you have capturing groups in your regex that you want to extract, use the [Regex::captures()]
-    /// method.
+    /// Accepts any type implementing [`RegexInput`]: `&str`, `&String`, or `&[u8]`.
     ///
     /// # Example
     ///
@@ -1035,11 +1071,14 @@ impl Regex {
     /// let re = Regex::new(r"\w+(?=!)").unwrap();
     /// assert_eq!(re.find("so fancy!").unwrap().unwrap().as_str(), "fancy");
     /// ```
-    pub fn find<'t>(&self, text: &'t str) -> Result<Option<Match<'t>>> {
-        self.find_from_pos(text, 0)
+    pub fn find<'t, S: input::RegexInput + ?Sized>(
+        &self,
+        input: &'t S,
+    ) -> Result<Option<S::Match<'t>>> {
+        self.find_from_pos(input, 0)
     }
 
-    /// Returns the first match in `text`, starting from the specified byte position `pos`.
+    /// Returns the first match in `input`, starting from the specified byte position `pos`.
     ///
     /// # Examples
     ///
@@ -1057,11 +1096,17 @@ impl Regex {
     ///
     /// Note that in some cases this is not the same as using the `find`
     /// method and passing a slice of the string, see [Regex::captures_from_pos()] for details.
-    pub fn find_from_pos<'t>(&self, text: &'t str, pos: usize) -> Result<Option<Match<'t>>> {
-        Ok(self.find_from_pos_raw(text, pos, 0)?.map(|(s, e)| Match::new(text, s, e)))
+    pub fn find_from_pos<'t, S: input::RegexInput + ?Sized>(
+        &self,
+        input: &'t S,
+        pos: usize,
+    ) -> Result<Option<S::Match<'t>>> {
+        Ok(self
+            .find_from_pos_raw(input, pos, 0)?
+            .map(|(s, e)| input.make_match(s, e)))
     }
 
-    fn find_from_pos_raw<S: vm::RegexInput + ?Sized>(
+    fn find_from_pos_raw<S: input::RegexInput + ?Sized>(
         &self,
         input: &S,
         pos: usize,
@@ -1082,7 +1127,10 @@ impl Regex {
                         .map(|m| (m.start(), m.end()))
                 } else {
                     let mut locations = inner.create_captures();
-                    inner.captures(RaInput::new(input.as_bytes()).span(pos..input.len()), &mut locations);
+                    inner.captures(
+                        RaInput::new(input.as_bytes()).span(pos..input.len()),
+                        &mut locations,
+                    );
                     locations
                         .get_group(1)
                         .map(|group1| (group1.start, group1.end))
@@ -1100,34 +1148,6 @@ impl Regex {
                 Ok(result.map(|saves| (saves[0], saves[1])))
             }
         }
-    }
-
-    /// Returns the first match in `bytes`, starting from the specified byte position `pos`.
-    ///
-    /// Unlike [`find_from_pos`], this method works on raw bytes and does not
-    /// require the input to be valid UTF-8.
-    ///
-    /// [`find_from_pos`]: Regex::find_from_pos
-    ///
-    /// # Examples
-    ///
-    /// Finding a match in bytes starting at a position:
-    ///
-    /// ```
-    /// # use fancy_regex::Regex;
-    /// let re = Regex::new(r"\d+").unwrap();
-    /// let bytes = b"abc 123";
-    /// let mat = re.find_from_pos_bytes(bytes, 4).unwrap().unwrap();
-    /// assert_eq!(mat.start(), 4);
-    /// assert_eq!(mat.end(), 7);
-    /// assert_eq!(mat.as_bytes(), b"123");
-    /// ```
-    pub fn find_from_pos_bytes<'t>(
-        &self,
-        bytes: &'t [u8],
-        pos: usize,
-    ) -> Result<Option<MatchBytes<'t>>> {
-        Ok(self.find_from_pos_raw(bytes, pos, 0)?.map(|(s, e)| MatchBytes::new(bytes, s, e)))
     }
 
     /// Returns an iterator over all the non-overlapping capture groups matched in `text`.
@@ -1155,7 +1175,10 @@ impl Regex {
     ///
     /// assert!(all_captures.next().is_none());
     /// ```
-    pub fn captures_iter<'r, 't>(&'r self, text: &'t str) -> CaptureMatches<'r, 't> {
+    pub fn captures_iter<'r, 't, S: input::RegexInput + ?Sized>(
+        &'r self,
+        text: &'t S,
+    ) -> CaptureMatches<'r, 't, S> {
         CaptureMatches(self.find_iter(text))
     }
 
@@ -1179,7 +1202,10 @@ impl Regex {
     /// assert_eq!(captures.get(3).unwrap().as_str(), "07");
     /// assert_eq!(captures.get(0).unwrap().as_str(), "2018-04-07");
     /// ```
-    pub fn captures<'t>(&self, text: &'t str) -> Result<Option<Captures<'t>>> {
+    pub fn captures<'t, S: input::RegexInput + ?Sized>(
+        &self,
+        text: &'t S,
+    ) -> Result<Option<Captures<'t, S>>> {
         self.captures_from_pos(text, 0)
     }
 
@@ -1217,20 +1243,25 @@ impl Regex {
     /// This matched the number "123" because it's at the beginning of the text
     /// of the string slice.
     ///
-    pub fn captures_from_pos<'t>(&self, text: &'t str, pos: usize) -> Result<Option<Captures<'t>>> {
+    pub fn captures_from_pos<'t, S: input::RegexInput + ?Sized>(
+        &self,
+        text: &'t S,
+        pos: usize,
+    ) -> Result<Option<Captures<'t, S>>> {
         self.captures_from_pos_with_option_flags(text, pos, 0)
     }
 
-    fn captures_from_pos_with_option_flags<'t>(
+    fn captures_from_pos_with_option_flags<'t, S: input::RegexInput + ?Sized>(
         &self,
-        text: &'t str,
+        input: &'t S,
         pos: usize,
         option_flags: u32,
-    ) -> Result<Option<Captures<'t>>> {
-        if pos > text.len() {
+    ) -> Result<Option<Captures<'t, S>>> {
+        if pos > input.len() {
             return Ok(None);
         }
         let named_groups = self.named_groups.clone();
+        let bytes = input.as_bytes();
         match &self.inner {
             RegexImpl::Wrap {
                 inner,
@@ -1241,14 +1272,14 @@ impl Regex {
                 // always false here.
                 let explicit = *explicit_capture_group_0;
                 let mut locations = inner.create_captures();
-                inner.captures(RaInput::new(text).span(pos..text.len()), &mut locations);
+                inner.captures(RaInput::new(bytes).span(pos..bytes.len()), &mut locations);
                 Ok(locations.is_match().then_some(Captures {
                     inner: CapturesImpl::Wrap {
-                        text,
                         locations,
                         explicit_capture_group_0: explicit,
                     },
                     named_groups,
+                    input,
                 }))
             }
             RegexImpl::Fancy {
@@ -1263,12 +1294,13 @@ impl Regex {
                     } else {
                         0
                     };
-                let result = vm::run(prog, text, pos, option_flags, options)?;
+                let result = vm::run(prog, input, pos, option_flags, options)?;
                 Ok(result.map(|mut saves| {
                     saves.truncate(n_groups * 2);
                     Captures {
-                        inner: CapturesImpl::Fancy { text, saves },
+                        inner: CapturesImpl::Fancy { saves },
                         named_groups,
+                        input,
                     }
                 }))
             }
@@ -1361,7 +1393,7 @@ impl Regex {
     /// ```rust
     /// # use fancy_regex::{Regex, Captures};
     /// let re = Regex::new(r"([^,\s]+),\s+(\S+)").unwrap();
-    /// let result = re.replace("Springsteen, Bruce", |caps: &Captures| {
+    /// let result = re.replace("Springsteen, Bruce", |caps: &Captures<'_, str>| {
     ///     format!("{} {}", &caps[2], &caps[1])
     /// });
     /// assert_eq!(result, "Bruce Springsteen");
@@ -1601,7 +1633,7 @@ impl<'t> Match<'t> {
     }
 
     /// Creates a new match from the given text and byte offsets.
-    fn new(text: &'t str, start: usize, end: usize) -> Match<'t> {
+    pub(crate) fn new(text: &'t str, start: usize, end: usize) -> Match<'t> {
         Match { text, start, end }
     }
 }
@@ -1619,49 +1651,43 @@ impl<'t> From<Match<'t>> for Range<usize> {
 }
 
 #[allow(clippy::len_without_is_empty)] // follow regex's API
-impl<'t> Captures<'t> {
+impl<'t, S: input::RegexInput + ?Sized> Captures<'t, S> {
     /// Get the capture group by its index in the regex.
     ///
     /// If there is no match for that group or the index does not correspond to a group, `None` is
     /// returned. The index 0 returns the whole match.
-    pub fn get(&self, i: usize) -> Option<Match<'t>> {
-        match &self.inner {
-            CapturesImpl::Wrap {
-                text,
-                locations,
-                explicit_capture_group_0,
-            } => locations
-                .get_group(i + if *explicit_capture_group_0 { 1 } else { 0 })
-                .map(|span| Match {
-                    text,
-                    start: span.start,
-                    end: span.end,
-                }),
-            CapturesImpl::Fancy { text, saves } => {
-                let slot = i * 2;
-                if slot >= saves.len() {
-                    return None;
-                }
-                let lo = saves[slot];
-                if lo == usize::MAX {
-                    return None;
-                }
-                let hi = saves[slot + 1];
-                Some(Match {
-                    text,
-                    start: lo,
-                    end: hi,
-                })
-            }
-        }
+    pub fn get(&self, i: usize) -> Option<S::Match<'t>> {
+        self.inner
+            .get_span(i)
+            .map(|(start, end)| self.input.make_match(start, end))
     }
 
     /// Returns the match for a named capture group.  Returns `None` the capture
     /// group did not match or if there is no group with the given name.
-    pub fn name(&self, name: &str) -> Option<Match<'t>> {
+    pub fn name(&self, name: &str) -> Option<S::Match<'t>> {
         self.named_groups.get(name).and_then(|i| self.get(*i))
     }
 
+    /// Iterate over the captured groups in order in which they appeared in the regex. The first
+    /// capture corresponds to the whole match.
+    pub fn iter<'c>(&'c self) -> SubCaptureMatches<'c, 't, S> {
+        SubCaptureMatches { data: self, i: 0 }
+    }
+
+    /// How many groups were captured. This is always at least 1 because group 0 returns the whole
+    /// match.
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Returns the byte slice of the input that was matched.
+    pub fn as_bytes(&self) -> &'t [u8] {
+        self.input.as_bytes()
+    }
+}
+
+// str-only methods
+impl<'t> Captures<'t, str> {
     /// Expands all instances of `$group` in `replacement` to the corresponding
     /// capture group `name`, and writes them to the `dst` buffer given.
     ///
@@ -1685,25 +1711,6 @@ impl<'t> Captures<'t> {
     pub fn expand(&self, replacement: &str, dst: &mut String) {
         Expander::default().append_expansion(dst, replacement, self);
     }
-
-    /// Iterate over the captured groups in order in which they appeared in the regex. The first
-    /// capture corresponds to the whole match.
-    pub fn iter<'c>(&'c self) -> SubCaptureMatches<'c, 't> {
-        SubCaptureMatches { caps: self, i: 0 }
-    }
-
-    /// How many groups were captured. This is always at least 1 because group 0 returns the whole
-    /// match.
-    pub fn len(&self) -> usize {
-        match &self.inner {
-            CapturesImpl::Wrap {
-                locations,
-                explicit_capture_group_0,
-                ..
-            } => locations.group_len() - if *explicit_capture_group_0 { 1 } else { 0 },
-            CapturesImpl::Fancy { saves, .. } => saves.len() / 2,
-        }
-    }
 }
 
 /// Get a group by index.
@@ -1717,7 +1724,7 @@ impl<'t> Captures<'t> {
 /// # Panics
 ///
 /// If there is no group at the given index.
-impl<'t> Index<usize> for Captures<'t> {
+impl<'t> Index<usize> for Captures<'t, str> {
     type Output = str;
 
     fn index(&self, i: usize) -> &str {
@@ -1739,7 +1746,7 @@ impl<'t> Index<usize> for Captures<'t> {
 /// # Panics
 ///
 /// If there is no group named by the given value.
-impl<'t, 'i> Index<&'i str> for Captures<'t> {
+impl<'t, 'i> Index<&'i str> for Captures<'t, str> {
     type Output = str;
 
     fn index<'a>(&'a self, name: &'i str) -> &'a str {
@@ -1749,12 +1756,12 @@ impl<'t, 'i> Index<&'i str> for Captures<'t> {
     }
 }
 
-impl<'c, 't> Iterator for SubCaptureMatches<'c, 't> {
-    type Item = Option<Match<'t>>;
+impl<'c, 't, S: input::RegexInput + ?Sized> Iterator for SubCaptureMatches<'c, 't, S> {
+    type Item = Option<S::Match<'t>>;
 
-    fn next(&mut self) -> Option<Option<Match<'t>>> {
-        if self.i < self.caps.len() {
-            let result = self.caps.get(self.i);
+    fn next(&mut self) -> Option<Option<S::Match<'t>>> {
+        if self.i < self.data.len() {
+            let result = self.data.get(self.i);
             self.i += 1;
             Some(result)
         } else {
@@ -2426,17 +2433,6 @@ fn codepoint_len(b: u8) -> usize {
         b if b < 0xf0 => 3,
         _ => 4,
     }
-}
-
-/// Returns the smallest possible index of the next valid UTF-8 sequence
-/// starting after `i`.
-/// Adapted from a function with the same name in the `regex` crate.
-pub(crate) fn next_utf8(text: &str, i: usize) -> usize {
-    let b = match text.as_bytes().get(i) {
-        None => return i + 1,
-        Some(&b) => b,
-    };
-    i + codepoint_len(b)
 }
 
 // If this returns false, then there is no possible backref in the re

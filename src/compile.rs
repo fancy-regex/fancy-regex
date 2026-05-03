@@ -953,10 +953,7 @@ pub(crate) fn options_to_rabuilder(options: &RegexOptions) -> RaBuilder {
 
     let syntax = SyntaxConfig::new()
         .utf8(utf8)
-        .unicode(
-            options.syntaxc.get_unicode()
-                && !matches!(options.bytes_mode, BytesMode::Ascii),
-        )
+        .unicode(options.syntaxc.get_unicode() && !matches!(options.bytes_mode, BytesMode::Ascii))
         .case_insensitive(options.syntaxc.get_case_insensitive())
         .multi_line(options.syntaxc.get_multi_line())
         .dot_matches_new_line(options.syntaxc.get_dot_matches_new_line())
