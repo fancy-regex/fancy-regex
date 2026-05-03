@@ -2231,7 +2231,7 @@ impl Expr {
     /// Parse the regex and return an expression (AST) and a bit set with the indexes of groups
     /// that are referenced by backrefs.
     pub fn parse_tree(re: &str) -> Result<ExprTree> {
-        Parser::parse(re)
+        Expr::parse_tree_with_flags(re, RegexOptions::default().compute_flags())
     }
 
     /// Parse the regex and return an expression (AST)
