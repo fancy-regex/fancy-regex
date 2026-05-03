@@ -1020,8 +1020,8 @@ impl<'a> Parser<'a> {
                 b'U' => self.update_flag(FLAG_SWAP_GREED, neg),
                 b'x' => self.update_flag(FLAG_IGNORE_SPACE, neg),
                 b'u' => {
-                    if neg {
-                        return Err(Error::ParseError(ix, ParseError::NonUnicodeUnsupported));
+                    if neg == self.flag(FLAG_UNICODE) {
+                        return Err(Error::ParseError(ix, ParseError::ChangingUnicodeModeUnsupported));
                     }
                 }
                 b'-' => {

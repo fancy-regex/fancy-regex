@@ -46,8 +46,8 @@ pub enum ParseError {
     InvalidClass,
     /// Unknown group flag
     UnknownFlag(String),
-    /// Disabling Unicode not supported
-    NonUnicodeUnsupported,
+    /// Changing Unicode inside a pattern not supported
+    ChangingUnicodeModeUnsupported,
     /// Invalid back reference
     InvalidBackref,
     /// Quantifier on lookaround or other zero-width assertion
@@ -129,7 +129,7 @@ impl fmt::Display for ParseError {
             }
             ParseError::InvalidClass => write!(f, "Invalid character class"),
             ParseError::UnknownFlag(s) => write!(f, "Unknown group flag: {}", s),
-            ParseError::NonUnicodeUnsupported => write!(f, "Disabling Unicode not supported"),
+            ParseError::ChangingUnicodeModeUnsupported => write!(f, "Changing Unicode mode inline is not supported"),
             ParseError::InvalidBackref => write!(f, "Invalid back reference"),
             ParseError::InvalidGroupName => write!(f, "Could not parse group name"),
             ParseError::InvalidGroupNameBackref(s) => {
