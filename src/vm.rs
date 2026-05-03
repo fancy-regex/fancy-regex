@@ -595,7 +595,7 @@ fn matches_literal_casei<S: RegexInput + ?Sized>(
         return false;
     }
     let text_bytes = &s.as_bytes()[ix..end];
-    if s.is_ascii() && literal.is_ascii() {
+    if text_bytes.is_ascii() && literal.is_ascii() {
         return text_bytes.eq_ignore_ascii_case(literal);
     }
     // text captured and being backreferenced is not ascii, so we utilize regex-automata's case insensitive matching

@@ -228,7 +228,7 @@ fn bytes_captures_as_bytes() {
         .build()
         .unwrap();
     let caps = re.captures(b"abc 123").unwrap().unwrap();
-    assert_eq!(caps.as_bytes(), b"abc 123");
+    assert_eq!(caps.input_as_bytes(), b"abc 123");
 }
 
 #[test]
@@ -332,4 +332,108 @@ fn assert_match_bytes(m: Option<MatchBytes<'_>>, expected: &[u8], start: usize, 
     );
     assert_eq!(m.start(), start);
     assert_eq!(m.end(), end);
+}
+
+#[test]
+fn bytes_captures_fixed_array_input() {
+    let re = RegexBuilder::new(r"(\d+)")
+        .bytes_mode(BytesMode::Ascii)
+        .build()
+        .unwrap();
+    let input: &[u8; 7] = b"abc 123";
+    let caps = re.captures(input).unwrap().unwrap();
+    assert_match_bytes(caps.get(0), b"123", 4, 7);
+    assert_match_bytes(caps.get(1), b"123", 4, 7);
+}
+
+#[test]
+fn bytes_find_fixed_array_input() {
+    let re = RegexBuilder::new(r"\d+")
+        .bytes_mode(BytesMode::Ascii)
+        .build()
+        .unwrap();
+    let input: &[u8; 7] = b"abc 456";
+    let m = re.find(input).unwrap().unwrap();
+    assert_eq!(m.as_bytes(), b"456");
+    assert_eq!(m.start(), 4);
+    assert_eq!(m.end(), 7);
+}
+
+#[test]
+fn bytes_is_match_fixed_array_input() {
+    let re = RegexBuilder::new(r"\d+")
+        .bytes_mode(BytesMode::Ascii)
+        .build()
+        .unwrap();
+    let yes: &[u8; 7] = b"abc 123";
+    let no: &[u8; 3] = b"abc";
+    assert!(re.is_match(yes).unwrap());
+    assert!(!re.is_match(no).unwrap());
+}
+
+#[test]
+fn bytes_unicode_bytes_captures() {
+    let re = RegexBuilder::new(r"(\w+)")
+        .bytes_mode(BytesMode::UnicodeBytes)
+        .build()
+        .unwrap();
+    let caps = re.captures("café".as_bytes()).unwrap().unwrap();
+    assert_eq!(caps.get(0).unwrap().as_bytes(), "café".as_bytes());
+    assert_eq!(caps.get(1).unwrap().as_bytes(), "café".as_bytes());
+}
+
+#[test]
+fn bytes_unicode_bytes_find() {
+    let re = RegexBuilder::new(r"\w+")
+        .bytes_mode(BytesMode::UnicodeBytes)
+        .build()
+        .unwrap();
+    let m = re.find("café!".as_bytes()).unwrap().unwrap();
+    assert_eq!(m.as_bytes(), "café".as_bytes());
+    assert_eq!(m.start(), 0);
+    assert_eq!(m.end(), 5);
+}
+
+#[test]
+fn bytes_unicode_bytes_find_iter() {
+    let re = RegexBuilder::new(r"\w+")
+        .bytes_mode(BytesMode::UnicodeBytes)
+        .build()
+        .unwrap();
+    let matches: Vec<_> = re
+        .find_iter("hello world".as_bytes())
+        .map(|m| m.unwrap())
+        .collect();
+    assert_eq!(matches.len(), 2);
+    assert_eq!(matches[0].as_bytes(), b"hello");
+    assert_eq!(matches[1].as_bytes(), b"world");
+}
+
+#[test]
+fn bytes_unicode_bytes_captures_iter() {
+    let re = RegexBuilder::new(r"(\w+)")
+        .bytes_mode(BytesMode::UnicodeBytes)
+        .build()
+        .unwrap();
+    let all_caps: Vec<_> = re
+        .captures_iter("foo bar".as_bytes())
+        .map(|c| c.unwrap())
+        .collect();
+    assert_eq!(all_caps.len(), 2);
+    assert_eq!(all_caps[0].get(1).unwrap().as_bytes(), b"foo");
+    assert_eq!(all_caps[1].get(1).unwrap().as_bytes(), b"bar");
+}
+
+#[test]
+fn bytes_unicode_bytes_captures_from_pos() {
+    let re = RegexBuilder::new(r"(\w+)")
+        .bytes_mode(BytesMode::UnicodeBytes)
+        .build()
+        .unwrap();
+    let caps = re
+        .captures_from_pos("hello world".as_bytes(), 6)
+        .unwrap()
+        .unwrap();
+    assert_eq!(caps.get(0).unwrap().as_bytes(), b"world");
+    assert_eq!(caps.get(1).unwrap().as_bytes(), b"world");
 }

@@ -159,7 +159,7 @@ impl RegexInput for [u8] {
         MatchBytes::new(self, start, end)
     }
     fn advance_position(&self, i: usize) -> usize {
-        next_input_pos(self, i)
+        i + 1
     }
 }
 
@@ -189,6 +189,6 @@ impl<const N: usize> RegexInput for [u8; N] {
         MatchBytes::new(self, start, end)
     }
     fn advance_position(&self, i: usize) -> usize {
-        next_input_pos(self, i)
+        i + 1
     }
 }
