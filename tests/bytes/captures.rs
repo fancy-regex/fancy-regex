@@ -1,7 +1,5 @@
 use fancy_regex::{BytesMode, MatchBytes, RegexBuilder};
 
-mod common;
-
 #[test]
 fn bytes_captures_easy() {
     let re = RegexBuilder::new(r"(\d+)-(\d+)")

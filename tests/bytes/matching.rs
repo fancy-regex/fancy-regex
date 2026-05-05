@@ -1,7 +1,5 @@
 use fancy_regex::{BytesMode, Error, RegexBuilder, RuntimeError};
 
-mod common;
-
 #[test]
 fn bytes_control_character_escapes() {
     assert_match_bytes(r"\a", b"\x07");
@@ -81,6 +79,27 @@ fn bytes_backrefs() {
     assert_match_bytes(r"(abc|def)\1", b"abcabc");
     assert_no_match_bytes(r"(abc|def)\1", b"abcdef");
     assert_match_bytes(r"(abc|def)\1", b"defdef");
+}
+
+#[test]
+fn bytes_backrefs_casei() {
+    // ASCII: case-insensitive backref match
+    assert_match_bytes(r"(abc)(?i:\1)", b"abcABC");
+    // ASCII: case-insensitive backref no-match (eq_ignore_ascii_case false)
+    assert_no_match_bytes(r"(abc)(?i:\1)", b"abcdef");
+
+    // ASCII slice in non-ASCII input (exercises text_bytes.is_ascii() fix)
+    assert_match_bytes(r"(abc)(?i:\1)", "δabcABC".as_bytes());
+
+    // Unicode: case-insensitive backref match (δ ↔ Δ)
+    assert_match_bytes(r"(δ)(?i:\1)", "δΔ".as_bytes());
+    // Unicode: case-insensitive backref no-match (matches_literal_casei_unicode false)
+    assert_no_match_bytes(r"(δ)(?i:\1)", "δσ".as_bytes());
+
+    // Non-UTF-8 bytes: no case-insensitive match possible (final false branch)
+    // 0xFF has UTF-8 lead byte length 4, so (.) captures 4 bytes;
+    // need 8-byte input so the backref has room to compare at position 4
+    assert_no_match_bytes(r"(.)(?i:\1)", b"\xff\xfe\xfd\xfc\xff\xfe\xfd\xfb");
 }
 
 #[test]
