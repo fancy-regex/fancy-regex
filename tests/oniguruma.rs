@@ -185,7 +185,7 @@ fn run_test(test: &Test) -> Option<String> {
             }
         }
         Assertion::NoMatch => {
-            let result = regex.find(&text).unwrap();
+            let result = regex.find(text).unwrap();
             if result.is_some() {
                 Some("Match found".to_string())
             } else {

@@ -46,7 +46,8 @@ use crate::vm::{CachePoolFn, ReverseBackwardsDelegate};
 use crate::vm::{CaptureGroupRange, Delegate, Insn, Prog};
 use crate::LookAround::*;
 use crate::{
-    Absent, BacktrackingControlVerb, CompileError, Error, Expr, LookAround, RegexOptions, Result,
+    Absent, BacktrackingControlVerb, BytesMode, CompileError, Error, Expr, LookAround,
+    RegexOptions, Result,
 };
 
 /// Maximum recursion depth for subroutine calls (matches Oniguruma's limit)
@@ -935,6 +936,8 @@ pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<Ra
 }
 
 pub(crate) fn options_to_rabuilder(options: &RegexOptions) -> RaBuilder {
+    use regex_automata::util::syntax::Config as SyntaxConfig;
+
     let mut config = RaConfig::new();
     if let Some(limit) = options.delegate_size_limit {
         config = config.nfa_size_limit(Some(limit));
@@ -945,7 +948,19 @@ pub(crate) fn options_to_rabuilder(options: &RegexOptions) -> RaBuilder {
 
     let mut builder = RaBuilder::new();
     builder.configure(config);
-    builder.syntax(options.syntaxc);
+
+    let utf8 = matches!(options.bytes_mode, BytesMode::Unicode);
+
+    let syntax = SyntaxConfig::new()
+        .utf8(utf8)
+        .unicode(options.syntaxc.get_unicode() && !matches!(options.bytes_mode, BytesMode::Ascii))
+        .case_insensitive(options.syntaxc.get_case_insensitive())
+        .multi_line(options.syntaxc.get_multi_line())
+        .dot_matches_new_line(options.syntaxc.get_dot_matches_new_line())
+        .crlf(options.syntaxc.get_crlf())
+        .ignore_whitespace(options.syntaxc.get_ignore_whitespace());
+    builder.syntax(syntax);
+
     builder
 }
 

@@ -556,14 +556,14 @@ fn forward_reference_subroutine_capture_groups() {
 }
 
 #[cfg_attr(feature = "track_caller", track_caller)]
-fn captures<'a>(re: &str, text: &'a str) -> Captures<'a> {
+fn captures<'a>(re: &str, text: &'a str) -> Captures<'a, str> {
     let regex = common::regex(re);
     let result = regex.captures(text);
     assert_captures(result)
 }
 
 #[cfg_attr(feature = "track_caller", track_caller)]
-fn assert_captures(result: Result<Option<Captures<'_>>>) -> Captures<'_> {
+fn assert_captures(result: Result<Option<Captures<'_, str>>>) -> Captures<'_, str> {
     assert!(
         result.is_ok(),
         "Expected captures to succeed, but was {:?}",
@@ -644,14 +644,14 @@ fn expand() {
 }
 
 #[cfg_attr(feature = "track_caller", track_caller)]
-fn assert_expansion(cap: &Captures, replacement: &str, text: &str) {
+fn assert_expansion(cap: &Captures<'_, str>, replacement: &str, text: &str) {
     let mut buf = "before".to_string();
     cap.expand(replacement, &mut buf);
     assert_eq!(buf, format!("before{}", text));
 }
 
 #[cfg_attr(feature = "track_caller", track_caller)]
-fn assert_python_expansion(cap: &Captures, replacement: &str, text: &str) {
+fn assert_python_expansion(cap: &Captures<'_, str>, replacement: &str, text: &str) {
     assert_eq!(Expander::python().expansion(replacement, cap), text);
 }
 
