@@ -50,6 +50,7 @@ pub struct RegexFlags {
     pub oniguruma_mode: bool,
     pub find_not_empty: bool,
     pub ignore_numbered_groups_when_named_groups_exist: bool,
+    pub ignore_trailing_newline: bool,
 }
 
 impl Default for RegexFlags {
@@ -63,6 +64,7 @@ impl Default for RegexFlags {
             oniguruma_mode: true,
             find_not_empty: false,
             ignore_numbered_groups_when_named_groups_exist: false,
+            ignore_trailing_newline: false,
         }
     }
 }
@@ -90,6 +92,7 @@ fn build_regex(pattern: &str, flags: &RegexFlags) -> Result<Regex, String> {
     builder.ignore_numbered_groups_when_named_groups_exist(
         flags.ignore_numbered_groups_when_named_groups_exist,
     );
+    builder.disallow_empty_match_at_eof_after_newline(flags.ignore_trailing_newline);
 
     builder
         .build()
@@ -205,6 +208,7 @@ pub fn analyze_regex(pattern: &str, flags: JsValue) -> Result<String, String> {
                 AnalyzeContext {
                     explicit_capture_group_0: requires_capture_group_fixup,
                     find_not_empty: flags.find_not_empty,
+                    disallow_empty_match_at_eof_after_newline: flags.ignore_trailing_newline,
                 },
             ) {
                 Ok(info) => Ok(format!("{:#?}", info)),
@@ -478,6 +482,7 @@ pub fn analyze_regex_tree(pattern: &str, flags: JsValue) -> Result<JsValue, Stri
                 AnalyzeContext {
                     explicit_capture_group_0: requires_capture_group_fixup,
                     find_not_empty: flags.find_not_empty,
+                    disallow_empty_match_at_eof_after_newline: flags.ignore_trailing_newline,
                 },
             ) {
                 Ok(info) => {

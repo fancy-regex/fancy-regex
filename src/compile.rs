@@ -949,17 +949,16 @@ pub(crate) fn options_to_rabuilder(options: &RegexOptions) -> RaBuilder {
 
     let mut builder = RaBuilder::new();
     builder.configure(config);
-
+    // NOTE: we deliberately don't configure the regex syntax because we rely on our Expr to_str function
+    //       to handle creating the correct string for regex-automata
+    //       otherwise, if the RegexOptions specifies case insensitive mode, then the pattern contains an explicit
+    //       (?-i) flag, then that flag would effectively be ignored unless to_str would encode the flag for every
+    //       node, even when it is the default, which feels like a waste.
     let utf8 = matches!(options.bytes_mode, BytesMode::Unicode);
 
     let syntax = SyntaxConfig::new()
         .utf8(utf8)
-        .unicode(options.syntaxc.get_unicode() && !matches!(options.bytes_mode, BytesMode::Ascii))
-        .case_insensitive(options.syntaxc.get_case_insensitive())
-        .multi_line(options.syntaxc.get_multi_line())
-        .dot_matches_new_line(options.syntaxc.get_dot_matches_new_line())
-        .crlf(options.syntaxc.get_crlf())
-        .ignore_whitespace(options.syntaxc.get_ignore_whitespace());
+        .unicode(options.syntaxc.get_unicode() && !matches!(options.bytes_mode, BytesMode::Ascii));
     builder.syntax(syntax);
 
     builder
@@ -998,6 +997,8 @@ pub struct CompileOptions {
     /// to decide whether it is useful enough to replace the `SplitUnanchored` preamble with a
     /// `Seek` instruction. When `None`, seek is disabled entirely.
     pub seek_filter: Option<fn(&str) -> bool>,
+    /// To match Oniguruma behavior where only \z can match at EOF if preceeded by a newline character
+    pub disallow_empty_match_at_eof_after_newline: bool,
 }
 
 impl core::fmt::Debug for CompileOptions {
@@ -1013,6 +1014,10 @@ impl core::fmt::Debug for CompileOptions {
             .field("anchored", &self.anchored)
             .field("contains_subroutines", &self.contains_subroutines)
             .field("seek_filter", &seek_filter_desc)
+            .field(
+                "disallow_empty_match_at_eof_after_newline",
+                &self.disallow_empty_match_at_eof_after_newline,
+            )
             .finish()
     }
 }
@@ -1079,6 +1084,9 @@ pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
     if info.start_group() == 1 {
         // add implicit capture group 0 end
         c.b.add(Insn::Save(1));
+    }
+    if options.disallow_empty_match_at_eof_after_newline {
+        c.b.add(Insn::RejectEmptyMatchAtEOFFollowingNewline);
     }
     c.b.add(Insn::End);
     Ok(c.b.build())
