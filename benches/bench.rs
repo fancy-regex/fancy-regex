@@ -25,6 +25,7 @@ use criterion::Criterion;
 use std::time::Duration;
 
 use fancy_regex::internal::{analyze, compile, run_default, AnalyzeContext, CompileOptions};
+use fancy_regex::seek_pattern_is_useful;
 use fancy_regex::Expr;
 use regex::Regex;
 
@@ -255,17 +256,138 @@ criterion_group!(
     continue_from_end_of_prev_match_long_haystack,
 );
 
+/// Shared logic for the backref-in-long-haystack seek benchmarks.
+///
+/// Compiles `(abc)\1` with the given `seek` setting, builds a 10,000-`x` haystack
+/// (optionally with `"abcabc"` appended), and registers a criterion benchmark under
+/// `name`.
+fn bench_backref_in_long_haystack(c: &mut Criterion, name: &str, seek: bool, with_match: bool) {
+    // Pattern with a backref — when seek is true the approximation inlines the group
+    // body ("abc"), so the engine jumps directly to "abc" occurrences and skips the rest.
+    let tree = Expr::parse_tree(r"(abc)\1").unwrap();
+    let a = analyze(&tree, AnalyzeContext::default()).unwrap();
+    let p = compile(
+        &a,
+        CompileOptions {
+            contains_subroutines: tree.contains_subroutines,
+            seek_filter: if seek {
+                Some(seek_pattern_is_useful)
+            } else {
+                None
+            },
+            ..CompileOptions::default()
+        },
+    )
+    .unwrap();
+    let mut haystack = String::new();
+    for _ in 0..10_000 {
+        haystack.push('x');
+    }
+    if with_match {
+        // Place the match target at the very end so the seek pre-filter must scan
+        // the entire haystack before finding the single candidate position.
+        haystack.push_str("abcabc");
+    }
+    c.bench_function(name, |b| b.iter(|| run_default(&p, &haystack, 0).unwrap()));
+}
+
+fn seek_backref_in_long_haystack(c: &mut Criterion) {
+    bench_backref_in_long_haystack(c, "seek_backref_in_long_haystack", true, true);
+}
+
+fn seek_backref_in_long_haystack_no_match(c: &mut Criterion) {
+    bench_backref_in_long_haystack(c, "seek_backref_in_long_haystack_no_match", true, false);
+}
+
+fn no_seek_backref_in_long_haystack(c: &mut Criterion) {
+    bench_backref_in_long_haystack(c, "no_seek_backref_in_long_haystack", false, true);
+}
+
+fn no_seek_backref_in_long_haystack_no_match(c: &mut Criterion) {
+    bench_backref_in_long_haystack(c, "no_seek_backref_in_long_haystack_no_match", false, false);
+}
+
+criterion_group!(
+    name = seek_benches;
+    config = Criterion::default();
+    targets = seek_backref_in_long_haystack,
+    seek_backref_in_long_haystack_no_match,
+    no_seek_backref_in_long_haystack,
+    no_seek_backref_in_long_haystack_no_match,
+);
+
+/// Shared logic for the worst-case seek benchmarks.
+///
+/// Compiles `(\d{3})\1` with the given `seek` setting and builds a haystack of
+/// `"1234567890"` repeated 100 times (optionally followed by `"00000"` to place a
+/// match at the very end).  Because every position in the all-digits haystack is
+/// a candidate for `\d{3}`, the seek pre-filter cannot skip any positions — it
+/// becomes pure overhead compared to running without seek.
+fn bench_digit_backref_worst_case(c: &mut Criterion, name: &str, seek: bool, with_match: bool) {
+    let tree = Expr::parse_tree(r"(\d{3})\1").unwrap();
+    let a = analyze(&tree, AnalyzeContext::default()).unwrap();
+    let p = compile(
+        &a,
+        CompileOptions {
+            contains_subroutines: tree.contains_subroutines,
+            seek_filter: if seek {
+                Some(seek_pattern_is_useful)
+            } else {
+                None
+            },
+            ..CompileOptions::default()
+        },
+    )
+    .unwrap();
+    let mut haystack = "1234567890".repeat(100);
+    if with_match {
+        // Append 5 zeros so the string ends with 6 zeros giving a match ("000" + "000")
+        // near the very end, forcing the seek pre-filter to traverse the whole haystack.
+        haystack.push_str("00000");
+    }
+    c.bench_function(name, |b| b.iter(|| run_default(&p, &haystack, 0).unwrap()));
+}
+
+fn seek_digit_backref_worst_case(c: &mut Criterion) {
+    bench_digit_backref_worst_case(c, "seek_digit_backref_worst_case", true, true);
+}
+
+fn seek_digit_backref_worst_case_no_match(c: &mut Criterion) {
+    bench_digit_backref_worst_case(c, "seek_digit_backref_worst_case_no_match", true, false);
+}
+
+fn no_seek_digit_backref_worst_case(c: &mut Criterion) {
+    bench_digit_backref_worst_case(c, "no_seek_digit_backref_worst_case", false, true);
+}
+
+fn no_seek_digit_backref_worst_case_no_match(c: &mut Criterion) {
+    bench_digit_backref_worst_case(c, "no_seek_digit_backref_worst_case_no_match", false, false);
+}
+
+criterion_group!(
+    name = seek_worst_case_benches;
+    config = Criterion::default();
+    targets = seek_digit_backref_worst_case,
+    seek_digit_backref_worst_case_no_match,
+    no_seek_digit_backref_worst_case,
+    no_seek_digit_backref_worst_case_no_match,
+);
+
 #[cfg(feature = "variable-lookbehinds")]
 criterion_main!(
     benches,
     slow_benches,
     lookbehind_benches,
-    continue_from_end_of_prev_match_benches
+    continue_from_end_of_prev_match_benches,
+    seek_benches,
+    seek_worst_case_benches
 );
 
 #[cfg(not(feature = "variable-lookbehinds"))]
 criterion_main!(
     benches,
     slow_benches,
-    continue_from_end_of_prev_match_benches
+    continue_from_end_of_prev_match_benches,
+    seek_benches,
+    seek_worst_case_benches
 );

@@ -76,12 +76,23 @@ Oniguruma doesn't have a problem with this particular case because its
 optimization saves it again: It checks if there's a `c` in the input
 before doing any matching.
 
-There's nothing preventing fancy-regex from adding similar optimizations
-in the future, but it's not done yet.
+fancy-regex now has a **Seek** pre-filter optimization (disabled by
+default) for hard (backtracking) patterns, which provides similar
+benefits for many cases. It derives a regular approximation of the
+pattern and uses it to skip directly to the earliest plausible match
+position in the haystack, so the backtracking VM only needs to run from
+that position onward. For patterns where the hard parts leave useful
+literals or anchors in the approximation — for example, backreferences
+like `(\w+) \1` or anchored patterns like `(.{5})\1$` — the Seek
+pre-filter can dramatically reduce the number of positions the VM tries.
+Lookarounds are currently dropped when building the approximation pattern,
+so the Seek pre-filter does not directly replicate Oniguruma's "find `c`
+first" step in that specific case. The Seek optimization can be toggled
+on/off via the `seek` method on `RegexBuilder`/`RegexOptionsBuilder`.
 
 Note that how much fancy-regex can do without backtracking depends on
 the structure of the regex. For example, with `(?=(a|b|ab)*bc)`, the
-inner part of the look-ahead can be delegated to regex entirely.
+inner part of the look-ahead can be delegated to regex-automata entirely.
 
 ### Summary
 
@@ -91,7 +102,11 @@ inner part of the look-ahead can be delegated to regex entirely.
   Oniguruma's exponential worst-case.
 * Even if the regex doesn't use any fancy features, Oniguruma can be
   faster because it is a mature and highly optimized engine.
-* With fancy features, Oniguruma can be faster because of optimizations.
+* With fancy features, Oniguruma can still be faster in some cases. Its
+  mature literal pre-search covers more patterns than the Seek pre-filter
+  (for example, lookaround patterns where the Seek approximation drops
+  the lookahead). The Seek pre-filter can be turned on or off via
+  `RegexBuilder::seek(seek_enabled)` if needed.
 
 [Runaway Regular Expressions: Catastrophic Backtracking]: https://www.regular-expressions.info/catastrophic.html
 [Oniguruma]: https://github.com/kkos/oniguruma
