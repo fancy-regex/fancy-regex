@@ -436,7 +436,10 @@ fn unicode_mode_inline_flag_only_allowed_when_matching_builder_setting() {
     assert!(
         matches!(
             result,
-            Err(Error::ParseError(_, ParseError::ChangingUnicodeModeUnsupported))
+            Err(Error::ParseError(
+                _,
+                ParseError::ChangingUnicodeModeUnsupported
+            ))
         ),
         "Expected ChangingUnicodeModeUnsupported for (?-u) with unicode enabled, got {:?}",
         result
@@ -463,7 +466,10 @@ fn unicode_mode_inline_flag_only_allowed_when_matching_builder_setting() {
     assert!(
         matches!(
             result,
-            Err(Error::ParseError(_, ParseError::ChangingUnicodeModeUnsupported))
+            Err(Error::ParseError(
+                _,
+                ParseError::ChangingUnicodeModeUnsupported
+            ))
         ),
         "Expected ChangingUnicodeModeUnsupported for (?u) with unicode disabled, got {:?}",
         result

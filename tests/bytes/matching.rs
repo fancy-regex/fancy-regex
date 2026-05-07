@@ -201,11 +201,7 @@ fn bytes_backrefs_casei() {
 #[cfg_attr(feature = "track_caller", track_caller)]
 fn assert_match_bytes(re: &str, text: &[u8]) {
     let result = match_bytes(re, text);
-    assert!(
-        result,
-        "Expected regex '{}' to match bytes {:?}",
-        re, text
-    );
+    assert!(result, "Expected regex '{}' to match bytes {:?}", re, text);
 }
 
 #[cfg_attr(feature = "track_caller", track_caller)]

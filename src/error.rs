@@ -129,7 +129,9 @@ impl fmt::Display for ParseError {
             }
             ParseError::InvalidClass => write!(f, "Invalid character class"),
             ParseError::UnknownFlag(s) => write!(f, "Unknown group flag: {}", s),
-            ParseError::ChangingUnicodeModeUnsupported => write!(f, "Changing Unicode mode inline is not supported"),
+            ParseError::ChangingUnicodeModeUnsupported => {
+                write!(f, "Changing Unicode mode inline is not supported")
+            }
             ParseError::InvalidBackref => write!(f, "Invalid back reference"),
             ParseError::InvalidGroupName => write!(f, "Could not parse group name"),
             ParseError::InvalidGroupNameBackref(s) => {
