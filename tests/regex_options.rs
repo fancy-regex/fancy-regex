@@ -1,4 +1,4 @@
-use fancy_regex::{CompileError, Error, Regex, RegexBuilder};
+use fancy_regex::{CompileError, Error, ParseError, Regex, RegexBuilder};
 
 fn build_regex(builder: &RegexBuilder) -> Regex {
     let result = builder.build();
@@ -320,4 +320,168 @@ fn check_find_not_empty_allows_trailing_lookahead_with_content() {
     let regex = result.unwrap();
     assert!(regex.is_match("ab").unwrap());
     assert!(!regex.is_match("ac").unwrap());
+}
+
+// --- unicode_mode tests ---
+//
+// These tests document the behavior of `unicode_mode(false)` when matching
+// against `str` input (the default, which corresponds to UTF-8 encoded text).
+//
+// Summary:
+// - Character classes `\w`, `\d`, `\s` are honoured: they become ASCII-only.
+// - Negated classes `\W`, `\D`, `\S`, bare `.`, and Unicode properties
+//   `\p{...}` fail to compile, because they could match individual bytes that
+//   violate UTF-8 boundaries (the underlying engine requires valid UTF-8 when
+//   operating on `str`).
+// - The inline `(?-u)` flag is rejected when it would change the unicode mode
+//   (i.e. when unicode_mode(true) is active, the default), but accepted as a
+//   no-op when it matches the current builder setting (i.e. unicode_mode(false)).
+// - The unicode flag is also honoured in "hard" (backtracking-VM) patterns
+//   such as those containing lookarounds.
+//
+// If you need to use `unicode_mode(false)` with `.`, `\W`, `\D`, `\S`, or
+// Unicode properties, use the bytes API (`BytesMode::Ascii`) instead.
+
+/// `\w` with `unicode_mode(false)` on `str` input matches only ASCII word chars.
+#[test]
+fn unicode_mode_false_w_is_ascii_only_on_str() {
+    // With unicode enabled, \w matches Unicode letters such as 'é'.
+    let re_unicode = build_regex(RegexBuilder::new(r"^\w+$").unicode_mode(true));
+    assert!(re_unicode.is_match("café").unwrap());
+
+    // With unicode disabled, \w matches only [a-zA-Z0-9_], so 'café' (which
+    // contains the non-ASCII 'é') no longer matches when anchored.
+    let re_ascii = build_regex(RegexBuilder::new(r"^\w+$").unicode_mode(false));
+    assert!(!re_ascii.is_match("café").unwrap());
+    // Pure ASCII still matches.
+    assert!(re_ascii.is_match("cafe").unwrap());
+}
+
+/// `\d` with `unicode_mode(false)` on `str` input matches only ASCII digits.
+#[test]
+fn unicode_mode_false_d_is_ascii_only_on_str() {
+    // Arabic-Indic digit THREE (U+0663) is matched by \d in Unicode mode.
+    let arabic_digit = "\u{0663}";
+
+    let re_unicode = build_regex(RegexBuilder::new(r"^\d+$").unicode_mode(true));
+    assert!(re_unicode.is_match(arabic_digit).unwrap());
+
+    let re_ascii = build_regex(RegexBuilder::new(r"^\d+$").unicode_mode(false));
+    assert!(!re_ascii.is_match(arabic_digit).unwrap());
+    // Plain ASCII digit still matches.
+    assert!(re_ascii.is_match("3").unwrap());
+}
+
+/// `\s` with `unicode_mode(false)` on `str` input matches only ASCII whitespace.
+#[test]
+fn unicode_mode_false_s_is_ascii_only_on_str() {
+    // EM SPACE (U+2003) is a Unicode space character but not ASCII whitespace.
+    let em_space = "\u{2003}";
+
+    let re_unicode = build_regex(RegexBuilder::new(r"^\s$").unicode_mode(true));
+    assert!(re_unicode.is_match(em_space).unwrap());
+
+    let re_ascii = build_regex(RegexBuilder::new(r"^\s$").unicode_mode(false));
+    assert!(!re_ascii.is_match(em_space).unwrap());
+    // Plain ASCII space still matches.
+    assert!(re_ascii.is_match(" ").unwrap());
+}
+
+/// `\W`, `\D`, and `\S` fail to compile with `unicode_mode(false)` on `str`
+/// input because their negation could match byte sequences that are not valid
+/// UTF-8 codepoint boundaries.
+#[test]
+fn unicode_mode_false_negated_classes_fail_to_compile_on_str() {
+    for pattern in [r"\W", r"\D", r"\S"] {
+        let result = RegexBuilder::new(pattern).unicode_mode(false).build();
+        assert!(
+            result.is_err(),
+            "Expected '{}' to fail to compile with unicode_mode(false) on str input",
+            pattern
+        );
+    }
+}
+
+/// `.` (bare dot) fails to compile with `unicode_mode(false)` on `str` input
+/// for the same reason: it could match arbitrary bytes.
+#[test]
+fn unicode_mode_false_dot_fails_to_compile_on_str() {
+    let result = RegexBuilder::new(r".").unicode_mode(false).build();
+    assert!(
+        result.is_err(),
+        "Expected '.' to fail to compile with unicode_mode(false) on str input"
+    );
+}
+
+/// `\p{...}` Unicode properties fail to compile with `unicode_mode(false)`.
+#[test]
+fn unicode_mode_false_unicode_properties_fail_to_compile() {
+    let result = RegexBuilder::new(r"\p{L}").unicode_mode(false).build();
+    assert!(
+        result.is_err(),
+        "{}",
+        "Expected \\p{{L}} to fail to compile with unicode_mode(false)"
+    );
+}
+
+/// The inline `(?-u)` flag is rejected when unicode mode is **enabled**
+/// (the default), because it would attempt to change the mode. It is accepted
+/// as a no-op when unicode mode is **already disabled** via the builder.
+/// Conversely, inline `(?u)` is accepted when unicode mode is already enabled,
+/// and rejected when it is disabled.
+#[test]
+fn unicode_mode_inline_flag_only_allowed_when_matching_builder_setting() {
+    // (?-u) while unicode is ON (default) → error: would change the mode
+    let result = Regex::new(r"(?-u)\w+");
+    assert!(
+        matches!(
+            result,
+            Err(Error::ParseError(_, ParseError::ChangingUnicodeModeUnsupported))
+        ),
+        "Expected ChangingUnicodeModeUnsupported for (?-u) with unicode enabled, got {:?}",
+        result
+    );
+
+    // (?-u) while unicode is OFF → accepted (no-op)
+    let result = RegexBuilder::new(r"(?-u)\w+").unicode_mode(false).build();
+    assert!(
+        result.is_ok(),
+        "Expected (?-u) to be accepted when unicode_mode(false), got {:?}",
+        result
+    );
+
+    // (?u) while unicode is ON (default) → accepted (no-op)
+    let result = Regex::new(r"(?u)\w+");
+    assert!(
+        result.is_ok(),
+        "Expected (?u) to be accepted when unicode is enabled (default), got {:?}",
+        result
+    );
+
+    // (?u) while unicode is OFF → error: would change the mode
+    let result = RegexBuilder::new(r"(?u)\w+").unicode_mode(false).build();
+    assert!(
+        matches!(
+            result,
+            Err(Error::ParseError(_, ParseError::ChangingUnicodeModeUnsupported))
+        ),
+        "Expected ChangingUnicodeModeUnsupported for (?u) with unicode disabled, got {:?}",
+        result
+    );
+}
+
+/// `unicode_mode(false)` is also honoured in "hard" (backtracking-VM) patterns
+/// such as those containing lookaheads.
+#[test]
+fn unicode_mode_false_hard_pattern_w_is_ascii_only_on_str() {
+    // The lookahead makes this a "hard" pattern processed by the VM.
+    let re_unicode = build_regex(RegexBuilder::new(r"^\w+(?=!)").unicode_mode(true));
+    let re_ascii = build_regex(RegexBuilder::new(r"^\w+(?=!)").unicode_mode(false));
+
+    // With unicode enabled, \w matches 'é' so the whole pattern matches.
+    assert!(re_unicode.is_match("café!").unwrap());
+    // With unicode disabled, \w is ASCII-only, so the pattern does not match.
+    assert!(!re_ascii.is_match("café!").unwrap());
+    // Pure-ASCII input still matches with unicode disabled.
+    assert!(re_ascii.is_match("cafe!").unwrap());
 }

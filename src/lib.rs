@@ -634,12 +634,33 @@ impl RegexOptionsBuilder {
 
     /// Enable or disable the Unicode flag (`u`) by default.
     ///
-    /// By default this is **enabled**. It may alternatively be selectively
-    /// disabled in the regular expression itself via the `u` flag.
+    /// By default this is **enabled**. The inline `u` flag inside a pattern
+    /// is only accepted when it **matches** the current builder setting (e.g.
+    /// `(?u)` when unicode is already enabled, or `(?-u)` when it is already
+    /// disabled). Attempts to change the mode inline are rejected with a
+    /// [`ParseError::ChangingUnicodeModeUnsupported`] error. Use this builder
+    /// method to set the desired mode instead.
     ///
-    /// Note that unless "allow invalid UTF-8" is enabled (it's disabled by
-    /// default), a regular expression will fail to parse if Unicode mode is
-    /// disabled and a sub-expression could possibly match invalid UTF-8.
+    /// ## Effect on `str` input (default)
+    ///
+    /// When matching against `&str` (the default), the underlying engine
+    /// requires that all matches respect UTF-8 boundaries. Disabling Unicode
+    /// therefore has the following effects:
+    ///
+    /// - **`\w`, `\d`, `\s`** become ASCII-only (`[a-zA-Z0-9_]`, `[0-9]`,
+    ///   and ASCII whitespace respectively).
+    /// - **`\W`, `\D`, `\S`**, bare **`.`**, and **`\p{...}`** Unicode
+    ///   properties **fail to compile**, because they could match byte
+    ///   sequences that violate UTF-8 boundaries.
+    ///
+    /// If you need those constructs with `unicode_mode(false)`, use the bytes
+    /// API with [`BytesMode::Ascii`] instead.
+    ///
+    /// ## Effect on byte input
+    ///
+    /// When matching against `&[u8]` (via [`BytesMode::Ascii`]), all
+    /// constructs work as expected in ASCII mode (`.` matches any byte,
+    /// `\W`/`\D`/`\S` match non-ASCII byte values, etc.).
     ///
     /// **WARNING**: Unicode mode can greatly increase the size of the compiled
     /// DFA, which can noticeably impact both memory usage and compilation

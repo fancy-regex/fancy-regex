@@ -1,41 +1,41 @@
-use fancy_regex::{Error, RegexBuilder, RuntimeError};
+use fancy_regex::{BytesMode, Error, RegexBuilder, RuntimeError};
 
 mod common;
 
 #[test]
 fn control_character_escapes() {
-    assert_match(r"\a", "\x07");
-    assert_match(r"\e", "\x1B");
-    assert_match(r"\f", "\x0C");
-    assert_match(r"\n", "\x0A");
-    assert_match(r"\r", "\x0D");
-    assert_match(r"\t", "\x09");
-    assert_match(r"\v", "\x0B");
+    common::assert_is_match(r"\a", "\x07");
+    common::assert_is_match(r"\e", "\x1B");
+    common::assert_is_match(r"\f", "\x0C");
+    common::assert_is_match(r"\n", "\x0A");
+    common::assert_is_match(r"\r", "\x0D");
+    common::assert_is_match(r"\t", "\x09");
+    common::assert_is_match(r"\v", "\x0B");
 }
 
 #[test]
 fn character_class_escapes() {
-    assert_match(r"[\[]", "[");
-    assert_match(r"[\^]", "^");
+    common::assert_is_match(r"[\[]", "[");
+    common::assert_is_match(r"[\^]", "^");
 
     // The regex crate would reject the following because it's not necessary to escape them.
     // Other engines allow to escape any non-alphanumeric character.
-    assert_match(r"[\<]", "<");
-    assert_match(r"[\>]", ">");
+    common::assert_is_match(r"[\<]", "<");
+    common::assert_is_match(r"[\>]", ">");
     assert_match(r"[\.]", ".");
-    assert_match(r"[\ ]", " ");
+    common::assert_is_match(r"[\ ]", " ");
 
     // Character class escape
-    assert_match(r"[\d]", "1");
+    common::assert_is_match(r"[\d]", "1");
 
     // Control characters
-    assert_match(r"[\e]", "\x1B");
-    assert_match(r"[\n]", "\x0A");
+    common::assert_is_match(r"[\e]", "\x1B");
+    common::assert_is_match(r"[\n]", "\x0A");
 
     // `]` can be unescaped if it's right after `[`
-    assert_match(r"[]]", "]");
+    common::assert_is_match(r"[]]", "]");
     // `]` can be unescaped even after `[^`
-    assert_match(r"[^]]", "a");
+    common::assert_is_match(r"[^]]", "a");
 }
 
 #[test]
@@ -74,20 +74,20 @@ fn character_class_intersection() {
 
 #[test]
 fn alternation_with_empty_arm() {
-    assert_match(r"^(a|)$", "a");
-    assert_match(r"^(a|)$", "");
-    assert_match(r"^(|a)$", "a");
-    assert_match(r"^(|a)$", "");
-    assert_match(r"a|", "a");
-    assert_match(r"a|", "");
-    assert_match(r"|a", "a");
-    assert_match(r"|a", "");
-    assert_no_match(r"^(a|)$", "b");
+    common::assert_is_match(r"^(a|)$", "a");
+    common::assert_is_match(r"^(a|)$", "");
+    common::assert_is_match(r"^(|a)$", "a");
+    common::assert_is_match(r"^(|a)$", "");
+    common::assert_is_match(r"a|", "a");
+    common::assert_is_match(r"a|", "");
+    common::assert_is_match(r"|a", "a");
+    common::assert_is_match(r"|a", "");
+    common::assert_no_match(r"^(a|)$", "b");
 }
 
 #[test]
 fn case_insensitive_character_class() {
-    assert_match(r"^(?i)[a-z]+$", "aB");
+    common::assert_is_match(r"^(?i)[a-z]+$", "aB");
 }
 
 #[test]
@@ -101,12 +101,12 @@ fn case_insensitive_escape() {
 
 #[test]
 fn atomic_group() {
-    assert_match(r"^a(?>bc|b)c$", "abcc");
-    assert_no_match(r"^a(?>bc|b)c$", "abc");
+    common::assert_is_match(r"^a(?>bc|b)c$", "abcc");
+    common::assert_no_match(r"^a(?>bc|b)c$", "abc");
 
     // Look-ahead forces use of VM
-    assert_match(r"^a(bc(?=d)|b)cd$", "abcd");
-    assert_no_match(r"^a(?>bc(?=d)|b)cd$", "abcd");
+    common::assert_is_match(r"^a(bc(?=d)|b)cd$", "abcd");
+    common::assert_no_match(r"^a(?>bc(?=d)|b)cd$", "abcd");
 }
 
 #[test]
@@ -122,13 +122,27 @@ fn backtrack_limit() {
         Some(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded)) => {}
         _ => panic!("Expected RuntimeError::BacktrackLimitExceeded"),
     }
+
+    // The same behaviour must hold in bytes mode.
+    let re = RegexBuilder::new(r"(?i)(a|b|ab)*(?>c)")
+        .bytes_mode(BytesMode::Ascii)
+        .backtrack_limit(100_000)
+        .build()
+        .expect("regex to compile successfully");
+    let s = b"abababababababababababababababababababababababababababab";
+    let result = re.is_match(s);
+    assert!(result.is_err());
+    match result.err() {
+        Some(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded)) => {}
+        _ => panic!("Expected RuntimeError::BacktrackLimitExceeded"),
+    }
 }
 
 #[test]
 fn end_of_hard_expression_cannot_be_delegated() {
-    assert_match(r"(?!x)(?:a|ab)c", "abc");
+    common::assert_is_match(r"(?!x)(?:a|ab)c", "abc");
     // If `(?:a|ab)` is delegated, there's no backtracking and `a` matches and `ab` is never tried.
-    assert_match(r"((?!x)(?:a|ab))c", "abc");
+    common::assert_is_match(r"((?!x)(?:a|ab))c", "abc");
 }
 
 #[test]
@@ -138,11 +152,11 @@ fn issue103() {
 
 #[test]
 fn backreference_validity_checker() {
-    assert_match(r"(a)(?(1))", "a");
-    assert_match(r"(?<group1>a)(?('group1'))b", "ab");
-    assert_match(r"(a)(b)?(?(2))", "ab");
-    assert_no_match(r"(a)(b)?(?(2))", "a");
-    assert_match(r"(a)(b?)(?(2))", "a");
+    common::assert_is_match(r"(a)(?(1))", "a");
+    common::assert_is_match(r"(?<group1>a)(?('group1'))b", "ab");
+    common::assert_is_match(r"(a)(b)?(?(2))", "ab");
+    common::assert_no_match(r"(a)(b)?(?(2))", "a");
+    common::assert_is_match(r"(a)(b?)(?(2))", "a");
 }
 
 #[test]
@@ -175,24 +189,24 @@ fn conditional_with_lookaround_condition() {
 
 #[test]
 fn backrefs() {
-    assert_match(r"(abc)\1", "abcabc");
-    assert_match(r"(abc|def)\1", "abcabc");
-    assert_no_match(r"(abc|def)\1", "abcdef");
-    assert_match(r"(abc|def)\1", "defdef");
+    common::assert_is_match(r"(abc)\1", "abcabc");
+    common::assert_is_match(r"(abc|def)\1", "abcabc");
+    common::assert_no_match(r"(abc|def)\1", "abcdef");
+    common::assert_is_match(r"(abc|def)\1", "defdef");
 
-    assert_no_match(r"(abc|def)\1", "abcABC");
-    assert_match(r"(abc|def)(?i:\1)", "abcABC");
-    assert_match(r"(abc|def)(?i:\1)", "abcAbc");
-    assert_no_match(r"(abc|def)(?i:\1)", "abcAB");
-    assert_no_match(r"(abc|def)(?i:\1)", "abcdef");
+    common::assert_no_match(r"(abc|def)\1", "abcABC");
+    common::assert_is_match(r"(abc|def)(?i:\1)", "abcABC");
+    common::assert_is_match(r"(abc|def)(?i:\1)", "abcAbc");
+    common::assert_no_match(r"(abc|def)(?i:\1)", "abcAB");
+    common::assert_no_match(r"(abc|def)(?i:\1)", "abcdef");
 
     assert_match(r"(δ)(?i:\1)", "δΔ");
     assert_no_match(r"(δ)\1", "δΔ");
     assert_no_match(r"(δδ)\1", "δΔfoo");
     assert_no_match(r"(δδ)\1", "δΔ");
 
-    assert_match(r"(.)(?i:\1)", "\\\\");
-    assert_match(r"(.)(?i:\1)", "((");
+    common::assert_is_match(r"(.)(?i:\1)", "\\\\");
+    common::assert_is_match(r"(.)(?i:\1)", "((");
 
     assert_match(r"(.)(?i:\1)", "įĮ");
     assert_no_match(r"(.)(?i:\1)", "įi");
@@ -203,19 +217,19 @@ fn backrefs() {
 
 #[test]
 fn easy_trailing_positive_lookaheads() {
-    assert_match(r"(?=c)", "abcabc");
-    assert_match(r"abc(?=abc)", "abcabc");
-    assert_no_match(r"abc(?=abc)", "abcdef");
-    assert_match(r"abc(?=a|b)", "abcabc");
-    assert_no_match(r"abc(?=a|f)", "f");
+    common::assert_is_match(r"(?=c)", "abcabc");
+    common::assert_is_match(r"abc(?=abc)", "abcabc");
+    common::assert_no_match(r"abc(?=abc)", "abcdef");
+    common::assert_is_match(r"abc(?=a|b)", "abcabc");
+    common::assert_no_match(r"abc(?=a|f)", "f");
 }
 
 #[test]
 fn hard_trailing_positive_lookaheads() {
-    assert_match(r"(abc|def)(?=\1)", "defdef");
-    assert_match(r"(abc|def)(?=a(?!b))", "abca");
-    assert_match(r"(abc|def)(?=a(?!b))", "abcaa");
-    assert_no_match(r"(abc|def)(?=a(?!b))", "abcabc");
+    common::assert_is_match(r"(abc|def)(?=\1)", "defdef");
+    common::assert_is_match(r"(abc|def)(?=a(?!b))", "abca");
+    common::assert_is_match(r"(abc|def)(?=a(?!b))", "abcaa");
+    common::assert_no_match(r"(abc|def)(?=a(?!b))", "abcabc");
 }
 
 #[test]
@@ -285,32 +299,32 @@ fn word_boundary_brace_syntax() {
 #[test]
 fn general_newline_escape() {
     // Test \R matching \r\n (two characters)
-    assert_match(r"\R", "\r\n");
+    common::assert_is_match(r"\R", "\r\n");
 
     // Test \R matching single newline characters
-    assert_match(r"\R", "\n");
-    assert_match(r"\R", "\r");
-    assert_match(r"\R", "\x0B"); // \v
-    assert_match(r"\R", "\x0C"); // \f
+    common::assert_is_match(r"\R", "\n");
+    common::assert_is_match(r"\R", "\r");
+    common::assert_is_match(r"\R", "\x0B"); // \v
+    common::assert_is_match(r"\R", "\x0C"); // \f
 
     // Test \R in patterns
-    assert_match(r"a\Rb", "a\r\nb");
-    assert_match(r"a\Rb", "a\nb");
-    assert_match(r"a\Rb", "a\rb");
+    common::assert_is_match(r"a\Rb", "a\r\nb");
+    common::assert_is_match(r"a\Rb", "a\nb");
+    common::assert_is_match(r"a\Rb", "a\rb");
 
     // Test that \R doesn't backtrack from \r\n to \r
     // If we have \r\n followed by something that must match \n,
     // \R should match \r\n as a unit and fail, not backtrack to match just \r
-    assert_no_match(r"\R\n", "\r\n");
+    common::assert_no_match(r"\R\n", "\r\n");
 
     // Test multiple \R in a pattern
-    assert_match(r"\R\R", "\n\r");
-    assert_match(r"\R\R", "\r\n\n");
+    common::assert_is_match(r"\R\R", "\n\r");
+    common::assert_is_match(r"\R\R", "\r\n\n");
 
     // Test \R doesn't match other characters
-    assert_no_match(r"^\R$", "a");
-    assert_no_match(r"^\R$", " ");
-    assert_no_match(r"^\R$", "");
+    common::assert_no_match(r"^\R$", "a");
+    common::assert_no_match(r"^\R$", " ");
+    common::assert_no_match(r"^\R$", "");
 }
 
 #[test]
@@ -762,25 +776,23 @@ fn unicode_property_cntrl_graph_print_combined() {
 
 #[test]
 fn test_basic_subroutine() {
-    assert_match(r"^(a)\g<1>$", "aa");
-    assert_no_match(r"^(a)\g<1>$", "ab");
-    assert_no_match(r"^(a)\g<1>$", "aab");
+    common::assert_is_match(r"^(a)\g<1>$", "aa");
+    common::assert_no_match(r"^(a)\g<1>$", "ab");
+    common::assert_no_match(r"^(a)\g<1>$", "aab");
 
     // Named group subroutine
-    assert_match(r"(?<name>ab)\g<name>", "abab");
-    assert_no_match(r"(?<name>ab)\g<name>", "abcd");
+    common::assert_is_match(r"(?<name>ab)\g<name>", "abab");
+    common::assert_no_match(r"(?<name>ab)\g<name>", "abcd");
 }
 
 #[test]
 fn test_recursive_subroutine() {
     let balanced_parens = r"^(?<foo>a|\(\g<foo>\))$";
-    assert_match(balanced_parens, "a");
-    assert_match(balanced_parens, "(a)");
-    assert_match(balanced_parens, "(((((a)))))");
-    assert_no_match(balanced_parens, "(a");
-    assert_no_match(balanced_parens, "((a)");
-    assert_no_match(balanced_parens, "(a");
-    assert_no_match(balanced_parens, "((a)");
+    common::assert_is_match(balanced_parens, "a");
+    common::assert_is_match(balanced_parens, "(a)");
+    common::assert_is_match(balanced_parens, "(((((a)))))");
+    common::assert_no_match(balanced_parens, "(a");
+    common::assert_no_match(balanced_parens, "((a)");
 }
 
 #[test]

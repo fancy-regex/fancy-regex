@@ -15,7 +15,7 @@ fn capture_names() {
 
 #[test]
 fn captures_fancy() {
-    let captures = captures(r"\s*(\w+)(?=\.)", "foo bar.");
+    let captures = common::assert_captures(r"\s*(\w+)(?=\.)", "foo bar.").unwrap();
     assert_eq!(captures.len(), 2);
     assert_match(captures.get(0), " bar", 3, 7);
     assert_match(captures.get(1), "bar", 4, 7);
@@ -24,7 +24,7 @@ fn captures_fancy() {
 
 #[test]
 fn captures_fancy_named() {
-    let captures = captures(r"\s*(?<name>\w+)(?=\.)", "foo bar.");
+    let captures = common::assert_captures(r"\s*(?<name>\w+)(?=\.)", "foo bar.").unwrap();
     assert_eq!(captures.len(), 2);
     assert_match(captures.get(0), " bar", 3, 7);
     assert_match(captures.name("name"), "bar", 4, 7);
@@ -35,7 +35,7 @@ fn captures_fancy_named() {
 
 #[test]
 fn captures_fancy_unmatched_group() {
-    let captures = captures(r"(\w+)(?=\.)|(\w+)(?=!)", "foo! bar.");
+    let captures = common::assert_captures(r"(\w+)(?=\.)|(\w+)(?=!)", "foo! bar.").unwrap();
     assert_eq!(captures.len(), 3);
     assert_match(captures.get(0), "foo", 0, 3);
     assert!(captures.get(1).is_none());
@@ -267,31 +267,20 @@ fn assert_capture_with_crlf_flag(
 fn captures_iter() {
     let text = "11 21 33";
 
-    for (i, captures) in common::regex(r"(?P<num>\d)\d")
-        .captures_iter(text)
-        .enumerate()
-    {
-        let captures = captures.unwrap();
+    let all_captures = common::assert_captures_iter(r"(?P<num>\d)\d", text);
+    assert_eq!(all_captures.len(), 3);
 
-        match i {
-            0 => {
-                assert_eq!(captures.len(), 2);
-                assert_match(captures.get(0), "11", 0, 2);
-                assert_match(captures.name("num"), "1", 0, 1);
-            }
-            1 => {
-                assert_eq!(captures.len(), 2);
-                assert_match(captures.get(0), "21", 3, 5);
-                assert_match(captures.name("num"), "2", 3, 4);
-            }
-            2 => {
-                assert_eq!(captures.len(), 2);
-                assert_match(captures.get(0), "33", 6, 8);
-                assert_match(captures.name("num"), "3", 6, 7);
-            }
-            i => panic!("Expected 3 captures, got {}", i + 1),
-        }
-    }
+    assert_eq!(all_captures[0].len(), 2);
+    assert_match(all_captures[0].get(0), "11", 0, 2);
+    assert_match(all_captures[0].name("num"), "1", 0, 1);
+
+    assert_eq!(all_captures[1].len(), 2);
+    assert_match(all_captures[1].get(0), "21", 3, 5);
+    assert_match(all_captures[1].name("num"), "2", 3, 4);
+
+    assert_eq!(all_captures[2].len(), 2);
+    assert_match(all_captures[2].get(0), "33", 6, 8);
+    assert_match(all_captures[2].name("num"), "3", 6, 7);
 }
 
 #[test]
@@ -309,25 +298,16 @@ fn captures_iter_attributes() {
 fn captures_iter_continue_from_previous_match_end() {
     let text = "1122 33";
 
-    for (i, caps) in common::regex(r"\G(\d)\d").captures_iter(text).enumerate() {
-        let caps = caps.unwrap();
-
-        match i {
-            0 => {
-                assert_eq!(caps.get(0).unwrap().start(), 0);
-                assert_eq!(caps.get(0).unwrap().end(), 2);
-                assert_eq!(caps.get(1).unwrap().start(), 0);
-                assert_eq!(caps.get(1).unwrap().end(), 1);
-            }
-            1 => {
-                assert_eq!(caps.get(0).unwrap().start(), 2);
-                assert_eq!(caps.get(0).unwrap().end(), 4);
-                assert_eq!(caps.get(1).unwrap().start(), 2);
-                assert_eq!(caps.get(1).unwrap().end(), 3);
-            }
-            i => panic!("Expected 2 results, got {}", i + 1),
-        }
-    }
+    let all_caps = common::assert_captures_iter(r"\G(\d)\d", text);
+    assert_eq!(all_caps.len(), 2);
+    assert_eq!(all_caps[0].get(0).unwrap().start(), 0);
+    assert_eq!(all_caps[0].get(0).unwrap().end(), 2);
+    assert_eq!(all_caps[0].get(1).unwrap().start(), 0);
+    assert_eq!(all_caps[0].get(1).unwrap().end(), 1);
+    assert_eq!(all_caps[1].get(0).unwrap().start(), 2);
+    assert_eq!(all_caps[1].get(0).unwrap().end(), 4);
+    assert_eq!(all_caps[1].get(1).unwrap().start(), 2);
+    assert_eq!(all_caps[1].get(1).unwrap().end(), 3);
 }
 
 #[test]
@@ -403,8 +383,7 @@ fn captures_iter_continue_from_previous_match_end_with_keepout() {
 fn captures_from_pos() {
     let text = "11 21 33";
 
-    let regex = common::regex(r"(\d)\d");
-    let captures = assert_captures(regex.captures_from_pos(text, 3));
+    let captures = common::assert_captures_from_pos(r"(\d)\d", text, 3).unwrap();
     assert_eq!(captures.len(), 2);
     assert_match(captures.get(0), "21", 3, 5);
     assert_match(captures.get(1), "2", 3, 4);
@@ -413,8 +392,7 @@ fn captures_from_pos() {
     assert_match(matches[0], "21", 3, 5);
     assert_match(matches[1], "2", 3, 4);
 
-    let regex = common::regex(r"(\d+)\1");
-    let captures = assert_captures(regex.captures_from_pos(text, 3));
+    let captures = common::assert_captures_from_pos(r"(\d+)\1", text, 3).unwrap();
     assert_eq!(captures.len(), 2);
     assert_match(captures.get(0), "33", 6, 8);
     assert_match(captures.get(1), "3", 6, 7);
@@ -423,8 +401,7 @@ fn captures_from_pos() {
     assert_match(matches[0], "33", 6, 8);
     assert_match(matches[1], "3", 6, 7);
 
-    let regex = common::regex(r"(?P<foo>\d+)\k<foo>");
-    let captures = assert_captures(regex.captures_from_pos(text, 3));
+    let captures = common::assert_captures_from_pos(r"(?P<foo>\d+)\k<foo>", text, 3).unwrap();
     assert_eq!(captures.len(), 2);
     assert_match(captures.get(0), "33", 6, 8);
     assert_match(captures.name("foo"), "3", 6, 7);
@@ -433,8 +410,7 @@ fn captures_from_pos() {
     assert_match(matches[0], "33", 6, 8);
     assert_match(matches[1], "3", 6, 7);
 
-    let regex = common::regex(r"(?P<foo>\d+)(?P=foo)");
-    let captures = assert_captures(regex.captures_from_pos(text, 3));
+    let captures = common::assert_captures_from_pos(r"(?P<foo>\d+)(?P=foo)", text, 3).unwrap();
     assert_eq!(captures.len(), 2);
     assert_match(captures.get(0), "33", 6, 8);
     assert_match(captures.name("foo"), "3", 6, 7);
@@ -490,13 +466,23 @@ fn captures_from_pos_looking_left() {
 
 #[test]
 fn captures_iter_collect_when_backtrack_limit_hit() {
-    use fancy_regex::RegexBuilder;
+    use fancy_regex::{BytesMode, RegexBuilder};
     let r = RegexBuilder::new("(x+x+)+(?>y)")
         .backtrack_limit(1)
         .build()
         .unwrap();
     let result: Vec<_> = r.captures_iter("xxxxxxxxxxy").collect();
     println!("{:?}", result);
+    assert_eq!(result.len(), 1);
+    assert!(result[0].is_err());
+
+    // The same behaviour must hold in bytes mode.
+    let r = RegexBuilder::new("(x+x+)+(?>y)")
+        .bytes_mode(BytesMode::Ascii)
+        .backtrack_limit(1)
+        .build()
+        .unwrap();
+    let result: Vec<_> = r.captures_iter(b"xxxxxxxxxxy").collect();
     assert_eq!(result.len(), 1);
     assert!(result[0].is_err());
 }
@@ -553,6 +539,58 @@ fn forward_reference_subroutine_capture_groups() {
     assert_match(captures.get(0), "xbxyby", 0, 6);
     assert!(captures.name("_A").is_none());
     assert_match(captures.name("_B"), "yby", 3, 6);
+}
+
+#[test]
+fn captures_easy() {
+    let caps = common::assert_captures(r"(\d+)-(\d+)", "abc 123-456 def").unwrap();
+    assert_eq!(caps.len(), 3);
+    assert_match(caps.get(0), "123-456", 4, 11);
+    assert_match(caps.get(1), "123", 4, 7);
+    assert_match(caps.get(2), "456", 8, 11);
+    assert!(caps.get(3).is_none());
+}
+
+#[test]
+fn captures_named() {
+    let caps = common::assert_captures(r"(?<first>\d+)-(?<second>\d+)", "12-34").unwrap();
+    assert_match(caps.name("first"), "12", 0, 2);
+    assert_match(caps.name("second"), "34", 3, 5);
+    assert!(caps.name("nonexistent").is_none());
+}
+
+#[test]
+fn captures_iter_groups() {
+    let caps = common::assert_captures(r"(\d+)-(\d+)", "123-456").unwrap();
+    let groups: Vec<_> = caps.iter().collect();
+    assert_eq!(groups.len(), 3);
+    assert_match(groups[0], "123-456", 0, 7);
+    assert_match(groups[1], "123", 0, 3);
+    assert_match(groups[2], "456", 4, 7);
+}
+
+#[test]
+fn captures_backrefs() {
+    let caps = common::assert_captures(r"(\w+)\s+\1", "abc abc").unwrap();
+    assert_eq!(caps.len(), 2);
+    assert_match(caps.get(0), "abc abc", 0, 7);
+    assert_match(caps.get(1), "abc", 0, 3);
+}
+
+#[test]
+fn captures_subroutine() {
+    let caps = common::assert_captures(r"^(?<pair>..)\g<pair>$", "abcd").unwrap();
+    assert_eq!(caps.len(), 2);
+    assert_match(caps.get(0), "abcd", 0, 4);
+    assert_match(caps.name("pair"), "cd", 2, 4);
+}
+
+#[test]
+fn captures_lookbehind_digits() {
+    let caps = common::assert_captures(r"(?<=[a-z])(\d+)", "abc123").unwrap();
+    assert_eq!(caps.len(), 2);
+    assert_match(caps.get(0), "123", 3, 6);
+    assert_match(caps.get(1), "123", 3, 6);
 }
 
 #[cfg_attr(feature = "track_caller", track_caller)]

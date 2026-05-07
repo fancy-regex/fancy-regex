@@ -143,8 +143,11 @@ fn lookbehind_with_word_boundary_and_variable_length() {
 #[test]
 #[cfg(feature = "variable-lookbehinds")]
 fn lookbehind_positive_variable_sized_functionality_unicode() {
-    assert_eq!(find(r"(?<=\b\w+\b)", "ežeras"), Some((7, 7)));
-    assert_eq!(find(r"(?<=\b\w+[ ]\d)", "ežeras 123"), Some((9, 9)));
+    assert_eq!(find_str_only(r"(?<=\b\w+\b)", "ežeras"), Some((7, 7)));
+    assert_eq!(
+        find_str_only(r"(?<=\b\w+[ ]\d)", "ežeras 123"),
+        Some((9, 9))
+    );
 }
 
 #[test]
@@ -180,7 +183,7 @@ fn backref_for_unmatched_group() {
 #[test]
 fn backref_with_multibyte() {
     assert_eq!(
-        find(r"(.+)\1+", "x\u{1F431}\u{1F436}\u{1F431}\u{1F436}"),
+        find_str_only(r"(.+)\1+", "x\u{1F431}\u{1F436}\u{1F431}\u{1F436}"),
         Some((1, 17))
     );
 }
@@ -188,11 +191,11 @@ fn backref_with_multibyte() {
 #[test]
 fn case_insensitive_backref_with_non_ascii() {
     assert_eq!(
-        find(r"(?i)(?<word>\w+)\s+\k<word>", "Greek : δ Δ"),
+        find_str_only(r"(?i)(?<word>\w+)\s+\k<word>", "Greek : δ Δ"),
         Some((8, 13))
     );
     assert_eq!(
-        find(r"(?i)(?<word>\w+)\s+\k<word>", "foo 🎯 test bar BaR"),
+        find_str_only(r"(?i)(?<word>\w+)\s+\k<word>", "foo 🎯 test bar BaR"),
         Some((14, 21))
     );
 }
@@ -214,14 +217,17 @@ fn empty_repeat_non_greedy() {
 
 #[test]
 fn any_match_unicode_scalar_value() {
-    assert_eq!(find(r"(.)\1", "\u{1F60A}\u{1F60A}"), Some((0, 8)));
-    assert_eq!(find(r"(?s)(.)\1", "\u{1F60A}\u{1F60A}"), Some((0, 8)));
+    assert_eq!(find_str_only(r"(.)\1", "\u{1F60A}\u{1F60A}"), Some((0, 8)));
+    assert_eq!(
+        find_str_only(r"(?s)(.)\1", "\u{1F60A}\u{1F60A}"),
+        Some((0, 8))
+    );
 }
 
 #[test]
 fn delegates_match_unicode_scalar_value() {
-    assert_eq!(find(r".(?=a)", "\u{1F60A}a"), Some((0, 4)));
-    assert_eq!(find(r".(?=\ba+)", "\u{1F60A}a"), Some((0, 4)));
+    assert_eq!(find_str_only(r".(?=a)", "\u{1F60A}a"), Some((0, 4)));
+    assert_eq!(find_str_only(r".(?=\ba+)", "\u{1F60A}a"), Some((0, 4)));
 }
 
 #[test]
@@ -1039,6 +1045,10 @@ fn find_from_pos_at_end_still_runs() {
 }
 
 fn find(re: &str, text: &str) -> Option<(usize, usize)> {
+    common::assert_find(re, text)
+}
+
+fn find_str_only(re: &str, text: &str) -> Option<(usize, usize)> {
     find_match(re, text).map(|m| (m.start(), m.end()))
 }
 

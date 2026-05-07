@@ -1,120 +1,4 @@
-use fancy_regex::{BytesMode, Error, RegexBuilder, RuntimeError};
-
-#[test]
-fn bytes_control_character_escapes() {
-    assert_match_bytes(r"\a", b"\x07");
-    assert_match_bytes(r"\e", b"\x1B");
-    assert_match_bytes(r"\f", b"\x0C");
-    assert_match_bytes(r"\n", b"\x0A");
-    assert_match_bytes(r"\r", b"\x0D");
-    assert_match_bytes(r"\t", b"\x09");
-    assert_match_bytes(r"\v", b"\x0B");
-}
-
-#[test]
-fn bytes_character_class_escapes() {
-    assert_match_bytes(r"[\[]", b"[");
-    assert_match_bytes(r"[\^]", b"^");
-    assert_match_bytes(r"[\<]", b"<");
-    assert_match_bytes(r"[\>]", b">");
-    assert_match_bytes(r"[\ ]", b" ");
-    assert_match_bytes(r"[\d]", b"1");
-    assert_match_bytes(r"[\e]", b"\x1B");
-    assert_match_bytes(r"[\n]", b"\x0A");
-    assert_match_bytes(r"[]]", b"]");
-    assert_match_bytes(r"[^]]", b"a");
-}
-
-#[test]
-fn bytes_alternation_with_empty_arm() {
-    assert_match_bytes(r"^(a|)$", b"a");
-    assert_match_bytes(r"^(a|)$", b"");
-    assert_match_bytes(r"^(|a)$", b"a");
-    assert_match_bytes(r"^(|a)$", b"");
-    assert_match_bytes(r"a|", b"a");
-    assert_match_bytes(r"a|", b"");
-    assert_match_bytes(r"|a", b"a");
-    assert_match_bytes(r"|a", b"");
-    assert_no_match_bytes(r"^(a|)$", b"b");
-}
-
-#[test]
-fn bytes_case_insensitive() {
-    assert_match_bytes(r"^(?i)[a-z]+$", b"aB");
-}
-
-#[test]
-fn bytes_atomic_group() {
-    assert_match_bytes(r"^a(?>bc|b)c$", b"abcc");
-    assert_no_match_bytes(r"^a(?>bc|b)c$", b"abc");
-    assert_match_bytes(r"^a(bc(?=d)|b)cd$", b"abcd");
-    assert_no_match_bytes(r"^a(?>bc(?=d)|b)cd$", b"abcd");
-}
-
-#[test]
-fn bytes_backtrack_limit() {
-    let re = RegexBuilder::new(r"(?i)(a|b|ab)*(?>c)")
-        .bytes_mode(BytesMode::Ascii)
-        .backtrack_limit(100_000)
-        .build()
-        .expect("regex to compile successfully");
-    let s = b"abababababababababababababababababababababababababababab";
-    let result = re.is_match(s);
-    assert!(result.is_err());
-    match result.err() {
-        Some(Error::RuntimeError(RuntimeError::BacktrackLimitExceeded)) => {}
-        _ => panic!("Expected RuntimeError::BacktrackLimitExceeded"),
-    }
-}
-
-#[test]
-fn bytes_end_of_hard_expression_cannot_be_delegated() {
-    assert_match_bytes(r"(?!x)(?:a|ab)c", b"abc");
-    assert_match_bytes(r"((?!x)(?:a|ab))c", b"abc");
-}
-
-#[test]
-fn bytes_backrefs() {
-    assert_match_bytes(r"(abc)\1", b"abcabc");
-    assert_match_bytes(r"(abc|def)\1", b"abcabc");
-    assert_no_match_bytes(r"(abc|def)\1", b"abcdef");
-    assert_match_bytes(r"(abc|def)\1", b"defdef");
-}
-
-#[test]
-fn bytes_backrefs_casei() {
-    // ASCII: case-insensitive backref match
-    assert_match_bytes(r"(abc)(?i:\1)", b"abcABC");
-    // ASCII: case-insensitive backref no-match (eq_ignore_ascii_case false)
-    assert_no_match_bytes(r"(abc)(?i:\1)", b"abcdef");
-
-    // ASCII slice in non-ASCII input (exercises text_bytes.is_ascii() fix)
-    assert_match_bytes(r"(abc)(?i:\1)", "δabcABC".as_bytes());
-
-    // Unicode: case-insensitive backref match (δ ↔ Δ)
-    assert_match_bytes(r"(δ)(?i:\1)", "δΔ".as_bytes());
-    // Unicode: case-insensitive backref no-match (matches_literal_casei_unicode false)
-    assert_no_match_bytes(r"(δ)(?i:\1)", "δσ".as_bytes());
-
-    // Non-UTF-8 bytes: no case-insensitive match possible (final false branch)
-    // 0xFF has UTF-8 lead byte length 4, so (.) captures 4 bytes;
-    // need 8-byte input so the backref has room to compare at position 4
-    assert_no_match_bytes(r"(.)(?i:\1)", b"\xff\xfe\xfd\xfc\xff\xfe\xfd\xfb");
-}
-
-#[test]
-fn bytes_lookaheads() {
-    assert_match_bytes(r"(?=c)", b"abcabc");
-    assert_match_bytes(r"abc(?=abc)", b"abcabc");
-    assert_no_match_bytes(r"abc(?=abc)", b"abcdef");
-}
-
-#[test]
-fn bytes_hard_trailing_positive_lookaheads() {
-    assert_match_bytes(r"(abc|def)(?=\1)", b"defdef");
-    assert_match_bytes(r"(abc|def)(?=a(?!b))", b"abca");
-    assert_no_match_bytes(r"(abc|def)(?=a(?!b))", b"abcabc");
-}
+use fancy_regex::{BytesMode, RegexBuilder};
 
 #[test]
 fn bytes_find_from_pos() {
@@ -204,44 +88,6 @@ fn bytes_ascii_char_classes_are_ascii_only() {
 }
 
 #[test]
-fn bytes_subroutines() {
-    assert_match_bytes(r"^(a)\g<1>$", b"aa");
-    assert_no_match_bytes(r"^(a)\g<1>$", b"ab");
-    assert_match_bytes(r"(?<name>ab)\g<name>", b"abab");
-    assert_no_match_bytes(r"(?<name>ab)\g<name>", b"abcd");
-}
-
-#[test]
-fn bytes_recursive_subroutine() {
-    let balanced_parens = r"^(?<foo>a|\(\g<foo>\))$";
-    assert_match_bytes(balanced_parens, b"a");
-    assert_match_bytes(balanced_parens, b"(a)");
-    assert_match_bytes(balanced_parens, b"(((((a)))))");
-    assert_no_match_bytes(balanced_parens, b"(a");
-    assert_no_match_bytes(balanced_parens, b"((a)");
-}
-
-#[test]
-fn bytes_conditional() {
-    assert_match_bytes(r"(a)(?(1))", b"a");
-    assert_match_bytes(r"(a)(b)?(?(2))", b"ab");
-    assert_no_match_bytes(r"(a)(b)?(?(2))", b"a");
-}
-
-#[test]
-fn bytes_general_newline_escape() {
-    assert_match_bytes(r"\R", b"\r\n");
-    assert_match_bytes(r"\R", b"\n");
-    assert_match_bytes(r"\R", b"\r");
-    assert_match_bytes(r"\R", b"\x0B");
-    assert_match_bytes(r"\R", b"\x0C");
-    assert_match_bytes(r"a\Rb", b"a\r\nb");
-    assert_match_bytes(r"a\Rb", b"a\nb");
-    assert_no_match_bytes(r"\R\n", b"\r\n");
-    assert_no_match_bytes(r"^\R$", b"a");
-}
-
-#[test]
 fn bytes_find_returns_matchbytes() {
     let re = RegexBuilder::new(r"\d+")
         .bytes_mode(BytesMode::Ascii)
@@ -301,11 +147,62 @@ fn bytes_find_with_str_still_works() {
     assert_eq!(mat.as_str(), "123");
 }
 
+#[test]
+fn bytes_find_fixed_array_input() {
+    let re = RegexBuilder::new(r"\d+")
+        .bytes_mode(BytesMode::Ascii)
+        .build()
+        .unwrap();
+    let input: &[u8; 7] = b"abc 456";
+    let m = re.find(input).unwrap().unwrap();
+    assert_eq!(m.as_bytes(), b"456");
+    assert_eq!(m.start(), 4);
+    assert_eq!(m.end(), 7);
+}
+
+#[test]
+fn bytes_is_match_fixed_array_input() {
+    let re = RegexBuilder::new(r"\d+")
+        .bytes_mode(BytesMode::Ascii)
+        .build()
+        .unwrap();
+    let yes: &[u8; 7] = b"abc 123";
+    let no: &[u8; 3] = b"abc";
+    assert!(re.is_match(yes).unwrap());
+    assert!(!re.is_match(no).unwrap());
+}
+
+/// Case-insensitive backref in bytes mode.
+///
+/// This covers the `text_bytes.is_ascii()` fix in the VM: previously the code
+/// checked `s.is_ascii()` (the whole input), so a non-ASCII *prefix* before an
+/// ASCII capture caused the ASCII fast-path to be skipped even when the
+/// captured slice itself was pure ASCII.
+#[test]
+fn bytes_backrefs_casei() {
+    // ASCII: case-insensitive backref match
+    assert_match_bytes(r"(abc)(?i:\1)", b"abcABC");
+    // ASCII: case-insensitive backref no-match
+    assert_no_match_bytes(r"(abc)(?i:\1)", b"abcdef");
+
+    // Non-ASCII prefix before ASCII capture – exercises the is_ascii() fix
+    assert_match_bytes(r"(abc)(?i:\1)", "δabcABC".as_bytes());
+
+    // Unicode: case-insensitive backref match (δ ↔ Δ)
+    assert_match_bytes(r"(δ)(?i:\1)", "δΔ".as_bytes());
+    // Unicode: case-insensitive backref no-match
+    assert_no_match_bytes(r"(δ)(?i:\1)", "δσ".as_bytes());
+
+    // Non-UTF-8 bytes: 0xFF is not a valid UTF-8 byte, so (.) captures it as
+    // a single raw byte; no ASCII case-insensitive match possible for these bytes.
+    assert_no_match_bytes(r"(.)(?i:\1)", b"\xff\xfe\xfd\xfc\xff\xfe\xfd\xfb");
+}
+
 #[cfg_attr(feature = "track_caller", track_caller)]
 fn assert_match_bytes(re: &str, text: &[u8]) {
     let result = match_bytes(re, text);
-    assert_eq!(
-        result, true,
+    assert!(
+        result,
         "Expected regex '{}' to match bytes {:?}",
         re, text
     );
@@ -314,8 +211,8 @@ fn assert_match_bytes(re: &str, text: &[u8]) {
 #[cfg_attr(feature = "track_caller", track_caller)]
 fn assert_no_match_bytes(re: &str, text: &[u8]) {
     let result = match_bytes(re, text);
-    assert_eq!(
-        result, false,
+    assert!(
+        !result,
         "Expected regex '{}' to not match bytes {:?}",
         re, text
     );
