@@ -818,4 +818,175 @@ mod tests {
 
         assert_eq!(node.kind, "DefineGroup");
     }
+
+    // --- Smoke tests: verify flags are wired through to matching ---
+    // These prove the playground's build_regex() correctly passes flags to the
+    // underlying engine. If wiring breaks, these will catch it early.
+
+    /// Helper to build a regex with specific flags and test matching.
+    fn flags_with_unicode(unicode: bool) -> RegexFlags {
+        RegexFlags {
+            unicode,
+            ..Default::default()
+        }
+    }
+
+    /// `\w` with unicode=true matches non-ASCII word characters (Lithuanian ė, š).
+    #[test]
+    fn smoke_unicode_w_matches_non_ascii_letters() {
+        let flags = flags_with_unicode(true);
+        let re = build_regex(r"^\w+$", &flags).unwrap();
+        assert!(
+            re.is_match("ėšų").unwrap(),
+            r"\w should match Lithuanian letters in unicode mode"
+        );
+        assert!(
+            re.is_match("café").unwrap(),
+            r"\w should match French accented letters in unicode mode"
+        );
+        assert!(
+            re.is_match("日本語").unwrap(),
+            r"\w should match CJK characters in unicode mode"
+        );
+    }
+
+    /// `\w` with unicode=false rejects non-ASCII word characters.
+    #[test]
+    fn smoke_no_unicode_w_rejects_non_ascii_letters() {
+        let flags = flags_with_unicode(false);
+        let re = build_regex(r"^\w+$", &flags).unwrap();
+        assert!(
+            !re.is_match("ėšų").unwrap(),
+            r"\w should NOT match Lithuanian letters without unicode"
+        );
+        assert!(
+            !re.is_match("café").unwrap(),
+            r"\w should NOT match accented letters without unicode"
+        );
+        // Pure ASCII still matches
+        assert!(
+            re.is_match("hello_123").unwrap(),
+            r"\w should still match ASCII word chars"
+        );
+    }
+
+    /// `\d` with unicode=true matches non-ASCII digits.
+    #[test]
+    fn smoke_unicode_d_matches_non_ascii_digits() {
+        let flags = flags_with_unicode(true);
+        let re = build_regex(r"^\d+$", &flags).unwrap();
+        // Arabic-Indic digit
+        assert!(
+            re.is_match("\u{0663}").unwrap(),
+            r"\d should match Arabic-Indic digits in unicode mode"
+        );
+    }
+
+    /// `\d` with unicode=false rejects non-ASCII digits.
+    #[test]
+    fn smoke_no_unicode_d_rejects_non_ascii_digits() {
+        let flags = flags_with_unicode(false);
+        let re = build_regex(r"^\d+$", &flags).unwrap();
+        assert!(
+            !re.is_match("\u{0663}").unwrap(),
+            r"\d should NOT match Arabic-Indic digits without unicode"
+        );
+        assert!(
+            re.is_match("0123456789").unwrap(),
+            r"\d should still match ASCII digits"
+        );
+    }
+
+    /// `\s` with unicode=true matches non-ASCII whitespace.
+    #[test]
+    fn smoke_unicode_s_matches_non_ascii_whitespace() {
+        let flags = flags_with_unicode(true);
+        let re = build_regex(r"^\s$", &flags).unwrap();
+        // EM SPACE (U+2003)
+        assert!(
+            re.is_match("\u{2003}").unwrap(),
+            r"\s should match EM SPACE in unicode mode"
+        );
+    }
+
+    /// `\s` with unicode=false rejects non-ASCII whitespace.
+    #[test]
+    fn smoke_no_unicode_s_rejects_non_ascii_whitespace() {
+        let flags = flags_with_unicode(false);
+        let re = build_regex(r"^\s$", &flags).unwrap();
+        assert!(
+            !re.is_match("\u{2003}").unwrap(),
+            r"\s should NOT match EM SPACE without unicode"
+        );
+        assert!(
+            re.is_match(" ").unwrap(),
+            r"\s should still match ASCII space"
+        );
+    }
+
+    /// Case insensitive flag is wired through correctly.
+    #[test]
+    fn smoke_case_insensitive_flag() {
+        let flags = RegexFlags {
+            case_insensitive: true,
+            ..Default::default()
+        };
+        let re = build_regex(r"^hello$", &flags).unwrap();
+        assert!(
+            re.is_match("HELLO").unwrap(),
+            "case_insensitive should allow uppercase match"
+        );
+        assert!(
+            re.is_match("Hello").unwrap(),
+            "case_insensitive should allow mixed case match"
+        );
+    }
+
+    /// Dot matches newline flag is wired through correctly.
+    #[test]
+    fn smoke_dot_matches_newline_flag() {
+        let no_dot_nl = RegexFlags {
+            dot_matches_new_line: false,
+            ..Default::default()
+        };
+        let re = build_regex(r"^a.b$", &no_dot_nl).unwrap();
+        assert!(
+            !re.is_match("a\nb").unwrap(),
+            "dot should NOT match newline by default"
+        );
+
+        let with_dot_nl = RegexFlags {
+            dot_matches_new_line: true,
+            ..Default::default()
+        };
+        let re = build_regex(r"^a.b$", &with_dot_nl).unwrap();
+        assert!(
+            re.is_match("a\nb").unwrap(),
+            "dot should match newline with dot_matches_new_line"
+        );
+    }
+
+    /// Multi-line flag is wired through correctly.
+    #[test]
+    fn smoke_multi_line_flag() {
+        let no_multi = RegexFlags {
+            multi_line: false,
+            ..Default::default()
+        };
+        let re = build_regex(r"^hello$", &no_multi).unwrap();
+        assert!(
+            !re.is_match("world\nhello\nfoo").unwrap(),
+            "^ should only match start of string without multi_line"
+        );
+
+        let with_multi = RegexFlags {
+            multi_line: true,
+            ..Default::default()
+        };
+        let re = build_regex(r"^hello$", &with_multi).unwrap();
+        assert!(
+            re.is_match("world\nhello\nfoo").unwrap(),
+            "^ should match start of line with multi_line"
+        );
+    }
 }
