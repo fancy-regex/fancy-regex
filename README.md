@@ -130,6 +130,11 @@ the following features are missing:
 
 * Backreferences at recursion levels
 
+### Experimental optimizations
+fancy-regex now has a **Seek** pre-filter optimization (currently disabled by default) for hard (backtracking) patterns. It derives a regular approximation of the pattern and uses it to skip directly to the earliest plausible match position in the haystack, so the backtracking VM only needs to run from that position.
+This helps greatly when working with anchored matches or searching large haystacks for literals etc.
+It is considered experimental because it hasn't been field tested much yet - it is expected that everything should be fine because it was designed to be conservative, but there is a chance that the seek will accidentally skip over possible match positions.
+
 ## Acknowledgements
 
 Many thanks to [Andrew Gallant](http://blog.burntsushi.net/about/) for
