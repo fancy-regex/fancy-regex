@@ -260,6 +260,171 @@ fn bytes_hard_mode_multiple_dots() {
     assert_no_match_bytes(r"^(?>.{3})z", b"\xC0\xE0z\xF0");
 }
 
+// --- UnicodeBytes hard-mode tests ---
+// These verify that UnicodeBytes mode still uses codepoint-level advancement
+// in the VM (not byte-level), while accepting non-UTF-8 input.
+
+/// In UnicodeBytes mode, the dot should advance by codepoint length, not 1 byte.
+/// A valid multi-byte UTF-8 sequence followed by a literal should work correctly.
+#[test]
+fn bytes_unicode_bytes_hard_mode_dot_advances_codepoint() {
+    // é is 0xC3 0xA9 (2-byte UTF-8). In UnicodeBytes mode with atomic group (hard),
+    // the dot should consume both bytes as one codepoint, then match 'x'.
+    let re = RegexBuilder::new(r"(?>.)x")
+        .bytes_mode(BytesMode::UnicodeBytes)
+        .build()
+        .unwrap();
+    assert!(re.is_match("éx".as_bytes()).unwrap());
+    // Should NOT match if x is at byte offset 1 (middle of the codepoint)
+    assert!(!re.is_match(b"\xC3x").unwrap());
+}
+
+/// In UnicodeBytes mode, the unanchored preamble should skip by codepoint.
+#[test]
+fn bytes_unicode_bytes_hard_mode_unanchored_skips_codepoints() {
+    // The VM skips over "é" (2 bytes) as one codepoint to find the match.
+    let re = RegexBuilder::new(r"(?>ab)")
+        .bytes_mode(BytesMode::UnicodeBytes)
+        .build()
+        .unwrap();
+    assert!(re.is_match("éab".as_bytes()).unwrap());
+}
+
+/// In UnicodeBytes mode, GoBack should retreat by codepoint, not by byte.
+#[test]
+fn bytes_unicode_bytes_hard_mode_lookbehind_goback() {
+    // `(?<=.)x` is hard. GoBack(1) should go back 1 codepoint.
+    // "é" is 2 bytes, so GoBack(1) from 'x' at offset 2 should land at offset 0.
+    let re = RegexBuilder::new(r"(?<=.)x")
+        .bytes_mode(BytesMode::UnicodeBytes)
+        .build()
+        .unwrap();
+    assert!(re.is_match("éx".as_bytes()).unwrap());
+}
+
+/// UnicodeBytes mode: dot does NOT match isolated non-UTF-8 bytes (unlike Ascii mode).
+#[test]
+fn bytes_unicode_bytes_hard_mode_dot_rejects_invalid_utf8() {
+    // (?>.)x: the dot in UnicodeBytes mode only matches valid Unicode scalar values.
+    // 0xC0 alone is not valid UTF-8, so dot should not match it.
+    let re = RegexBuilder::new(r"^(?>.)x")
+        .bytes_mode(BytesMode::UnicodeBytes)
+        .build()
+        .unwrap();
+    assert!(!re.is_match(b"\xC0x").unwrap());
+}
+
+// --- Seek instruction with high bytes in Ascii mode ---
+
+/// Seek pre-filter with backref pattern should advance byte-by-byte over high bytes.
+/// The seek instruction's `advance_one` is used when computing `next_seek_start`.
+#[test]
+fn bytes_hard_mode_seek_with_high_bytes() {
+    // Pattern: (abc)\1 with seek enabled. The seek pre-filter derives a pattern
+    // for "abc" and uses it to skip ahead. We place high bytes before the match
+    // to verify the seek advances correctly over them.
+    let re = RegexBuilder::new(r"(abc)\1")
+        .bytes_mode(BytesMode::Ascii)
+        .seek(true)
+        .build()
+        .unwrap();
+    let input = b"\xFF\xFE\xFDabcabc";
+    let mat = re.find(input).unwrap().unwrap();
+    assert_eq!(mat.start(), 3);
+    assert_eq!(mat.end(), 9);
+    assert_eq!(mat.as_bytes(), b"abcabc");
+}
+
+/// Seek with a zero-width match scenario: the seek pre-filter matches at a position
+/// but the main pattern fails, requiring backtrack and re-seek past a high byte.
+#[test]
+fn bytes_hard_mode_seek_advances_past_high_byte_on_backtrack() {
+    // Pattern: lookahead for "x" then backref. The seek pattern is "x".
+    // Input has \xFF before the real match. If the seek finds "x" at position 1
+    // (after \xFF) and the full pattern fails, the next seek start should be
+    // position 2 (1 byte past), not a multi-byte advance.
+    let re = RegexBuilder::new(r"(?=x)(x)\1")
+        .bytes_mode(BytesMode::Ascii)
+        .seek(true)
+        .build()
+        .unwrap();
+    let input = b"\xFFxxx";
+    let mat = re.find(input).unwrap().unwrap();
+    assert_eq!(mat.as_bytes(), b"xx");
+}
+
+// --- AbsentRepeater with high bytes in Ascii mode ---
+
+/// The absent repeater `(?~...)` advances one position at a time when scanning.
+/// In Ascii mode, this should be 1 byte even for high bytes.
+#[test]
+fn bytes_hard_mode_absent_repeater_with_high_bytes() {
+    // (`+)(?~\1)\1 pattern: capture backticks, then absent-repeat (no backticks),
+    // then match backticks again. Place high bytes in the "body" to verify
+    // the absent repeater scans byte-by-byte.
+    let re = RegexBuilder::new(r"(`+)(?~\1)\1")
+        .bytes_mode(BytesMode::Ascii)
+        .build()
+        .unwrap();
+    let input = b"`\xFF\xFE\xC0`";
+    assert!(re.is_match(input).unwrap());
+    let mat = re.find(input).unwrap().unwrap();
+    assert_eq!(mat.as_bytes(), b"`\xFF\xFE\xC0`");
+}
+
+/// Absent repeater with lookahead inner (hard) scanning over high bytes.
+#[test]
+fn bytes_hard_mode_absent_repeater_lookahead_with_high_bytes() {
+    // (?~(?=end))end: match everything until "end" appears.
+    // High bytes before "end" should be scanned one byte at a time.
+    let re = RegexBuilder::new(r"(?~(?=end))end")
+        .bytes_mode(BytesMode::Ascii)
+        .build()
+        .unwrap();
+    let input = b"\xFF\xC0\xE0end";
+    assert!(re.is_match(input).unwrap());
+    let mat = re.find(input).unwrap().unwrap();
+    assert_eq!(mat.as_bytes(), b"\xFF\xC0\xE0end");
+}
+
+// --- Explicit \R tests in Ascii bytes mode ---
+
+/// \R should compile and work in Ascii bytes mode (non-Unicode newline set).
+#[test]
+fn bytes_hard_mode_general_newline_ascii() {
+    // \R is compiled using atomic groups internally, making it hard.
+    // In Ascii mode it should match \r\n, \n, \r, \x0B, \x0C but NOT
+    // the Unicode newlines U+0085, U+2028, U+2029.
+    assert_match_bytes(r"\R", b"\r\n");
+    assert_match_bytes(r"\R", b"\n");
+    assert_match_bytes(r"\R", b"\r");
+    assert_match_bytes(r"\R", b"\x0B");
+    assert_match_bytes(r"\R", b"\x0C");
+
+    // Unicode newlines should NOT match in Ascii mode.
+    // U+0085 = 0xC2 0x85, U+2028 = 0xE2 0x80 0xA8, U+2029 = 0xE2 0x80 0xA9
+    assert_no_match_bytes(r"^\R$", "\u{0085}".as_bytes());
+    assert_no_match_bytes(r"^\R$", "\u{2028}".as_bytes());
+    assert_no_match_bytes(r"^\R$", "\u{2029}".as_bytes());
+}
+
+/// \R should not backtrack from \r\n to \r in Ascii bytes mode.
+#[test]
+fn bytes_hard_mode_general_newline_atomic() {
+    // \R\n should NOT match "\r\n" because \R atomically consumes \r\n,
+    // leaving nothing for the \n.
+    assert_no_match_bytes(r"\R\n", b"\r\n");
+    // But \R\R should match \r\n followed by \n
+    assert_match_bytes(r"\R\R", b"\r\n\n");
+}
+
+/// \R with high bytes: the unanchored search should skip high bytes to find newlines.
+#[test]
+fn bytes_hard_mode_general_newline_after_high_bytes() {
+    assert_match_bytes(r"\R", b"\xFF\xFE\n");
+    assert_match_bytes(r"a\Rb", b"\xFFa\nb");
+}
+
 #[cfg_attr(feature = "track_caller", track_caller)]
 fn assert_match_bytes(re: &str, text: &[u8]) {
     let result = match_bytes(re, text);
