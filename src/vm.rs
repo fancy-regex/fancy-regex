@@ -96,6 +96,7 @@ pub(crate) type CachePoolFn = alloc::boxed::Box<
 use crate::error::RuntimeError;
 use crate::input::RegexInput;
 use crate::Assertion;
+use crate::BytesMode;
 use crate::Error;
 use crate::Formatter;
 use crate::Result;
@@ -368,11 +369,17 @@ pub struct Prog {
     /// Instructions of the program
     pub body: Vec<Insn>,
     n_saves: usize,
+    /// How the VM advances positions: byte-level (Ascii) vs codepoint-level (Unicode/UnicodeBytes).
+    bytes_mode: BytesMode,
 }
 
 impl Prog {
-    pub(crate) fn new(body: Vec<Insn>, n_saves: usize) -> Prog {
-        Prog { body, n_saves }
+    pub(crate) fn new(body: Vec<Insn>, n_saves: usize, bytes_mode: BytesMode) -> Prog {
+        Prog {
+            body,
+            n_saves,
+            bytes_mode,
+        }
     }
 
     #[doc(hidden)]
@@ -574,6 +581,28 @@ fn codepoint_len_at<S: RegexInput + ?Sized>(s: &S, ix: usize) -> usize {
     codepoint_len(s.as_bytes()[ix])
 }
 
+/// Returns the number of bytes to advance forward from `ix`, respecting the bytes mode.
+/// In `Ascii` mode, always advances 1 byte. In `Unicode`/`UnicodeBytes` mode, advances
+/// by the full codepoint length at `ix`.
+#[inline]
+fn advance_one<S: RegexInput + ?Sized>(s: &S, ix: usize, bytes_mode: BytesMode) -> usize {
+    match bytes_mode {
+        BytesMode::Ascii => 1,
+        _ => codepoint_len_at(s, ix),
+    }
+}
+
+/// Returns the previous position before `ix`, respecting the bytes mode.
+/// In `Ascii` mode, simply returns `ix - 1`. In `Unicode`/`UnicodeBytes` mode,
+/// skips backward over UTF-8 continuation bytes.
+#[inline]
+fn prev_ix<S: RegexInput + ?Sized>(s: &S, ix: usize, bytes_mode: BytesMode) -> usize {
+    match bytes_mode {
+        BytesMode::Ascii => ix - 1,
+        _ => s.prev_codepoint_ix(ix),
+    }
+}
+
 #[inline]
 fn matches_literal<S: RegexInput + ?Sized>(s: &S, ix: usize, end: usize, literal: &[u8]) -> bool {
     // Compare as bytes because the literal might be a single byte char whereas ix
@@ -744,21 +773,21 @@ pub(crate) fn run<S: RegexInput + ?Sized>(
                 }
                 Insn::Any => {
                     if ix < s.len() {
-                        ix += codepoint_len_at(s, ix);
+                        ix += advance_one(s, ix, prog.bytes_mode);
                     } else {
                         break 'fail;
                     }
                 }
                 Insn::AnyNoNL => {
                     if ix < s.len() && s.as_bytes()[ix] != b'\n' {
-                        ix += codepoint_len_at(s, ix);
+                        ix += advance_one(s, ix, prog.bytes_mode);
                     } else {
                         break 'fail;
                     }
                 }
                 Insn::AnyNoCRLF => {
                     if ix < s.len() && s.as_bytes()[ix] != b'\r' && s.as_bytes()[ix] != b'\n' {
-                        ix += codepoint_len_at(s, ix);
+                        ix += advance_one(s, ix, prog.bytes_mode);
                     } else {
                         break 'fail;
                     }
@@ -933,7 +962,7 @@ pub(crate) fn run<S: RegexInput + ?Sized>(
                         if ix == 0 {
                             break 'fail;
                         }
-                        ix = s.prev_codepoint_ix(ix);
+                        ix = prev_ix(s, ix, prog.bytes_mode);
                     }
                 }
                 Insn::FailNegativeLookAround => {
@@ -1089,7 +1118,7 @@ pub(crate) fn run<S: RegexInput + ?Sized>(
                     } else if ix < s.len() {
                         // Try advancing one character and checking again
                         state.push(pc + 1, ix)?;
-                        ix += codepoint_len_at(s, ix);
+                        ix += advance_one(s, ix, prog.bytes_mode);
                         // Stay at same pc to check delegate match at new position
                         continue;
                     } else {
@@ -1128,7 +1157,7 @@ pub(crate) fn run<S: RegexInput + ?Sized>(
                             // zero-width matches) so we make progress.
                             let next_seek_start = if m.start() == m.end() {
                                 if m.end() < s.len() {
-                                    m.end() + codepoint_len_at(s, m.end())
+                                    m.end() + advance_one(s, m.end(), prog.bytes_mode)
                                 } else {
                                     // Zero-width match at end-of-string.  Push a sentinel value
                                     // (s.len() + 1) so that if the main pattern fails and we
@@ -1137,7 +1166,7 @@ pub(crate) fn run<S: RegexInput + ?Sized>(
                                     s.len() + 1
                                 }
                             } else {
-                                m.start() + codepoint_len_at(s, m.start())
+                                m.start() + advance_one(s, m.start(), prog.bytes_mode)
                             };
                             state.push(pc, next_seek_start)?;
                             ix = m.start();

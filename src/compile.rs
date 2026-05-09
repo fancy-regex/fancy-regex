@@ -59,6 +59,7 @@ pub(crate) const MAX_SUBROUTINE_RECURSION_DEPTH: usize = 19;
 struct VMBuilder {
     prog: Vec<Insn>,
     n_saves: usize,
+    bytes_mode: BytesMode,
 }
 
 impl VMBuilder {
@@ -66,11 +67,12 @@ impl VMBuilder {
         VMBuilder {
             prog: Vec::new(),
             n_saves: max_group * 2,
+            bytes_mode: BytesMode::default(),
         }
     }
 
     fn build(self) -> Prog {
-        Prog::new(self.prog, self.n_saves)
+        Prog::new(self.prog, self.n_saves, self.bytes_mode)
     }
 
     fn newsave(&mut self) -> usize {
@@ -886,8 +888,11 @@ impl<'a> Compiler<'a> {
         self.b
             .set_split_target(split_pc, single_newline_char_pc, true);
 
-        // Compile a delegate for matching single newline characters
-        let pattern = if unicode {
+        // Compile a delegate for matching single newline characters.
+        // In Ascii bytes mode, Unicode chars are not allowed in the delegate,
+        // so we always use the non-Unicode pattern regardless of the `unicode` flag.
+        let use_unicode = unicode && !matches!(self.options.bytes_mode, BytesMode::Ascii);
+        let pattern = if use_unicode {
             // Unicode mode: \n, \v, \f, \r, U+0085, U+2028, U+2029
             "[\n\x0B\x0C\r\u{0085}\u{2028}\u{2029}]"
         } else {
@@ -999,6 +1004,8 @@ pub struct CompileOptions {
     pub seek_filter: Option<fn(&str) -> bool>,
     /// To match Oniguruma behavior where only \z can match at EOF if preceeded by a newline character
     pub disallow_empty_match_at_eof_after_newline: bool,
+    /// How the VM should advance positions: byte-level (Ascii) vs codepoint-level (Unicode/UnicodeBytes).
+    pub bytes_mode: BytesMode,
 }
 
 impl core::fmt::Debug for CompileOptions {
@@ -1018,6 +1025,7 @@ impl core::fmt::Debug for CompileOptions {
                 "disallow_empty_match_at_eof_after_newline",
                 &self.disallow_empty_match_at_eof_after_newline,
             )
+            .field("bytes_mode", &self.bytes_mode)
             .finish()
     }
 }
@@ -1025,6 +1033,8 @@ impl core::fmt::Debug for CompileOptions {
 /// Compile the analyzed expressions into a program.
 pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
     let mut c = Compiler::new(info.end_group());
+    c.options.bytes_mode = options.bytes_mode;
+    c.b.bytes_mode = options.bytes_mode;
 
     if options.contains_subroutines {
         // Store root info for group 0 subroutine calls

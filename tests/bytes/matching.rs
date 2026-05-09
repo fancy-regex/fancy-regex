@@ -198,6 +198,68 @@ fn bytes_backrefs_casei() {
     assert_no_match_bytes(r"(.)(?i:\1)", b"\xff\xfe\xfd\xfc\xff\xfe\xfd\xfb");
 }
 
+// --- Hard-mode tests (force VM via atomic groups) ---
+// These tests use `(?>...)` to force the backtracking VM path,
+// verifying that byte-level advancement works correctly with non-UTF-8 high bytes.
+
+/// Atomic group forces hard mode. The dot should advance by 1 byte in Ascii mode,
+/// even for bytes >= 0x80 that would be multi-byte UTF-8 lead bytes.
+#[test]
+fn bytes_hard_mode_dot_advances_one_byte() {
+    // (?>.) forces hard mode; the dot should match exactly 1 byte (0xC0),
+    // and then the literal `x` should match at position 1.
+    // 0xC0 is a 2-byte UTF-8 lead byte; in Unicode mode it would try to
+    // advance 2 bytes, but in Ascii mode it should advance only 1.
+    assert_match_bytes(r"(?>.)x", b"\xC0x");
+    // Same with 0xE0 (3-byte UTF-8 lead byte)
+    assert_match_bytes(r"(?>.)x", b"\xE0x");
+    // Same with 0xF0 (4-byte UTF-8 lead byte)
+    assert_match_bytes(r"(?>.)x", b"\xF0x");
+}
+
+/// Verify that the SplitUnanchored preamble (which uses `Any`) advances 1 byte
+/// at a time in Ascii mode, allowing matches after high bytes.
+#[test]
+fn bytes_hard_mode_unanchored_skips_high_bytes() {
+    // The pattern is unanchored. The VM needs to skip over 0xFF, 0xFE, 0xFD
+    // (each 1 byte) to find the match at "ab".
+    // The atomic group forces hard mode.
+    assert_match_bytes(r"(?>ab)", b"\xFF\xFE\xFDab");
+}
+
+/// `AnyNoNL` in hard mode should advance 1 byte for high bytes.
+#[test]
+fn bytes_hard_mode_dot_no_newline() {
+    // (?s) is NOT set, so `.` means AnyNoNL. Atomic group forces VM.
+    // 0x80 is not a newline, so dot should match it (1 byte) and then match `y`.
+    assert_match_bytes(r"(?>.)y", b"\x80y");
+    // But newline should not be matched by dot (no (?s))
+    assert_no_match_bytes(r"^(?>.)y", b"\ny");
+}
+
+/// GoBack instruction should go back 1 byte in Ascii mode, even for high bytes.
+/// We use a lookbehind with a dot (which is hard due to the lookbehind) to test
+/// that GoBack(1) retreats exactly 1 byte, even when the byte at that position
+/// is a high byte (>= 0x80) that would normally be a multi-byte UTF-8 lead byte.
+#[test]
+fn bytes_hard_mode_lookbehind_goback() {
+    // `(?<=.)x` is hard (lookbehind). GoBack(1) goes back 1 byte from `x`.
+    // In Ascii mode, the dot in the lookbehind then matches the single byte 0xC0.
+    // In Unicode mode this would fail because 0xC0 followed by 'x' is invalid UTF-8.
+    assert_match_bytes(r"(?<=.)x", b"\xC0x");
+    // Verify with a 2-char lookbehind: GoBack(2) should go back 2 bytes.
+    assert_match_bytes(r"(?<=..)x", b"\xE0\xF0x");
+}
+
+/// Multiple dots in an atomic group should each advance 1 byte.
+#[test]
+fn bytes_hard_mode_multiple_dots() {
+    // (?>...) should consume exactly 3 bytes, then `z` should match.
+    assert_match_bytes(r"(?>.{3})z", b"\xC0\xE0\xF0z");
+    // Verify the match doesn't happen if z isn't at position 3
+    assert_no_match_bytes(r"^(?>.{3})z", b"\xC0\xE0z\xF0");
+}
+
 #[cfg_attr(feature = "track_caller", track_caller)]
 fn assert_match_bytes(re: &str, text: &[u8]) {
     let result = match_bytes(re, text);

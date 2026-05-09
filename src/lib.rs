@@ -1127,6 +1127,7 @@ impl Regex {
                 contains_subroutines: tree.contains_subroutines,
                 seek_filter: options.seek_filter,
                 disallow_empty_match_at_eof_after_newline,
+                bytes_mode: options.bytes_mode,
             },
         )?;
         Ok(Regex {
