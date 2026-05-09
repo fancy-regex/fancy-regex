@@ -16,6 +16,8 @@ with the exception that 0.x versions can break between minor versions.
 - Patterns no longer force Unicode mode during parsing, and inline `(?u)` / `(?-u)` flags are accepted when they agree with the builder configuration
 ### Fixed
 - Fix bug whereby inline flags were not overriding the builder options (#247)
+### Upgrade guide
+If you previously stored i.e. `Captures`, you would need to change the type to `Captures<str>` to get the code to compile.
 
 ## [0.18.0] - 2026-04-24
 ### Added
