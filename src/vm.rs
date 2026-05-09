@@ -324,6 +324,8 @@ pub enum Insn {
         slot: usize,
         /// Whether the backref should be matched case insensitively
         casei: bool,
+        /// Whether Unicode mode is enabled (affects case folding behavior)
+        unicode: bool,
     },
     /// Begin of atomic group
     BeginAtomic,
@@ -646,6 +648,7 @@ fn matches_literal_casei<S: RegexInput + ?Sized>(
     ix: usize,
     end: usize,
     literal: &[u8],
+    unicode: bool,
 ) -> bool {
     if end > s.len() {
         return false;
@@ -659,6 +662,10 @@ fn matches_literal_casei<S: RegexInput + ?Sized>(
     let text_bytes = &s.as_bytes()[ix..end];
     if text_bytes.is_ascii() && literal.is_ascii() {
         return text_bytes.eq_ignore_ascii_case(literal);
+    }
+    if !unicode {
+        // ASCII-only case folding: if content is not ASCII, no match
+        return false;
     }
     // text captured and being backreferenced is not ascii, so we utilize regex-automata's case insensitive matching
     if let (Ok(text_str), Ok(lit_str)) = (
@@ -983,7 +990,11 @@ pub(crate) fn run<S: RegexInput + ?Sized>(
                     }
                     break 'fail;
                 }
-                Insn::Backref { slot, casei } => {
+                Insn::Backref {
+                    slot,
+                    casei,
+                    unicode,
+                } => {
                     let lo = state.get(slot);
                     if lo == usize::MAX {
                         // Referenced group hasn't matched, so the backref doesn't match either
@@ -997,7 +1008,7 @@ pub(crate) fn run<S: RegexInput + ?Sized>(
                     let ref_text = &s.as_bytes()[lo..hi];
                     let ix_end = ix + ref_text.len();
                     if casei {
-                        if !matches_literal_casei(s, ix, ix_end, ref_text) {
+                        if !matches_literal_casei(s, ix, ix_end, ref_text, unicode) {
                             break 'fail;
                         }
                     } else if !matches_literal(s, ix, ix_end, ref_text) {

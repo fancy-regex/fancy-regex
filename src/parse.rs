@@ -1986,14 +1986,14 @@ mod tests {
             p("\\h"),
             Expr::Delegate {
                 inner: String::from("[0-9A-Fa-f]"),
-                casei: false
+                casei: false,
             }
         );
         assert_eq!(
             p("\\H"),
             Expr::Delegate {
                 inner: String::from("[^0-9A-Fa-f]"),
-                casei: false
+                casei: false,
             }
         );
     }
@@ -2366,35 +2366,35 @@ mod tests {
             p("\\p{Greek}"),
             Expr::Delegate {
                 inner: String::from("\\p{greek}"),
-                casei: false
+                casei: false,
             }
         );
         assert_eq!(
             p("\\pL"),
             Expr::Delegate {
                 inner: String::from("\\pL"),
-                casei: false
+                casei: false,
             }
         );
         assert_eq!(
             p("\\P{Greek}"),
             Expr::Delegate {
                 inner: String::from("\\P{greek}"),
-                casei: false
+                casei: false,
             }
         );
         assert_eq!(
             p("\\PL"),
             Expr::Delegate {
                 inner: String::from("\\PL"),
-                casei: false
+                casei: false,
             }
         );
         assert_eq!(
             p("(?i)\\p{Ll}"),
             Expr::Delegate {
                 inner: String::from("\\p{ll}"),
-                casei: true
+                casei: true,
             }
         );
     }
@@ -2729,12 +2729,12 @@ mod tests {
                 make_literal("'"),
                 Expr::Delegate {
                     inner: String::from("[a-zA-Z_]"),
-                    casei: false
+                    casei: false,
                 },
                 Expr::Repeat {
                     child: Box::new(Expr::Delegate {
                         inner: String::from("[a-zA-Z0-9_]"),
-                        casei: false
+                        casei: false,
                     }),
                     lo: 0,
                     hi: usize::MAX,
@@ -3355,7 +3355,7 @@ mod tests {
                 condition: Box::new(Expr::LookAround(
                     Box::new(Expr::Delegate {
                         inner: "\\d".to_string(),
-                        casei: false
+                        casei: false,
                     }),
                     LookAhead
                 )),
@@ -4260,7 +4260,7 @@ mod tests {
                 exp: Box::new(Expr::Repeat {
                     child: Box::new(Expr::Delegate {
                         inner: "\\d".to_string(),
-                        casei: false
+                        casei: false,
                     }),
                     lo: 1,
                     hi: usize::MAX,

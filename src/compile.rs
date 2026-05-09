@@ -198,6 +198,7 @@ impl<'a> Compiler<'a> {
                 self.b.add(Insn::Backref {
                     slot: group * 2,
                     casei,
+                    unicode: self.options.syntaxc.get_unicode(),
                 });
             }
             Expr::BackrefExistsCondition {
@@ -990,7 +991,7 @@ pub(crate) fn populate_group_info_map<'a>(map: &mut Map<usize, &'a Info<'a>>, in
 }
 
 /// Options for compiling analyzed expressions into a program.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct CompileOptions {
     /// Whether the regex is anchored (starts matching at the beginning of the input).
     /// When `false`, a `SplitUnanchored` preamble is emitted to allow matching at any position.
@@ -1006,6 +1007,8 @@ pub struct CompileOptions {
     pub disallow_empty_match_at_eof_after_newline: bool,
     /// How the VM should advance positions: byte-level (Ascii) vs codepoint-level (Unicode/UnicodeBytes).
     pub bytes_mode: BytesMode,
+    /// Whether Unicode mode is enabled for the regex.
+    pub unicode: bool,
 }
 
 impl core::fmt::Debug for CompileOptions {
@@ -1026,7 +1029,21 @@ impl core::fmt::Debug for CompileOptions {
                 &self.disallow_empty_match_at_eof_after_newline,
             )
             .field("bytes_mode", &self.bytes_mode)
+            .field("unicode", &self.unicode)
             .finish()
+    }
+}
+
+impl Default for CompileOptions {
+    fn default() -> Self {
+        CompileOptions {
+            anchored: false,
+            contains_subroutines: false,
+            seek_filter: None,
+            disallow_empty_match_at_eof_after_newline: false,
+            bytes_mode: BytesMode::default(),
+            unicode: true,
+        }
     }
 }
 
@@ -1034,6 +1051,7 @@ impl core::fmt::Debug for CompileOptions {
 pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
     let mut c = Compiler::new(info.end_group());
     c.options.bytes_mode = options.bytes_mode;
+    c.options.syntaxc = c.options.syntaxc.unicode(options.unicode);
     c.b.bytes_mode = options.bytes_mode;
 
     if options.contains_subroutines {
@@ -1555,7 +1573,8 @@ mod tests {
             prog[9],
             Backref {
                 slot: 2,
-                casei: false
+                casei: false,
+                unicode: true,
             }
         );
         assert_matches!(prog[10], GoBack(2));
@@ -1563,7 +1582,8 @@ mod tests {
             prog[11],
             Backref {
                 slot: 2,
-                casei: false
+                casei: false,
+                unicode: true,
             }
         );
         assert_matches!(prog[12], Restore(4));
@@ -1649,7 +1669,8 @@ mod tests {
             prog[12],
             Backref {
                 slot: 2,
-                casei: false
+                casei: false,
+                unicode: true,
             }
         );
         assert_matches!(prog[13], FailNegativeLookAround);

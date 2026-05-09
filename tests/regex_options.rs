@@ -507,6 +507,46 @@ fn unicode_mode_false_hard_pattern_w_is_ascii_only_on_str() {
     assert!(re_ascii.is_match("cafe!").unwrap());
 }
 
+/// `unicode_mode(false)` is honoured for hard-path backrefs: `(\w+)\1` should
+/// only match ASCII word characters when unicode is disabled.
+#[test]
+fn unicode_mode_false_w_is_ascii_only_in_hard_path_backref() {
+    // The backref makes this a "hard" pattern processed by the VM.
+    let re_unicode = build_regex(RegexBuilder::new(r"(\w+)\1").unicode_mode(true));
+    let re_ascii = build_regex(RegexBuilder::new(r"(\w+)\1").unicode_mode(false));
+
+    // With unicode enabled, \w matches Unicode letters like 'δ'.
+    assert!(re_unicode.is_match("δδ").unwrap());
+    // With unicode disabled, \w is ASCII-only, so δδ doesn't match.
+    assert!(!re_ascii.is_match("δδ").unwrap());
+    // Pure-ASCII input still matches with unicode disabled.
+    assert!(re_ascii.is_match("abcabc").unwrap());
+}
+
+/// Case-insensitive backrefs with `unicode_mode(false)` should NOT apply
+/// Unicode case folding (e.g. δ ↔ Δ).
+#[test]
+fn unicode_mode_false_backref_casei_no_unicode_folding() {
+    // The backref + case-insensitive makes this a "hard" pattern.
+    let re_unicode = build_regex(
+        RegexBuilder::new(r"(?i)(.)\1")
+            .unicode_mode(true)
+            .case_insensitive(true),
+    );
+    let re_ascii = build_regex(
+        RegexBuilder::new(r"(?i)(.)\1")
+            .unicode_mode(false)
+            .case_insensitive(true),
+    );
+
+    // With unicode enabled, case-insensitive backref equates δ with Δ.
+    assert!(re_unicode.is_match("δΔ").unwrap());
+    // With unicode disabled, only ASCII case folding applies, so δ ≠ Δ.
+    assert!(!re_ascii.is_match("δΔ").unwrap());
+    // ASCII case folding still works.
+    assert!(re_ascii.is_match("aA").unwrap());
+}
+
 #[test]
 fn disallow_empty_match_at_eof_after_newline_does_as_it_says() {
     fn find_all_matches(regex: &Regex, text: &'static str) -> Vec<usize> {

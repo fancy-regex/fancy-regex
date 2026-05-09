@@ -572,7 +572,10 @@ impl RegexOptions {
         let whitespace =
             Self::get_flag_value(self.syntaxc.get_ignore_whitespace(), FLAG_IGNORE_SPACE);
         let dotnl = Self::get_flag_value(self.syntaxc.get_dot_matches_new_line(), FLAG_DOTNL);
-        let unicode = Self::get_flag_value(self.syntaxc.get_unicode(), FLAG_UNICODE);
+        let unicode = Self::get_flag_value(
+            self.syntaxc.get_unicode() && !matches!(self.bytes_mode, BytesMode::Ascii),
+            FLAG_UNICODE,
+        );
         let oniguruma_mode = Self::get_flag_value(self.oniguruma_mode, FLAG_ONIGURUMA_MODE);
         let crlf = Self::get_flag_value(self.syntaxc.get_crlf(), FLAG_CRLF);
         let named_groups_only = Self::get_flag_value(
@@ -1128,6 +1131,8 @@ impl Regex {
                 seek_filter: options.seek_filter,
                 disallow_empty_match_at_eof_after_newline,
                 bytes_mode: options.bytes_mode,
+                unicode: options.syntaxc.get_unicode()
+                    && !matches!(options.bytes_mode, BytesMode::Ascii),
             },
         )?;
         Ok(Regex {
@@ -2826,7 +2831,7 @@ mod tests {
         .is_leaf_node());
         assert!(Expr::Delegate {
             inner: "[0-9]".to_string(),
-            casei: false
+            casei: false,
         }
         .is_leaf_node());
         assert!(Expr::Backref {

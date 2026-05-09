@@ -188,8 +188,9 @@ fn bytes_backrefs_casei() {
     // Non-ASCII prefix before ASCII capture – exercises the is_ascii() fix
     assert_match_bytes(r"(abc)(?i:\1)", "δabcABC".as_bytes());
 
-    // Unicode: case-insensitive backref match (δ ↔ Δ)
-    assert_match_bytes(r"(δ)(?i:\1)", "δΔ".as_bytes());
+    // Unicode case folding (δ ↔ Δ) is NOT applied in BytesMode::Ascii because
+    // unicode=false is implied, so the backref uses ASCII-only case folding.
+    assert_no_match_bytes(r"(δ)(?i:\1)", "δΔ".as_bytes());
     // Unicode: case-insensitive backref no-match
     assert_no_match_bytes(r"(δ)(?i:\1)", "δσ".as_bytes());
 
