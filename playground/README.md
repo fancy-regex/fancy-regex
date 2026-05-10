@@ -16,6 +16,7 @@ A browser-based interactive playground for testing and exploring the [fancy-rege
 - **Analysis Output**: See detailed analysis information about your regex pattern
 - **Error Handling**: Clear error messages for invalid patterns or runtime errors
 - **Debounced Updates**: Smooth real-time updates with debouncing to prevent excessive computation
+- **Sharable URLs**: Load/save pattern, haystack, and flag settings via query parameters
 - **Responsive Design**: Works well on desktop and mobile devices
 
 ## 🚀 Quick Start
@@ -63,6 +64,25 @@ A browser-based interactive playground for testing and exploring the [fancy-rege
 - Pattern: `\w+(?=\s+world)`
 - Text: `hello world goodbye moon`
 - Result: Matches "hello" (word followed by " world")
+
+### Share Playground State with URL Parameters
+
+Click **Update share URL** to write current state into the address bar so it can be copy/pasted.
+
+Supported parameters:
+
+- `pattern`: regex pattern input
+- `text`: haystack/test text input
+- Flag booleans (accepts `1/0`, `true/false`, `yes/no`, `on/off`):
+  - `i`: case-insensitive
+  - `m`: multi-line
+  - `s`: dot matches newline
+  - `x`: ignore whitespace
+  - `u`: unicode
+  - `O`: oniguruma mode
+  - `N`: find not empty
+  - `R`: ignore numbered groups when named groups exist
+  - `T`: ignore trailing newline in multi-line mode
 
 ## 🏗️ Architecture
 

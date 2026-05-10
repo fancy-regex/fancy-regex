@@ -206,6 +206,9 @@ textarea:focus, input[type="text"]:focus {
 
 .toggle-section {
     margin-bottom: 1rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
 }
 
 .toggle-btn {
@@ -225,6 +228,14 @@ textarea:focus, input[type="text"]:focus {
 
 .toggle-btn.active {
     background: #27ae60;
+}
+
+#update-url {
+    background: #8e44ad;
+}
+
+#update-url:hover {
+    background: #7d3c98;
 }
 
 .hidden {
@@ -408,4 +419,3 @@ footer a {
 .analysis-children--collapsed {
     display: none;
 }
-
