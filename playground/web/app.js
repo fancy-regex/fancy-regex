@@ -50,7 +50,7 @@ class FancyRegexPlayground {
         this.defaultFlags = this.getFlags();
         this.setupEventListeners();
         if (this.loadStateFromUrl()) {
-            setTimeout(() => this.updateResults(), 100);
+            this.updateResults();
         } else {
             this.loadExampleData();
         }
@@ -146,8 +146,6 @@ class FancyRegexPlayground {
         }
 
         flagConfig.forEach(cfg => {
-            cfg.element.checked = this.defaultFlags[cfg.key];
-
             let rawValue = null;
             if (params.has(cfg.param)) {
                 rawValue = params.get(cfg.param);
@@ -156,9 +154,7 @@ class FancyRegexPlayground {
             }
 
             const parsedValue = this.parseBooleanQueryParam(rawValue);
-            if (parsedValue !== null) {
-                cfg.element.checked = parsedValue;
-            }
+            cfg.element.checked = parsedValue !== null ? parsedValue : this.defaultFlags[cfg.key];
         });
 
         return true;

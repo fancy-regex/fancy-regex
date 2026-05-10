@@ -82,7 +82,7 @@ Supported parameters:
   - `O`: oniguruma mode
   - `N`: find not empty
   - `R`: ignore numbered groups when named groups exist
-  - `T`: ignore trailing newline in multi-line mode
+  - `T`: ignore trailing newline
 
 ## 🏗️ Architecture
 
