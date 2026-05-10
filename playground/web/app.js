@@ -139,10 +139,10 @@ class FancyRegexPlayground {
         }
 
         if (params.has('pattern')) {
-            this.elements.regexInput.value = params.get('pattern') ?? '';
+            this.elements.regexInput.value = params.get('pattern');
         }
         if (params.has('text')) {
-            this.elements.textInput.value = params.get('text') ?? '';
+            this.elements.textInput.value = params.get('text');
         }
 
         flagConfig.forEach(cfg => {
