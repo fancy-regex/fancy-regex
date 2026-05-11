@@ -84,7 +84,7 @@ pub(crate) fn emit_min_size_placeholder(buf: &mut String, min_size: usize, prece
 
 /// Write the seek-pattern approximation for `info` into `buf`.
 ///
-/// Easy (non-hard) subtrees are serialised verbatim via [`Expr::to_str`].
+/// Easy subtrees without capture groups are serialised verbatim via [`Expr::to_str`].
 /// Hard nodes are handled as follows:
 /// - `Backref` / `SubroutineCall`: inline the referenced group's body (up to
 ///   `MAX_SUBROUTINE_RECURSION_DEPTH`). For backrefs, positional anchors (`^`, `$`, `\b`) etc.
@@ -141,7 +141,8 @@ pub(crate) fn build_seek_pattern_impl<'a>(
         }
     }
 
-    if !info.hard {
+    let has_capture_groups = info.start_group() != info.end_group();
+    if !info.hard && !has_capture_groups {
         // Easy subtree — use to_str directly when no positional-anchor dropping is needed,
         // or when the subtree contains no positional anchors (so dropping is a no-op).
         if !drop_positional_anchors || !expr_contains_positional_anchor(info.expr) {
@@ -447,8 +448,8 @@ pub(crate) fn build_seek_pattern_impl<'a>(
         | Expr::BacktrackingControlVerb(_)
         | Expr::BackrefExistsCondition { .. }
         | Expr::Absent(_) => {}
-        // Easy leaf nodes (Literal, Any, Delegate) are always handled by the `!info.hard`
-        // early return above and never reach here.  Listed explicitly so that adding a new
+        // Easy leaf nodes (Literal, Any, Delegate) are always handled by the easy no-captures
+        // early return above and never reach here. Listed explicitly so that adding a new
         // Expr variant produces a compile error until the seek-pattern case is handled.
         Expr::Literal { .. } | Expr::Any { .. } | Expr::Delegate { .. } => {
             info.expr.to_str(buf, precedence)
@@ -478,11 +479,22 @@ mod tests {
     use super::*;
     use crate::analyze::{analyze, AnalyzeContext};
     use crate::compile::populate_group_info_map;
+    use crate::optimize;
 
     /// Build the seek pattern for a regex string and return it.
     fn get_seek_pattern(re: &str) -> String {
-        let tree = Expr::parse_tree(re).unwrap();
-        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        let mut tree = Expr::parse_tree(re).unwrap();
+        let requires_capture_group_fixup = optimize(&mut tree);
+
+        let info = analyze(
+            &tree,
+            AnalyzeContext {
+                explicit_capture_group_0: requires_capture_group_fixup,
+                ..AnalyzeContext::default()
+            },
+        )
+        .unwrap();
+
         let mut group_info_map = Map::new();
         populate_group_info_map(&mut group_info_map, &info);
         let mut buf = String::new();
@@ -495,6 +507,10 @@ mod tests {
         // Simple backref with no positional anchors: group body is inlined verbatim.
         // The `(?:...)` wrapping comes from Concat precedence handling when stripping groups.
         assert_eq!(get_seek_pattern(r"(abc)\1"), "(?:abc)(?:abc)");
+        assert_eq!(
+            get_seek_pattern(r"(?i)(abc)\1"),
+            "(?:(?i:a)(?i:b)(?i:c))(?i:(?i:a)(?i:b)(?i:c))"
+        );
     }
 
     #[test]
@@ -540,10 +556,30 @@ mod tests {
 
     #[test]
     fn seek_pattern_easy_expr_preserved() {
-        // An easy (non-hard) expression is serialised verbatim via to_str.
+        // Easy (non-hard) expressions without capture groups are serialised verbatim via to_str.
         assert_eq!(get_seek_pattern(r"abc"), "abc");
         assert_eq!(get_seek_pattern(r"a|b"), "a|b");
         assert_eq!(get_seek_pattern(r"a+b*c?"), "a+b*c?");
+    }
+
+    #[test]
+    fn seek_pattern_easy_expr_with_capture_group_strips_group_wrapper() {
+        // Easy expressions with capture groups drop the capture group wrappings.
+        assert_eq!(get_seek_pattern(r"(abc)"), "abc");
+        assert_eq!(
+            get_seek_pattern(r"(abc(def))(?<named>ghi)"),
+            "(?:abc(?:def))(?:ghi)"
+        );
+    }
+
+    #[test]
+    fn seek_pattern_optimized_easy_expr_strips_group_wrapper() {
+        // Optimized patterns lose the capture group wrappings
+        assert_eq!(get_seek_pattern(r"(?=abc)"), "(?:abc)");
+        assert_eq!(
+            get_seek_pattern(r"(h)(e)(l)(l)(o)\s*(?=world)"),
+            r"(?:hello\s*)(?:world)"
+        );
     }
 
     #[test]
