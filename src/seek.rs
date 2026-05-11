@@ -485,14 +485,15 @@ mod tests {
     fn get_seek_pattern(re: &str) -> String {
         let mut tree = Expr::parse_tree(re).unwrap();
         let requires_capture_group_fixup = optimize(&mut tree);
-        
+
         let info = analyze(
             &tree,
             AnalyzeContext {
                 explicit_capture_group_0: requires_capture_group_fixup,
                 ..AnalyzeContext::default()
             },
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut group_info_map = Map::new();
         populate_group_info_map(&mut group_info_map, &info);
@@ -506,7 +507,10 @@ mod tests {
         // Simple backref with no positional anchors: group body is inlined verbatim.
         // The `(?:...)` wrapping comes from Concat precedence handling when stripping groups.
         assert_eq!(get_seek_pattern(r"(abc)\1"), "(?:abc)(?:abc)");
-        assert_eq!(get_seek_pattern(r"(?i)(abc)\1"), "(?:(?i:a)(?i:b)(?i:c))(?i:(?i:a)(?i:b)(?i:c))");
+        assert_eq!(
+            get_seek_pattern(r"(?i)(abc)\1"),
+            "(?:(?i:a)(?i:b)(?i:c))(?i:(?i:a)(?i:b)(?i:c))"
+        );
     }
 
     #[test]
@@ -562,14 +566,20 @@ mod tests {
     fn seek_pattern_easy_expr_with_capture_group_strips_group_wrapper() {
         // Easy expressions with capture groups drop the capture group wrappings.
         assert_eq!(get_seek_pattern(r"(abc)"), "abc");
-        assert_eq!(get_seek_pattern(r"(abc(def))(?<named>ghi)"), "(?:abc(?:def))(?:ghi)");
+        assert_eq!(
+            get_seek_pattern(r"(abc(def))(?<named>ghi)"),
+            "(?:abc(?:def))(?:ghi)"
+        );
     }
 
     #[test]
     fn seek_pattern_optimized_easy_expr_strips_group_wrapper() {
         // Optimized patterns lose the capture group wrappings
         assert_eq!(get_seek_pattern(r"(?=abc)"), "(?:abc)");
-        assert_eq!(get_seek_pattern(r"(h)(e)(l)(l)(o)\s*(?=world)"), r"(?:hello\s*)(?:world)");
+        assert_eq!(
+            get_seek_pattern(r"(h)(e)(l)(l)(o)\s*(?=world)"),
+            r"(?:hello\s*)(?:world)"
+        );
     }
 
     #[test]
