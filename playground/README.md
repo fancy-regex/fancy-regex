@@ -81,7 +81,7 @@ Supported parameters:
   - `u`: unicode
   - `O`: oniguruma mode
   - `N`: find not empty
-  - `R`: ignore numbered groups when named groups exist
+  - `G`: ignore numbered groups when named groups exist
   - `T`: ignore trailing newline
 
 ## 🏗️ Architecture
