@@ -10,7 +10,9 @@ class FancyRegexPlayground {
     constructor() {
         this.isInitialized = false;
         this.debounceTimer = null;
+        this.shareUrlFeedbackTimer = null;
         this.elements = {};
+        this.defaultFlags = null;
         this.lastResults = null;
     }
 
@@ -29,6 +31,7 @@ class FancyRegexPlayground {
             parseTreeDisplay: document.getElementById('parse-tree-display'),
             analysisSection: document.getElementById('analysis-section'),
             analysisDisplay: document.getElementById('analysis-display'),
+            updateUrlBtn: document.getElementById('update-url'),
             showParseTreeBtn: document.getElementById('show-parse-tree'),
             showAnalysisBtn: document.getElementById('show-analysis'),
             flags: {
@@ -44,8 +47,13 @@ class FancyRegexPlayground {
             }
         };
 
+        this.defaultFlags = this.getFlags();
         this.setupEventListeners();
-        this.loadExampleData();
+        if (this.loadStateFromUrl()) {
+            this.updateResults();
+        } else {
+            this.loadExampleData();
+        }
     }
 
     setupEventListeners() {
@@ -59,6 +67,7 @@ class FancyRegexPlayground {
         });
 
         // Toggle button handlers
+        this.elements.updateUrlBtn.addEventListener('click', () => this.updateUrlWithCurrentState());
         this.elements.showParseTreeBtn.addEventListener('click', () => this.toggleParseTree());
         this.elements.showAnalysisBtn.addEventListener('click', () => this.toggleAnalysis());
     }
@@ -81,6 +90,104 @@ class FancyRegexPlayground {
             ignore_numbered_groups_when_named_groups_exist: this.elements.flags.ignoreNumberedGroups.checked,
             ignore_trailing_newline: this.elements.flags.ignoreTrailingNewline.checked,
         };
+    }
+
+    getFlagShareConfig() {
+        return [
+            { param: 'i', key: 'case_insensitive', element: this.elements.flags.caseInsensitive },
+            { param: 'm', key: 'multi_line', element: this.elements.flags.multiLine },
+            { param: 's', key: 'dot_matches_new_line', element: this.elements.flags.dotMatchesNewline },
+            { param: 'x', key: 'ignore_whitespace', element: this.elements.flags.ignoreWhitespace },
+            { param: 'u', key: 'unicode', element: this.elements.flags.unicode },
+            { param: 'O', key: 'oniguruma_mode', element: this.elements.flags.onigurumaMode },
+            { param: 'N', key: 'find_not_empty', element: this.elements.flags.findNotEmpty },
+            { param: 'G', key: 'ignore_numbered_groups_when_named_groups_exist', element: this.elements.flags.ignoreNumberedGroups },
+            { param: 'T', key: 'ignore_trailing_newline', element: this.elements.flags.ignoreTrailingNewline },
+        ];
+    }
+
+    parseBooleanQueryParam(value) {
+        if (value === null) {
+            return null;
+        }
+
+        switch (value.toLowerCase()) {
+            case '1':
+            case 'true':
+            case 'yes':
+            case 'on':
+                return true;
+            case '0':
+            case 'false':
+            case 'no':
+            case 'off':
+                return false;
+            default:
+                return null;
+        }
+    }
+
+    loadStateFromUrl() {
+        const params = new URLSearchParams(window.location.search);
+        const flagConfig = this.getFlagShareConfig();
+        const hasState = params.has('pattern')
+            || params.has('text')
+            || flagConfig.some(cfg => params.has(cfg.param) || params.has(cfg.key));
+
+        if (!hasState) {
+            return false;
+        }
+
+        if (params.has('pattern')) {
+            this.elements.regexInput.value = params.get('pattern');
+        }
+        if (params.has('text')) {
+            this.elements.textInput.value = params.get('text');
+        }
+
+        flagConfig.forEach(cfg => {
+            let rawValue = null;
+            if (params.has(cfg.param)) {
+                rawValue = params.get(cfg.param);
+            } else if (params.has(cfg.key)) {
+                rawValue = params.get(cfg.key);
+            }
+
+            const parsedValue = this.parseBooleanQueryParam(rawValue);
+            cfg.element.checked = parsedValue !== null ? parsedValue : this.defaultFlags[cfg.key];
+        });
+
+        return true;
+    }
+
+    updateUrlWithCurrentState() {
+        const params = new URLSearchParams();
+        const pattern = this.elements.regexInput.value;
+        const text = this.elements.textInput.value;
+        const currentFlags = this.getFlags();
+
+        if (pattern !== '') {
+            params.set('pattern', pattern);
+        }
+        if (text !== '') {
+            params.set('text', text);
+        }
+
+        this.getFlagShareConfig().forEach(cfg => {
+            if (currentFlags[cfg.key] !== this.defaultFlags[cfg.key]) {
+                params.set(cfg.param, currentFlags[cfg.key] ? '1' : '0');
+            }
+        });
+
+        const query = params.toString();
+        const url = query ? `${window.location.pathname}?${query}` : window.location.pathname;
+        window.history.replaceState({}, '', url);
+
+        clearTimeout(this.shareUrlFeedbackTimer);
+        this.elements.updateUrlBtn.textContent = 'URL updated!';
+        this.shareUrlFeedbackTimer = setTimeout(() => {
+            this.elements.updateUrlBtn.textContent = 'Update share URL';
+        }, 1500);
     }
 
     async updateResults() {
