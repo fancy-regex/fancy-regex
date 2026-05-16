@@ -47,8 +47,7 @@ use crate::vm::{CachePoolFn, ReverseBackwardsDelegate};
 use crate::vm::{CaptureGroupRange, Delegate, Insn, Prog, Seek};
 use crate::LookAround::*;
 use crate::{
-    Absent, BacktrackingControlVerb, BytesMode, CompileError, Error, Expr, LookAround,
-    RegexOptions, Result,
+    Absent, BacktrackingControlVerb, BytesMode, CompileError, Error, Expr, LookAround, Result,
 };
 
 /// Maximum recursion depth for subroutine calls (matches Oniguruma's limit)
@@ -59,7 +58,6 @@ pub(crate) const MAX_SUBROUTINE_RECURSION_DEPTH: usize = 19;
 struct VMBuilder {
     prog: Vec<Insn>,
     n_saves: usize,
-    bytes_mode: BytesMode,
 }
 
 impl VMBuilder {
@@ -67,12 +65,11 @@ impl VMBuilder {
         VMBuilder {
             prog: Vec::new(),
             n_saves: max_group * 2,
-            bytes_mode: BytesMode::default(),
         }
     }
 
-    fn build(self) -> Prog {
-        Prog::new(self.prog, self.n_saves, self.bytes_mode)
+    fn build(self, bytes_mode: BytesMode) -> Prog {
+        Prog::new(self.prog, self.n_saves, bytes_mode)
     }
 
     fn newsave(&mut self) -> usize {
@@ -118,7 +115,7 @@ impl VMBuilder {
 
 struct Compiler<'a> {
     b: VMBuilder,
-    options: RegexOptions,
+    options: CompileOptions,
     inside_alternation: bool,
     /// Map from group number to its Info node for subroutine expansion
     group_info_map: Map<usize, &'a Info<'a>>,
@@ -129,6 +126,7 @@ struct Compiler<'a> {
 }
 
 impl<'a> Compiler<'a> {
+    #[cfg(test)]
     fn new(max_group: usize) -> Compiler<'a> {
         Compiler {
             b: VMBuilder::new(max_group),
@@ -198,7 +196,8 @@ impl<'a> Compiler<'a> {
                 self.b.add(Insn::Backref {
                     slot: group * 2,
                     casei,
-                    unicode: self.options.syntaxc.get_unicode(),
+                    // use the pre-computed effective unicode flag (unicode && !Ascii bytes mode)
+                    unicode: self.options.unicode,
                 });
             }
             Expr::BackrefExistsCondition {
@@ -925,7 +924,7 @@ impl<'a> Compiler<'a> {
 #[cfg(all(test, feature = "std"))]
 static PATTERN_MAPPING: RwLock<BTreeMap<String, String>> = RwLock::new(BTreeMap::new());
 
-pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<RaRegex> {
+pub(crate) fn compile_inner(inner_re: &str, options: &CompileOptions) -> Result<RaRegex> {
     let builder = options_to_rabuilder(options);
 
     let re = builder
@@ -942,7 +941,7 @@ pub(crate) fn compile_inner(inner_re: &str, options: &RegexOptions) -> Result<Ra
     Ok(re)
 }
 
-pub(crate) fn options_to_rabuilder(options: &RegexOptions) -> RaBuilder {
+pub(crate) fn options_to_rabuilder(options: &CompileOptions) -> RaBuilder {
     use regex_automata::util::syntax::Config as SyntaxConfig;
 
     let mut config = RaConfig::new();
@@ -955,16 +954,14 @@ pub(crate) fn options_to_rabuilder(options: &RegexOptions) -> RaBuilder {
 
     let mut builder = RaBuilder::new();
     builder.configure(config);
-    // NOTE: we deliberately don't configure the regex syntax because we rely on our Expr to_str function
-    //       to handle creating the correct string for regex-automata
-    //       otherwise, if the RegexOptions specifies case insensitive mode, then the pattern contains an explicit
-    //       (?-i) flag, then that flag would effectively be ignored unless to_str would encode the flag for every
-    //       node, even when it is the default, which feels like a waste.
+    // NOTE: our Expr to_str function handles creating the correct pattern string for regex-automata
+    //       using the default SyntaxConfig. If we were to set i.e. case sensitivity directly on
+    //       the SyntaxConfig here, and the pattern includes the (?-i) flag, then that flag would
+    //       effectively be ignored unless to_str would encode the flag for every node, even when it
+    //       is the default, which feels too verbose and hurts readability, is more to parse etc.
     let utf8 = matches!(options.bytes_mode, BytesMode::Unicode);
 
-    let syntax = SyntaxConfig::new()
-        .utf8(utf8)
-        .unicode(options.syntaxc.get_unicode() && !matches!(options.bytes_mode, BytesMode::Ascii));
+    let syntax = SyntaxConfig::new().utf8(utf8).unicode(options.unicode);
     builder.syntax(syntax);
 
     builder
@@ -1007,8 +1004,14 @@ pub struct CompileOptions {
     pub disallow_empty_match_at_eof_after_newline: bool,
     /// How the VM should advance positions: byte-level (Ascii) vs codepoint-level (Unicode/UnicodeBytes).
     pub bytes_mode: BytesMode,
-    /// Whether Unicode mode is enabled for the regex.
+    /// Whether Unicode mode is enabled for the regex. This is the effective value combining
+    /// the unicode flag and bytes_mode: `syntaxc.get_unicode() && !matches!(bytes_mode, BytesMode::Ascii)`.
+    /// It is always `false` in Ascii bytes mode, regardless of the unicode flag.
     pub unicode: bool,
+    /// Optional size limit in bytes for the NFA of each delegated sub-expression.
+    pub delegate_size_limit: Option<usize>,
+    /// Optional size limit in bytes for the DFA of each delegated sub-expression.
+    pub delegate_dfa_size_limit: Option<usize>,
 }
 
 impl core::fmt::Debug for CompileOptions {
@@ -1030,6 +1033,8 @@ impl core::fmt::Debug for CompileOptions {
             )
             .field("bytes_mode", &self.bytes_mode)
             .field("unicode", &self.unicode)
+            .field("delegate_size_limit", &self.delegate_size_limit)
+            .field("delegate_dfa_size_limit", &self.delegate_dfa_size_limit)
             .finish()
     }
 }
@@ -1043,18 +1048,25 @@ impl Default for CompileOptions {
             disallow_empty_match_at_eof_after_newline: false,
             bytes_mode: BytesMode::default(),
             unicode: true,
+            delegate_size_limit: None,
+            delegate_dfa_size_limit: None,
         }
     }
 }
 
 /// Compile the analyzed expressions into a program.
 pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
-    let mut c = Compiler::new(info.end_group());
-    c.options.bytes_mode = options.bytes_mode;
-    c.options.syntaxc = c.options.syntaxc.unicode(options.unicode);
-    c.b.bytes_mode = options.bytes_mode;
+    let bytes_mode = options.bytes_mode;
+    let mut c = Compiler {
+        b: VMBuilder::new(info.end_group()),
+        options,
+        inside_alternation: false,
+        group_info_map: Map::new(),
+        subroutine_recursion_stack: Vec::new(),
+        root_info: None,
+    };
 
-    if options.contains_subroutines {
+    if c.options.contains_subroutines {
         // Store root info for group 0 subroutine calls
         c.root_info = Some(info);
 
@@ -1062,14 +1074,14 @@ pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
         populate_group_info_map(&mut c.group_info_map, info);
     }
 
-    if !options.anchored {
+    if !c.options.anchored {
         // Attempt to build a Seek pre-filter when requested.
         let mut used_seek = false;
-        if let Some(filter) = options.seek_filter {
+        if let Some(filter) = c.options.seek_filter {
             if info.hard {
                 // Build the group_info_map if not already populated (needed for backref inlining).
                 let mut local_group_info_map: Map<usize, &Info<'_>>;
-                let group_info_map: &Map<usize, &Info<'_>> = if options.contains_subroutines {
+                let group_info_map: &Map<usize, &Info<'_>> = if c.options.contains_subroutines {
                     &c.group_info_map
                 } else {
                     local_group_info_map = Map::new();
@@ -1113,11 +1125,11 @@ pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
         // add implicit capture group 0 end
         c.b.add(Insn::Save(1));
     }
-    if options.disallow_empty_match_at_eof_after_newline {
+    if c.options.disallow_empty_match_at_eof_after_newline {
         c.b.add(Insn::RejectEmptyMatchAtEOFFollowingNewline);
     }
     c.b.add(Insn::End);
-    Ok(c.b.build())
+    Ok(c.b.build(bytes_mode))
 }
 
 struct DelegateBuilder {
@@ -1171,11 +1183,11 @@ impl DelegateBuilder {
         self
     }
 
-    fn build(&self, options: &RegexOptions) -> Result<Insn> {
+    fn build(&self, options: &CompileOptions) -> Result<Insn> {
         Ok(Insn::Delegate(self.build_delegate(options)?))
     }
 
-    fn build_delegate(&self, options: &RegexOptions) -> Result<Delegate> {
+    fn build_delegate(&self, options: &CompileOptions) -> Result<Delegate> {
         let capture_groups = self
             .capture_groups
             .expect("Expected at least one expression");
