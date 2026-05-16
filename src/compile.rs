@@ -32,8 +32,6 @@ use regex_automata::meta::Regex as RaRegex;
 use regex_automata::meta::{Builder as RaBuilder, Config as RaConfig};
 #[cfg(feature = "variable-lookbehinds")]
 use regex_automata::util::pool::Pool;
-#[cfg(all(test, feature = "std"))]
-use std::{collections::BTreeMap, sync::RwLock};
 
 #[cfg(not(feature = "std"))]
 use alloc::collections::BTreeMap as Map;
@@ -917,13 +915,6 @@ impl<'a> Compiler<'a> {
     }
 }
 
-// Unlike Regex in `regex`, `regex-automata` does not store the pattern string,
-// and we cannot retrieve the pattern string using `as_str`.
-// Unfortunately we need to get the pattern string in our tests,
-// so we just store it in a global map.
-#[cfg(all(test, feature = "std"))]
-static PATTERN_MAPPING: RwLock<BTreeMap<String, String>> = RwLock::new(BTreeMap::new());
-
 pub(crate) fn compile_inner(inner_re: &str, options: &CompileOptions) -> Result<RaRegex> {
     let builder = options_to_rabuilder(options);
 
@@ -931,12 +922,6 @@ pub(crate) fn compile_inner(inner_re: &str, options: &CompileOptions) -> Result<
         .build(inner_re)
         .map_err(CompileError::InnerError)
         .map_err(|e| Error::CompileError(Box::new(e)))?;
-
-    #[cfg(all(test, feature = "std"))]
-    PATTERN_MAPPING
-        .write()
-        .unwrap()
-        .insert(format!("{:?}", re), inner_re.to_owned());
 
     Ok(re)
 }
@@ -1272,7 +1257,6 @@ mod tests {
         assert_matches!(prog[7], End);
     }
 
-    #[cfg_attr(not(feature = "std"), ignore = "this test need std")]
     #[test]
     fn look_around_pattern_can_be_delegated() {
         let prog = compile_prog("(?=ab*)c");
@@ -1285,7 +1269,6 @@ mod tests {
         assert_matches!(prog[4], End);
     }
 
-    #[cfg_attr(not(feature = "std"), ignore = "this test need std")]
     #[test]
     fn easy_concat_can_delegate_end() {
         let prog = compile_prog("(?!x)(?:a|ab)x*");
@@ -1298,7 +1281,6 @@ mod tests {
         assert_matches!(prog[4], End);
     }
 
-    #[cfg_attr(not(feature = "std"), ignore = "this test need std")]
     #[test]
     fn hard_concat_can_delegate_const_size_end() {
         let prog = compile_prog("(?:(?!x)(?:a|b)c)x*");
@@ -1312,7 +1294,6 @@ mod tests {
         assert_matches!(prog[5], End);
     }
 
-    #[cfg_attr(not(feature = "std"), ignore = "this test need std")]
     #[test]
     fn hard_concat_can_not_delegate_variable_end() {
         let prog = compile_prog("(?:(?!x)(?:a|ab))x*");
@@ -1920,23 +1901,12 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "std")]
     fn assert_delegate(
         delegate: &crate::vm::Delegate,
         re: &str,
         captures: Option<CaptureGroupRange>,
     ) {
-        assert_eq!(
-            PATTERN_MAPPING
-                .read()
-                .unwrap()
-                .get(&alloc::format!("{:?}", delegate.inner))
-                .unwrap(),
-            re
-        );
+        assert_eq!(delegate.pattern, re);
         assert_eq!(captures, delegate.capture_groups);
     }
-
-    #[cfg(not(feature = "std"))]
-    fn assert_delegate(_: &crate::vm::Delegate, _: &str, _: Option<CaptureGroupRange>) {}
 }
