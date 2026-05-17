@@ -618,6 +618,45 @@ fn find_endtext_ignore_trailing_newlines_crlf() {
 }
 
 #[test]
+fn find_endtext_ignore_trailing_newlines_crlf_seek() {
+    // (?R) enables CRLF mode; \Z should then treat \r as part of trailing newlines too.
+    assert_eq!(
+        RegexBuilder::new(r"\Z")
+            .crlf(true)
+            .seek(true) // TODO: ideally we would test every pattern with seek on and off automatically to compare them. Otherwise if we change the default, we might miss test case combinations in our tests.
+            .build()
+            .unwrap()
+            .find("abc\r\n")
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
+        Some((3, 3))
+    );
+    assert_eq!(
+        RegexBuilder::new(r"\Z")
+            .crlf(true)
+            .seek(true)
+            .build()
+            .unwrap()
+            .find("abc\r\r")
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
+        Some((3, 3))
+    );
+    // bare \n still works in CRLF mode
+    assert_eq!(
+        RegexBuilder::new(r"\Z")
+            .crlf(true)
+            .seek(true)
+            .build()
+            .unwrap()
+            .find("abc\n")
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
+        Some((3, 3))
+    );
+}
+
+#[test]
 fn continue_from_previous_match_with_lookahead_before() {
     let text = "123abc";
 

@@ -1159,7 +1159,10 @@ pub(crate) fn run<S: RegexInput + ?Sized>(
                         return Ok(None);
                     }
 
-                    let input = Input::new(s.as_bytes()).span(ix..s.len()).earliest(true);
+                    // TODO: ideally we would be able to use .earliest(true) as an extra optimization
+                    //       as we only care about the start of the match, but unfortunately this doesn't
+                    //       always return the correct start position, perhaps a bug in regex-automata
+                    let input = Input::new(s.as_bytes()).span(ix..s.len());
                     match inner.search(&input) {
                         None => return Ok(None),
                         Some(m) => {
