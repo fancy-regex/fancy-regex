@@ -1,4 +1,4 @@
-use fancy_regex::{Captures, CompileError, Error, Expander, Match, Result};
+use fancy_regex::{Captures, CompileError, Error, Expander, Match, RegexInput, Result};
 use matches::assert_matches;
 use std::borrow::Cow;
 use std::ops::Index;
@@ -462,6 +462,40 @@ fn captures_from_pos_looking_left() {
     assert_eq!(captures.len(), 2);
     assert_match(captures.get(0), "x", 1, 2);
     assert_match(captures.get(1), "x", 1, 2);
+}
+
+#[test]
+fn captures_input_wrap_range_keeps_anchor_context() {
+    assert!(common::assert_captures_input(r"\bat\b", "batter", 0, 1..3).is_none());
+
+    let captures = common::assert_captures_input(r"(?m)^foo$", "xx\nfoo\nzz", 0, 3..6).unwrap();
+    assert_match(captures.get(0), "foo", 3, 6);
+}
+
+#[test]
+fn captures_input_fancy_range_allows_lookaround_outside_range() {
+    let captures = common::assert_captures_input(r"(?=(foo))\1(?=bar)", "foobar", 0, 0..3).unwrap();
+    assert_match(captures.get(0), "foo", 0, 3);
+    assert_match(captures.get(1), "foo", 0, 3);
+
+    let captures = common::assert_captures_input(r"(?<=foo)(bar)", "foobar", 3, 3..6).unwrap();
+    assert_match(captures.get(0), "bar", 3, 6);
+    assert_match(captures.get(1), "bar", 3, 6);
+}
+
+#[test]
+fn captures_iter_input_respects_range_for_empty_matches() {
+    let regex = common::regex(r"(?m)(^)");
+    let text = "a\nb\n";
+    let spans: Vec<_> = regex
+        .captures_iter_input(RegexInput::new(text).range(2..4))
+        .map(|caps| {
+            let caps = caps.unwrap();
+            let m = caps.get(0).unwrap();
+            (m.start(), m.end())
+        })
+        .collect();
+    assert_eq!(spans, vec![(2, 2), (4, 4)]);
 }
 
 #[test]

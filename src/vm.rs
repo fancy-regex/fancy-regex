@@ -94,7 +94,7 @@ pub(crate) type CachePoolFn = alloc::boxed::Box<
 >;
 
 use crate::error::RuntimeError;
-use crate::input::RegexInput;
+use crate::input::{Input as HaystackInput, RegexInput};
 use crate::Assertion;
 use crate::BytesMode;
 use crate::Error;
@@ -579,7 +579,7 @@ impl State {
     }
 }
 
-fn codepoint_len_at<S: RegexInput + ?Sized>(s: &S, ix: usize) -> usize {
+fn codepoint_len_at<S: HaystackInput + ?Sized>(s: &S, ix: usize) -> usize {
     codepoint_len(s.as_bytes()[ix])
 }
 
@@ -587,7 +587,7 @@ fn codepoint_len_at<S: RegexInput + ?Sized>(s: &S, ix: usize) -> usize {
 /// In `Ascii` mode, always advances 1 byte. In `Unicode`/`UnicodeBytes` mode, advances
 /// by the full codepoint length at `ix`.
 #[inline]
-fn advance_one<S: RegexInput + ?Sized>(s: &S, ix: usize, bytes_mode: BytesMode) -> usize {
+fn advance_one<S: HaystackInput + ?Sized>(s: &S, ix: usize, bytes_mode: BytesMode) -> usize {
     match bytes_mode {
         BytesMode::Ascii => 1,
         _ => codepoint_len_at(s, ix),
@@ -598,7 +598,7 @@ fn advance_one<S: RegexInput + ?Sized>(s: &S, ix: usize, bytes_mode: BytesMode) 
 /// In `Ascii` mode, simply returns `ix - 1`. In `Unicode`/`UnicodeBytes` mode,
 /// skips backward over UTF-8 continuation bytes.
 #[inline]
-fn prev_ix<S: RegexInput + ?Sized>(s: &S, ix: usize, bytes_mode: BytesMode) -> usize {
+fn prev_ix<S: HaystackInput + ?Sized>(s: &S, ix: usize, bytes_mode: BytesMode) -> usize {
     match bytes_mode {
         BytesMode::Ascii => ix - 1,
         _ => s.prev_codepoint_ix(ix),
@@ -606,7 +606,12 @@ fn prev_ix<S: RegexInput + ?Sized>(s: &S, ix: usize, bytes_mode: BytesMode) -> u
 }
 
 #[inline]
-fn matches_literal<S: RegexInput + ?Sized>(s: &S, ix: usize, end: usize, literal: &[u8]) -> bool {
+fn matches_literal<S: HaystackInput + ?Sized>(
+    s: &S,
+    ix: usize,
+    end: usize,
+    literal: &[u8],
+) -> bool {
     // Compare as bytes because the literal might be a single byte char whereas ix
     // points to a multibyte char. Comparing with str would result in an error like
     // "byte index N is not a char boundary".
@@ -643,7 +648,7 @@ fn matches_literal_casei_unicode(text: &str, literal: &str) -> bool {
     re.find(text).is_some()
 }
 
-fn matches_literal_casei<S: RegexInput + ?Sized>(
+fn matches_literal_casei<S: HaystackInput + ?Sized>(
     s: &S,
     ix: usize,
     end: usize,
@@ -712,8 +717,7 @@ fn store_capture_groups(
 pub fn run_trace(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
     run(
         prog,
-        s,
-        pos,
+        &RegexInput::new(s).from_pos(pos),
         OPTION_TRACE,
         &HardRegexRuntimeOptions::default(),
     )
@@ -721,18 +725,28 @@ pub fn run_trace(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>>
 
 /// Run the program with default options.
 pub fn run_default(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
-    run(prog, s, pos, 0, &HardRegexRuntimeOptions::default())
+    run(
+        prog,
+        &RegexInput::new(s).from_pos(pos),
+        0,
+        &HardRegexRuntimeOptions::default(),
+    )
 }
 
 /// Run the program with options.
 #[allow(clippy::cognitive_complexity)]
-pub(crate) fn run<S: RegexInput + ?Sized>(
+pub(crate) fn run<S: HaystackInput + ?Sized>(
     prog: &Prog,
-    s: &S,
-    pos: usize,
+    input: &RegexInput<'_, S>,
     option_flags: u32,
     options: &HardRegexRuntimeOptions,
 ) -> Result<Option<Vec<usize>>> {
+    if input.is_done() {
+        return Ok(None);
+    }
+    let s = input.haystack();
+    let pos = input.effective_start();
+    let match_range = input.get_range();
     let mut state = State::new(prog.n_saves, MAX_STACK, option_flags);
     let mut inner_slots: Vec<Option<NonMaxUsize>> = Vec::new();
     let look_matcher = LookMatcher::new();
@@ -775,6 +789,9 @@ pub(crate) fn run<S: RegexInput + ?Sized>(
                         if state.get(0) > slot1 {
                             state.save(0, slot1);
                         }
+                    }
+                    if state.get(0) < match_range.start || state.get(1) > match_range.end {
+                        break 'fail;
                     }
                     return Ok(Some(state.saves));
                 }
@@ -869,6 +886,9 @@ pub(crate) fn run<S: RegexInput + ?Sized>(
                     continue;
                 }
                 Insn::SplitUnanchored(x, y) => {
+                    if ix > match_range.end {
+                        return Ok(None);
+                    }
                     match_attempt_start = ix;
                     slash_z_matched = false;
                     state.push(y, ix)?;
@@ -1155,15 +1175,15 @@ pub(crate) fn run<S: RegexInput + ?Sized>(
                     // A sentinel value greater than s.len() is pushed onto the backtrack stack
                     // when the seek found a zero-width match at end-of-string.  On re-entry with
                     // that sentinel, there are no more positions to try.
-                    if ix > s.len() {
+                    if ix > match_range.end {
                         return Ok(None);
                     }
 
                     // TODO: ideally we would be able to use .earliest(true) as an extra optimization
                     //       as we only care about the start of the match, but unfortunately this doesn't
                     //       always return the correct start position, perhaps a bug in regex-automata
-                    let input = Input::new(s.as_bytes()).span(ix..s.len());
-                    match inner.search(&input) {
+                    let seek_input = Input::new(s.as_bytes()).span(ix..match_range.end);
+                    match inner.search(&seek_input) {
                         None => return Ok(None),
                         Some(m) => {
                             // Compute the next position to retry the seek from on backtrack:

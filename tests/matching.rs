@@ -1,4 +1,4 @@
-use fancy_regex::{BytesMode, Error, RegexBuilder, RuntimeError};
+use fancy_regex::{BytesMode, Error, RegexBuilder, RegexInput, RuntimeError};
 
 mod common;
 
@@ -107,6 +107,19 @@ fn atomic_group() {
     // Look-ahead forces use of VM
     common::assert_is_match(r"^a(bc(?=d)|b)cd$", "abcd");
     common::assert_no_match(r"^a(?>bc(?=d)|b)cd$", "abcd");
+}
+
+#[test]
+fn is_match_input_respects_range_without_slicing() {
+    let re = RegexBuilder::new(r"\bat\b").build().unwrap();
+    assert!(!re
+        .is_match_input(RegexInput::new("batter").range(1..3))
+        .unwrap());
+
+    let re = RegexBuilder::new(r"(?=(foo))\1(?=bar)").build().unwrap();
+    assert!(re
+        .is_match_input(RegexInput::new("foobar").range(0..3))
+        .unwrap());
 }
 
 #[test]

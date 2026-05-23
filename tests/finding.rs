@@ -1,6 +1,6 @@
 mod common;
 
-use fancy_regex::{Match, RegexBuilder};
+use fancy_regex::{Match, RegexBuilder, RegexInput};
 use matches::assert_matches;
 use std::ops::Range;
 
@@ -1081,6 +1081,57 @@ fn find_from_pos_at_end_still_runs() {
     let re = RegexBuilder::new("$").oniguruma_mode(true).build().unwrap();
     let result = re.find_from_pos("ab", 2).unwrap();
     assert!(result.is_some(), "pattern `$` must match at end-of-text");
+}
+
+#[test]
+fn find_input_wrap_range_keeps_word_boundary_context() {
+    assert_eq!(
+        common::assert_find_input(r"\bat\b", "batter", 0, 1..3),
+        None
+    );
+    assert_eq!(
+        common::assert_find_input(r"\bat\b", "batter at", 0, 7..9),
+        Some((7, 9))
+    );
+}
+
+#[test]
+fn find_input_wrap_range_handles_multiline_anchor_and_end_anchor() {
+    assert_eq!(
+        common::assert_find_input(r"(?m)^foo$", "xx\nfoo\nzz", 0, 3..6),
+        Some((3, 6))
+    );
+    assert_eq!(common::assert_find_input(r"$", "ab", 0, 2..2), Some((2, 2)));
+    assert_eq!(
+        common::assert_find_input(r"\z", "ab", 0, 2..2),
+        Some((2, 2))
+    );
+}
+
+#[test]
+fn find_input_fancy_range_allows_lookaround_outside_range() {
+    assert_eq!(
+        common::assert_find_input(r"(?=(foo))\1(?=bar)", "foobar", 0, 0..3),
+        Some((0, 3))
+    );
+    assert_eq!(
+        common::assert_find_input(r"(?<=foo)bar", "foobar", 3, 3..6),
+        Some((3, 6))
+    );
+}
+
+#[test]
+fn find_iter_input_respects_range_for_empty_matches() {
+    let re = common::regex(r"(?m)^");
+    let text = "a\nb\n";
+    let spans: Vec<_> = re
+        .find_iter_input(RegexInput::new(text).range(2..4))
+        .map(|m| {
+            let m = m.unwrap();
+            (m.start(), m.end())
+        })
+        .collect();
+    assert_eq!(spans, vec![(2, 2), (4, 4)]);
 }
 
 fn find(re: &str, text: &str) -> Option<(usize, usize)> {
