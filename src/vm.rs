@@ -744,7 +744,7 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
     if input.is_done() {
         return Ok(None);
     }
-    let s = input.haystack();
+    let haystack = input.haystack();
     let pos = input.effective_start();
     let match_range = input.get_range();
     let mut state = State::new(prog.n_saves, MAX_STACK, option_flags);
@@ -796,43 +796,43 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                     return Ok(Some(state.saves));
                 }
                 Insn::Any => {
-                    if ix < s.len() {
-                        ix += advance_one(s, ix, prog.bytes_mode);
+                    if ix < haystack.len() {
+                        ix += advance_one(haystack, ix, prog.bytes_mode);
                     } else {
                         break 'fail;
                     }
                 }
                 Insn::AnyNoNL => {
-                    if ix < s.len() && s.as_bytes()[ix] != b'\n' {
-                        ix += advance_one(s, ix, prog.bytes_mode);
+                    if ix < haystack.len() && haystack.as_bytes()[ix] != b'\n' {
+                        ix += advance_one(haystack, ix, prog.bytes_mode);
                     } else {
                         break 'fail;
                     }
                 }
                 Insn::AnyNoCRLF => {
-                    if ix < s.len() && s.as_bytes()[ix] != b'\r' && s.as_bytes()[ix] != b'\n' {
-                        ix += advance_one(s, ix, prog.bytes_mode);
+                    if ix < haystack.len() && haystack.as_bytes()[ix] != b'\r' && haystack.as_bytes()[ix] != b'\n' {
+                        ix += advance_one(haystack, ix, prog.bytes_mode);
                     } else {
                         break 'fail;
                     }
                 }
                 Insn::Lit(ref val) => {
                     let ix_end = ix + val.len();
-                    if !matches_literal(s, ix, ix_end, val.as_bytes()) {
+                    if !matches_literal(haystack, ix, ix_end, val.as_bytes()) {
                         break 'fail;
                     }
                     ix = ix_end
                 }
                 Insn::Assertion(assertion) => {
                     if !match assertion {
-                        Assertion::StartText => look_matcher.is_start(s.as_bytes(), ix),
+                        Assertion::StartText => look_matcher.is_start(haystack.as_bytes(), ix),
                         Assertion::EndText => {
-                            let matched = look_matcher.is_end(s.as_bytes(), ix);
+                            let matched = look_matcher.is_end(haystack.as_bytes(), ix);
                             slash_z_matched |= matched;
                             matched
                         }
                         Assertion::EndTextIgnoreTrailingNewlines { crlf } => {
-                            let bytes = s.as_bytes();
+                            let bytes = haystack.as_bytes();
                             let matched = if ix == bytes.len() {
                                 // At the end of string
                                 true
@@ -847,34 +847,34 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                             matched
                         }
                         Assertion::StartLine { crlf: false } => {
-                            look_matcher.is_start_lf(s.as_bytes(), ix)
+                            look_matcher.is_start_lf(haystack.as_bytes(), ix)
                         }
                         Assertion::StartLine { crlf: true } => {
-                            look_matcher.is_start_crlf(s.as_bytes(), ix)
+                            look_matcher.is_start_crlf(haystack.as_bytes(), ix)
                         }
                         Assertion::EndLine { crlf: false } => {
-                            look_matcher.is_end_lf(s.as_bytes(), ix)
+                            look_matcher.is_end_lf(haystack.as_bytes(), ix)
                         }
                         Assertion::EndLine { crlf: true } => {
-                            look_matcher.is_end_crlf(s.as_bytes(), ix)
+                            look_matcher.is_end_crlf(haystack.as_bytes(), ix)
                         }
                         Assertion::LeftWordBoundary => look_matcher
-                            .is_word_start_unicode(s.as_bytes(), ix)
+                            .is_word_start_unicode(haystack.as_bytes(), ix)
                             .unwrap(),
                         Assertion::RightWordBoundary => {
-                            look_matcher.is_word_end_unicode(s.as_bytes(), ix).unwrap()
+                            look_matcher.is_word_end_unicode(haystack.as_bytes(), ix).unwrap()
                         }
                         Assertion::LeftWordHalfBoundary => look_matcher
-                            .is_word_start_half_unicode(s.as_bytes(), ix)
+                            .is_word_start_half_unicode(haystack.as_bytes(), ix)
                             .unwrap(),
                         Assertion::RightWordHalfBoundary => look_matcher
-                            .is_word_end_half_unicode(s.as_bytes(), ix)
+                            .is_word_end_half_unicode(haystack.as_bytes(), ix)
                             .unwrap(),
                         Assertion::WordBoundary => {
-                            look_matcher.is_word_unicode(s.as_bytes(), ix).unwrap()
+                            look_matcher.is_word_unicode(haystack.as_bytes(), ix).unwrap()
                         }
                         Assertion::NotWordBoundary => look_matcher
-                            .is_word_unicode_negate(s.as_bytes(), ix)
+                            .is_word_unicode_negate(haystack.as_bytes(), ix)
                             .unwrap(),
                     } {
                         break 'fail;
@@ -989,7 +989,7 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                         if ix == 0 {
                             break 'fail;
                         }
-                        ix = prev_ix(s, ix, prog.bytes_mode);
+                        ix = prev_ix(haystack, ix, prog.bytes_mode);
                     }
                 }
                 Insn::FailNegativeLookAround => {
@@ -1025,13 +1025,13 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                         // Referenced group hasn't matched, so the backref doesn't match either
                         break 'fail;
                     }
-                    let ref_text = &s.as_bytes()[lo..hi];
+                    let ref_text = &haystack.as_bytes()[lo..hi];
                     let ix_end = ix + ref_text.len();
                     if casei {
-                        if !matches_literal_casei(s, ix, ix_end, ref_text, unicode) {
+                        if !matches_literal_casei(haystack, ix, ix_end, ref_text, unicode) {
                             break 'fail;
                         }
-                    } else if !matches_literal(s, ix, ix_end, ref_text) {
+                    } else if !matches_literal(haystack, ix, ix_end, ref_text) {
                         break 'fail;
                     }
                     ix = ix_end;
@@ -1057,7 +1057,7 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                 }) => {
                     // Use regex-automata to search backwards from current position
                     let mut cache_guard = cache_pool.get();
-                    let input = Input::new(s.as_bytes())
+                    let input = Input::new(haystack.as_bytes())
                         .anchored(Anchored::Yes)
                         .range(0..ix);
 
@@ -1069,7 +1069,7 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                             if let Some(inner) = capture_group_extraction_inner {
                                 if let Some(range) = capture_groups {
                                     // There are capture groups, need to search forward to populate them
-                                    let forward_input = Input::new(s.as_bytes())
+                                    let forward_input = Input::new(haystack.as_bytes())
                                         .span(match_start..ix)
                                         .anchored(Anchored::Yes);
                                     inner_slots.resize((range.end() - range.start() + 1) * 2, None);
@@ -1108,8 +1108,8 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                     pattern: _,
                     capture_groups,
                 }) => {
-                    let input = Input::new(s.as_bytes())
-                        .span(ix..s.len())
+                    let input = Input::new(haystack.as_bytes())
+                        .span(ix..haystack.len())
                         .anchored(Anchored::Yes);
                     if let Some(range) = capture_groups {
                         // Has capture groups, need to extract them
@@ -1136,8 +1136,8 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                     // If we reach end of string without delegate matching, we also continue
 
                     // Check if delegate matches at current position
-                    let input = Input::new(s.as_bytes())
-                        .span(ix..s.len())
+                    let input = Input::new(haystack.as_bytes())
+                        .span(ix..haystack.len())
                         .anchored(Anchored::Yes);
                     // capture groups in the delegate are always ignored, so we can use the quicker search_half method
                     let delegate_matches_here = delegate.inner.search_half(&input).is_some();
@@ -1146,10 +1146,10 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                         // Delegate matches at current position - we've reached the boundary
                         // Continue to next instruction without consuming any characters
                         // Fall through via pc += 1 below
-                    } else if ix < s.len() {
+                    } else if ix < haystack.len() {
                         // Try advancing one character and checking again
                         state.push(pc + 1, ix)?;
-                        ix += advance_one(s, ix, prog.bytes_mode);
+                        ix += advance_one(haystack, ix, prog.bytes_mode);
                         // Stay at same pc to check delegate match at new position
                         continue;
                     } else {
@@ -1172,7 +1172,7 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                     }
                 }
                 Insn::Seek(Seek { ref inner, .. }) => {
-                    // A sentinel value greater than s.len() is pushed onto the backtrack stack
+                    // A sentinel value greater than haystack.len() is pushed onto the backtrack stack
                     // when the seek found a zero-width match at end-of-string.  On re-entry with
                     // that sentinel, there are no more positions to try.
                     if ix > match_range.end {
@@ -1182,7 +1182,7 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                     // TODO: ideally we would be able to use .earliest(true) as an extra optimization
                     //       as we only care about the start of the match, but unfortunately this doesn't
                     //       always return the correct start position, perhaps a bug in regex-automata
-                    let seek_input = Input::new(s.as_bytes()).span(ix..match_range.end);
+                    let seek_input = Input::new(haystack.as_bytes()).span(ix..match_range.end);
                     match inner.search(&seek_input) {
                         None => return Ok(None),
                         Some(m) => {
@@ -1190,17 +1190,17 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                             // one codepoint past the start of this match (or past the end for
                             // zero-width matches) so we make progress.
                             let next_seek_start = if m.start() == m.end() {
-                                if m.end() < s.len() {
-                                    m.end() + advance_one(s, m.end(), prog.bytes_mode)
+                                if m.end() < haystack.len() {
+                                    m.end() + advance_one(haystack, m.end(), prog.bytes_mode)
                                 } else {
                                     // Zero-width match at end-of-string.  Push a sentinel value
-                                    // (s.len() + 1) so that if the main pattern fails and we
-                                    // backtrack here, the `ix > s.len()` guard above returns None
+                                    // (haystack.len() + 1) so that if the main pattern fails and we
+                                    // backtrack here, the `ix > haystack.len()` guard above returns None
                                     // immediately instead of looping.
-                                    s.len() + 1
+                                    haystack.len() + 1
                                 }
                             } else {
-                                m.start() + advance_one(s, m.start(), prog.bytes_mode)
+                                m.start() + advance_one(haystack, m.start(), prog.bytes_mode)
                             };
                             state.push(pc, next_seek_start)?;
                             ix = m.start();
@@ -1212,9 +1212,9 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                     }
                 }
                 Insn::RejectEmptyMatchAtEOFFollowingNewline => {
-                    if ix == s.len()
+                    if ix == haystack.len()
                         && ix > 0
-                        && matches_literal(s, ix - 1, ix, b"\n")
+                        && matches_literal(haystack, ix - 1, ix, b"\n")
                         && !slash_z_matched
                         && match_attempt_start == ix
                     {
