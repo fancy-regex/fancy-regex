@@ -810,7 +810,10 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                     }
                 }
                 Insn::AnyNoCRLF => {
-                    if ix < haystack.len() && haystack.as_bytes()[ix] != b'\r' && haystack.as_bytes()[ix] != b'\n' {
+                    if ix < haystack.len()
+                        && haystack.as_bytes()[ix] != b'\r'
+                        && haystack.as_bytes()[ix] != b'\n'
+                    {
                         ix += advance_one(haystack, ix, prog.bytes_mode);
                     } else {
                         break 'fail;
@@ -861,18 +864,18 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                         Assertion::LeftWordBoundary => look_matcher
                             .is_word_start_unicode(haystack.as_bytes(), ix)
                             .unwrap(),
-                        Assertion::RightWordBoundary => {
-                            look_matcher.is_word_end_unicode(haystack.as_bytes(), ix).unwrap()
-                        }
+                        Assertion::RightWordBoundary => look_matcher
+                            .is_word_end_unicode(haystack.as_bytes(), ix)
+                            .unwrap(),
                         Assertion::LeftWordHalfBoundary => look_matcher
                             .is_word_start_half_unicode(haystack.as_bytes(), ix)
                             .unwrap(),
                         Assertion::RightWordHalfBoundary => look_matcher
                             .is_word_end_half_unicode(haystack.as_bytes(), ix)
                             .unwrap(),
-                        Assertion::WordBoundary => {
-                            look_matcher.is_word_unicode(haystack.as_bytes(), ix).unwrap()
-                        }
+                        Assertion::WordBoundary => look_matcher
+                            .is_word_unicode(haystack.as_bytes(), ix)
+                            .unwrap(),
                         Assertion::NotWordBoundary => look_matcher
                             .is_word_unicode_negate(haystack.as_bytes(), ix)
                             .unwrap(),
