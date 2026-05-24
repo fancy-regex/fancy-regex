@@ -1,4 +1,6 @@
-use fancy_regex::{Captures, CompileError, Error, Expander, Match, RegexInput, Result};
+use fancy_regex::{
+    BytesMode, Captures, CompileError, Error, Expander, Match, RegexBuilder, RegexInput, Result,
+};
 use matches::assert_matches;
 use std::borrow::Cow;
 use std::ops::Index;
@@ -481,6 +483,49 @@ fn captures_input_fancy_range_allows_lookaround_outside_range() {
     let captures = common::assert_captures_input(r"(?<=foo)(bar)", "foobar", 3, 3..6).unwrap();
     assert_match(captures.get(0), "bar", 3, 6);
     assert_match(captures.get(1), "bar", 3, 6);
+}
+
+#[test]
+fn captures_input_text_boundary_overrides() {
+    let re = RegexBuilder::new(r"\A(foo)\z")
+        .allow_input_assertion_overrides(true)
+        .build()
+        .unwrap();
+    let re_bytes = RegexBuilder::new(r"\A(foo)\z")
+        .bytes_mode(BytesMode::Ascii)
+        .allow_input_assertion_overrides(true)
+        .build()
+        .unwrap();
+    let caps = re
+        .captures_input(RegexInput::new("foo").start_text(false).end_text(false))
+        .unwrap();
+    assert!(caps.is_none());
+    let caps = re_bytes
+        .captures_input(
+            RegexInput::new("foo".as_bytes())
+                .start_text(false)
+                .end_text(false),
+        )
+        .unwrap();
+    assert!(caps.is_none());
+
+    let caps = re
+        .captures_input(RegexInput::new("foo").start_text(true).end_text(true))
+        .unwrap()
+        .unwrap();
+    assert_match(caps.get(0), "foo", 0, 3);
+    assert_match(caps.get(1), "foo", 0, 3);
+
+    let caps = re_bytes
+        .captures_input(
+            RegexInput::new("foo".as_bytes())
+                .start_text(true)
+                .end_text(true),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(caps.get(0).map(|m| (m.start(), m.end())), Some((0, 3)));
+    assert_eq!(caps.get(1).map(|m| (m.start(), m.end())), Some((0, 3)));
 }
 
 #[test]

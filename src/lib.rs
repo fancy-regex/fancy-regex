@@ -560,6 +560,7 @@ struct HardRegexRuntimeOptions {
     backtrack_limit: usize,
     find_not_empty: bool,
     disallow_empty_match_at_eof_after_newline: bool,
+    allow_input_assertion_overrides: bool,
 }
 
 impl RegexOptions {
@@ -605,6 +606,7 @@ impl Default for HardRegexRuntimeOptions {
             backtrack_limit: 1_000_000,
             find_not_empty: false,
             disallow_empty_match_at_eof_after_newline: false,
+            allow_input_assertion_overrides: false,
         }
     }
 }
@@ -917,6 +919,20 @@ impl RegexOptionsBuilder {
             .disallow_empty_match_at_eof_after_newline = yes;
         self
     }
+
+    /// Allow [`RegexInput`] assertion suppression overrides at runtime.
+    ///
+    /// When enabled, patterns containing `\A` and `\z` are treated as hard and compiled to the VM
+    /// so that [`RegexInput::start_text`] and [`RegexInput::end_text`] can suppress those
+    /// assertions.
+    ///
+    /// When disabled (the default), those runtime overrides are ignored.
+    pub fn allow_input_assertion_overrides(&mut self, yes: bool) -> &mut Self {
+        self.options
+            .hard_regex_runtime_options
+            .allow_input_assertion_overrides = yes;
+        self
+    }
 }
 
 impl RegexBuilder {
@@ -1044,6 +1060,12 @@ impl RegexBuilder {
         self.options.disallow_empty_match_at_eof_after_newline(yes);
         self
     }
+
+    /// See [`RegexOptionsBuilder::allow_input_assertion_overrides`]
+    pub fn allow_input_assertion_overrides(&mut self, yes: bool) -> &mut Self {
+        self.options.allow_input_assertion_overrides(yes);
+        self
+    }
 }
 
 impl fmt::Debug for Regex {
@@ -1084,6 +1106,9 @@ impl Regex {
         let disallow_empty_match_at_eof_after_newline = options
             .hard_regex_runtime_options
             .disallow_empty_match_at_eof_after_newline;
+        let allow_input_assertion_overrides = options
+            .hard_regex_runtime_options
+            .allow_input_assertion_overrides;
 
         let requires_capture_group_fixup = if find_not_empty {
             // if the find_not_empty flag is set, we skip optimizations
@@ -1102,6 +1127,7 @@ impl Regex {
                 explicit_capture_group_0: requires_capture_group_fixup,
                 find_not_empty,
                 disallow_empty_match_at_eof_after_newline,
+                allow_input_assertion_overrides,
             },
         )?;
 
@@ -2353,17 +2379,18 @@ pub enum Assertion {
 }
 
 impl Assertion {
-    pub(crate) fn is_hard(&self) -> bool {
+    pub(crate) fn is_always_hard(&self) -> bool {
         use Assertion::*;
         matches!(
             self,
-            // these will make regex-automata use PikeVM
+            // these will make regex-automata use PikeVM and are not compabible with certain regex-automata features we use
             LeftWordBoundary
                 | LeftWordHalfBoundary
                 | RightWordBoundary
                 | RightWordHalfBoundary
                 | WordBoundary
                 | NotWordBoundary
+                // `\Z` needs custom trailing-newline handling.
                 | EndTextIgnoreTrailingNewlines { .. }
         )
     }
@@ -2727,7 +2754,7 @@ mod tests {
     use alloc::{format, vec};
 
     use crate::parse::{make_group, make_literal};
-    use crate::{Absent, Expr, Regex, RegexImpl};
+    use crate::{Absent, Expr, Regex, RegexBuilder, RegexImpl};
 
     //use detect_possible_backref;
 
@@ -2865,6 +2892,27 @@ mod tests {
         );
         assert_eq!(s, regex.as_str());
         assert_eq!(s, format!("{:?}", regex));
+    }
+
+    #[test]
+    fn start_end_text_assertions_can_stay_wrap_without_override_opt_in() {
+        let regex = Regex::new(r"\Afoo\z").unwrap();
+        assert!(
+            matches!(regex.inner, RegexImpl::Wrap { .. }),
+            r"\A...\z should stay on the wrap path unless input assertion overrides are enabled"
+        );
+    }
+
+    #[test]
+    fn start_end_text_assertions_become_fancy_with_override_opt_in() {
+        let regex = RegexBuilder::new(r"\Afoo\z")
+            .allow_input_assertion_overrides(true)
+            .build()
+            .unwrap();
+        assert!(
+            matches!(regex.inner, RegexImpl::Fancy { .. }),
+            r"\A...\z should use the VM when input assertion overrides are enabled"
+        );
     }
 
     /*

@@ -1,4 +1,4 @@
-use fancy_regex::{CompileError, Error, ParseError, Regex, RegexBuilder};
+use fancy_regex::{CompileError, Error, ParseError, Regex, RegexBuilder, RegexInput};
 
 mod common;
 
@@ -618,4 +618,59 @@ fn disallow_empty_match_at_eof_after_newline_still_allows_slash_z() {
         find_all_matches(&create_regex(r"$\z", false), haystack),
         [4]
     );
+}
+
+#[test]
+fn input_assertion_overrides_are_ignored_by_default() {
+    let re = build_regex(&RegexBuilder::new(r"\Afoo\z"));
+    assert_eq!(
+        re.find_input(RegexInput::new("foo").start_text(false).end_text(false))
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
+        Some((0, 3))
+    );
+}
+
+#[test]
+fn input_assertion_overrides_require_builder_opt_in() {
+    let re = build_regex(RegexBuilder::new(r"\Afoo\z").allow_input_assertion_overrides(true));
+    assert_eq!(
+        re.find_input(RegexInput::new("foo").start_text(false).end_text(false))
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
+        None
+    );
+}
+
+#[test]
+fn continue_from_previous_match_end_override_is_suppression_only() {
+    let re = build_regex(RegexBuilder::new(r"\G").allow_input_assertion_overrides(true));
+    let text = "ab";
+
+    let default_spans: Vec<_> = re
+        .find_iter_input(RegexInput::new(text))
+        .map(|m| {
+            let m = m.unwrap();
+            (m.start(), m.end())
+        })
+        .collect();
+    assert_eq!(default_spans, vec![(0, 0)]);
+
+    let suppressed_spans: Vec<_> = re
+        .find_iter_input(RegexInput::new(text).continue_from_previous_match_end(false))
+        .map(|m| {
+            let m = m.unwrap();
+            (m.start(), m.end())
+        })
+        .collect();
+    assert!(suppressed_spans.is_empty());
+
+    let cleared_override_spans: Vec<_> = re
+        .find_iter_input(RegexInput::new(text).continue_from_previous_match_end(true))
+        .map(|m| {
+            let m = m.unwrap();
+            (m.start(), m.end())
+        })
+        .collect();
+    assert_eq!(cleared_override_spans, default_spans);
 }

@@ -828,9 +828,19 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                 }
                 Insn::Assertion(assertion) => {
                     if !match assertion {
-                        Assertion::StartText => look_matcher.is_start(haystack.as_bytes(), ix),
+                        Assertion::StartText => input
+                            .start_text_override()
+                            .and_then(|value| {
+                                options.allow_input_assertion_overrides.then_some(value)
+                            })
+                            .unwrap_or_else(|| look_matcher.is_start(haystack.as_bytes(), ix)),
                         Assertion::EndText => {
-                            let matched = look_matcher.is_end(haystack.as_bytes(), ix);
+                            let matched = input
+                                .end_text_override()
+                                .and_then(|value| {
+                                    options.allow_input_assertion_overrides.then_some(value)
+                                })
+                                .unwrap_or_else(|| look_matcher.is_end(haystack.as_bytes(), ix));
                             slash_z_matched |= matched;
                             matched
                         }
@@ -1161,7 +1171,11 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                     }
                 }
                 Insn::ContinueFromPreviousMatchEnd { at_start } => {
-                    if ix > pos || option_flags & OPTION_SKIPPED_EMPTY_MATCH != 0 {
+                    let at_previous_match_end = input
+                        .continue_from_previous_match_end_override()
+                        .and_then(|value| options.allow_input_assertion_overrides.then_some(value))
+                        .unwrap_or(ix == pos && option_flags & OPTION_SKIPPED_EMPTY_MATCH == 0);
+                    if !at_previous_match_end {
                         // If \G is at the start of the pattern, we can fail early
                         // instead of checking at each position in the haystack
                         // because \G will never match at any other position

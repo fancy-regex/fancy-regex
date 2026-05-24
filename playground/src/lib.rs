@@ -209,6 +209,7 @@ pub fn analyze_regex(pattern: &str, flags: JsValue) -> Result<String, String> {
                     explicit_capture_group_0: requires_capture_group_fixup,
                     find_not_empty: flags.find_not_empty,
                     disallow_empty_match_at_eof_after_newline: flags.ignore_trailing_newline,
+                    allow_input_assertion_overrides: false,
                 },
             ) {
                 Ok(info) => Ok(format!("{:#?}", info)),
@@ -483,6 +484,7 @@ pub fn analyze_regex_tree(pattern: &str, flags: JsValue) -> Result<JsValue, Stri
                     explicit_capture_group_0: requires_capture_group_fixup,
                     find_not_empty: flags.find_not_empty,
                     disallow_empty_match_at_eof_after_newline: flags.ignore_trailing_newline,
+                    allow_input_assertion_overrides: false,
                 },
             ) {
                 Ok(info) => {
