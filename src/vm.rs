@@ -115,6 +115,13 @@ pub(crate) const OPTION_SKIPPED_EMPTY_MATCH: u32 = 1 << 1;
 /// \K is ignored as part of this check - so empty matches can still be reported if the engine
 /// consumed characters and then \K was used afterwards.
 pub(crate) const OPTION_FIND_NOT_EMPTY: u32 = 1 << 2;
+/// When this option is set, the VM will only attempt to match at the start position given by the
+/// input (`effective_start`), without scanning forward.  `SplitUnanchored` and `Seek` preamble
+/// instructions are treated as no-ops that simply advance to the real pattern body; no backtrack
+/// branch is pushed for retrying at later positions.  This is used by [`RegexSet`] verification,
+/// where the many-DFA has already identified candidate start positions and the VM only needs to
+/// confirm (or deny) a match anchored at that exact position.
+pub(crate) const OPTION_ANCHORED: u32 = 1 << 3;
 
 // TODO: make configurable
 const MAX_STACK: usize = 1_000_000;
@@ -904,7 +911,13 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                     }
                     match_attempt_start = ix;
                     slash_z_matched = false;
-                    state.push(y, ix)?;
+
+                    if option_flags & OPTION_ANCHORED != 0 {
+                        // Anchored mode: only try at the current position; do not push a
+                        // backtrack branch for advancing to the next position.
+                    } else {
+                        state.push(y, ix)?;
+                    }
                     pc = x;
                     continue;
                 }
@@ -1196,37 +1209,45 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                         return Ok(None);
                     }
 
-                    // TODO: ideally we would be able to use .earliest(true) as an extra optimization
-                    //       as we only care about the start of the match, but unfortunately this doesn't
-                    //       always return the correct start position, perhaps a bug in regex-automata
-                    let seek_input = Input::new(haystack.as_bytes()).span(ix..match_range.end);
-                    match inner.search(&seek_input) {
-                        None => return Ok(None),
-                        Some(m) => {
-                            // Compute the next position to retry the seek from on backtrack:
-                            // one codepoint past the start of this match (or past the end for
-                            // zero-width matches) so we make progress.
-                            let next_seek_start = if m.start() == m.end() {
-                                if m.end() < haystack.len() {
-                                    m.end() + advance_one(haystack, m.end(), prog.bytes_mode)
+                    if option_flags & OPTION_ANCHORED != 0 {
+                        // Anchored mode: the idea is that since the many-DFA from the regex-set has
+                        // already confirmed a candidate match starting at this position, there is no
+                        // need to verify the seek pattern matches here. We also don't push any backtracking
+                        // states and just continue on like a no-op.
+                    } else {
+
+                        // TODO: ideally we would be able to use .earliest(true) as an extra optimization
+                        //       as we only care about the start of the match, but unfortunately this doesn't
+                        //       always return the correct start position, perhaps a bug in regex-automata
+                        let seek_input = Input::new(haystack.as_bytes()).span(ix..match_range.end);
+                        match inner.search(&seek_input) {
+                            None => return Ok(None),
+                            Some(m) => {
+                                // Compute the next position to retry the seek from on backtrack:
+                                // one codepoint past the start of this match (or past the end for
+                                // zero-width matches) so we make progress.
+                                let next_seek_start = if m.start() == m.end() {
+                                    if m.end() < haystack.len() {
+                                        m.end() + advance_one(haystack, m.end(), prog.bytes_mode)
+                                    } else {
+                                        // Zero-width match at end-of-string.  Push a sentinel value
+                                        // (haystack.len() + 1) so that if the main pattern fails and we
+                                        // backtrack here, the `ix > haystack.len()` guard above returns None
+                                        // immediately instead of looping.
+                                        haystack.len() + 1
+                                    }
                                 } else {
-                                    // Zero-width match at end-of-string.  Push a sentinel value
-                                    // (haystack.len() + 1) so that if the main pattern fails and we
-                                    // backtrack here, the `ix > haystack.len()` guard above returns None
-                                    // immediately instead of looping.
-                                    haystack.len() + 1
-                                }
-                            } else {
-                                m.start() + advance_one(haystack, m.start(), prog.bytes_mode)
-                            };
-                            state.push(pc, next_seek_start)?;
-                            ix = m.start();
-                            match_attempt_start = ix;
-                            slash_z_matched = false;
-                            pc += 1;
-                            continue;
+                                    m.start() + advance_one(haystack, m.start(), prog.bytes_mode)
+                                };
+                                state.push(pc, next_seek_start)?;
+                                ix = m.start();
+                            }
                         }
                     }
+                    match_attempt_start = ix;
+                    slash_z_matched = false;
+                    pc += 1;
+                    continue;
                 }
                 Insn::RejectEmptyMatchAtEOFFollowingNewline => {
                     if ix == haystack.len()
