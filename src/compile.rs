@@ -1039,40 +1039,25 @@ pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
         root_info: None,
     };
 
-    if c.options.contains_subroutines {
-        // Store root info for group 0 subroutine calls
-        c.root_info = Some(info);
+    // Store root info for group 0 subroutine calls
+    c.root_info = Some(info);
 
-        // Pre-populate the group_info_map to support forward references
-        populate_group_info_map(&mut c.group_info_map, info);
-    }
+    // Pre-populate the group_info_map to support forward references
+    populate_group_info_map(&mut c.group_info_map, info);
+    
+    let mut seek_pat = String::new();
+    build_seek_pattern(info, c.group_info_map, 0, &mut seek_pat, 0);
 
     if !c.options.anchored {
-        // Attempt to build a Seek pre-filter when requested.
         let mut used_seek = false;
         if let Some(filter) = c.options.seek_filter {
-            if info.hard {
-                // Build the group_info_map if not already populated (needed for backref inlining).
-                let mut local_group_info_map: Map<usize, &Info<'_>>;
-                let group_info_map: &Map<usize, &Info<'_>> = if c.options.contains_subroutines {
-                    &c.group_info_map
-                } else {
-                    local_group_info_map = Map::new();
-                    populate_group_info_map(&mut local_group_info_map, info);
-                    &local_group_info_map
-                };
-
-                let mut seek_pat = String::new();
-                build_seek_pattern(info, group_info_map, 0, &mut seek_pat, 0);
-
-                if filter(&seek_pat) {
-                    if let Ok(inner) = compile_inner(&seek_pat, &c.options) {
-                        c.b.add(Insn::Seek(Seek {
-                            inner,
-                            pattern: seek_pat,
-                        }));
-                        used_seek = true;
-                    }
+            if filter(&seek_pat) {
+                if let Ok(inner) = compile_inner(&seek_pat, &c.options) {
+                    c.b.add(Insn::Seek(Seek {
+                        inner,
+                        pattern: seek_pat,
+                    }));
+                    used_seek = true;
                 }
             }
         }
