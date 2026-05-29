@@ -380,14 +380,17 @@ pub struct Prog {
     n_saves: usize,
     /// How the VM advances positions: byte-level (Ascii) vs codepoint-level (Unicode/UnicodeBytes).
     bytes_mode: BytesMode,
+    /// A pattern compatible with a DFA which can be used to seek to candidate positions where the real/full pattern might match
+    pub (crate) seek_pattern: String,
 }
 
 impl Prog {
-    pub(crate) fn new(body: Vec<Insn>, n_saves: usize, bytes_mode: BytesMode) -> Prog {
+    pub(crate) fn new(body: Vec<Insn>, n_saves: usize, bytes_mode: BytesMode, seek_pattern: String) -> Prog {
         Prog {
             body,
             n_saves,
             bytes_mode,
+            seek_pattern,
         }
     }
 
