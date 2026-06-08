@@ -381,11 +381,16 @@ pub struct Prog {
     /// How the VM advances positions: byte-level (Ascii) vs codepoint-level (Unicode/UnicodeBytes).
     bytes_mode: BytesMode,
     /// A pattern compatible with a DFA which can be used to seek to candidate positions where the real/full pattern might match
-    pub (crate) seek_pattern: String,
+    pub(crate) seek_pattern: String,
 }
 
 impl Prog {
-    pub(crate) fn new(body: Vec<Insn>, n_saves: usize, bytes_mode: BytesMode, seek_pattern: String) -> Prog {
+    pub(crate) fn new(
+        body: Vec<Insn>,
+        n_saves: usize,
+        bytes_mode: BytesMode,
+        seek_pattern: String,
+    ) -> Prog {
         Prog {
             body,
             n_saves,
@@ -1218,7 +1223,6 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                         // need to verify the seek pattern matches here. We also don't push any backtracking
                         // states and just continue on like a no-op.
                     } else {
-
                         // TODO: ideally we would be able to use .earliest(true) as an extra optimization
                         //       as we only care about the start of the match, but unfortunately this doesn't
                         //       always return the correct start position, perhaps a bug in regex-automata

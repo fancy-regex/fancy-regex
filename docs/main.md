@@ -84,6 +84,19 @@ Using [`RegexInput`] preserves the original haystack for anchors, word
 boundaries, and lookaround while still constraining the reported match to a
 specific byte range.
 
+## RegexSet notes for `regex` crate users
+
+`fancy_regex::RegexSet` is not a drop-in API replacement for `regex::RegexSet`.
+
+- `regex::RegexSet` answers "which patterns matched anywhere?"
+- `fancy_regex::RegexSet` answers "what matched at the earliest position?" and yields
+  full matches (with offsets and captures) in pattern index order.
+- Each yielded match is a `Result`, since fancy features may fail at runtime (for
+  example when a backtracking limit is exceeded).
+
+This design is useful for tasks like tokenization/syntax-highlighting where you
+need both match locations and explicit control over priority resolution.
+
 ## Example: Splitting text
 
 ```rust

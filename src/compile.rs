@@ -991,7 +991,9 @@ impl core::fmt::Debug for CompileOptions {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let seek_filter_desc = match self.seek_filter {
             None => "None",
-            Some(f_ptr) if f_ptr as usize == crate::seek::seek_pattern_is_useful as usize => {
+            Some(f_ptr)
+                if (f_ptr as *const ()) == (crate::seek::seek_pattern_is_useful as *const ()) =>
+            {
                 "Some(seek_pattern_is_useful)"
             }
             Some(_) => "Some(<custom>)",
