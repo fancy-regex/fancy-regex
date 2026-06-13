@@ -25,6 +25,18 @@ fn captures_fancy() {
 }
 
 #[test]
+fn nested_repeats_preserve_capture_numbering() {
+    let re = RegexBuilder::new(r"(x+){1,}(y)$")
+        .oniguruma_mode(true)
+        .build()
+        .unwrap();
+    let captures = re.captures("xxxy").unwrap().unwrap();
+    assert_eq!(captures.len(), 3);
+    assert_match(captures.get(1), "xxx", 0, 3);
+    assert_match(captures.get(2), "y", 3, 4);
+}
+
+#[test]
 fn captures_fancy_named() {
     let captures = common::assert_captures(r"\s*(?<name>\w+)(?=\.)", "foo bar.").unwrap();
     assert_eq!(captures.len(), 2);

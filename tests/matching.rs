@@ -86,6 +86,32 @@ fn alternation_with_empty_arm() {
 }
 
 #[test]
+fn nested_repeats_match_same_language() {
+    fn assert_oniguruma_is_match(pattern: &str, text: &str) {
+        let re = RegexBuilder::new(pattern)
+            .oniguruma_mode(true)
+            .build()
+            .unwrap();
+        assert!(re.is_match(text).unwrap());
+    }
+
+    fn assert_oniguruma_no_match(pattern: &str, text: &str) {
+        let re = RegexBuilder::new(pattern)
+            .oniguruma_mode(true)
+            .build()
+            .unwrap();
+        assert!(!re.is_match(text).unwrap());
+    }
+
+    assert_oniguruma_is_match(r"^(x+){1,}$", "xxx");
+    assert_oniguruma_no_match(r"^(x+){1,}$", "xxy");
+    assert_oniguruma_is_match(r"^(x*){1,}$", "");
+    assert_oniguruma_is_match(r"^(x*){1,}$", "xxx");
+    assert_oniguruma_is_match(r"^(x?){1,}$", "");
+    assert_oniguruma_is_match(r"^(x?){1,}$", "xxx");
+}
+
+#[test]
 fn case_insensitive_character_class() {
     common::assert_is_match(r"^(?i)[a-z]+$", "aB");
 }
