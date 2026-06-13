@@ -249,8 +249,7 @@ impl<'a> Parser<'a> {
             let mut adjacent = 0;
             loop {
                 let before = ix;
-                let (next_ix, next_repeat) =
-                    self.parse_quantifier(ix, before, repeat)?;
+                let (next_ix, next_repeat) = self.parse_quantifier(ix, before, repeat)?;
                 ix = next_ix;
                 repeat = next_repeat;
                 if ix == before {
