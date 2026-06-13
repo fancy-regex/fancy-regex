@@ -1,4 +1,5 @@
-use fancy_regex::{BytesMode, Captures, Regex, RegexBuilder};
+use fancy_regex::{BytesMode, Captures, Regex, RegexBuilder, RegexInput};
+use std::ops::Range;
 
 #[allow(dead_code)]
 pub fn regex(re: &str) -> Regex {
@@ -84,6 +85,36 @@ pub fn assert_find(re: &str, text: &str) -> Option<(usize, usize)> {
     assert_eq!(
         str_result, bytes_result,
         "Expected regex '{}' find results to agree between str and bytes mode for text '{}'",
+        re, text
+    );
+    str_result
+}
+
+/// Run `find_input` against `text` in both str mode and ASCII bytes mode, assert
+/// that both agree, and return the common result.
+#[cfg_attr(feature = "track_caller", track_caller)]
+#[allow(dead_code)]
+pub fn assert_find_input(
+    re: &str,
+    text: &str,
+    start: usize,
+    range: Range<usize>,
+) -> Option<(usize, usize)> {
+    let str_result = regex(re)
+        .find_input(RegexInput::new(text).from_pos(start).range(range.clone()))
+        .unwrap()
+        .map(|m| (m.start(), m.end()));
+    let bytes_result = ascii_bytes_regex(re)
+        .find_input(
+            RegexInput::new(text.as_bytes())
+                .from_pos(start)
+                .range(range),
+        )
+        .unwrap()
+        .map(|m| (m.start(), m.end()));
+    assert_eq!(
+        str_result, bytes_result,
+        "Expected regex '{}' find_input results to agree between str and bytes mode for text '{}'",
         re, text
     );
     str_result
@@ -178,6 +209,57 @@ pub fn assert_captures_from_pos<'t>(
                 re,
                 text,
                 pos
+            );
+        }
+    }
+    str_result
+}
+
+/// Run `captures_input` against `text` in both str mode and ASCII bytes mode,
+/// assert that both agree on every group span, and return the str-mode result.
+#[cfg_attr(feature = "track_caller", track_caller)]
+#[allow(dead_code)]
+pub fn assert_captures_input<'t>(
+    re: &str,
+    text: &'t str,
+    start: usize,
+    range: Range<usize>,
+) -> Option<Captures<'t, str>> {
+    let str_result = regex(re)
+        .captures_input(RegexInput::new(text).from_pos(start).range(range.clone()))
+        .expect("expected captures_input to succeed (str mode)");
+    let bytes_result = ascii_bytes_regex(re)
+        .captures_input(
+            RegexInput::new(text.as_bytes())
+                .from_pos(start)
+                .range(range),
+        )
+        .expect("expected captures_input to succeed (bytes mode)");
+    assert_eq!(
+        str_result.is_some(),
+        bytes_result.is_some(),
+        "Expected regex '{}' captures_input to agree between str and bytes modes for '{}'",
+        re,
+        text
+    );
+    if let (Some(ref s), Some(ref b)) = (&str_result, &bytes_result) {
+        assert_eq!(
+            s.len(),
+            b.len(),
+            "Expected capture group count to agree for regex '{}' on '{}'",
+            re,
+            text
+        );
+        for i in 0..s.len() {
+            let str_span = s.get(i).map(|m| (m.start(), m.end()));
+            let bytes_span = b.get(i).map(|m| (m.start(), m.end()));
+            assert_eq!(
+                str_span,
+                bytes_span,
+                "Expected capture group {} to agree between str and bytes modes for regex '{}' on '{}'",
+                i,
+                re,
+                text
             );
         }
     }

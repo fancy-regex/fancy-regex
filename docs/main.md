@@ -65,6 +65,25 @@ let group = captures.get(1).expect("No group");
 assert_eq!(group.as_str(), "20");
 ```
 
+## Example: Searching within a range without slicing
+
+```rust
+use fancy_regex::{Regex, RegexInput};
+
+let re = Regex::new(r"\bat\b").unwrap();
+let haystack = "batter at";
+
+assert!(re.find("at").unwrap().is_some());
+assert!(re
+    .find_input(RegexInput::new(haystack).range(1..3))
+    .unwrap()
+    .is_none());
+```
+
+Using [`RegexInput`] preserves the original haystack for anchors, word
+boundaries, and lookaround while still constraining the reported match to a
+specific byte range.
+
 ## Example: Splitting text
 
 ```rust

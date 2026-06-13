@@ -1,6 +1,7 @@
 use crate::bytes::MatchBytes;
 use crate::Match;
 use alloc::string::String;
+use core::ops::Range;
 
 /// Returns the smallest possible index of the next valid UTF-8 sequence
 /// starting after `i`.
@@ -14,10 +15,89 @@ pub(crate) fn next_input_pos(text: &[u8], i: usize) -> usize {
     i + crate::codepoint_len(b)
 }
 
-/// A trait abstracting over input types for regex matching.
+/// A search configuration for matching against a haystack.
 ///
-/// This trait is implemented for `str`, `String`, `[u8]`, and `[u8; N]`, allowing
-/// regex methods to work with both UTF-8 text and raw byte slices.
+/// This keeps the original haystack together with a starting search position
+/// and a range that constrains where the overall match may occur. Unlike
+/// slicing a haystack, anchors and lookaround can still inspect the full
+/// original input, and reported offsets remain absolute.
+#[derive(Clone, Debug)]
+pub struct RegexInput<'h, S: Input + ?Sized> {
+    haystack: &'h S,
+    start: usize,
+    range: Range<usize>,
+}
+
+impl<'h, S: Input + ?Sized> RegexInput<'h, S> {
+    /// Create a new search input over the full haystack.
+    pub fn new(haystack: &'h S) -> Self {
+        Self {
+            haystack,
+            start: 0,
+            range: 0..haystack.len(),
+        }
+    }
+
+    /// Return the haystack being searched.
+    pub fn haystack(&self) -> &'h S {
+        self.haystack
+    }
+
+    /// Return the requested starting position for this search.
+    pub fn start(&self) -> usize {
+        self.start
+    }
+
+    /// Return the range constraining where match `0` may occur.
+    pub fn get_range(&self) -> Range<usize> {
+        self.range.clone()
+    }
+
+    /// Return a copy of this input with a different search start.
+    pub fn from_pos(mut self, start: usize) -> Self {
+        self.start = start;
+        self
+    }
+
+    /// Return a copy of this input with a different search range.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the range is not within the haystack bounds or if
+    /// `range.start > range.end`.
+    pub fn range(mut self, range: Range<usize>) -> Self {
+        assert!(range.start <= range.end, "range start must be <= range end");
+        assert!(
+            range.end <= self.haystack.len(),
+            "range end must be within haystack bounds"
+        );
+        self.range = range;
+        self
+    }
+
+    pub(crate) fn effective_start(&self) -> usize {
+        self.start.max(self.range.start)
+    }
+
+    pub(crate) fn is_done(&self) -> bool {
+        self.effective_start() > self.range.end
+    }
+
+    pub(crate) fn set_start(&mut self, start: usize) {
+        self.start = start;
+    }
+}
+
+impl<'h, S: Input + ?Sized> From<&'h S> for RegexInput<'h, S> {
+    fn from(haystack: &'h S) -> Self {
+        Self::new(haystack)
+    }
+}
+
+/// A trait abstracting over haystack types for regex matching.
+///
+/// This trait is implemented for `str`, `String`, `[u8]`, and `[u8; N]`,
+/// allowing regex methods to work with both UTF-8 text and raw byte slices.
 ///
 /// When the regex is compiled with [`BytesMode::Ascii`](crate::BytesMode),
 /// patterns like `.` will match any byte in `[u8]` input. Without bytes mode,
@@ -26,7 +106,7 @@ pub(crate) fn next_input_pos(text: &[u8], i: usize) -> usize {
 /// The associated type [`Match<'t>`](Self::Match) is the concrete match type
 /// returned for a given input: [`Match<'t>`](crate::Match) for string inputs,
 /// [`MatchBytes<'t>`](crate::MatchBytes) for byte slice inputs.
-pub trait RegexInput {
+pub trait Input {
     /// The match type produced for this input.
     type Match<'t>
     where
@@ -52,7 +132,7 @@ pub trait RegexInput {
     fn advance_position(&self, i: usize) -> usize;
 }
 
-impl<S: RegexInput + ?Sized> RegexInput for &S {
+impl<S: Input + ?Sized> Input for &S {
     type Match<'t>
         = S::Match<'t>
     where
@@ -81,7 +161,7 @@ impl<S: RegexInput + ?Sized> RegexInput for &S {
     }
 }
 
-impl RegexInput for str {
+impl Input for str {
     type Match<'t> = Match<'t>;
 
     fn len(&self) -> usize {
@@ -107,7 +187,7 @@ impl RegexInput for str {
     }
 }
 
-impl RegexInput for String {
+impl Input for String {
     type Match<'t> = Match<'t>;
 
     fn len(&self) -> usize {
@@ -133,7 +213,7 @@ impl RegexInput for String {
     }
 }
 
-impl RegexInput for [u8] {
+impl Input for [u8] {
     type Match<'t> = MatchBytes<'t>;
 
     fn len(&self) -> usize {
@@ -163,7 +243,7 @@ impl RegexInput for [u8] {
     }
 }
 
-impl<const N: usize> RegexInput for [u8; N] {
+impl<const N: usize> Input for [u8; N] {
     type Match<'t> = MatchBytes<'t>;
 
     fn len(&self) -> usize {

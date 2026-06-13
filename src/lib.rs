@@ -73,7 +73,7 @@ use crate::vm::{Prog, OPTION_FIND_NOT_EMPTY, OPTION_SKIPPED_EMPTY_MATCH};
 pub use crate::bytes::MatchBytes;
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
 pub use crate::expand::Expander;
-pub use crate::input::RegexInput;
+pub use crate::input::{Input, RegexInput};
 pub use crate::replacer::{NoExpand, Replacer, ReplacerRef};
 pub use crate::seek::seek_pattern_is_useful;
 
@@ -195,15 +195,14 @@ pub struct Match<'t> {
 /// `'r` is the lifetime of the compiled regular expression and `'t` is the
 /// lifetime of the matched input.
 #[derive(Debug)]
-pub struct Matches<'r, 't, S: input::RegexInput + ?Sized> {
+pub struct Matches<'r, 't, S: input::Input + ?Sized> {
     re: &'r Regex,
-    text: &'t S,
-    last_end: usize,
+    input: RegexInput<'t, S>,
     last_match: Option<usize>,
     last_skipped_empty: bool,
 }
 
-impl<'r, 't, S: input::RegexInput + ?Sized> Matches<'r, 't, S> {
+impl<'r, 't, S: input::Input + ?Sized> Matches<'r, 't, S> {
     /// Return the underlying regex.
     pub fn regex(&self) -> &'r Regex {
         self.re
@@ -211,7 +210,12 @@ impl<'r, 't, S: input::RegexInput + ?Sized> Matches<'r, 't, S> {
 
     /// Return the text being searched.
     pub fn text(&self) -> &'t S {
-        self.text
+        self.input.haystack()
+    }
+
+    /// Return the current search input configuration.
+    pub fn input(&self) -> &RegexInput<'t, S> {
+        &self.input
     }
 
     /// Adapted from the `regex` crate. Calls `find_from_pos`/`captures_from_pos` repeatedly.
@@ -219,9 +223,9 @@ impl<'r, 't, S: input::RegexInput + ?Sized> Matches<'r, 't, S> {
     /// Also passes a flag when skipping an empty match, so that \G wouldn't match at the new start position.
     fn next_with<F, R>(&mut self, mut search: F) -> Option<Result<R>>
     where
-        F: FnMut(&Regex, usize, u32) -> Result<Option<(R, (usize, usize))>>,
+        F: FnMut(&Regex, &RegexInput<'t, S>, u32) -> Result<Option<(R, (usize, usize))>>,
     {
-        if self.last_end > self.text.len() {
+        if self.input.is_done() {
             return None;
         }
 
@@ -231,12 +235,13 @@ impl<'r, 't, S: input::RegexInput + ?Sized> Matches<'r, 't, S> {
             0
         };
 
-        let pos = self.last_end;
-        let (result, (match_start, match_end)) = match search(self.re, pos, option_flags) {
+        let pos = self.input.effective_start();
+        let (result, (match_start, match_end)) = match search(self.re, &self.input, option_flags) {
             Err(error) => {
                 // Stop on first error: If an error is encountered, return it, and set the "last match position"
                 // to the string length, so that the next next() call will return None, to prevent an infinite loop.
-                self.last_end = self.text.len() + 1;
+                self.input
+                    .set_start(self.input.get_range().end.saturating_add(1));
                 return Some(Err(error));
             }
             Ok(None) => return None,
@@ -247,7 +252,8 @@ impl<'r, 't, S: input::RegexInput + ?Sized> Matches<'r, 't, S> {
             // This is an empty match. To ensure we make progress, start
             // the next search at the smallest possible starting position
             // of the next match following this one.
-            self.last_end = self.text.advance_position(match_end);
+            self.input
+                .set_start(self.input.haystack().advance_position(match_end));
             // Only set OPTION_SKIPPED_EMPTY_MATCH on the next call if this was a
             // truly zero-length match (the VM consumed no bytes from `pos`).
             // This means that \K won't prevent \G from matching.
@@ -258,7 +264,7 @@ impl<'r, 't, S: input::RegexInput + ?Sized> Matches<'r, 't, S> {
                 return self.next_with(search);
             }
         } else {
-            self.last_end = match_end;
+            self.input.set_start(match_end);
             self.last_skipped_empty = false;
         }
 
@@ -268,13 +274,13 @@ impl<'r, 't, S: input::RegexInput + ?Sized> Matches<'r, 't, S> {
     }
 }
 
-impl<'r, 't, S: input::RegexInput + ?Sized> Iterator for Matches<'r, 't, S> {
+impl<'r, 't, S: input::Input + ?Sized> Iterator for Matches<'r, 't, S> {
     type Item = Result<S::Match<'t>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let text = self.text;
-        self.next_with(move |re, pos, flags| {
-            re.find_from_pos_raw(text, pos, flags)
+        let text = self.input.haystack();
+        self.next_with(move |re, input, flags| {
+            re.find_input_raw(input, flags)
                 .map(|opt| opt.map(|(s, e)| (text.make_match(s, e), (s, e))))
         })
     }
@@ -288,12 +294,12 @@ impl<'r, 't, S: input::RegexInput + ?Sized> Iterator for Matches<'r, 't, S> {
 /// `'r` is the lifetime of the compiled regular expression and `'t` is the
 /// lifetime of the matched string.
 #[derive(Debug)]
-pub struct CaptureMatches<'r, 't, S: input::RegexInput + ?Sized>(Matches<'r, 't, S>);
+pub struct CaptureMatches<'r, 't, S: input::Input + ?Sized>(Matches<'r, 't, S>);
 
-impl<'r, 't, S: input::RegexInput + ?Sized> CaptureMatches<'r, 't, S> {
+impl<'r, 't, S: input::Input + ?Sized> CaptureMatches<'r, 't, S> {
     /// Return the text being searched.
     pub fn text(&self) -> &'t S {
-        self.0.text
+        self.0.input.haystack()
     }
 
     /// Return the underlying regex.
@@ -302,13 +308,12 @@ impl<'r, 't, S: input::RegexInput + ?Sized> CaptureMatches<'r, 't, S> {
     }
 }
 
-impl<'r, 't, S: input::RegexInput + ?Sized> Iterator for CaptureMatches<'r, 't, S> {
+impl<'r, 't, S: input::Input + ?Sized> Iterator for CaptureMatches<'r, 't, S> {
     type Item = Result<Captures<'t, S>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let text = self.0.text;
-        self.0.next_with(move |re, pos, flags| {
-            let captures = re.captures_from_pos_with_option_flags(text, pos, flags)?;
+        self.0.next_with(move |re, input, flags| {
+            let captures = re.captures_input_with_option_flags(input, flags)?;
             Ok(captures.map(|c| {
                 let (start, end) = c
                     .inner
@@ -324,7 +329,7 @@ impl<'r, 't, S: input::RegexInput + ?Sized> Iterator for CaptureMatches<'r, 't, 
 ///
 /// `S` is the input type (`str` or `[u8]`).
 #[derive(Debug)]
-pub struct Captures<'t, S: input::RegexInput + ?Sized> {
+pub struct Captures<'t, S: input::Input + ?Sized> {
     inner: CapturesImpl,
     named_groups: Arc<NamedGroups>,
     input: &'t S,
@@ -381,7 +386,7 @@ impl CapturesImpl {
 
 /// Iterator for captured groups in order in which they appear in the regex.
 #[derive(Debug)]
-pub struct SubCaptureMatches<'c, 't, S: input::RegexInput + ?Sized> {
+pub struct SubCaptureMatches<'c, 't, S: input::Input + ?Sized> {
     data: &'c Captures<'t, S>,
     i: usize,
 }
@@ -1169,7 +1174,7 @@ impl Regex {
 
     /// Check if the regex matches the input.
     ///
-    /// Accepts any type implementing [`RegexInput`]: `&str`, `&String`, or `&[u8]`.
+    /// Accepts any type implementing [`Input`]: `&str`, `&String`, or `&[u8]`.
     ///
     /// # Example
     ///
@@ -1193,10 +1198,25 @@ impl Regex {
     ///     .unwrap();
     /// assert!(re.is_match(b"abc 123").unwrap());
     /// ```
-    pub fn is_match<S: input::RegexInput + ?Sized>(&self, input: &S) -> Result<bool> {
+    pub fn is_match<S: input::Input + ?Sized>(&self, input: &S) -> Result<bool> {
+        self.is_match_input(RegexInput::new(input))
+    }
+
+    /// Returns true if and only if this regex matches anywhere in the given
+    /// search input.
+    pub fn is_match_input<S: input::Input + ?Sized>(
+        &self,
+        input: RegexInput<'_, S>,
+    ) -> Result<bool> {
         match &self.inner {
-            RegexImpl::Wrap { inner, .. } => Ok(inner.is_match(RaInput::new(input.as_bytes()))),
-            RegexImpl::Fancy { .. } => self.find_from_pos_raw(input, 0, 0).map(|m| m.is_some()),
+            RegexImpl::Wrap { inner, .. } => {
+                if input.is_done() {
+                    Ok(false)
+                } else {
+                    Ok(inner.is_match(ra_input(&input)))
+                }
+            }
+            RegexImpl::Fancy { .. } => self.find_input_raw(&input, 0).map(|m| m.is_some()),
         }
     }
 
@@ -1219,14 +1239,22 @@ impl Regex {
     /// assert_eq!(matches.next().unwrap().unwrap().as_str(), "iterators");
     /// assert!(matches.next().is_none());
     /// ```
-    pub fn find_iter<'r, 't, S: input::RegexInput + ?Sized>(
+    pub fn find_iter<'r, 't, S: input::Input + ?Sized>(
         &'r self,
         text: &'t S,
     ) -> Matches<'r, 't, S> {
+        self.find_iter_input(RegexInput::new(text))
+    }
+
+    /// Returns an iterator for each successive non-overlapping match in the
+    /// given search input.
+    pub fn find_iter_input<'r, 't, S: input::Input + ?Sized>(
+        &'r self,
+        input: RegexInput<'t, S>,
+    ) -> Matches<'r, 't, S> {
         Matches {
             re: self,
-            text,
-            last_end: 0,
+            input,
             last_match: None,
             last_skipped_empty: false,
         }
@@ -1234,7 +1262,7 @@ impl Regex {
 
     /// Find the first match in the input.
     ///
-    /// Accepts any type implementing [`RegexInput`]: `&str`, `&String`, or `&[u8]`.
+    /// Accepts any type implementing [`Input`]: `&str`, `&String`, or `&[u8]`.
     ///
     /// # Example
     ///
@@ -1246,11 +1274,18 @@ impl Regex {
     /// let re = Regex::new(r"\w+(?=!)").unwrap();
     /// assert_eq!(re.find("so fancy!").unwrap().unwrap().as_str(), "fancy");
     /// ```
-    pub fn find<'t, S: input::RegexInput + ?Sized>(
+    pub fn find<'t, S: input::Input + ?Sized>(&self, input: &'t S) -> Result<Option<S::Match<'t>>> {
+        self.find_input(RegexInput::new(input))
+    }
+
+    /// Find the first match in the given search input.
+    pub fn find_input<'t, S: input::Input + ?Sized>(
         &self,
-        input: &'t S,
+        input: RegexInput<'t, S>,
     ) -> Result<Option<S::Match<'t>>> {
-        self.find_from_pos(input, 0)
+        Ok(self
+            .find_input_raw(&input, 0)?
+            .map(|(s, e)| input.haystack().make_match(s, e)))
     }
 
     /// Returns the first match in `input`, starting from the specified byte position `pos`.
@@ -1270,24 +1305,23 @@ impl Regex {
     /// ```
     ///
     /// Note that in some cases this is not the same as using the `find`
-    /// method and passing a slice of the string, see [Regex::captures_from_pos()] for details.
-    pub fn find_from_pos<'t, S: input::RegexInput + ?Sized>(
+    /// method and passing a slice of the string, see [Regex::captures_from_pos()]
+    /// for details. To constrain matching to a byte range without slicing, use
+    /// [Regex::find_input()] with [`RegexInput`].
+    pub fn find_from_pos<'t, S: input::Input + ?Sized>(
         &self,
         input: &'t S,
         pos: usize,
     ) -> Result<Option<S::Match<'t>>> {
-        Ok(self
-            .find_from_pos_raw(input, pos, 0)?
-            .map(|(s, e)| input.make_match(s, e)))
+        self.find_input(RegexInput::new(input).from_pos(pos))
     }
 
-    fn find_from_pos_raw<S: input::RegexInput + ?Sized>(
+    fn find_input_raw<S: input::Input + ?Sized>(
         &self,
-        input: &S,
-        pos: usize,
+        input: &RegexInput<'_, S>,
         option_flags: u32,
     ) -> Result<Option<(usize, usize)>> {
-        if pos > input.len() {
+        if input.is_done() {
             return Ok(None);
         }
         match &self.inner {
@@ -1297,15 +1331,10 @@ impl Regex {
                 ..
             } => {
                 let result = if !*explicit_capture_group_0 {
-                    inner
-                        .search(&RaInput::new(input.as_bytes()).span(pos..input.len()))
-                        .map(|m| (m.start(), m.end()))
+                    inner.search(&ra_input(input)).map(|m| (m.start(), m.end()))
                 } else {
                     let mut locations = inner.create_captures();
-                    inner.captures(
-                        RaInput::new(input.as_bytes()).span(pos..input.len()),
-                        &mut locations,
-                    );
+                    inner.captures(ra_input(input), &mut locations);
                     locations
                         .get_group(1)
                         .map(|group1| (group1.start, group1.end))
@@ -1319,7 +1348,7 @@ impl Regex {
                     } else {
                         0
                     };
-                let result = vm::run(prog, input, pos, option_flags, options)?;
+                let result = vm::run(prog, input, option_flags, options)?;
                 Ok(result.map(|saves| (saves[0], saves[1])))
             }
         }
@@ -1350,11 +1379,20 @@ impl Regex {
     ///
     /// assert!(all_captures.next().is_none());
     /// ```
-    pub fn captures_iter<'r, 't, S: input::RegexInput + ?Sized>(
+    pub fn captures_iter<'r, 't, S: input::Input + ?Sized>(
         &'r self,
         text: &'t S,
     ) -> CaptureMatches<'r, 't, S> {
-        CaptureMatches(self.find_iter(text))
+        self.captures_iter_input(RegexInput::new(text))
+    }
+
+    /// Returns an iterator over all the non-overlapping capture groups matched
+    /// in the given search input.
+    pub fn captures_iter_input<'r, 't, S: input::Input + ?Sized>(
+        &'r self,
+        input: RegexInput<'t, S>,
+    ) -> CaptureMatches<'r, 't, S> {
+        CaptureMatches(self.find_iter_input(input))
     }
 
     /// Returns the capture groups for the first match in `text`.
@@ -1377,11 +1415,20 @@ impl Regex {
     /// assert_eq!(captures.get(3).unwrap().as_str(), "07");
     /// assert_eq!(captures.get(0).unwrap().as_str(), "2018-04-07");
     /// ```
-    pub fn captures<'t, S: input::RegexInput + ?Sized>(
+    pub fn captures<'t, S: input::Input + ?Sized>(
         &self,
         text: &'t S,
     ) -> Result<Option<Captures<'t, S>>> {
-        self.captures_from_pos(text, 0)
+        self.captures_input(RegexInput::new(text))
+    }
+
+    /// Returns the capture groups for the first match in the given search
+    /// input.
+    pub fn captures_input<'t, S: input::Input + ?Sized>(
+        &self,
+        input: RegexInput<'t, S>,
+    ) -> Result<Option<Captures<'t, S>>> {
+        self.captures_input_with_option_flags(&input, 0)
     }
 
     /// Returns the capture groups for the first match in `text`, starting from
@@ -1418,25 +1465,27 @@ impl Regex {
     /// This matched the number "123" because it's at the beginning of the text
     /// of the string slice.
     ///
-    pub fn captures_from_pos<'t, S: input::RegexInput + ?Sized>(
+    /// To constrain matching to a byte range without slicing, use
+    /// [Regex::captures_input()] with [`RegexInput`].
+    ///
+    pub fn captures_from_pos<'t, S: input::Input + ?Sized>(
         &self,
         text: &'t S,
         pos: usize,
     ) -> Result<Option<Captures<'t, S>>> {
-        self.captures_from_pos_with_option_flags(text, pos, 0)
+        self.captures_input(RegexInput::new(text).from_pos(pos))
     }
 
-    fn captures_from_pos_with_option_flags<'t, S: input::RegexInput + ?Sized>(
+    fn captures_input_with_option_flags<'t, S: input::Input + ?Sized>(
         &self,
-        input: &'t S,
-        pos: usize,
+        input: &RegexInput<'t, S>,
         option_flags: u32,
     ) -> Result<Option<Captures<'t, S>>> {
-        if pos > input.len() {
+        if input.is_done() {
             return Ok(None);
         }
         let named_groups = self.named_groups.clone();
-        let bytes = input.as_bytes();
+        let haystack = input.haystack();
         match &self.inner {
             RegexImpl::Wrap {
                 inner,
@@ -1447,14 +1496,14 @@ impl Regex {
                 // always false here.
                 let explicit = *explicit_capture_group_0;
                 let mut locations = inner.create_captures();
-                inner.captures(RaInput::new(bytes).span(pos..bytes.len()), &mut locations);
+                inner.captures(ra_input(input), &mut locations);
                 Ok(locations.is_match().then_some(Captures {
                     inner: CapturesImpl::Wrap {
                         locations,
                         explicit_capture_group_0: explicit,
                     },
                     named_groups,
-                    input,
+                    input: haystack,
                 }))
             }
             RegexImpl::Fancy {
@@ -1469,13 +1518,13 @@ impl Regex {
                     } else {
                         0
                     };
-                let result = vm::run(prog, input, pos, option_flags, options)?;
+                let result = vm::run(prog, input, option_flags, options)?;
                 Ok(result.map(|mut saves| {
                     saves.truncate(n_groups * 2);
                     Captures {
                         inner: CapturesImpl::Fancy { saves },
                         named_groups,
-                        input,
+                        input: haystack,
                     }
                 }))
             }
@@ -1764,6 +1813,12 @@ impl Regex {
     }
 }
 
+fn ra_input<'a, S: input::Input + ?Sized>(input: &'a RegexInput<'a, S>) -> RaInput<'a> {
+    let mut ra_input = RaInput::new(input.haystack().as_bytes()).range(input.get_range());
+    ra_input.set_start(input.effective_start());
+    ra_input
+}
+
 impl TryFrom<&str> for Regex {
     type Error = Error;
 
@@ -1826,7 +1881,7 @@ impl<'t> From<Match<'t>> for Range<usize> {
 }
 
 #[allow(clippy::len_without_is_empty)] // follow regex's API
-impl<'t, S: input::RegexInput + ?Sized> Captures<'t, S> {
+impl<'t, S: input::Input + ?Sized> Captures<'t, S> {
     /// Get the capture group by its index in the regex.
     ///
     /// If there is no match for that group or the index does not correspond to a group, `None` is
@@ -1931,7 +1986,7 @@ impl<'t, 'i> Index<&'i str> for Captures<'t, str> {
     }
 }
 
-impl<'c, 't, S: input::RegexInput + ?Sized> Iterator for SubCaptureMatches<'c, 't, S> {
+impl<'c, 't, S: input::Input + ?Sized> Iterator for SubCaptureMatches<'c, 't, S> {
     type Item = Option<S::Match<'t>>;
 
     fn next(&mut self) -> Option<Option<S::Match<'t>>> {
