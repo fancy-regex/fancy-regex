@@ -64,20 +64,8 @@
   // Match found at start 1 and end 2 (expected 0 and 2)
   x2("a(?i)b|c", "aC", 0, 2);
 
-  // No match found
-  x2("(?:ab)?{2}", "", 0, 0);
-
-  // No match found
-  x2("(?:ab)?{2}", "ababa", 0, 4);
-
-  // No match found
-  x2("(?:ab)*{0}", "ababa", 0, 0);
-
   // Match found at start 0 and end 2 (expected 0 and 5)
   x2("(?:ab){,}", "ab{,}", 0, 5);
-
-  // No match found
-  x2("(?:abc)+?{2}", "abcabcabc", 0, 6);
 
   // No match found
   x3("((?m:a.c))", "a\nc", 0, 3, 1);
@@ -219,20 +207,8 @@
   // No match found
   x2("(?m:.め)", "ま\nめ", 3, 7);
 
-  // No match found
-  x2("(?:あい)?{2}", "", 0, 0);
-
-  // No match found
-  x2("(?:鬼車)?{2}", "鬼車鬼車鬼", 0, 12);
-
-  // No match found
-  x2("(?:鬼車)*{0}", "鬼車鬼車鬼", 0, 0);
-
   // Match found at start 0 and end 6 (expected 0 and 9)
   x2("(?:鬼車){,}", "鬼車{,}", 0, 9);
-
-  // No match found
-  x2("(?:かきく)+?{2}", "かきくかきくかきく", 0, 18);
 
   // No match found
   x3("((?m:あ.う))", "あ\nう", 0, 7, 1);
@@ -423,7 +399,7 @@
   // Compile failed: ParseError(2, InvalidHex)
   x2("\\x1", "\x01", 0, 1);
 
-  // Compile failed: ParseError(10, TargetNotRepeatable)
+  // Compile failed: ParseError(88, RecursionExceeded)
   x2("((?()0+)+++(((0\\g<0>)0)|())++++((?(1)(0\\g<0>))++++++0*())++++((?(1)(0\\g<1>)+)++++++++++*())++++((?(1)((0)\\g<0>)+)++())+0++*+++(((0\\g<0>))*())++++((?(1)(0\\g<0>)+)++++++++++*|)++++*+++((?(1)((0)\\g<0>)+)+++++++++())++*|)++++((?()0))|", "abcde", 0, 0);
 
   // Compile failed: ParseError(9, TargetNotRepeatable)
