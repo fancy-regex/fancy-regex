@@ -125,7 +125,9 @@ use regex_automata::util::pool::Pool;
 use regex_automata::util::syntax::Config as SyntaxConfig;
 use regex_automata::Anchored;
 use regex_automata::Input as RaInput;
+use regex_automata::MatchErrorKind;
 use regex_automata::MatchKind;
+use regex_automata::PatternID;
 use regex_automata::PatternSet;
 
 use crate::compile::options_to_rabuilder;
@@ -361,15 +363,25 @@ impl RegexSet {
             seen_pattern_indices.clear();
             {
                 let mut cache_guard = self.overlapping_cache_pool.get();
-                self.overlapping_dfa
-                    .try_which_overlapping_matches(
-                        &mut cache_guard,
-                        &overlapping_input,
-                        &mut seen_pattern_indices,
-                    )
-                    .expect(
-                        "overlapping DFA search is infallible: no cache capacity limit, no quit bytes, Anchored::Yes always supported",
-                    );
+                if let Err(e) = self.overlapping_dfa.try_which_overlapping_matches(
+                    &mut cache_guard,
+                    &overlapping_input,
+                    &mut seen_pattern_indices,
+                ) {
+                    match e.kind() {
+                        MatchErrorKind::Quit { .. } | MatchErrorKind::GaveUp { .. } => {
+                            // The DFA gave up (e.g. it encountered non-ASCII bytes while
+                            // unicode word boundaries are enabled, which adds quit bytes
+                            // for multi-byte UTF-8 sequences). Fall back to trying every
+                            // pattern at this position so correctness is preserved.
+                            seen_pattern_indices.clear();
+                            for i in 0..self.regexes.len() {
+                                seen_pattern_indices.insert(PatternID::must(i));
+                            }
+                        }
+                        _ => panic!("unexpected overlapping DFA error: {:?}", e),
+                    }
+                }
             } // release cache_guard back to pool before doing per-pattern matching
             let candidate_pattern_indices = seen_pattern_indices
                 .iter()
@@ -693,5 +705,33 @@ mod tests {
         assert_eq!(0, only.pattern());
         assert_eq!(1, only.captures().len());
         assert_eq!("abc", only.as_str());
+    }
+
+    #[test]
+    fn word_boundary_matches_correctly_with_unicode_text() {
+        // \bbar\b uses a unicode word boundary; the DFA may encounter quit bytes
+        // for multi-byte UTF-8 characters such as 'é' (0xC3 0xA9). The RegexSet
+        // must not panic and must still return the correct match.
+        let set = RegexSet::new([r"foo", r"\bbar\b"]).unwrap();
+        let mut matches = set
+            .find_input(RegexInput::new("fooé bar"))
+            .unwrap()
+            .unwrap();
+
+        // "foo" is the earliest match (position 0)
+        let first = matches.next().unwrap().unwrap();
+        assert_eq!(0, first.pattern());
+        assert_eq!("foo", first.as_str());
+        assert!(matches.next().is_none());
+
+        // "bar" is matched later in the string (after the unicode character)
+        let mut matches2 = set
+            .find_input(RegexInput::new("fooé bar").from_pos(first.end()))
+            .unwrap()
+            .unwrap();
+        let bar_match = matches2.next().unwrap().unwrap();
+        assert_eq!(1, bar_match.pattern());
+        assert_eq!("bar", bar_match.as_str());
+        assert!(matches2.next().is_none());
     }
 }
