@@ -161,10 +161,7 @@ impl<'a> Compiler<'a> {
             }
             Expr::Alt(_) => {
                 let count = info.children.len();
-                let inside_alternation = self.inside_alternation;
-                self.inside_alternation = true;
                 self.compile_alt(count, |compiler, i| compiler.visit(&info.children[i], hard))?;
-                self.inside_alternation = inside_alternation;
             }
             Expr::Group(_) => {
                 let group = info.start_group();
@@ -231,7 +228,7 @@ impl<'a> Compiler<'a> {
             }
             Expr::ContinueFromPreviousMatchEnd => {
                 self.b.add(Insn::ContinueFromPreviousMatchEnd {
-                    at_start: info.start_group() == 1
+                    at_start: info.start_group() <= 1
                         && info.min_pos_in_group == 0
                         && !self.inside_alternation,
                 });
@@ -357,6 +354,8 @@ impl<'a> Compiler<'a> {
     where
         F: FnMut(&mut Compiler, usize) -> Result<()>,
     {
+        let was_inside_alternation = self.inside_alternation;
+        self.inside_alternation = true;
         let mut jmps = Vec::new();
         let mut last_pc = usize::MAX;
         for i in 0..count {
@@ -385,6 +384,7 @@ impl<'a> Compiler<'a> {
         for jmp_pc in jmps {
             self.b.set_jmp_target(jmp_pc, next_pc);
         }
+        self.inside_alternation = was_inside_alternation;
         Ok(())
     }
 
@@ -404,6 +404,9 @@ impl<'a> Compiler<'a> {
         // This is to ensure that if the condition succeeds, but the "true" branch from the
         // conditional fails, that it wouldn't jump to the "false" branch.
         self.b.add(Insn::BeginAtomic);
+
+        let was_inside_alternation = self.inside_alternation;
+        self.inside_alternation = true;
 
         let split_pc = self.b.pc();
         // add the split instruction - we will update it's second pc later
@@ -427,6 +430,8 @@ impl<'a> Compiler<'a> {
 
         // update the jump target for jumping over the false branch
         self.b.set_jmp_target(jump_over_false_pc, self.b.pc());
+
+        self.inside_alternation = was_inside_alternation;
 
         Ok(())
     }
@@ -1785,6 +1790,87 @@ mod tests {
 
         assert_eq!(prog.len(), 1, "prog: {:?}", prog);
         assert_matches!(prog[0], End);
+    }
+
+    #[test]
+    fn continue_from_prev_match_inside_variable_lookbehind_alt_can_be_compiled() {
+        let prog = compile_prog(r"(?<=\G|\s)\d");
+
+        assert_eq!(prog.len(), 12, "prog: {:?}", prog);
+
+        assert_matches!(prog[0], Split(1, 6));
+        assert_matches!(prog[1], Save(0));
+        assert_matches!(prog[2], GoBack(0));
+        assert_matches!(prog[3], ContinueFromPreviousMatchEnd { at_start: false });
+        assert_matches!(prog[4], Restore(0));
+        assert_matches!(prog[5], Jmp(10));
+        assert_matches!(prog[6], Save(1));
+        assert_matches!(prog[7], GoBack(1));
+        assert_delegate_insn(&prog[8], r"\s", None);
+        assert_matches!(prog[9], Restore(1));
+        assert_delegate_insn(&prog[10], r"\d", None);
+        assert_matches!(prog[11], End);
+    }
+
+    #[test]
+    fn continue_from_prev_match_inside_alt_can_be_compiled() {
+        let prog = compile_prog(r"(?:\G|\s)\d");
+
+        assert_eq!(prog.len(), 6, "prog: {:?}", prog);
+
+        assert_matches!(prog[0], Split(1, 3));
+        assert_matches!(prog[1], ContinueFromPreviousMatchEnd { at_start: false });
+        assert_matches!(prog[2], Jmp(4));
+        assert_delegate_insn(&prog[3], r"\s", None);
+        assert_delegate_insn(&prog[4], r"\d", None);
+        assert_matches!(prog[5], End);
+    }
+
+    #[test]
+    fn continue_from_prev_match_first_instruction_can_be_compiled() {
+        let prog = compile_prog(r"\G\s\d");
+
+        assert_eq!(prog.len(), 3, "prog: {:?}", prog);
+
+        assert_matches!(prog[0], ContinueFromPreviousMatchEnd { at_start: true });
+        assert_delegate_insn(&prog[1], r"\s\d", None);
+        assert_matches!(prog[2], End);
+
+        let prog = compile_prog(r"^\G\s\d");
+
+        assert_eq!(prog.len(), 4, "prog: {:?}", prog);
+
+        assert_matches!(prog[1], ContinueFromPreviousMatchEnd { at_start: true });
+        assert_delegate_insn(&prog[2], r"\s\d", None);
+        assert_matches!(prog[3], End);
+    }
+
+    #[test]
+    fn continue_from_prev_match_not_first_instruction_can_be_compiled() {
+        let prog = compile_prog(r"\w\G\s\d");
+
+        assert_eq!(prog.len(), 4, "prog: {:?}", prog);
+
+        assert_delegate_insn(&prog[0], r"\w", None);
+        assert_matches!(prog[1], ContinueFromPreviousMatchEnd { at_start: false });
+        assert_delegate_insn(&prog[2], r"\s\d", None);
+        assert_matches!(prog[3], End);
+    }
+
+    #[test]
+    fn continue_from_prev_match_inside_conditional_can_be_compiled() {
+        let prog = compile_prog(r"(?(\G)\s\d|$)");
+
+        assert_eq!(prog.len(), 8, "prog: {:?}", prog);
+
+        assert_matches!(prog[0], BeginAtomic);
+        assert_matches!(prog[1], Split(2, 6));
+        assert_matches!(prog[2], ContinueFromPreviousMatchEnd { at_start: false });
+        assert_matches!(prog[3], EndAtomic);
+        assert_delegate_insn(&prog[4], r"\s\d", None);
+        assert_matches!(prog[5], Jmp(7));
+        assert_delegate_insn(&prog[6], r"$", None);
+        assert_matches!(prog[7], End);
     }
 
     fn compile_prog(re: &str) -> Vec<Insn> {

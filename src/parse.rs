@@ -160,12 +160,14 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_piece(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
-        let start = ix;
-        let (ix, child) = self.parse_atom(ix, depth)?;
+    fn parse_quantifier(
+        &mut self,
+        ix: usize,
+        start_ix: usize,
+        child: Expr,
+    ) -> Result<(usize, Expr)> {
         let mut ix = self.optional_whitespace(ix)?;
         if ix < self.re.len() {
-            // fail when child is empty?
             let (lo, hi) = match self.re.as_bytes()[ix] {
                 b'?' => (0, 1),
                 b'*' => (0, usize::MAX),
@@ -189,10 +191,10 @@ impl<'a> Parser<'a> {
                 // In Oniguruma mode, `(?:)` followed by a quantifier is a
                 // zero-width no-op that Oniguruma silently accepts. Skip
                 // past the quantifier and its modifiers, returning Empty.
-                // We check `ix > start` to ensure the atom actually consumed
+                // We check `ix > start_ix` to ensure the atom actually consumed
                 // input (e.g. a `(?:)` group), as opposed to a bare
                 // quantifier with no preceding atom.
-                if child == Expr::Empty && ix > start && self.flag(FLAG_ONIGURUMA_MODE) {
+                if child == Expr::Empty && ix > start_ix && self.flag(FLAG_ONIGURUMA_MODE) {
                     skip = true;
                 } else {
                     return Err(Error::ParseError(ix, ParseError::TargetNotRepeatable));
@@ -226,6 +228,42 @@ impl<'a> Parser<'a> {
             }
         }
         Ok((ix, child))
+    }
+
+    fn parse_piece(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
+        let start = ix;
+        let (ix, child) = self.parse_atom(ix, depth)?;
+        let (mut ix, mut repeat) = self.parse_quantifier(ix, start, child)?;
+        if self.flag(FLAG_ONIGURUMA_MODE) {
+            // Oniguruma allows expressions like `\s{1,2}{0,1}` to mean `(?:\s{1,2})?`.
+            // Each additional adjacent quantifier wraps the previous result in
+            // another `Expr::Repeat` (and `Expr::AtomicGroup` if a possessive
+            // `+` modifier follows), increasing AST depth. We count them
+            // against the parse recursion budget AND enforce a tighter
+            // per-piece cap, because the AST depth interacts multiplicatively
+            // with subroutine-call inlining (`\g<...>`) during compile and
+            // can otherwise blow the stack on adversarial inputs like
+            // Oniguruma test #139.
+            const MAX_ADJACENT_QUANTIFIERS: usize = 4;
+            let mut depth = depth;
+            let mut adjacent = 0;
+            loop {
+                let before = ix;
+                let (next_ix, next_repeat) =
+                    self.parse_quantifier(ix, before, repeat)?;
+                ix = next_ix;
+                repeat = next_repeat;
+                if ix == before {
+                    break;
+                }
+                adjacent += 1;
+                depth += 1;
+                if adjacent > MAX_ADJACENT_QUANTIFIERS || depth >= MAX_RECURSION {
+                    return Err(Error::ParseError(ix, ParseError::RecursionExceeded));
+                }
+            }
+        }
+        Ok((ix, repeat))
     }
 
     fn is_repeatable(&self, child: &Expr) -> bool {
@@ -279,6 +317,9 @@ impl<'a> Parser<'a> {
         let ix = self.optional_whitespace(end)?; // past hi number
         if ix == self.re.len() || bytes[ix] != b'}' {
             return Err(Error::ParseError(ix, ParseError::InvalidRepeat));
+        }
+        if self.flag(FLAG_ONIGURUMA_MODE) && hi < lo {
+            return Ok((ix + 1, hi, lo));
         }
         Ok((ix + 1, lo, hi))
     }
