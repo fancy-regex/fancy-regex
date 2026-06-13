@@ -280,6 +280,9 @@ impl<'a> Parser<'a> {
         if ix == self.re.len() || bytes[ix] != b'}' {
             return Err(Error::ParseError(ix, ParseError::InvalidRepeat));
         }
+        if self.flag(FLAG_ONIGURUMA_MODE) && hi < lo {
+            return Ok((ix + 1, hi, lo));
+        }
         Ok((ix + 1, lo, hi))
     }
 

@@ -448,16 +448,7 @@
   // Compile failed: CompileError(LeftRecursiveSubroutineCall("group 0"))
   x2("\\g'0'++{,0}?def", "abcdefgh", 3, 6);
 
-  // Compile failed: CompileError(InnerError(BuildError { kind: Syntax { pid: PatternID(0), err: Parse(Error { kind: RepetitionCountInvalid, pattern: "a{3,2}b", span: Span(Position(o: 1, l: 1, c: 2), Position(o: 6, l: 1, c: 7)) }) } }))
-  x2("a{3,2}b", "aaab", 0, 4);
-
-  // Compile failed: CompileError(InnerError(BuildError { kind: Syntax { pid: PatternID(0), err: Parse(Error { kind: RepetitionCountInvalid, pattern: "a{3,2}b", span: Span(Position(o: 1, l: 1, c: 2), Position(o: 6, l: 1, c: 7)) }) } }))
-  x2("a{3,2}b", "aaaab", 1, 5);
-
-  // Compile failed: CompileError(InnerError(BuildError { kind: Syntax { pid: PatternID(0), err: Parse(Error { kind: RepetitionCountInvalid, pattern: "a{3,2}b", span: Span(Position(o: 1, l: 1, c: 2), Position(o: 6, l: 1, c: 7)) }) } }))
-  x2("a{3,2}b", "aab", 0, 3);
-
-  // Compile failed: CompileError(InnerError(BuildError { kind: Syntax { pid: PatternID(0), err: Parse(Error { kind: RepetitionCountInvalid, pattern: "a{3,2}?", span: Span(Position(o: 1, l: 1, c: 2), Position(o: 7, l: 1, c: 8)) }) } }))
+  // No match found
   x2("a{3,2}?", "", 0, 0);
 
   // No match found
