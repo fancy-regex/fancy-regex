@@ -133,6 +133,9 @@ struct Analyzer<'a> {
     /// When true, nodes that could produce empty matches (min size 0 and not const size)
     /// are promoted to hard so the VM can ensure the whole match at EOF isn't empty.
     disallow_empty_match_at_eof_after_newline: bool,
+    /// When true, assertions with runtime input suppression overrides are promoted to hard
+    /// so they run on the VM.
+    allow_input_assertion_overrides: bool,
 }
 
 impl<'a> Analyzer<'a> {
@@ -152,7 +155,13 @@ impl<'a> Analyzer<'a> {
         let mut const_size = false;
         let mut hard = false;
         match *expr {
-            Expr::Assertion(assertion) if assertion.is_hard() => {
+            Expr::Assertion(assertion) if assertion.is_always_hard() => {
+                const_size = true;
+                hard = true;
+            }
+            Expr::Assertion(Assertion::StartText | Assertion::EndText)
+                if self.allow_input_assertion_overrides =>
+            {
                 const_size = true;
                 hard = true;
             }
@@ -796,6 +805,9 @@ pub struct AnalyzeContext {
     pub find_not_empty: bool,
     /// To match Oniguruma behavior where only \z can match at EOF if preceeded by a newline character
     pub disallow_empty_match_at_eof_after_newline: bool,
+    /// When true, treat assertions that support runtime input suppression overrides (`\A`, `\z`)
+    /// as hard so that they execute on the VM.
+    pub allow_input_assertion_overrides: bool,
 }
 
 /// Analyze the parsed expression to determine whether it requires fancy features.
@@ -803,6 +815,7 @@ pub fn analyze<'a>(tree: &'a ExprTree, ctx: AnalyzeContext) -> Result<Info<'a>> 
     let explicit_capture_group_0 = ctx.explicit_capture_group_0;
     let find_not_empty = ctx.find_not_empty;
     let disallow_empty_match_at_eof_after_newline = ctx.disallow_empty_match_at_eof_after_newline;
+    let allow_input_assertion_overrides = ctx.allow_input_assertion_overrides;
 
     // Check that numeric capture group references (backrefs and subroutine calls) and named groups are not mixed
     if tree.numbered_groups_ignored
@@ -836,6 +849,7 @@ pub fn analyze<'a>(tree: &'a ExprTree, ctx: AnalyzeContext) -> Result<Info<'a>> 
         analyzing_groups: BitSet::new(),
         find_not_empty,
         disallow_empty_match_at_eof_after_newline,
+        allow_input_assertion_overrides,
     };
 
     let mut analyzed = analyzer.visit(&tree.expr, 0, false, 0)?;
