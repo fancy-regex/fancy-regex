@@ -308,7 +308,16 @@ impl RegexSet {
             });
         let overlapping_dfa =
             Arc::new(overlapping_dfa_builder.build_many(&patterns).map_err(|e| {
-                Error::CompileError(Box::new(CompileError::DfaBuildError(e.to_string())))
+                let all_patterns = patterns
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| alloc::format!("[{}]: {}", i, p))
+                    .collect::<Vec<_>>()
+                    .join("\n---\n");
+                Error::CompileError(Box::new(CompileError::DfaBuildError(
+                    all_patterns,
+                    e.to_string(),
+                )))
             })?);
         let create: DfaCachePoolFactory = alloc::boxed::Box::new({
             let dfa = Arc::clone(&overlapping_dfa);

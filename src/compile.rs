@@ -783,6 +783,7 @@ impl<'a> Compiler<'a> {
             Ok(dfa) => Arc::new(dfa),
             Err(e) => {
                 return Err(Error::CompileError(Box::new(CompileError::DfaBuildError(
+                    pattern.to_string(),
                     e.to_string(),
                 ))))
             }
