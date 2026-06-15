@@ -141,6 +141,11 @@ type DfaCachePoolFactory = alloc::boxed::Box<
     dyn Fn() -> dfa::Cache + Send + Sync + core::panic::UnwindSafe + core::panic::RefUnwindSafe,
 >;
 
+const BYTES_PER_MIB: usize = 1 << 20;
+const DEFAULT_META_NFA_SIZE_LIMIT: usize = 64 * BYTES_PER_MIB;
+const DEFAULT_META_HYBRID_CACHE_CAPACITY: usize = 64 * BYTES_PER_MIB;
+const DEFAULT_OVERLAPPING_DFA_CACHE_CAPACITY: usize = 64 * BYTES_PER_MIB;
+
 #[derive(Clone, Debug)]
 /// RegexSet API for matching multiple patterns against the same input.
 pub struct RegexSet {
@@ -156,6 +161,10 @@ pub struct RegexSetOptions {
     syntaxc: SyntaxConfig,
     delegate_size_limit: Option<usize>,
     delegate_dfa_size_limit: Option<usize>,
+    meta_nfa_size_limit: Option<usize>,
+    meta_hybrid_cache_capacity: usize,
+    overlapping_dfa_cache_capacity: usize,
+    overlapping_dfa_skip_cache_capacity_check: bool,
     bytes_mode: BytesMode,
 }
 
@@ -166,8 +175,76 @@ impl Default for RegexSetOptions {
             syntaxc: default_options.syntaxc,
             delegate_size_limit: default_options.delegate_size_limit,
             delegate_dfa_size_limit: default_options.delegate_dfa_size_limit,
+            meta_nfa_size_limit: Some(DEFAULT_META_NFA_SIZE_LIMIT),
+            meta_hybrid_cache_capacity: DEFAULT_META_HYBRID_CACHE_CAPACITY,
+            overlapping_dfa_cache_capacity: DEFAULT_OVERLAPPING_DFA_CACHE_CAPACITY,
+            overlapping_dfa_skip_cache_capacity_check: true,
             bytes_mode: default_options.bytes_mode,
         }
+    }
+}
+
+impl RegexSetOptions {
+    /// Create a new RegexSet options value with default settings.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the approximate size limit of each delegated sub-regex.
+    ///
+    /// This option is forwarded from the wrapped `regex` crate. Note that depending on the used
+    /// regex features there may be multiple delegated sub-regexes fed to the `regex` crate. As
+    /// such the actual limit is closer to `<number of delegated regexes> * delegate_size_limit`.
+    pub fn delegate_size_limit(mut self, limit: usize) -> Self {
+        self.delegate_size_limit = Some(limit);
+        self
+    }
+
+    /// Set the approximate size of the cache used by delegated DFAs.
+    ///
+    /// This option is forwarded from the wrapped `regex` crate. Note that depending on the used
+    /// regex features there may be multiple delegated sub-regexes fed to the `regex` crate. As
+    /// such the actual limit is closer to `<number of delegated regexes> *
+    /// delegate_dfa_size_limit`.
+    pub fn delegate_dfa_size_limit(mut self, limit: usize) -> Self {
+        self.delegate_dfa_size_limit = Some(limit);
+        self
+    }
+
+    /// Set the approximate NFA size limit for the regex-automata meta regex used to find the
+    /// earliest match position.
+    ///
+    /// Passing `None` disables the limit. The default is 64 MiB.
+    pub fn meta_nfa_size_limit(mut self, limit: Option<usize>) -> Self {
+        self.meta_nfa_size_limit = limit;
+        self
+    }
+
+    /// Set the cache capacity, in bytes, for the lazy DFA used by the regex-automata meta regex
+    /// that finds the earliest match position.
+    ///
+    /// The default is 64 MiB.
+    pub fn meta_hybrid_cache_capacity(mut self, limit: usize) -> Self {
+        self.meta_hybrid_cache_capacity = limit;
+        self
+    }
+
+    /// Set the cache capacity, in bytes, for the lazy DFA used to find overlapping matches at a
+    /// candidate match position.
+    ///
+    /// The default is 64 MiB.
+    pub fn overlapping_dfa_cache_capacity(mut self, limit: usize) -> Self {
+        self.overlapping_dfa_cache_capacity = limit;
+        self
+    }
+
+    /// Configure whether the overlapping DFA builder should skip its minimum cache capacity check.
+    ///
+    /// Enabling this can allow large DFAs to build when the default cache capacity check would
+    /// reject them, but it may allocate more memory at build time. The default is `true`.
+    pub fn overlapping_dfa_skip_cache_capacity_check(mut self, yes: bool) -> Self {
+        self.overlapping_dfa_skip_cache_capacity_check = yes;
+        self
     }
 }
 
@@ -218,6 +295,10 @@ impl RegexSet {
             syntaxc: options_builder.options.syntaxc,
             delegate_size_limit: options_builder.options.delegate_size_limit,
             delegate_dfa_size_limit: options_builder.options.delegate_dfa_size_limit,
+            meta_nfa_size_limit: Some(DEFAULT_META_NFA_SIZE_LIMIT),
+            meta_hybrid_cache_capacity: DEFAULT_META_HYBRID_CACHE_CAPACITY,
+            overlapping_dfa_cache_capacity: DEFAULT_OVERLAPPING_DFA_CACHE_CAPACITY,
+            overlapping_dfa_skip_cache_capacity_check: true,
             bytes_mode: options_builder.options.bytes_mode,
         };
         Self::from_regexes(regexes, config)
@@ -281,19 +362,27 @@ impl RegexSet {
         let utf8 = matches!(compile_options.bytes_mode, BytesMode::Unicode);
 
         let mut earliest_builder = options_to_rabuilder(&compile_options);
-        earliest_builder.configure(RaConfig::new().match_kind(MatchKind::LeftmostFirst));
+        earliest_builder.configure(
+            RaConfig::new()
+                .match_kind(MatchKind::LeftmostFirst)
+                .nfa_size_limit(config.meta_nfa_size_limit)
+                .hybrid_cache_capacity(config.meta_hybrid_cache_capacity),
+        );
         let earliest_match_finder = earliest_builder
             .build_many(&patterns)
             .map_err(CompileError::InnerError)
             .map_err(|e| Error::CompileError(Box::new(e)))?;
 
         let mut overlapping_dfa_builder = dfa::DFA::builder();
+        let mut overlapping_config = dfa::Config::new()
+            .match_kind(MatchKind::All)
+            .unicode_word_boundary(compile_options.unicode)
+            .cache_capacity(config.overlapping_dfa_cache_capacity);
+        if config.overlapping_dfa_skip_cache_capacity_check {
+            overlapping_config = overlapping_config.skip_cache_capacity_check(true);
+        }
         overlapping_dfa_builder
-            .configure(
-                dfa::Config::new()
-                    .match_kind(MatchKind::All)
-                    .unicode_word_boundary(compile_options.unicode),
-            )
+            .configure(overlapping_config)
             .syntax(
                 SyntaxConfig::new()
                     .utf8(utf8)
@@ -580,8 +669,48 @@ impl<'r, 't, S: Input + ?Sized> Iterator for RegexSetMatchesAt<'r, 't, S> {
 
 #[cfg(test)]
 mod tests {
-    use super::RegexSet;
+    use super::{
+        RegexSet, RegexSetOptions, DEFAULT_META_HYBRID_CACHE_CAPACITY, DEFAULT_META_NFA_SIZE_LIMIT,
+        DEFAULT_OVERLAPPING_DFA_CACHE_CAPACITY,
+    };
     use crate::{Error, RegexInput, RegexOptionsBuilder, RuntimeError};
+
+    #[test]
+    fn regex_set_options_defaults_to_larger_regex_automata_limits() {
+        let options = RegexSetOptions::default();
+
+        assert_eq!(
+            options.meta_nfa_size_limit,
+            Some(DEFAULT_META_NFA_SIZE_LIMIT)
+        );
+        assert_eq!(
+            options.meta_hybrid_cache_capacity,
+            DEFAULT_META_HYBRID_CACHE_CAPACITY
+        );
+        assert_eq!(
+            options.overlapping_dfa_cache_capacity,
+            DEFAULT_OVERLAPPING_DFA_CACHE_CAPACITY
+        );
+        assert!(options.overlapping_dfa_skip_cache_capacity_check);
+    }
+
+    #[test]
+    fn regex_set_options_setters_update_regex_automata_limits() {
+        let options = RegexSetOptions::new()
+            .delegate_size_limit(11)
+            .delegate_dfa_size_limit(22)
+            .meta_nfa_size_limit(None)
+            .meta_hybrid_cache_capacity(33)
+            .overlapping_dfa_cache_capacity(44)
+            .overlapping_dfa_skip_cache_capacity_check(false);
+
+        assert_eq!(options.delegate_size_limit, Some(11));
+        assert_eq!(options.delegate_dfa_size_limit, Some(22));
+        assert_eq!(options.meta_nfa_size_limit, None);
+        assert_eq!(options.meta_hybrid_cache_capacity, 33);
+        assert_eq!(options.overlapping_dfa_cache_capacity, 44);
+        assert!(!options.overlapping_dfa_skip_cache_capacity_check);
+    }
 
     #[test]
     fn find_input_returns_all_matches_at_earliest_position_in_pattern_order() {
