@@ -1,3 +1,5 @@
+#[allow(unused_imports)]
+pub use fancy_regex::DebugRegex;
 use fancy_regex::{BytesMode, Captures, Regex, RegexBuilder, RegexInput};
 use std::ops::Range;
 
@@ -307,13 +309,4 @@ pub fn assert_captures<'t>(re: &str, text: &'t str) -> Option<Captures<'t, str>>
         }
     }
     str_result
-}
-
-use std::fmt;
-#[allow(dead_code)]
-pub struct DebugRegex<'a>(pub &'a Regex);
-impl fmt::Display for DebugRegex<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.debug_print(f)
-    }
 }

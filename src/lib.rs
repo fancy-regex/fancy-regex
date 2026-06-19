@@ -1839,6 +1839,19 @@ impl Regex {
     }
 }
 
+/// `Display` adapter that prints a [`Regex`]'s internal representation via
+/// [`Regex::debug_print`]. Intended for debugging and test output only.
+#[doc(hidden)]
+#[derive(Debug)]
+#[allow(dead_code)]
+pub struct DebugRegex<'a>(pub &'a Regex);
+
+impl fmt::Display for DebugRegex<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        self.0.debug_print(f)
+    }
+}
+
 fn ra_input<'a, S: input::Input + ?Sized>(input: &'a RegexInput<'a, S>) -> RaInput<'a> {
     let mut ra_input = RaInput::new(input.haystack().as_bytes()).range(input.get_range());
     ra_input.set_start(input.effective_start());

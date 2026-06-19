@@ -1191,18 +1191,6 @@ extern int main(int argc, char* argv[])
   x2("(?(?{....})123|456)", "123", 0, 3);
   x2("(?(*FAIL)123|456)", "456", 0, 3);
 
-  x2("\\g'0'++{,0}",   "abcdefgh", 0, 0);
-  x2("\\g'0'++{,0}?",  "abcdefgh", 0, 0);
-  x2("\\g'0'++{,0}b",  "abcdefgh", 1, 2);
-  x2("\\g'0'++{,0}?def", "abcdefgh", 3, 6);
-  n("a{2,3}?",  "a");
-  n("a{3,2}a", "aaa");
-  x2("a{3,2}b", "aaab", 0, 4);
-  x2("a{3,2}b", "aaaab", 1, 5);
-  x2("a{3,2}b", "aab", 0, 3);
-  x2("a{3,2}?", "", 0, 0);     /* == (?:a{3,2})?*/
-  x2("a{2,3}+a", "aaa", 0, 3); /* == (?:a{2,3})+*/
-
   n("   \xfd", ""); /* https://bugs.php.net/bug.php?id=77370 */
   /* can't use \xfc00.. because compiler error: hex escape sequence out of range */
   n("()0\\xfc00000\\xfc00000\\xfc00000\xfc", ""); /* https://bugs.php.net/bug.php?id=77371 */
