@@ -1197,10 +1197,11 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                         .and_then(|value| options.allow_input_assertion_overrides.then_some(value))
                         .unwrap_or(ix == pos && option_flags & OPTION_SKIPPED_EMPTY_MATCH == 0);
                     if !at_previous_match_end {
-                        // If \G is at the start of the pattern, we can fail early
-                        // instead of checking at each position in the haystack
-                        // because \G will never match at any other position
-                        if at_start && state.stack.len() == 1 {
+                        // If \G is at the start of the pattern, and we are performing a non-anchored
+                        // search, then we can fail early instead of checking at each position in the
+                        // haystack because \G will never match at any other position
+                        if at_start && state.stack.len() == 1 && option_flags & OPTION_ANCHORED == 0
+                        {
                             // The only item on the stack is from the SplitUnanchored (or Seek)
                             // instruction for non-anchored search.
                             // We can safely return None immediately.

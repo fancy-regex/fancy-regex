@@ -872,4 +872,20 @@ mod tests {
         assert_eq!("bar", bar_match.as_str());
         assert!(matches2.next().is_none());
     }
+
+    #[test]
+    fn find_input_continue_from_prev_match_inside_negative_lookbehind() {
+        let options = &mut RegexOptionsBuilder::new();
+        let options = options.allow_input_assertion_overrides(true);
+        let set = RegexSet::new_with_options([r"(?<!\G)b"], &options).unwrap();
+        let mut matches = set
+            .find_input(RegexInput::new("ab").continue_from_previous_match_end(false))
+            .unwrap()
+            .unwrap();
+
+        let first = matches.next().unwrap().unwrap();
+        assert_eq!(0, first.pattern());
+        assert_eq!("b", first.as_str());
+        assert!(matches.next().is_none());
+    }
 }
