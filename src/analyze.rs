@@ -893,8 +893,6 @@ pub fn analyze<'a>(tree: &'a ExprTree, ctx: AnalyzeContext) -> Result<Info<'a>> 
 /// Note that false negatives are possible - it can return false even if it could be anchored.
 /// This should therefore only be treated as an optimization.
 pub fn can_compile_as_anchored(root_expr: &Expr) -> bool {
-    use crate::Assertion;
-
     match root_expr {
         Expr::Concat(children) => match children[0] {
             Expr::Assertion(assertion) => assertion == Assertion::StartText,

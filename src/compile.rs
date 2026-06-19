@@ -66,8 +66,8 @@ impl VMBuilder {
         }
     }
 
-    fn build(self, bytes_mode: BytesMode) -> Prog {
-        Prog::new(self.prog, self.n_saves, bytes_mode)
+    fn build(self, bytes_mode: BytesMode, seek_pattern: String) -> Prog {
+        Prog::new(self.prog, self.n_saves, bytes_mode, seek_pattern)
     }
 
     fn newsave(&mut self) -> usize {
@@ -120,7 +120,7 @@ struct Compiler<'a> {
     /// Stack tracking currently expanding subroutine calls to detect recursion depth
     subroutine_recursion_stack: Vec<usize>,
     /// Root Info node for handling group 0 subroutine calls
-    root_info: Option<&'a Info<'a>>,
+    root_info: &'a Info<'a>,
 }
 
 impl<'a> Compiler<'a> {
@@ -256,7 +256,7 @@ impl<'a> Compiler<'a> {
 
                 // Handle group 0 (whole pattern) specially
                 let target_info = if target_group == 0 {
-                    self.root_info
+                    Some(self.root_info)
                 } else {
                     self.group_info_map.get(&target_group).map(|v| &**v)
                 };
@@ -783,6 +783,7 @@ impl<'a> Compiler<'a> {
             Ok(dfa) => Arc::new(dfa),
             Err(e) => {
                 return Err(Error::CompileError(Box::new(CompileError::DfaBuildError(
+                    pattern.to_string(),
                     e.to_string(),
                 ))))
             }
@@ -996,7 +997,9 @@ impl core::fmt::Debug for CompileOptions {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let seek_filter_desc = match self.seek_filter {
             None => "None",
-            Some(f_ptr) if f_ptr as usize == crate::seek::seek_pattern_is_useful as usize => {
+            Some(f_ptr)
+                if (f_ptr as *const ()) == (crate::seek::seek_pattern_is_useful as *const ()) =>
+            {
                 "Some(seek_pattern_is_useful)"
             }
             Some(_) => "Some(<custom>)",
@@ -1035,49 +1038,32 @@ impl Default for CompileOptions {
 /// Compile the analyzed expressions into a program.
 pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
     let bytes_mode = options.bytes_mode;
+    // Pre-populate the group_info_map to support forward references
+    let mut group_info_map = Map::new();
+    populate_group_info_map(&mut group_info_map, info);
+
     let mut c = Compiler {
         b: VMBuilder::new(info.end_group()),
         options,
         inside_alternation: false,
-        group_info_map: Map::new(),
+        group_info_map,
         subroutine_recursion_stack: Vec::new(),
-        root_info: None,
+        root_info: info,
     };
 
-    if c.options.contains_subroutines {
-        // Store root info for group 0 subroutine calls
-        c.root_info = Some(info);
-
-        // Pre-populate the group_info_map to support forward references
-        populate_group_info_map(&mut c.group_info_map, info);
-    }
+    let mut seek_pattern = String::new();
+    build_seek_pattern(info, &c.group_info_map, 0, &mut seek_pattern, 0);
 
     if !c.options.anchored {
-        // Attempt to build a Seek pre-filter when requested.
         let mut used_seek = false;
         if let Some(filter) = c.options.seek_filter {
-            if info.hard {
-                // Build the group_info_map if not already populated (needed for backref inlining).
-                let mut local_group_info_map: Map<usize, &Info<'_>>;
-                let group_info_map: &Map<usize, &Info<'_>> = if c.options.contains_subroutines {
-                    &c.group_info_map
-                } else {
-                    local_group_info_map = Map::new();
-                    populate_group_info_map(&mut local_group_info_map, info);
-                    &local_group_info_map
-                };
-
-                let mut seek_pat = String::new();
-                build_seek_pattern(info, group_info_map, 0, &mut seek_pat, 0);
-
-                if filter(&seek_pat) {
-                    if let Ok(inner) = compile_inner(&seek_pat, &c.options) {
-                        c.b.add(Insn::Seek(Seek {
-                            inner,
-                            pattern: seek_pat,
-                        }));
-                        used_seek = true;
-                    }
+            if filter(&seek_pattern) {
+                if let Ok(inner) = compile_inner(&seek_pattern, &c.options) {
+                    c.b.add(Insn::Seek(Seek {
+                        inner,
+                        pattern: seek_pattern.clone(),
+                    }));
+                    used_seek = true;
                 }
             }
         }
@@ -1107,7 +1093,7 @@ pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
         c.b.add(Insn::RejectEmptyMatchAtEOFFollowingNewline);
     }
     c.b.add(Insn::End);
-    Ok(c.b.build(bytes_mode))
+    Ok(c.b.build(bytes_mode, seek_pattern))
 }
 
 struct DelegateBuilder {

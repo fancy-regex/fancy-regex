@@ -47,6 +47,7 @@ use core::str::FromStr;
 use regex_automata::meta::Regex as RaRegex;
 use regex_automata::util::captures::Captures as RaCaptures;
 use regex_automata::util::syntax::Config as SyntaxConfig;
+use regex_automata::Anchored as RaAnchored;
 use regex_automata::Input as RaInput;
 
 mod analyze;
@@ -58,6 +59,7 @@ mod input;
 mod optimize;
 mod parse;
 mod parse_flags;
+mod regexset;
 mod replacer;
 mod seek;
 mod vm;
@@ -68,12 +70,13 @@ use crate::compile::{compile, CompileOptions};
 use crate::optimize::optimize;
 use crate::parse::{ExprTree, NamedGroups, Parser};
 use crate::parse_flags::*;
-use crate::vm::{Prog, OPTION_FIND_NOT_EMPTY, OPTION_SKIPPED_EMPTY_MATCH};
+use crate::vm::{Prog, OPTION_ANCHORED, OPTION_FIND_NOT_EMPTY, OPTION_SKIPPED_EMPTY_MATCH};
 
 pub use crate::bytes::MatchBytes;
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
 pub use crate::expand::Expander;
 pub use crate::input::{Input, RegexInput};
+pub use crate::regexset::{RegexSet, RegexSetMatch, RegexSetOptions};
 pub use crate::replacer::{NoExpand, Replacer, ReplacerRef};
 pub use crate::seek::seek_pattern_is_useful;
 
@@ -517,7 +520,7 @@ impl fmt::Debug for RegexOptions {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let seek_filter_desc = match self.seek_filter {
             None => "None",
-            Some(f_ptr) if f_ptr as usize == seek_pattern_is_useful as usize => {
+            Some(f_ptr) if (f_ptr as *const ()) == (seek_pattern_is_useful as *const ()) => {
                 "Some(seek_pattern_is_useful)"
             }
             Some(_) => "Some(<custom>)",
@@ -1342,7 +1345,7 @@ impl Regex {
         self.find_input(RegexInput::new(input).from_pos(pos))
     }
 
-    fn find_input_raw<S: input::Input + ?Sized>(
+    pub(crate) fn find_input_raw<S: input::Input + ?Sized>(
         &self,
         input: &RegexInput<'_, S>,
         option_flags: u32,
@@ -1356,11 +1359,15 @@ impl Regex {
                 explicit_capture_group_0,
                 ..
             } => {
+                let mut delegated_input = ra_input(input);
+                if option_flags & OPTION_ANCHORED != 0 {
+                    delegated_input = delegated_input.anchored(RaAnchored::Yes);
+                }
                 let result = if !*explicit_capture_group_0 {
-                    inner.search(&ra_input(input)).map(|m| (m.start(), m.end()))
+                    inner.search(&delegated_input).map(|m| (m.start(), m.end()))
                 } else {
                     let mut locations = inner.create_captures();
-                    inner.captures(ra_input(input), &mut locations);
+                    inner.captures(delegated_input, &mut locations);
                     locations
                         .get_group(1)
                         .map(|group1| (group1.start, group1.end))
@@ -1377,6 +1384,28 @@ impl Regex {
                 let result = vm::run(prog, input, option_flags, options)?;
                 Ok(result.map(|saves| (saves[0], saves[1])))
             }
+        }
+    }
+
+    /// Build a `Captures` value containing only group 0 for the given span.
+    ///
+    /// This is used by `RegexSet` as a fast path for patterns without capture
+    /// groups, where we only need to preserve the overall match range.
+    ///
+    /// The caller must pass a valid `start..end` match span for `input`.
+    /// Behavior is otherwise undefined for APIs reading the resulting captures.
+    pub(crate) fn captures_for_span<'t, S: input::Input + ?Sized>(
+        &self,
+        input: &'t S,
+        start: usize,
+        end: usize,
+    ) -> Captures<'t, S> {
+        Captures {
+            inner: CapturesImpl::Fancy {
+                saves: vec![start, end],
+            },
+            named_groups: self.named_groups.clone(),
+            input,
         }
     }
 
@@ -1502,7 +1531,7 @@ impl Regex {
         self.captures_input(RegexInput::new(text).from_pos(pos))
     }
 
-    fn captures_input_with_option_flags<'t, S: input::Input + ?Sized>(
+    pub(crate) fn captures_input_with_option_flags<'t, S: input::Input + ?Sized>(
         &self,
         input: &RegexInput<'t, S>,
         option_flags: u32,
@@ -1522,7 +1551,11 @@ impl Regex {
                 // always false here.
                 let explicit = *explicit_capture_group_0;
                 let mut locations = inner.create_captures();
-                inner.captures(ra_input(input), &mut locations);
+                let mut delegated_input = ra_input(input);
+                if option_flags & OPTION_ANCHORED != 0 {
+                    delegated_input = delegated_input.anchored(RaAnchored::Yes);
+                }
+                inner.captures(delegated_input, &mut locations);
                 Ok(locations.is_match().then_some(Captures {
                     inner: CapturesImpl::Wrap {
                         locations,
@@ -1554,6 +1587,15 @@ impl Regex {
                     }
                 }))
             }
+        }
+    }
+
+    pub(crate) fn seek_pattern(&self) -> &str {
+        match &self.inner {
+            RegexImpl::Wrap {
+                delegated_pattern, ..
+            } => delegated_pattern,
+            RegexImpl::Fancy { prog, .. } => &prog.seek_pattern,
         }
     }
 
@@ -1921,6 +1963,10 @@ impl<'t> From<Match<'t>> for Range<usize> {
 
 #[allow(clippy::len_without_is_empty)] // follow regex's API
 impl<'t, S: input::Input + ?Sized> Captures<'t, S> {
+    pub(crate) fn get_span(&self, i: usize) -> Option<(usize, usize)> {
+        self.inner.get_span(i)
+    }
+
     /// Get the capture group by its index in the regex.
     ///
     /// If there is no match for that group or the index does not correspond to a group, `None` is
@@ -2767,7 +2813,7 @@ mod tests {
     use alloc::{format, vec};
 
     use crate::parse::{make_group, make_literal};
-    use crate::{Absent, Expr, Regex, RegexBuilder, RegexImpl};
+    use crate::{Absent, Expr, Regex, RegexBuilder, RegexImpl, RegexInput};
 
     //use detect_possible_backref;
 
@@ -3104,5 +3150,27 @@ mod tests {
         });
         let children: Vec<_> = expr.children_iter().collect();
         assert_eq!(children.len(), 2);
+    }
+
+    #[test]
+    fn find_input_raw_honors_anchored_flag_for_wrapped_regex() {
+        let regex = Regex::new("abc").unwrap();
+        let input = RegexInput::new("zabc");
+
+        assert_eq!(Some((1, 4)), regex.find_input_raw(&input, 0).unwrap());
+        assert_eq!(
+            None,
+            regex
+                .find_input_raw(&input, super::OPTION_ANCHORED)
+                .unwrap()
+        );
+
+        let anchored_at_match = input.clone().from_pos(1);
+        assert_eq!(
+            Some((1, 4)),
+            regex
+                .find_input_raw(&anchored_at_match, super::OPTION_ANCHORED)
+                .unwrap()
+        );
     }
 }

@@ -1,4 +1,4 @@
-use fancy_regex::{Matches, Regex};
+use fancy_regex::{Captures, Matches, Regex, RegexSet, RegexSetMatch};
 
 #[cfg(feature = "std")]
 use std::sync::Arc;
@@ -20,6 +20,26 @@ fn test_regex_is_sync() {
 #[test]
 fn test_matches_is_send() {
     assert_send::<Matches<'static, 'static, str>>();
+}
+
+#[test]
+fn test_captures_is_send() {
+    assert_send::<Captures<'static, str>>();
+}
+
+#[test]
+fn test_regexset_is_send() {
+    assert_send::<RegexSet>();
+}
+
+#[test]
+fn test_regexset_is_sync() {
+    assert_sync::<RegexSet>();
+}
+
+#[test]
+fn test_regexsetmatches_is_send() {
+    assert_send::<RegexSetMatch<'static, str>>();
 }
 
 #[cfg(all(feature = "std", feature = "variable-lookbehinds"))]

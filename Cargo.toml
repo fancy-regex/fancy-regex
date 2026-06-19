@@ -44,3 +44,7 @@ regex = "1.10"
 [[bench]]
 name = "bench"
 harness = false
+
+[[bench]]
+name = "regexset_vs_individual"
+harness = false
