@@ -9,6 +9,8 @@ with the exception that 0.x versions can break between minor versions.
 ## [Unreleased]
 ### Added
 - Add `BytesMode` and the `RegexInput` trait so the matching and capture APIs can operate on strings or bytes, and allows to opt out of unicode handling if desired (#248)
+  - Also allows searching within a range without slicing (#253)
+  - Assertions can be overridden at runtime, if the regex builder `allow_input_assertion_overrides` option was used (#254)
 - Add experimental seek optimization to only invoke the VM at candidate positions where a match could occur (#246)
 - Add `RegexBuilder::disallow_empty_match_at_eof_after_newline` to reject empty matches at the end of the haystack following a trailing newline, to match Oniguruma behavior (#247)
 - Add `RegexSet` API for efficiently matching multiple patterns against the same text (#255)
@@ -17,6 +19,7 @@ with the exception that 0.x versions can break between minor versions.
 - Patterns no longer force Unicode mode during parsing, and inline `(?u)` / `(?-u)` flags are accepted when they agree with the builder configuration
 ### Fixed
 - Fix bug whereby inline flags were not overriding the builder options (#247)
+- Fix bug whereby `\G` optimizations were applying where they shouldn't, giving wrong results (#256)
 ### Upgrade guide
 If you previously stored i.e. `Captures`, you would need to change the type to `Captures<str>` to get the code to compile.
 
