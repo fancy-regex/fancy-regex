@@ -1091,6 +1091,17 @@ fn oniguruma_swapped_quantifier_order_is_possessive() {
 }
 
 #[test]
+fn oniguruma_plus_after_quantifier() {
+    let re = RegexBuilder::new("^x{2}+$").oniguruma_mode(true).build().unwrap();
+    let result = re.find_from_pos("xxxx", 0).unwrap();
+    assert!(result.is_some(), "quantifier should be repeated");
+
+    let re = RegexBuilder::new("^x{0,3}+$").oniguruma_mode(true).build().unwrap();
+    let result = re.find_from_pos("xx", 0).unwrap();
+    assert!(result.is_some(), "quantifier should be repeated");
+}
+
+#[test]
 fn find_input_wrap_range_keeps_word_boundary_context() {
     assert_eq!(
         common::assert_find_input(r"\bat\b", "batter", 0, 1..3),

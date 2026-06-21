@@ -168,15 +168,15 @@ impl<'a> Parser<'a> {
     ) -> Result<(usize, Expr)> {
         let mut ix = self.optional_whitespace(ix)?;
         if ix < self.re.len() {
-            let (mut lo, mut hi) = match self.re.as_bytes()[ix] {
-                b'?' => (0, 1),
-                b'*' => (0, usize::MAX),
-                b'+' => (1, usize::MAX),
+            let (mut lo, mut hi, user_specified) = match self.re.as_bytes()[ix] {
+                b'?' => (0, 1, false),
+                b'*' => (0, usize::MAX, false),
+                b'+' => (1, usize::MAX, false),
                 b'{' => {
                     match self.parse_repeat(ix) {
                         Ok((next, lo, hi)) => {
                             ix = next - 1;
-                            (lo, hi)
+                            (lo, hi, true)
                         }
                         Err(_) => {
                             // Invalid repeat syntax, which results in `{` being treated as a literal
@@ -208,9 +208,14 @@ impl<'a> Parser<'a> {
             }
             greedy ^= self.flag(FLAG_SWAP_GREED);
             let mut atomic_group = false;
-            if self.flag(FLAG_ONIGURUMA_MODE) && hi < lo {
-                (lo, hi) = (hi, lo);
-                atomic_group = true;
+            if self.flag(FLAG_ONIGURUMA_MODE) {
+                if hi < lo {
+                    (lo, hi) = (hi, lo);
+                    atomic_group = true;
+                } else if !user_specified && ix < self.re.len() && self.re.as_bytes()[ix] == b'+' {
+                    ix += 1;
+                    atomic_group = true;
+                }
             } else if ix < self.re.len() && self.re.as_bytes()[ix] == b'+' {
                 ix += 1;
                 atomic_group = true;
@@ -3115,6 +3120,11 @@ mod tests {
     #[test]
     fn swapped_order_quantifier_oniguruma_mode() {
         assert_eq!(parse_oniguruma("x{3,0}").unwrap(), Expr::AtomicGroup(Box::new(Expr::Repeat { child: Box::new(make_literal("x")), lo: 0, hi: 3, greedy: true, })));
+    }
+
+    #[test]
+    fn plus_after_user_specified_quantifier_oniguruma_mode() {
+        assert_eq!(parse_oniguruma("x{2}+").unwrap(), Expr::Repeat { child: Box::new(Expr::Repeat { child: Box::new(make_literal("x")), lo: 2, hi: 2, greedy: true, }), lo: 1, hi: usize::MAX, greedy: true, });
     }
 
     #[test]
