@@ -20,6 +20,7 @@ with the exception that 0.x versions can break between minor versions.
 ### Fixed
 - Fix bug whereby inline flags were not overriding the builder options (#247)
 - Fix bug whereby `\G` optimizations were applying where they shouldn't, giving wrong results (#256)
+- Support Oniguruma quantifier parsing rules, whereby swapped ordering causes possessiveness, `+` only causes possessiveness after `?`, `*` or `+` (#258)
 ### Upgrade guide
 If you previously stored i.e. `Captures`, you would need to change the type to `Captures<str>` to get the code to compile.
 
