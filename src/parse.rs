@@ -168,7 +168,7 @@ impl<'a> Parser<'a> {
     ) -> Result<(usize, Expr)> {
         let mut ix = self.optional_whitespace(ix)?;
         if ix < self.re.len() {
-            let (lo, hi) = match self.re.as_bytes()[ix] {
+            let (mut lo, mut hi) = match self.re.as_bytes()[ix] {
                 b'?' => (0, 1),
                 b'*' => (0, usize::MAX),
                 b'+' => (1, usize::MAX),
@@ -208,7 +208,10 @@ impl<'a> Parser<'a> {
             }
             greedy ^= self.flag(FLAG_SWAP_GREED);
             let mut atomic_group = false;
-            if ix < self.re.len() && self.re.as_bytes()[ix] == b'+' {
+            if self.flag(FLAG_ONIGURUMA_MODE) && hi < lo {
+                (lo, hi) = (hi, lo);
+                atomic_group = true;
+            } else if ix < self.re.len() && self.re.as_bytes()[ix] == b'+' {
                 ix += 1;
                 atomic_group = true;
             }
@@ -316,9 +319,6 @@ impl<'a> Parser<'a> {
         let ix = self.optional_whitespace(end)?; // past hi number
         if ix == self.re.len() || bytes[ix] != b'}' {
             return Err(Error::ParseError(ix, ParseError::InvalidRepeat));
-        }
-        if self.flag(FLAG_ONIGURUMA_MODE) && hi < lo {
-            return Ok((ix + 1, hi, lo));
         }
         Ok((ix + 1, lo, hi))
     }
@@ -3110,6 +3110,11 @@ mod tests {
         assert_eq!(parse_oniguruma("(?i:)*").unwrap(), Expr::Empty);
         assert_eq!(parse_oniguruma("(?s:)+").unwrap(), Expr::Empty);
         assert_eq!(parse_oniguruma("(?x: (?i:) * )").unwrap(), Expr::Empty);
+    }
+
+    #[test]
+    fn swapped_order_quantifier_oniguruma_mode() {
+        assert_eq!(parse_oniguruma("x{3,0}").unwrap(), Expr::AtomicGroup(Box::new(Expr::Repeat { child: Box::new(make_literal("x")), lo: 0, hi: 3, greedy: true, })));
     }
 
     #[test]

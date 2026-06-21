@@ -1084,6 +1084,13 @@ fn find_from_pos_at_end_still_runs() {
 }
 
 #[test]
+fn oniguruma_swapped_quantifier_order_is_possessive() {
+    let re = RegexBuilder::new("x{3,0}x").oniguruma_mode(true).build().unwrap();
+    let result = re.find_from_pos("xx", 0).unwrap();
+    assert!(result.is_none(), "swapped quantifier order in Oniguruma mode should make it possessive");
+}
+
+#[test]
 fn find_input_wrap_range_keeps_word_boundary_context() {
     assert_eq!(
         common::assert_find_input(r"\bat\b", "batter", 0, 1..3),
