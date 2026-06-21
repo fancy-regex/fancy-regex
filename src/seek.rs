@@ -107,6 +107,34 @@ pub(crate) fn build_seek_pattern<'a>(
     buf: &mut String,
     precedence: u8,
 ) {
+    // `optimize::optimize_trailing_lookahead` rewrites a standalone top-level
+    // `(?=X)` to `Concat([Group(Empty), X])` so that the body `X` becomes
+    // explicit content (and may go through the Wrap arm when `X` is easy).
+    //
+    // For the seek pre-filter that rewrite is unsound: the original pattern is
+    // a zero-width assertion, but the rewritten `()X` requires `X` to actually
+    // be matched.  Building a seek over-approximation from `X` then asks
+    // `regex-automata::meta::Regex` to find the leftmost position where `X`
+    // matches.  The META engine's leftmost-first search has been observed to
+    // pick non-leftmost matches for some patterns of the form
+    // `[char-class]+<…(?:nested)?…>` (verified by direct comparison against
+    // PikeVM and the lazy DFA, both of which agree on a strictly earlier
+    // start position).  When that happens, `Insn::Seek` jumps the VM past
+    // valid match positions and the surrounding pattern emits a false
+    // negative.
+    //
+    // Skipping the seek pre-filter for this specific tree shape preserves
+    // the original lookahead semantics: the parser falls through the standard
+    // `SplitUnanchored` byte-by-byte preamble, which never skips a position.
+    if let Expr::Concat(children) = info.expr {
+        if let Some(first) = children.first() {
+            if let Expr::Group(inner) = first {
+                if matches!(**inner, Expr::Empty) {
+                    return;
+                }
+            }
+        }
+    }
     build_seek_pattern_impl(info, group_info_map, depth, buf, precedence, false);
 }
 
@@ -607,5 +635,78 @@ mod tests {
         // dropped when inlining the group body for the backref.
         // `(a\Z)\1` — seek = `(?:a\n*$)` (group) + `(?:a\n*)` (backref, \Z anchor dropped, newline matching kept)
         assert_eq!(get_seek_pattern(r"(a\Z)\1"), r"(?:a\n*$)(?:a\n*)");
+    }
+
+    /// Build the seek pattern for a regex string after running the
+    /// `optimize_trailing_lookahead` rewrite, mirroring what the compile
+    /// pipeline produces for the Fancy arm.
+    fn get_seek_pattern_post_optimize(re: &str) -> String {
+        let mut tree = Expr::parse_tree(re).unwrap();
+        crate::optimize::optimize(&mut tree);
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        let mut group_info_map = Map::new();
+        populate_group_info_map(&mut group_info_map, &info);
+        let mut buf = String::new();
+        build_seek_pattern(&info, &group_info_map, 0, &mut buf, 0);
+        buf
+    }
+
+    #[test]
+    fn standalone_hard_lookahead_emits_no_seek_pattern() {
+        // After `optimize_trailing_lookahead`, a top-level `(?=X)` becomes
+        // `Concat([Group(Empty), X])`.  When `X` itself contains hard nodes
+        // (so the regex compiles to the Fancy VM), the seek pre-filter must
+        // emit nothing for this shape — the body `X` is a zero-width
+        // assertion in the original pattern, and feeding its over-
+        // approximation to `regex-automata::meta::Regex` has been observed
+        // to skip valid leftmost match positions on patterns of the form
+        // `[char-class]+<…(?:nested)?…>`.  We instead fall through to the
+        // standard `SplitUnanchored` byte-by-byte preamble.
+        //
+        // `(?=(?!t)X)` is hard (has an internal negative lookahead) and so
+        // exercises the Fancy-arm branch where `build_seek_pattern` runs.
+        assert_eq!(
+            get_seek_pattern_post_optimize(r"(?=(?!t)foo)"),
+            "",
+            "hard standalone (?=X) must not emit a seek pre-filter",
+        );
+
+        // Trailing-lookahead optimisation (`a(?=(?!c)b)` → `(a)(?!c)b`)
+        // keeps a non-empty group, so its seek pre-filter is allowed.
+        assert!(
+            !get_seek_pattern_post_optimize(r"a(?=(?!c)b)").is_empty(),
+            "trailing-lookahead post-optimize tree should still emit a seek pattern",
+        );
+    }
+
+    #[test]
+    fn standalone_lookahead_finds_leftmost_match_via_byte_scan() {
+        // Regression test for a syntect failure where seek=true mis-skipped
+        // the C++ "generic-type-call" lookahead.  The lookahead must report a
+        // zero-width match at the *leftmost* position where its body starts
+        // matching, not at any later position the seek over-approximation
+        // happens to find first.
+        let pat = r"(?=(?!template)(?:\b[\p{L}_][\p{L}\p{N}_]*\b\s*::\s*)*\b[\p{L}_][\p{L}\p{N}_]*\b\s*<(?:[^(){}&;*^%=<>-]+(?:<[^(){}&;*^%=<>-]*>)?)?[^(){}&;*^%=<>-]*>)";
+        let haystack = "    auto f = [](std::function<A<B>>) {};";
+        for &seek in &[false, true] {
+            let regex = crate::RegexBuilder::new(pat)
+                .oniguruma_mode(true)
+                .seek(seek)
+                .build()
+                .unwrap();
+            let captures = regex.captures_from_pos(haystack, 0).unwrap();
+            let m = captures.expect("lookahead must match somewhere");
+            let span = m.get(0).unwrap();
+            // The leftmost position where the lookahead body matches is the
+            // `s` of `std::function<...>` (byte 16).
+            assert_eq!(
+                span.start(),
+                16,
+                "seek={} returned non-leftmost match at {}..{}",
+                seek,
+                span.start(),
+                span.end()
+            );
+        }
     }
 }
