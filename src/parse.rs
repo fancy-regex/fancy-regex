@@ -3119,12 +3119,33 @@ mod tests {
 
     #[test]
     fn swapped_order_quantifier_oniguruma_mode() {
-        assert_eq!(parse_oniguruma("x{3,0}").unwrap(), Expr::AtomicGroup(Box::new(Expr::Repeat { child: Box::new(make_literal("x")), lo: 0, hi: 3, greedy: true, })));
+        assert_eq!(
+            parse_oniguruma("x{3,0}").unwrap(),
+            Expr::AtomicGroup(Box::new(Expr::Repeat {
+                child: Box::new(make_literal("x")),
+                lo: 0,
+                hi: 3,
+                greedy: true,
+            }))
+        );
     }
 
     #[test]
     fn plus_after_user_specified_quantifier_oniguruma_mode() {
-        assert_eq!(parse_oniguruma("x{2}+").unwrap(), Expr::Repeat { child: Box::new(Expr::Repeat { child: Box::new(make_literal("x")), lo: 2, hi: 2, greedy: true, }), lo: 1, hi: usize::MAX, greedy: true, });
+        assert_eq!(
+            parse_oniguruma("x{2}+").unwrap(),
+            Expr::Repeat {
+                child: Box::new(Expr::Repeat {
+                    child: Box::new(make_literal("x")),
+                    lo: 2,
+                    hi: 2,
+                    greedy: true,
+                }),
+                lo: 1,
+                hi: usize::MAX,
+                greedy: true,
+            }
+        );
     }
 
     #[test]

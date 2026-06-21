@@ -1085,18 +1085,30 @@ fn find_from_pos_at_end_still_runs() {
 
 #[test]
 fn oniguruma_swapped_quantifier_order_is_possessive() {
-    let re = RegexBuilder::new("x{3,0}x").oniguruma_mode(true).build().unwrap();
+    let re = RegexBuilder::new("x{3,0}x")
+        .oniguruma_mode(true)
+        .build()
+        .unwrap();
     let result = re.find_from_pos("xx", 0).unwrap();
-    assert!(result.is_none(), "swapped quantifier order in Oniguruma mode should make it possessive");
+    assert!(
+        result.is_none(),
+        "swapped quantifier order in Oniguruma mode should make it possessive"
+    );
 }
 
 #[test]
 fn oniguruma_plus_after_quantifier() {
-    let re = RegexBuilder::new("^x{2}+$").oniguruma_mode(true).build().unwrap();
+    let re = RegexBuilder::new("^x{2}+$")
+        .oniguruma_mode(true)
+        .build()
+        .unwrap();
     let result = re.find_from_pos("xxxx", 0).unwrap();
     assert!(result.is_some(), "quantifier should be repeated");
 
-    let re = RegexBuilder::new("^x{0,3}+$").oniguruma_mode(true).build().unwrap();
+    let re = RegexBuilder::new("^x{0,3}+$")
+        .oniguruma_mode(true)
+        .build()
+        .unwrap();
     let result = re.find_from_pos("xx", 0).unwrap();
     assert!(result.is_some(), "quantifier should be repeated");
 }
