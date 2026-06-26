@@ -874,11 +874,27 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                             slash_z_matched |= matched;
                             matched
                         }
-                        Assertion::StartLine { crlf: false } => {
+                        Assertion::StartLine {
+                            crlf: false,
+                            reject_after_trailing_newline_at_eof: false,
+                        } => look_matcher.is_start_lf(haystack.as_bytes(), ix),
+                        Assertion::StartLine {
+                            crlf: true,
+                            reject_after_trailing_newline_at_eof: false,
+                        } => look_matcher.is_start_crlf(haystack.as_bytes(), ix),
+                        Assertion::StartLine {
+                            crlf: false,
+                            reject_after_trailing_newline_at_eof: true,
+                        } => {
                             look_matcher.is_start_lf(haystack.as_bytes(), ix)
+                                && !(ix > 0 && ix == haystack.len())
                         }
-                        Assertion::StartLine { crlf: true } => {
+                        Assertion::StartLine {
+                            crlf: true,
+                            reject_after_trailing_newline_at_eof: true,
+                        } => {
                             look_matcher.is_start_crlf(haystack.as_bytes(), ix)
+                                && !(ix > 0 && ix == haystack.len())
                         }
                         Assertion::EndLine { crlf: false } => {
                             look_matcher.is_end_lf(haystack.as_bytes(), ix)

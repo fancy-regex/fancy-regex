@@ -2415,6 +2415,8 @@ pub enum Assertion {
         /// If true, this assertion matches at the starting position of the input text, or at the position immediately
         /// following either a `\r` or `\n` character, but never after a `\r` when a `\n` follows.
         crlf: bool,
+        /// Whether to reject matches after a trailing newline at EOF
+        reject_after_trailing_newline_at_eof: bool,
     },
     /// End of a line
     EndLine {
@@ -2451,6 +2453,7 @@ impl Assertion {
                 | NotWordBoundary
                 // `\Z` needs custom trailing-newline handling.
                 | EndTextIgnoreTrailingNewlines { .. }
+                | StartLine { reject_after_trailing_newline_at_eof: true, .. }
         )
     }
 }
@@ -2665,9 +2668,15 @@ impl Expr {
             }
             Expr::Assertion(Assertion::StartText) => buf.push('^'),
             Expr::Assertion(Assertion::EndText) => buf.push('$'),
-            Expr::Assertion(Assertion::StartLine { crlf: false }) => buf.push_str("(?m:^)"),
+            Expr::Assertion(Assertion::StartLine {
+                crlf: false,
+                reject_after_trailing_newline_at_eof: _,
+            }) => buf.push_str("(?m:^)"),
             Expr::Assertion(Assertion::EndLine { crlf: false }) => buf.push_str("(?m:$)"),
-            Expr::Assertion(Assertion::StartLine { crlf: true }) => buf.push_str("(?Rm:^)"),
+            Expr::Assertion(Assertion::StartLine {
+                crlf: true,
+                reject_after_trailing_newline_at_eof: _,
+            }) => buf.push_str("(?Rm:^)"),
             Expr::Assertion(Assertion::EndLine { crlf: true }) => buf.push_str("(?Rm:$)"),
             Expr::Concat(ref children) => {
                 if precedence > 1 {

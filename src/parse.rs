@@ -346,6 +346,7 @@ impl<'a> Parser<'a> {
                 if self.flag(FLAG_MULTI) {
                     Expr::Assertion(Assertion::StartLine {
                         crlf: self.flag(FLAG_CRLF),
+                        reject_after_trailing_newline_at_eof: self.flag(FLAG_ONIGURUMA_MODE),
                     })
                 } else {
                     Expr::Assertion(Assertion::StartText)
@@ -1810,6 +1811,7 @@ mod tests {
     fn parse_oniguruma(s: &str) -> crate::Result<Expr> {
         let mut options = RegexOptions::default();
         options.oniguruma_mode = true;
+        options.syntaxc = options.syntaxc.multi_line(true);
         Expr::parse_tree_with_flags(s, options.compute_flags()).map(|tree| tree.expr)
     }
 
@@ -2373,7 +2375,10 @@ mod tests {
         assert_eq!(
             p(r"(?m)^?"),
             Expr::Repeat {
-                child: Box::new(Expr::Assertion(Assertion::StartLine { crlf: false })),
+                child: Box::new(Expr::Assertion(Assertion::StartLine {
+                    crlf: false,
+                    reject_after_trailing_newline_at_eof: false
+                })),
                 lo: 0,
                 hi: 1,
                 greedy: true
@@ -2721,7 +2726,10 @@ mod tests {
         assert_eq!(p("^"), Expr::Assertion(Assertion::StartText));
         assert_eq!(
             p("(?m:^)"),
-            Expr::Assertion(Assertion::StartLine { crlf: false })
+            Expr::Assertion(Assertion::StartLine {
+                crlf: false,
+                reject_after_trailing_newline_at_eof: false
+            })
         );
         assert_eq!(p("$"), Expr::Assertion(Assertion::EndText));
         assert_eq!(
@@ -2734,11 +2742,17 @@ mod tests {
     fn flag_crlf() {
         assert_eq!(
             p("(?mR:^)"),
-            Expr::Assertion(Assertion::StartLine { crlf: true })
+            Expr::Assertion(Assertion::StartLine {
+                crlf: true,
+                reject_after_trailing_newline_at_eof: false
+            })
         );
         assert_eq!(
             p("(?Rm:^)"),
-            Expr::Assertion(Assertion::StartLine { crlf: true })
+            Expr::Assertion(Assertion::StartLine {
+                crlf: true,
+                reject_after_trailing_newline_at_eof: false
+            })
         );
         assert_eq!(
             p("(?mR:$)"),
@@ -2747,7 +2761,10 @@ mod tests {
         // Negating R reverts to LF-only
         assert_eq!(
             p("(?mR)(?-R:^)"),
-            Expr::Assertion(Assertion::StartLine { crlf: false })
+            Expr::Assertion(Assertion::StartLine {
+                crlf: false,
+                reject_after_trailing_newline_at_eof: false
+            })
         );
     }
 
@@ -3075,6 +3092,17 @@ mod tests {
         assert_eq!(parse_oniguruma("(?:)++").unwrap(), Expr::Empty);
         // Both non-greedy and possessive
         assert_eq!(parse_oniguruma("(?:)*?+").unwrap(), Expr::Empty);
+    }
+
+    #[test]
+    fn start_line_in_oniguruma_mode_will_reject_after_trailing_newline_at_eof() {
+        assert_eq!(
+            parse_oniguruma("^").unwrap(),
+            Expr::Assertion(Assertion::StartLine {
+                crlf: false,
+                reject_after_trailing_newline_at_eof: true
+            })
+        );
     }
 
     #[test]
@@ -3761,7 +3789,10 @@ mod tests {
         assert_eq!(
             expr,
             Expr::Concat(vec![
-                Expr::Assertion(Assertion::StartLine { crlf: false }),
+                Expr::Assertion(Assertion::StartLine {
+                    crlf: false,
+                    reject_after_trailing_newline_at_eof: false
+                }),
                 make_literal("h"),
                 make_literal("e"),
                 make_literal("l"),
@@ -3773,7 +3804,7 @@ mod tests {
     }
 
     #[test]
-    fn pparse_with_multiline_option() {
+    fn parse_with_multiline_option() {
         let options = get_options(|x| x.multi_line(true));
 
         let tree = Expr::parse_tree_with_flags("^hello$", options.compute_flags());
@@ -3782,7 +3813,10 @@ mod tests {
         assert_eq!(
             expr,
             Expr::Concat(vec![
-                Expr::Assertion(Assertion::StartLine { crlf: false }),
+                Expr::Assertion(Assertion::StartLine {
+                    crlf: false,
+                    reject_after_trailing_newline_at_eof: false
+                }),
                 make_literal("h"),
                 make_literal("e"),
                 make_literal("l"),
@@ -3877,7 +3911,10 @@ mod tests {
         assert_eq!(
             expr,
             Expr::Concat(vec![
-                Expr::Assertion(Assertion::StartLine { crlf: false }),
+                Expr::Assertion(Assertion::StartLine {
+                    crlf: false,
+                    reject_after_trailing_newline_at_eof: false
+                }),
                 make_literal_case_insensitive("h", true),
                 make_literal_case_insensitive("e", true),
                 make_literal_case_insensitive("l", true),
@@ -3899,7 +3936,10 @@ mod tests {
         assert_eq!(
             expr,
             Expr::Concat(vec![
-                Expr::Assertion(Assertion::StartLine { crlf: false }),
+                Expr::Assertion(Assertion::StartLine {
+                    crlf: false,
+                    reject_after_trailing_newline_at_eof: false
+                }),
                 make_literal_case_insensitive("h", true),
                 make_literal_case_insensitive("e", true),
                 make_literal_case_insensitive("l", true),

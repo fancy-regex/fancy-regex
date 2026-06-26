@@ -180,8 +180,14 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                 // Emit them faithfully.
                 Assertion::StartText => buf.push('^'),
                 Assertion::EndText => buf.push('$'),
-                Assertion::StartLine { crlf: false } => buf.push_str("(?m:^)"),
-                Assertion::StartLine { crlf: true } => buf.push_str("(?Rm:^)"),
+                Assertion::StartLine {
+                    crlf: false,
+                    reject_after_trailing_newline_at_eof: _,
+                } => buf.push_str("(?m:^)"),
+                Assertion::StartLine {
+                    crlf: true,
+                    reject_after_trailing_newline_at_eof: _,
+                } => buf.push_str("(?Rm:^)"),
                 Assertion::EndLine { crlf: false } => buf.push_str("(?m:$)"),
                 Assertion::EndLine { crlf: true } => buf.push_str("(?Rm:$)"),
             }
