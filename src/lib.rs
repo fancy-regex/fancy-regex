@@ -2453,7 +2453,6 @@ impl Assertion {
                 | NotWordBoundary
                 // `\Z` needs custom trailing-newline handling.
                 | EndTextIgnoreTrailingNewlines { .. }
-                | StartLine { reject_after_trailing_newline_at_eof: true, .. }
         )
     }
 }

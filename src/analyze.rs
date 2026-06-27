@@ -136,6 +136,13 @@ struct Analyzer<'a> {
     /// When true, assertions with runtime input suppression overrides are promoted to hard
     /// so they run on the VM.
     allow_input_assertion_overrides: bool,
+    /// Oniguruma's `^` (StartLine with `reject_after_trailing_newline_at_eof`) only rejects
+    /// the empty match at the absolute end of the haystack when it anchors the match itself;
+    /// when used as a sub-assertion inside a lookaround it behaves as a plain line start.
+    /// Treating it as the (delegatable) plain line start inside lookarounds also
+    /// keeps variable-length lookbehinds that contain `^` compilable instead of
+    /// forcing the whole body onto the backtracking VM.
+    in_lookaround: bool,
 }
 
 impl<'a> Analyzer<'a> {
@@ -155,6 +162,13 @@ impl<'a> Analyzer<'a> {
         let mut const_size = false;
         let mut hard = false;
         match *expr {
+            Expr::Assertion(Assertion::StartLine {
+                reject_after_trailing_newline_at_eof: true,
+                ..
+            }) if !self.in_lookaround => {
+                const_size = true;
+                hard = true;
+            }
             Expr::Assertion(assertion) if assertion.is_always_hard() => {
                 const_size = true;
                 hard = true;
@@ -248,9 +262,12 @@ impl<'a> Analyzer<'a> {
                 children.push(child_info);
             }
             Expr::LookAround(ref child, _) => {
+                let was_in_lookaround = self.in_lookaround;
+                self.in_lookaround = true;
                 // NOTE: min_pos_in_group might seem weird for lookbehinds
                 let child_info =
                     self.visit(child, min_pos_in_group, inside_zero_rep, enclosing_group)?;
+                self.in_lookaround = was_in_lookaround;
                 // min_size = 0
                 const_size = true;
                 hard = true;
@@ -850,6 +867,7 @@ pub fn analyze<'a>(tree: &'a ExprTree, ctx: AnalyzeContext) -> Result<Info<'a>> 
         find_not_empty,
         disallow_empty_match_at_eof_after_newline,
         allow_input_assertion_overrides,
+        in_lookaround: false,
     };
 
     let mut analyzed = analyzer.visit(&tree.expr, 0, false, 0)?;
