@@ -131,7 +131,7 @@ use regex_automata::PatternID;
 use regex_automata::PatternSet;
 
 use crate::compile::options_to_rabuilder;
-use crate::vm::OPTION_ANCHORED;
+use crate::vm::{OPTION_ANCHORED, OPTION_SKIPPED_EMPTY_MATCH};
 use crate::CompileError;
 use crate::Error;
 use crate::RegexOptions;
@@ -522,16 +522,20 @@ impl RegexSet {
     ) -> Result<Option<RegexSetMatch<'t, S>>> {
         let candidate_input = input.clone().from_pos(match_start);
         let regex = &self.regexes[pattern_index];
+        let mut option_flags = OPTION_ANCHORED;
+        if input.start() < match_start {
+            option_flags |= OPTION_SKIPPED_EMPTY_MATCH;
+        }
         if regex.captures_len() == 1 {
-            return Ok(regex
-                .find_input_raw(&candidate_input, OPTION_ANCHORED)?
-                .map(|(start, end)| RegexSetMatch {
+            return Ok(regex.find_input_raw(&candidate_input, option_flags)?.map(
+                |(start, end)| RegexSetMatch {
                     pattern_index,
                     captures: regex.captures_for_span(input.haystack(), start, end),
-                }));
+                },
+            ));
         }
         Ok(regex
-            .captures_input_with_option_flags(&candidate_input, OPTION_ANCHORED)?
+            .captures_input_with_option_flags(&candidate_input, option_flags)?
             .map(|captures| RegexSetMatch {
                 pattern_index,
                 captures,
@@ -887,5 +891,37 @@ mod tests {
         assert_eq!(0, first.pattern());
         assert_eq!("b", first.as_str());
         assert!(matches.next().is_none());
+    }
+
+    #[test]
+    fn continue_from_prev_match_works_as_expected_when_match_is_not_at_search_start() {
+        use crate::Arc;
+        use crate::RegexBuilder;
+
+        let (pat, hay) = (r"\Gx", "yx");
+
+        // `\G` holds only at the search start (index 0); 'x' is at 1 -> no match.
+        let re = RegexBuilder::new(pat).build().unwrap();
+        let single = re
+            .find_input(RegexInput::new(hay).from_pos(0))
+            .unwrap()
+            .map(|m| (m.start(), m.end()));
+
+        // Same regex, same input, via a RegexSet:
+        let set = RegexSet::from_regexes([Arc::new(re)], Default::default()).unwrap();
+        let via_set = set
+            .find_input(RegexInput::new(hay).from_pos(0))
+            .unwrap()
+            .and_then(|mut it| it.next())
+            .map(|m| {
+                let m = m.unwrap();
+                (m.start(), m.end())
+            });
+
+        assert_eq!(
+            single, via_set,
+            "RegexSet should behave the same as a standalone regex"
+        );
+        assert_eq!(single, None);
     }
 }
