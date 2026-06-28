@@ -880,6 +880,14 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                         Assertion::StartLine { crlf: true } => {
                             look_matcher.is_start_crlf(haystack.as_bytes(), ix)
                         }
+                        Assertion::StartLineOniguruma { crlf: false } => {
+                            look_matcher.is_start_lf(haystack.as_bytes(), ix)
+                                && !(ix > 0 && ix == haystack.len())
+                        }
+                        Assertion::StartLineOniguruma { crlf: true } => {
+                            look_matcher.is_start_crlf(haystack.as_bytes(), ix)
+                                && !(ix > 0 && ix == haystack.len())
+                        }
                         Assertion::EndLine { crlf: false } => {
                             look_matcher.is_end_lf(haystack.as_bytes(), ix)
                         }

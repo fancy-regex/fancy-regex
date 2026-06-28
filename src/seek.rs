@@ -50,6 +50,7 @@ pub(crate) fn expr_contains_positional_anchor(expr: &Expr) -> bool {
             | Assertion::EndText
             | Assertion::EndTextIgnoreTrailingNewlines { .. }
             | Assertion::StartLine { .. }
+            | Assertion::StartLineOniguruma { .. }
             | Assertion::EndLine { .. },
         ) => true,
         _ => expr.children_iter().any(expr_contains_positional_anchor),
@@ -124,6 +125,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
             Assertion::StartText
             | Assertion::EndText
             | Assertion::StartLine { .. }
+            | Assertion::StartLineOniguruma { .. }
             | Assertion::EndLine { .. },
         ) = info.expr
         {
@@ -180,8 +182,10 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                 // Emit them faithfully.
                 Assertion::StartText => buf.push('^'),
                 Assertion::EndText => buf.push('$'),
-                Assertion::StartLine { crlf: false } => buf.push_str("(?m:^)"),
-                Assertion::StartLine { crlf: true } => buf.push_str("(?Rm:^)"),
+                Assertion::StartLine { crlf: false }
+                | Assertion::StartLineOniguruma { crlf: false } => buf.push_str("(?m:^)"),
+                Assertion::StartLine { crlf: true }
+                | Assertion::StartLineOniguruma { crlf: true } => buf.push_str("(?Rm:^)"),
                 Assertion::EndLine { crlf: false } => buf.push_str("(?m:$)"),
                 Assertion::EndLine { crlf: true } => buf.push_str("(?Rm:$)"),
             }

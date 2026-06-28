@@ -315,6 +315,10 @@ fn info_to_tree_node<'a>(
                 }
                 StartLine { crlf: true } => ("StartLine", Some("(crlf)".to_string())),
                 StartLine { crlf: false } => ("StartLine", None),
+                StartLineOniguruma { crlf: true } => {
+                    ("StartLineOniguruma", Some("(crlf)".to_string()))
+                }
+                StartLineOniguruma { crlf: false } => ("StartLineOniguruma", None),
                 EndLine { crlf: true } => ("EndLine", Some("(crlf)".to_string())),
                 EndLine { crlf: false } => ("EndLine", None),
                 LeftWordBoundary => ("LeftWordBoundary", None),

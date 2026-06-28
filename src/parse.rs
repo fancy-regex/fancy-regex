@@ -344,9 +344,15 @@ impl<'a> Parser<'a> {
             b'^' => Ok((
                 ix + 1,
                 if self.flag(FLAG_MULTI) {
-                    Expr::Assertion(Assertion::StartLine {
-                        crlf: self.flag(FLAG_CRLF),
-                    })
+                    if self.flag(FLAG_ONIGURUMA_MODE) {
+                        Expr::Assertion(Assertion::StartLineOniguruma {
+                            crlf: self.flag(FLAG_CRLF),
+                        })
+                    } else {
+                        Expr::Assertion(Assertion::StartLine {
+                            crlf: self.flag(FLAG_CRLF),
+                        })
+                    }
                 } else {
                     Expr::Assertion(Assertion::StartText)
                 },
@@ -1810,6 +1816,7 @@ mod tests {
     fn parse_oniguruma(s: &str) -> crate::Result<Expr> {
         let mut options = RegexOptions::default();
         options.oniguruma_mode = true;
+        options.syntaxc = options.syntaxc.multi_line(true);
         Expr::parse_tree_with_flags(s, options.compute_flags()).map(|tree| tree.expr)
     }
 
@@ -3078,6 +3085,18 @@ mod tests {
     }
 
     #[test]
+    fn start_line_in_oniguruma_mode() {
+        assert_eq!(
+            parse_oniguruma("(?R:^)").unwrap(),
+            Expr::Assertion(Assertion::StartLineOniguruma { crlf: true })
+        );
+        assert_eq!(
+            parse_oniguruma("^").unwrap(),
+            Expr::Assertion(Assertion::StartLineOniguruma { crlf: false })
+        );
+    }
+
+    #[test]
     fn empty_noncapturing_group_with_quantifier_extended_mode() {
         // In (?x) mode, whitespace between the group and quantifier (and
         // between the quantifier and its modifiers) should be handled
@@ -3773,7 +3792,7 @@ mod tests {
     }
 
     #[test]
-    fn pparse_with_multiline_option() {
+    fn parse_with_multiline_option() {
         let options = get_options(|x| x.multi_line(true));
 
         let tree = Expr::parse_tree_with_flags("^hello$", options.compute_flags());

@@ -1114,6 +1114,20 @@ fn oniguruma_plus_after_quantifier() {
 }
 
 #[test]
+fn find_from_pos_startline_rejected_after_trailing_newline_at_eof() {
+    let re = RegexBuilder::new("^")
+        .oniguruma_mode(true)
+        .multi_line(true)
+        .build()
+        .unwrap();
+    let result = re.find_from_pos("ab\n", 3).unwrap();
+    assert!(
+        result.is_none(),
+        "pattern `^` must not match at end-of-text after a trailing newline"
+    );
+}
+
+#[test]
 fn find_input_wrap_range_keeps_word_boundary_context() {
     assert_eq!(
         common::assert_find_input(r"\bat\b", "batter", 0, 1..3),

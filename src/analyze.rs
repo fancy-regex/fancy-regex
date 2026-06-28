@@ -136,6 +136,10 @@ struct Analyzer<'a> {
     /// When true, assertions with runtime input suppression overrides are promoted to hard
     /// so they run on the VM.
     allow_input_assertion_overrides: bool,
+    /// Oniguruma's `^` rejects the empty match at the absolute end of the haystack after a trailing
+    /// newline when it anchors the match itself. When used as a sub-assertion inside a lookaround,
+    /// it behaves as a plain line start. So we need to track when we are analyzing inside a lookaround.
+    in_lookaround: bool,
 }
 
 impl<'a> Analyzer<'a> {
@@ -156,6 +160,10 @@ impl<'a> Analyzer<'a> {
         let mut hard = false;
         match *expr {
             Expr::Assertion(assertion) if assertion.is_always_hard() => {
+                const_size = true;
+                hard = true;
+            }
+            Expr::Assertion(Assertion::StartLineOniguruma { .. }) if !self.in_lookaround => {
                 const_size = true;
                 hard = true;
             }
@@ -248,9 +256,12 @@ impl<'a> Analyzer<'a> {
                 children.push(child_info);
             }
             Expr::LookAround(ref child, _) => {
+                let was_in_lookaround = self.in_lookaround;
+                self.in_lookaround = true;
                 // NOTE: min_pos_in_group might seem weird for lookbehinds
                 let child_info =
                     self.visit(child, min_pos_in_group, inside_zero_rep, enclosing_group)?;
+                self.in_lookaround = was_in_lookaround;
                 // min_size = 0
                 const_size = true;
                 hard = true;
@@ -850,6 +861,7 @@ pub fn analyze<'a>(tree: &'a ExprTree, ctx: AnalyzeContext) -> Result<Info<'a>> 
         find_not_empty,
         disallow_empty_match_at_eof_after_newline,
         allow_input_assertion_overrides,
+        in_lookaround: false,
     };
 
     let mut analyzed = analyzer.visit(&tree.expr, 0, false, 0)?;
@@ -1453,6 +1465,40 @@ mod tests {
     fn not_anchored_for_startline_assertions() {
         let tree = Expr::parse_tree(r"(?m)^(\w+)\1").unwrap();
         assert_eq!(can_compile_as_anchored(&tree.expr), false);
+    }
+
+    #[test]
+    fn start_line_analysis() {
+        use crate::parse_flags::FLAG_ONIGURUMA_MODE;
+        use crate::Assertion;
+
+        let tree = Expr::parse_tree(r"(?m)^").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).expect("can analyze start line");
+        assert_eq!(info.min_size, 0);
+        assert!(info.const_size);
+        assert!(!info.hard);
+        assert_matches!(info.expr, Expr::Assertion(Assertion::StartLine { .. }));
+
+        let tree = Expr::parse_tree_with_flags(r"(?m)^", FLAG_ONIGURUMA_MODE).unwrap();
+        let info =
+            analyze(&tree, AnalyzeContext::default()).expect("can analyze Oniguruma start line");
+        assert_eq!(info.min_size, 0);
+        assert!(info.hard);
+        assert_matches!(
+            info.expr,
+            Expr::Assertion(Assertion::StartLineOniguruma { .. })
+        );
+
+        let tree = Expr::parse_tree_with_flags(r"(?m)(?=^)", FLAG_ONIGURUMA_MODE).unwrap();
+        let info = analyze(&tree, AnalyzeContext::default())
+            .expect("can analyze Oniguruma start line inside lookaround");
+        assert_eq!(info.min_size, 0);
+        assert!(info.hard);
+        assert_matches!(
+            info.children[0].expr,
+            Expr::Assertion(Assertion::StartLineOniguruma { .. })
+        );
+        assert!(!info.children[0].hard);
     }
 
     #[test]
