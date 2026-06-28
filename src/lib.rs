@@ -859,6 +859,30 @@ impl RegexOptionsBuilder {
     /// `fancy-regex` would normally reject patterns like `(?:)+` because the `+` has nothing
     /// to target. In Oniguruma mode, the empty repeat is silently dropped at parse time.
     ///
+    /// # Swapped order quantifiers
+    ///
+    /// `fancy-regex` would normally treat `x{0,3}` as a syntax error because the minimum is
+    /// greater than the maximum. In Oniguruma mode, the limits are swapped (behaving as
+    /// `x{3,0}`) and the resulting repeat is treated as atomic (possessive), matching
+    /// Oniguruma's behavior.
+    ///
+    /// # Adjacent quantifiers
+    ///
+    /// `fancy-regex` would normally reject adjacent quantifiers like `a{3}{2}`, treating the
+    /// second as having nothing to target. In Oniguruma mode, each quantifier wraps the
+    /// previous result (e.g. `a{3}{2}` becomes `(?:a{3}){2}`).
+    ///
+    /// Outside Oniguruma mode, `+` after `{...}` is a possessive modifier (e.g. `x{2}+` is
+    /// possessive). In Oniguruma mode, `+` after a user-specified `{...}` repeat is treated
+    /// as another repeat modifier — `x{2}+` is equivalent to `(?:x{2})+`.
+    ///
+    /// # Start of line (`^`) in multiline mode
+    ///
+    /// In multiline mode (`(?m)`), `^` normally matches at the start of the input and after
+    /// any newline. In Oniguruma mode, it additionally rejects a match at the absolute end of
+    /// the input when it is preceded by a trailing newline.
+    /// Inside lookarounds, `^` behaves as a plain line start without the end-of-input rejection.
+    ///
     /// ## Example
     ///
     /// ```
@@ -2415,8 +2439,15 @@ pub enum Assertion {
         /// If true, this assertion matches at the starting position of the input text, or at the position immediately
         /// following either a `\r` or `\n` character, but never after a `\r` when a `\n` follows.
         crlf: bool,
-        /// Whether to reject matches after a trailing newline at EOF
-        reject_after_trailing_newline_at_eof: bool,
+    },
+    /// Start of a line in Oniguruma mode.
+    /// Behaves like [`StartLine`], but additionally rejects matches at the end of the input
+    /// when it is preceded by a newline.
+    StartLineOniguruma {
+        /// CRLF mode.
+        /// If true, this assertion matches at the starting position of the input text, or at the position immediately
+        /// following either a `\r` or `\n` character, but never after a `\r` when a `\n` follows.
+        crlf: bool,
     },
     /// End of a line
     EndLine {
@@ -2667,15 +2698,14 @@ impl Expr {
             }
             Expr::Assertion(Assertion::StartText) => buf.push('^'),
             Expr::Assertion(Assertion::EndText) => buf.push('$'),
-            Expr::Assertion(Assertion::StartLine {
-                crlf: false,
-                reject_after_trailing_newline_at_eof: _,
-            }) => buf.push_str("(?m:^)"),
+            Expr::Assertion(
+                Assertion::StartLine { crlf: false }
+                | Assertion::StartLineOniguruma { crlf: false },
+            ) => buf.push_str("(?m:^)"),
             Expr::Assertion(Assertion::EndLine { crlf: false }) => buf.push_str("(?m:$)"),
-            Expr::Assertion(Assertion::StartLine {
-                crlf: true,
-                reject_after_trailing_newline_at_eof: _,
-            }) => buf.push_str("(?Rm:^)"),
+            Expr::Assertion(
+                Assertion::StartLine { crlf: true } | Assertion::StartLineOniguruma { crlf: true },
+            ) => buf.push_str("(?Rm:^)"),
             Expr::Assertion(Assertion::EndLine { crlf: true }) => buf.push_str("(?Rm:$)"),
             Expr::Concat(ref children) => {
                 if precedence > 1 {
