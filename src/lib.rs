@@ -2441,7 +2441,7 @@ pub enum Assertion {
         crlf: bool,
     },
     /// Start of a line in Oniguruma mode.
-    /// Behaves like [`StartLine`], but additionally rejects matches at the end of the input
+    /// Behaves like [`Assertion::StartLine`], but additionally rejects matches at the end of the input
     /// when it is preceded by a newline.
     StartLineOniguruma {
         /// CRLF mode.
