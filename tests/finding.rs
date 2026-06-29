@@ -1021,7 +1021,7 @@ fn find_not_empty_with_continue_from_previous_match_end_and_keep_out() {
         .collect();
     // Each match physically consumes 2 bytes; \K resets the reported start to
     // the physical end, yielding zero-length spans. The iterator advances by 1
-    // after each zero-length match (OPTION_SKIPPED_EMPTY_MATCH), so the pattern
+    // after each zero-length match (OPTION_NOT_CONTINUED_FROM_PREVIOUS_MATCH), so the pattern
     // matches at positions (2,2) and (5,5), mirroring the behavior without find_not_empty.
     assert_eq!(matches, vec![(2, 2), (5, 5)]);
 }
