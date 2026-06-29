@@ -110,7 +110,7 @@ const OPTION_TRACE: u32 = 1 << 0;
 /// If `\G` is used in the pattern, that means it no longer matches. If we didn't tell the VM about
 /// the fact that we skipped because of an empty match, it would still treat `\G` as matching. So
 /// this option is for communicating that to the VM. Phew.
-pub(crate) const OPTION_SKIPPED_EMPTY_MATCH: u32 = 1 << 1;
+pub(crate) const OPTION_NOT_CONTINUED_FROM_PREVIOUS_MATCH: u32 = 1 << 1;
 /// When this option is set, the VM will reject any match where the engine consumed no characters.
 /// \K is ignored as part of this check - so empty matches can still be reported if the engine
 /// consumed characters and then \K was used afterwards.
@@ -1203,7 +1203,10 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                     let at_previous_match_end = input
                         .continue_from_previous_match_end_override()
                         .and_then(|value| options.allow_input_assertion_overrides.then_some(value))
-                        .unwrap_or(ix == pos && option_flags & OPTION_SKIPPED_EMPTY_MATCH == 0);
+                        .unwrap_or(
+                            ix == pos
+                                && option_flags & OPTION_NOT_CONTINUED_FROM_PREVIOUS_MATCH == 0,
+                        );
                     if !at_previous_match_end {
                         // If \G is at the start of the pattern, and we are performing a non-anchored
                         // search, then we can fail early instead of checking at each position in the

@@ -131,7 +131,7 @@ use regex_automata::PatternID;
 use regex_automata::PatternSet;
 
 use crate::compile::options_to_rabuilder;
-use crate::vm::{OPTION_ANCHORED, OPTION_SKIPPED_EMPTY_MATCH};
+use crate::vm::{OPTION_ANCHORED, OPTION_NOT_CONTINUED_FROM_PREVIOUS_MATCH};
 use crate::CompileError;
 use crate::Error;
 use crate::RegexOptions;
@@ -524,7 +524,7 @@ impl RegexSet {
         let regex = &self.regexes[pattern_index];
         let mut option_flags = OPTION_ANCHORED;
         if input.start() < match_start {
-            option_flags |= OPTION_SKIPPED_EMPTY_MATCH;
+            option_flags |= OPTION_NOT_CONTINUED_FROM_PREVIOUS_MATCH;
         }
         if regex.captures_len() == 1 {
             return Ok(regex.find_input_raw(&candidate_input, option_flags)?.map(

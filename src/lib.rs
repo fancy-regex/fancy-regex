@@ -70,7 +70,9 @@ use crate::compile::{compile, CompileOptions};
 use crate::optimize::optimize;
 use crate::parse::{ExprTree, NamedGroups, Parser};
 use crate::parse_flags::*;
-use crate::vm::{Prog, OPTION_ANCHORED, OPTION_FIND_NOT_EMPTY, OPTION_SKIPPED_EMPTY_MATCH};
+use crate::vm::{
+    Prog, OPTION_ANCHORED, OPTION_FIND_NOT_EMPTY, OPTION_NOT_CONTINUED_FROM_PREVIOUS_MATCH,
+};
 
 pub use crate::bytes::MatchBytes;
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
@@ -233,7 +235,7 @@ impl<'r, 't, S: input::Input + ?Sized> Matches<'r, 't, S> {
         }
 
         let option_flags = if self.last_skipped_empty {
-            OPTION_SKIPPED_EMPTY_MATCH
+            OPTION_NOT_CONTINUED_FROM_PREVIOUS_MATCH
         } else {
             0
         };
@@ -257,7 +259,7 @@ impl<'r, 't, S: input::Input + ?Sized> Matches<'r, 't, S> {
             // of the next match following this one.
             self.input
                 .set_start(self.input.haystack().advance_position(match_end));
-            // Only set OPTION_SKIPPED_EMPTY_MATCH on the next call if this was a
+            // Only set OPTION_NOT_CONTINUED_FROM_PREVIOUS_MATCH on the next call if this was a
             // truly zero-length match (the VM consumed no bytes from `pos`).
             // This means that \K won't prevent \G from matching.
             self.last_skipped_empty = match_end == pos;
