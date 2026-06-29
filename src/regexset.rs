@@ -924,4 +924,35 @@ mod tests {
         );
         assert_eq!(single, None);
     }
+
+    #[test]
+    fn continue_from_prev_match_works_as_expected_when_match_is_at_search_start() {
+        use crate::Arc;
+        use crate::RegexBuilder;
+
+        let (pat, hay) = (r"\Gx", "yx");
+
+        let re = RegexBuilder::new(pat).build().unwrap();
+        let single = re
+            .find_input(RegexInput::new(hay).from_pos(1))
+            .unwrap()
+            .map(|m| (m.start(), m.end()));
+
+        // Same regex, same input, via a RegexSet:
+        let set = RegexSet::from_regexes([Arc::new(re)], Default::default()).unwrap();
+        let via_set = set
+            .find_input(RegexInput::new(hay).from_pos(1))
+            .unwrap()
+            .and_then(|mut it| it.next())
+            .map(|m| {
+                let m = m.unwrap();
+                (m.start(), m.end())
+            });
+
+        assert_eq!(
+            single, via_set,
+            "RegexSet should behave the same as a standalone regex"
+        );
+        assert_eq!(single, Some((1, 2)));
+    }
 }
