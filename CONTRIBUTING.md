@@ -28,6 +28,10 @@ The toy example is useful for playing around with different regexes:
 
     cargo run --example toy run '[a-z]' 'input text'
 
+As is the web based playground:
+
+    cd playground && ./build.sh && ./serve.sh
+
 ### Oniguruma
 
 Set up rust-onig which is based on Oniguruma:
