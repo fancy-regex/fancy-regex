@@ -130,7 +130,7 @@ use regex_automata::MatchKind;
 use regex_automata::PatternID;
 use regex_automata::PatternSet;
 
-use crate::compile::options_to_rabuilder;
+use crate::compile::{options_to_rabuilder, DelegateUsage};
 use crate::vm::{OPTION_ANCHORED, OPTION_NOT_CONTINUED_FROM_PREVIOUS_MATCH};
 use crate::CompileError;
 use crate::Error;
@@ -361,7 +361,10 @@ impl RegexSet {
 
         let utf8 = matches!(compile_options.bytes_mode, BytesMode::Unicode);
 
-        let mut earliest_builder = options_to_rabuilder(&compile_options);
+        // The multi-pattern "earliest match" engine is searched unanchored; its
+        // config is fully overridden just below, so this only sets the syntax.
+        let mut earliest_builder =
+            options_to_rabuilder(&compile_options, DelegateUsage::unanchored());
         earliest_builder.configure(
             RaConfig::new()
                 .match_kind(MatchKind::LeftmostFirst)

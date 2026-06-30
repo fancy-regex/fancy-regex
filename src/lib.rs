@@ -1182,7 +1182,13 @@ impl Regex {
                 // delegate compile in the easy path and their defaults are correct.
                 ..CompileOptions::default()
             };
-            let inner = compile::compile_inner(&re_cooked, &compile_options)?;
+            // The whole pattern is delegated and searched unanchored, so it keeps
+            // its prefilter and all capture groups (the user may request captures).
+            let inner = compile::compile_inner(
+                &re_cooked,
+                &compile_options,
+                compile::DelegateUsage::unanchored(),
+            )?;
             return Ok(Regex {
                 inner: RegexImpl::Wrap {
                     inner,

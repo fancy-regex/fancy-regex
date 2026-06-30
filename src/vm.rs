@@ -69,6 +69,7 @@
 //! 5. We continue with the previously saved thread at PC 4 and IX 0 (backtracking)
 //! 6. Both `Lit("a")` and `Lit("c")` match and we reach `End` -> successful match (index 0 to 2)
 
+use alloc::boxed::Box;
 use alloc::collections::BTreeSet;
 use alloc::string::String;
 #[cfg(feature = "variable-lookbehinds")]
@@ -149,6 +150,84 @@ impl CaptureGroupRange {
             Some(self)
         }
     }
+}
+
+/// Matches a single character class (e.g. `\d`, `[a-z]`, `\w`) without building
+/// a regex-automata engine.
+///
+/// Most "fancy" patterns interleave plain character classes with the features
+/// that force backtracking (look-around, back-references, ...). Each such class
+/// would otherwise be compiled to a full delegated `meta::Regex` whose
+/// construction (NFA + reverse NFA + lazy DFA) dominates both compile time and
+/// memory — and which is then searched, anchored, once per character inside the
+/// backtracking loop. Because a class matches exactly one codepoint/byte, we can
+/// instead test membership directly here, which is cheaper to build *and* faster
+/// to match than calling into the engine.
+///
+/// The ranges are taken verbatim from the `regex-syntax` `Hir` for the class
+/// (sorted, non-overlapping, and already case-folded / Unicode-expanded), so the
+/// matched set is identical to what the delegated engine would accept.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CharClassMatcher {
+    /// Match one Unicode scalar value against inclusive `char` ranges. Used in
+    /// Unicode bytes mode, where the haystack is valid UTF-8.
+    Codepoint(Box<[(char, char)]>),
+    /// Match one byte against inclusive byte ranges. Used in ASCII bytes mode
+    /// (and for ASCII-only `(?-u:...)` classes).
+    Byte(Box<[(u8, u8)]>),
+}
+
+impl CharClassMatcher {
+    /// If the character at `ix` is in the class, returns the number of bytes it
+    /// occupies (so the caller can advance). Returns `None` on no match or at the
+    /// end of input.
+    #[inline]
+    fn match_len<S: HaystackInput + ?Sized>(&self, s: &S, ix: usize) -> Option<usize> {
+        let bytes = s.as_bytes();
+        if ix >= bytes.len() {
+            return None;
+        }
+        match self {
+            CharClassMatcher::Byte(ranges) => {
+                if range_contains(ranges, bytes[ix]) {
+                    Some(1)
+                } else {
+                    None
+                }
+            }
+            CharClassMatcher::Codepoint(ranges) => {
+                let len = codepoint_len(bytes[ix]);
+                let end = ix + len;
+                if end > bytes.len() {
+                    return None;
+                }
+                // The haystack is valid UTF-8 in Unicode mode, so this decodes the
+                // codepoint; the `?` is a safety net for an unexpected boundary.
+                let c = core::str::from_utf8(&bytes[ix..end]).ok()?.chars().next()?;
+                if range_contains(ranges, c) {
+                    Some(len)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+}
+
+/// Binary-searches `ranges` (sorted, non-overlapping, inclusive) for `needle`.
+#[inline]
+fn range_contains<T: Ord + Copy>(ranges: &[(T, T)], needle: T) -> bool {
+    ranges
+        .binary_search_by(|&(lo, hi)| {
+            if needle < lo {
+                core::cmp::Ordering::Greater
+            } else if needle > hi {
+                core::cmp::Ordering::Less
+            } else {
+                core::cmp::Ordering::Equal
+            }
+        })
+        .is_ok()
 }
 
 #[derive(Clone)]
@@ -260,6 +339,9 @@ pub enum Insn {
     Assertion(Assertion),
     /// Match the literal string at the current index
     Lit(String), // should be cow?
+    /// Match a single character class (e.g. `\d`, `[a-z]`) at the current index,
+    /// without delegating to a regex-automata engine. See [`CharClassMatcher`].
+    CharClass(CharClassMatcher),
     /// Split execution into two threads. The two fields are positions of instructions. Execution
     /// first tries the first thread. If that fails, the second position is tried.
     Split(usize, usize),
@@ -841,6 +923,10 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                     }
                     ix = ix_end
                 }
+                Insn::CharClass(ref matcher) => match matcher.match_len(haystack, ix) {
+                    Some(len) => ix += len,
+                    None => break 'fail,
+                },
                 Insn::Assertion(assertion) => {
                     if !match assertion {
                         Assertion::StartText => input

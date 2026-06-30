@@ -30,6 +30,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use regex_automata::meta::Regex as RaRegex;
 use regex_automata::meta::{Builder as RaBuilder, Config as RaConfig};
+use regex_automata::nfa::thompson::WhichCaptures;
 #[cfg(feature = "variable-lookbehinds")]
 use regex_automata::util::pool::Pool;
 
@@ -42,7 +43,7 @@ use crate::analyze::Info;
 use crate::seek::build_seek_pattern;
 #[cfg(feature = "variable-lookbehinds")]
 use crate::vm::{CachePoolFn, ReverseBackwardsDelegate};
-use crate::vm::{CaptureGroupRange, Delegate, Insn, Prog, Seek};
+use crate::vm::{CaptureGroupRange, CharClassMatcher, Delegate, Insn, Prog, Seek};
 use crate::LookAround::*;
 use crate::{
     Absent, BacktrackingControlVerb, BytesMode, CompileError, Error, Expr, LookAround, Result,
@@ -795,9 +796,15 @@ impl<'a> Compiler<'a> {
         });
         let cache_pool = Pool::new(create);
 
-        // Build the forward regex for capture group extraction
+        // Build the forward regex for capture group extraction. It is only run
+        // anchored (see vm.rs BackwardsDelegate) and exists precisely to report
+        // captures, so disable the prefilter but keep all capture groups.
         let forward_regex = if capture_groups.start() != capture_groups.end() {
-            Some(compile_inner(pattern, &self.options)?)
+            Some(compile_inner(
+                pattern,
+                &self.options,
+                DelegateUsage::anchored(true),
+            )?)
         } else {
             None
         };
@@ -892,12 +899,19 @@ impl<'a> Compiler<'a> {
             "[\n\x0B\x0C\r]"
         };
 
-        let compiled = compile_inner(pattern, &self.options)?;
-        self.b.add(Insn::Delegate(Delegate {
-            inner: compiled,
-            pattern: pattern.to_string(),
-            capture_groups: None,
-        }));
+        // This delegate (a single newline character class) is run anchored and
+        // has no capture groups fancy-regex reads. Match it natively when possible
+        // (skipping engine construction), falling back to a delegate otherwise.
+        if let Some(matcher) = try_char_class_matcher(pattern, &self.options) {
+            self.b.add(Insn::CharClass(matcher));
+        } else {
+            let compiled = compile_inner(pattern, &self.options, DelegateUsage::anchored(false))?;
+            self.b.add(Insn::Delegate(Delegate {
+                inner: compiled,
+                pattern: pattern.to_string(),
+                capture_groups: None,
+            }));
+        }
 
         // Fix the jump target
         let end_atomic_pc = self.b.pc();
@@ -909,8 +923,49 @@ impl<'a> Compiler<'a> {
     }
 }
 
-pub(crate) fn compile_inner(inner_re: &str, options: &CompileOptions) -> Result<RaRegex> {
-    let builder = options_to_rabuilder(options);
+/// Describes how a delegated regex-automata engine will be searched, so the
+/// builder can skip machinery that wouldn't help for that usage.
+///
+/// VM `Delegate` instructions are always executed anchored at the current input
+/// position (see `vm::run`), so prefilters — which only accelerate *unanchored*
+/// scans — are pure build-time and memory overhead for them. Likewise, a delegate
+/// whose explicit capture groups fancy-regex never reads doesn't need them
+/// compiled into the NFA.
+#[derive(Clone, Copy)]
+pub(crate) struct DelegateUsage {
+    /// True if the engine is only ever searched anchored (prefilter is useless).
+    anchored: bool,
+    /// True if explicit capture-group spans must be reported by the engine.
+    needs_captures: bool,
+}
+
+impl DelegateUsage {
+    /// An engine searched unanchored and expected to report full captures: the
+    /// top-level `Wrap` engine and the seek pre-filter. Matches the historical
+    /// default (prefilter on, all captures).
+    pub(crate) const fn unanchored() -> Self {
+        DelegateUsage {
+            anchored: false,
+            needs_captures: true,
+        }
+    }
+
+    /// An anchored VM delegate. `needs_captures` says whether fancy-regex reads
+    /// the delegate's explicit capture groups.
+    pub(crate) const fn anchored(needs_captures: bool) -> Self {
+        DelegateUsage {
+            anchored: true,
+            needs_captures,
+        }
+    }
+}
+
+pub(crate) fn compile_inner(
+    inner_re: &str,
+    options: &CompileOptions,
+    usage: DelegateUsage,
+) -> Result<RaRegex> {
+    let builder = options_to_rabuilder(options, usage);
 
     let re = builder
         .build(inner_re)
@@ -920,7 +975,7 @@ pub(crate) fn compile_inner(inner_re: &str, options: &CompileOptions) -> Result<
     Ok(re)
 }
 
-pub(crate) fn options_to_rabuilder(options: &CompileOptions) -> RaBuilder {
+pub(crate) fn options_to_rabuilder(options: &CompileOptions, usage: DelegateUsage) -> RaBuilder {
     use regex_automata::util::syntax::Config as SyntaxConfig;
 
     let mut config = RaConfig::new();
@@ -929,6 +984,25 @@ pub(crate) fn options_to_rabuilder(options: &CompileOptions) -> RaBuilder {
     }
     if let Some(limit) = options.delegate_dfa_size_limit {
         config = config.dfa_size_limit(Some(limit));
+    }
+    if usage.anchored {
+        // Anchored searches never consult a prefilter, so don't spend build time
+        // (literal extraction, Aho-Corasick/Teddy tables) or memory constructing one.
+        //
+        // NOTE: we deliberately do *not* disable the lazy-DFA (`hybrid`) / DFA
+        // engines here, even though a VM delegate is only searched anchored.
+        // Doing so lets regex-automata skip building the reverse NFA and roughly
+        // halves per-delegate build time, but benchmarking showed it regresses
+        // *match* performance — the lazy DFA has lower per-search overhead than
+        // the PikeVM, and delegates (especially short char classes) are searched
+        // repeatedly inside the backtracking VM. The reverse-NFA build cost is
+        // therefore coupled to match speed; see the compile benches.
+        config = config.auto_prefilter(false);
+    }
+    if !usage.needs_captures {
+        // We only need to know whether (and where) the overall match is, via
+        // search_half/search; skip compiling explicit capture-group slots.
+        config = config.which_captures(WhichCaptures::Implicit);
     }
 
     let mut builder = RaBuilder::new();
@@ -944,6 +1018,52 @@ pub(crate) fn options_to_rabuilder(options: &CompileOptions) -> RaBuilder {
     builder.syntax(syntax);
 
     builder
+}
+
+/// Try to compile a delegated fragment to a native [`CharClassMatcher`] instead
+/// of a regex-automata engine.
+///
+/// Most delegates are a single character class (`\d`, `[a-z]`, ...). Building a
+/// full `meta::Regex` for each one dominates compile time and memory, and the
+/// engine is then searched once per character inside the backtracking loop. A
+/// class matches exactly one codepoint/byte, so we can match it directly.
+///
+/// Returns `None` (so the caller builds an engine instead) when the fragment is
+/// not exactly one character class, or when the class can't be matched natively
+/// for the current bytes mode.
+fn try_char_class_matcher(re: &str, options: &CompileOptions) -> Option<CharClassMatcher> {
+    use regex_syntax::hir::{Class, HirKind};
+    use regex_syntax::ParserBuilder;
+
+    // Parse with the same flags `options_to_rabuilder` would hand the engine, so
+    // the resulting class is exactly the set the delegated engine would accept
+    // (same case folding, same Unicode handling).
+    let utf8 = matches!(options.bytes_mode, BytesMode::Unicode);
+    let hir = ParserBuilder::new()
+        .utf8(utf8)
+        .unicode(options.unicode)
+        .build()
+        .parse(re)
+        .ok()?;
+
+    match hir.kind() {
+        HirKind::Class(Class::Unicode(cu)) => {
+            // A Unicode class over a possibly-invalid-UTF-8 haystack (UnicodeBytes
+            // mode) is matched by the engine via a UTF-8 automaton; defer to it to
+            // keep those exact semantics. In Unicode mode the haystack is valid
+            // UTF-8, so direct codepoint membership is equivalent.
+            if !matches!(options.bytes_mode, BytesMode::Unicode) {
+                return None;
+            }
+            let ranges = cu.ranges().iter().map(|r| (r.start(), r.end())).collect();
+            Some(CharClassMatcher::Codepoint(ranges))
+        }
+        HirKind::Class(Class::Bytes(cb)) => {
+            let ranges = cb.ranges().iter().map(|r| (r.start(), r.end())).collect();
+            Some(CharClassMatcher::Byte(ranges))
+        }
+        _ => None,
+    }
 }
 
 /// Recursively populate the group_info_map with all capture groups in the Info tree
@@ -1058,7 +1178,11 @@ pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
         let mut used_seek = false;
         if let Some(filter) = c.options.seek_filter {
             if filter(&seek_pattern) {
-                if let Ok(inner) = compile_inner(&seek_pattern, &c.options) {
+                // The seek engine is searched unanchored to find the next candidate
+                // position, so it keeps its prefilter (the whole point of seeking).
+                if let Ok(inner) =
+                    compile_inner(&seek_pattern, &c.options, DelegateUsage::unanchored())
+                {
                     c.b.add(Insn::Seek(Seek {
                         inner,
                         pattern: seek_pattern.clone(),
@@ -1148,6 +1272,14 @@ impl DelegateBuilder {
     }
 
     fn build(&self, options: &CompileOptions) -> Result<Insn> {
+        // A single character class is matched directly, skipping engine
+        // construction entirely (see CharClassMatcher). A class has no capture
+        // groups, so this only applies when none are needed.
+        if self.capture_groups.map_or(false, |r| r.start() == r.end()) {
+            if let Some(matcher) = try_char_class_matcher(&self.re, options) {
+                return Ok(Insn::CharClass(matcher));
+            }
+        }
         Ok(Insn::Delegate(self.build_delegate(options)?))
     }
 
@@ -1156,12 +1288,17 @@ impl DelegateBuilder {
             .capture_groups
             .expect("Expected at least one expression");
 
-        let compiled = compile_inner(&self.re, options)?;
+        // VM delegates are always run anchored. Only compile capture-group slots
+        // when fancy-regex actually reads them (vm.rs uses search_slots when
+        // capture_groups is Some, and the faster search_half otherwise).
+        let capture_groups = capture_groups.to_option_if_non_empty();
+        let usage = DelegateUsage::anchored(capture_groups.is_some());
+        let compiled = compile_inner(&self.re, options, usage)?;
 
         Ok(Delegate {
             inner: compiled,
             pattern: self.re.clone(),
-            capture_groups: capture_groups.to_option_if_non_empty(),
+            capture_groups,
         })
     }
 }
@@ -1590,7 +1727,7 @@ mod tests {
         assert_matches!(prog[2], Jmp(0));
         assert_matches!(prog[3], Save(0));
         assert_matches!(prog[4], SaveCaptureGroupStart(1));
-        assert_delegate_insn(&prog[5], r"\w", None);
+        assert_char_class_insn(&prog[5], r"\w");
         assert_matches!(prog[6], Save(3));
         assert_matches!(prog[7], Save0(4));
         assert_matches!(
@@ -1742,7 +1879,7 @@ mod tests {
         assert_matches!(prog[0], SaveCaptureGroupStart(0));
         assert_delegate_insn(&prog[1], ".(b)", Some(CaptureGroupRange(1, 2)));
         assert_matches!(prog[2], SaveCaptureGroupStart(2));
-        assert_delegate_insn(&prog[3], "[^a]", None);
+        assert_char_class_insn(&prog[3], "[^a]");
         assert_matches!(prog[4], Split(3, 5));
         assert_matches!(prog[5], Save(5));
         assert_matches!(prog[6], Split(7, 9));
@@ -1807,9 +1944,9 @@ mod tests {
         assert_matches!(prog[5], Jmp(10));
         assert_matches!(prog[6], Save(1));
         assert_matches!(prog[7], GoBack(1));
-        assert_delegate_insn(&prog[8], r"\s", None);
+        assert_char_class_insn(&prog[8], r"\s");
         assert_matches!(prog[9], Restore(1));
-        assert_delegate_insn(&prog[10], r"\d", None);
+        assert_char_class_insn(&prog[10], r"\d");
         assert_matches!(prog[11], End);
     }
 
@@ -1822,8 +1959,8 @@ mod tests {
         assert_matches!(prog[0], Split(1, 3));
         assert_matches!(prog[1], ContinueFromPreviousMatchEnd { at_start: false });
         assert_matches!(prog[2], Jmp(4));
-        assert_delegate_insn(&prog[3], r"\s", None);
-        assert_delegate_insn(&prog[4], r"\d", None);
+        assert_char_class_insn(&prog[3], r"\s");
+        assert_char_class_insn(&prog[4], r"\d");
         assert_matches!(prog[5], End);
     }
 
@@ -1852,7 +1989,7 @@ mod tests {
 
         assert_eq!(prog.len(), 4, "prog: {:?}", prog);
 
-        assert_delegate_insn(&prog[0], r"\w", None);
+        assert_char_class_insn(&prog[0], r"\w");
         assert_matches!(prog[1], ContinueFromPreviousMatchEnd { at_start: false });
         assert_delegate_insn(&prog[2], r"\s\d", None);
         assert_matches!(prog[3], End);
@@ -1949,6 +2086,21 @@ mod tests {
             _ => {
                 panic!("Expected Insn::Delegate but was {:#?}", insn);
             }
+        }
+    }
+
+    /// Assert that `insn` is a native `CharClass` matching the single character
+    /// class `re` (compiled with default options, matching `compile_prog`).
+    fn assert_char_class_insn(insn: &Insn, re: &str) {
+        let expected = try_char_class_matcher(re, &CompileOptions::default())
+            .unwrap_or_else(|| panic!("test re {:?} is not a single char class", re));
+        match insn {
+            Insn::CharClass(matcher) => assert_eq!(
+                matcher, &expected,
+                "char class mismatch for {:?}: {:#?}",
+                re, matcher
+            ),
+            _ => panic!("Expected Insn::CharClass but was {:#?}", insn),
         }
     }
 
