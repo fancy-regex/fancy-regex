@@ -48,3 +48,7 @@ harness = false
 [[bench]]
 name = "regexset_vs_individual"
 harness = false
+
+[[bench]]
+name = "compile"
+harness = false
