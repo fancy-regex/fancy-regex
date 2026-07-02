@@ -70,7 +70,6 @@
 //! 6. Both `Lit("a")` and `Lit("c")` match and we reach `End` -> successful match (index 0 to 2)
 
 use alloc::boxed::Box;
-use alloc::collections::BTreeSet;
 use alloc::string::String;
 #[cfg(feature = "variable-lookbehinds")]
 use alloc::sync::Arc;
@@ -78,12 +77,10 @@ use alloc::vec;
 use alloc::vec::Vec;
 use regex_automata::meta::Regex;
 use regex_automata::util::look::LookMatcher;
+use regex_automata::util::pool::Pool;
 use regex_automata::util::primitives::NonMaxUsize;
 use regex_automata::Anchored;
 use regex_automata::Input;
-
-#[cfg(feature = "variable-lookbehinds")]
-use regex_automata::util::pool::Pool;
 
 #[cfg(feature = "variable-lookbehinds")]
 pub(crate) type CachePoolFn = alloc::boxed::Box<
@@ -454,6 +451,23 @@ pub enum Insn {
     RejectEmptyMatchAtEOFFollowingNewline,
 }
 
+/// Reusable per-run working memory: the backtracking [`State`] plus the slot
+/// buffer used when calling delegated engines. Pooled on the [`Prog`] so that
+/// repeated runs (every `find_iter` step, every `RegexSet` candidate
+/// verification) don't re-allocate it; `run` resets it before use.
+#[derive(Debug)]
+struct Scratch {
+    state: State,
+    inner_slots: Vec<Option<NonMaxUsize>>,
+}
+
+fn new_scratch() -> Scratch {
+    Scratch {
+        state: State::new(0, MAX_STACK, 0),
+        inner_slots: Vec::new(),
+    }
+}
+
 /// Sequence of instructions for the VM to execute.
 #[derive(Debug)]
 pub struct Prog {
@@ -464,6 +478,7 @@ pub struct Prog {
     bytes_mode: BytesMode,
     /// A pattern compatible with a DFA which can be used to seek to candidate positions where the real/full pattern might match
     pub(crate) seek_pattern: String,
+    scratch_pool: Pool<Scratch, fn() -> Scratch>,
 }
 
 impl Prog {
@@ -478,6 +493,7 @@ impl Prog {
             n_saves,
             bytes_mode,
             seek_pattern,
+            scratch_pool: Pool::new(new_scratch),
         }
     }
 
@@ -503,6 +519,7 @@ struct Save {
     value: usize,
 }
 
+#[derive(Debug)]
 struct State {
     /// Saved values indexed by slot. Mostly indices to s, but can be repeat values etc.
     /// Always contains the saves of the current state.
@@ -519,6 +536,9 @@ struct State {
     max_stack: usize,
     #[allow(dead_code)]
     options: u32,
+    /// Reusable buffer for `backtrack_cut`'s slot dedup, kept to avoid
+    /// allocating on every atomic-group exit.
+    cut_scratch: Vec<usize>,
 }
 
 // Each element in the stack conceptually represents the entire state
@@ -539,7 +559,19 @@ impl State {
             explicit_sp: n_saves,
             max_stack,
             options,
+            cut_scratch: Vec::new(),
         }
+    }
+
+    /// Reset for a fresh run, keeping the allocated buffers.
+    fn reset(&mut self, n_saves: usize, options: u32) {
+        self.saves.clear();
+        self.saves.resize(n_saves, usize::MAX);
+        self.stack.clear();
+        self.oldsave.clear();
+        self.nsave = 0;
+        self.explicit_sp = n_saves;
+        self.options = options;
     }
 
     // push a backtrack branch
@@ -644,17 +676,22 @@ impl State {
             let start = end - self.stack[count].nsave;
             (start, end)
         };
-        let mut saved = BTreeSet::new();
+        // The seen-slot set is a plain Vec with linear lookup: per-branch save
+        // counts are small, and this avoids allocating on every atomic-group
+        // exit (the buffer is reused across calls).
+        let mut saved = core::mem::take(&mut self.cut_scratch);
+        saved.clear();
         // keep all the old saves of our branch (they're all for different slots)
         for &Save { slot, .. } in &self.oldsave[oldsave_start..oldsave_end] {
-            saved.insert(slot);
+            saved.push(slot);
         }
         let mut oldsave_ix = oldsave_end;
         // for other old saves, keep them only if they're for a slot that we haven't saved yet
         for ix in oldsave_end..self.oldsave.len() {
             let Save { slot, .. } = self.oldsave[ix];
-            let new_slot = saved.insert(slot);
+            let new_slot = !saved.contains(&slot);
             if new_slot {
+                saved.push(slot);
                 // put the save we want to keep (ix) after the ones we already have (oldsave_ix)
                 // note that it's fine if the indexes are the same (then swapping is a no-op)
                 self.oldsave.swap(oldsave_ix, ix);
@@ -664,6 +701,7 @@ impl State {
         self.stack.truncate(count);
         self.oldsave.truncate(oldsave_ix);
         self.nsave = oldsave_ix - oldsave_start;
+        self.cut_scratch = saved;
     }
 
     #[inline]
@@ -842,22 +880,55 @@ pub fn run_default(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>
     )
 }
 
-/// Run the program with options.
-#[allow(clippy::cognitive_complexity)]
+/// Run the program with options, returning the full saves vector on a match.
 pub(crate) fn run<S: HaystackInput + ?Sized>(
     prog: &Prog,
     input: &RegexInput<'_, S>,
     option_flags: u32,
     options: &HardRegexRuntimeOptions,
 ) -> Result<Option<Vec<usize>>> {
+    // The clone is the one allocation the caller keeps (it owns the captures).
+    run_with(prog, input, option_flags, options, |state| {
+        state.saves.clone()
+    })
+}
+
+/// Run the program with options, returning only the overall match span.
+///
+/// Unlike [`run`], nothing is moved out of the pooled scratch, so `is_match`,
+/// `find`, `find_iter`, and RegexSet verification are allocation-free per call
+/// (after buffers have grown to steady state).
+pub(crate) fn run_spans<S: HaystackInput + ?Sized>(
+    prog: &Prog,
+    input: &RegexInput<'_, S>,
+    option_flags: u32,
+    options: &HardRegexRuntimeOptions,
+) -> Result<Option<(usize, usize)>> {
+    run_with(prog, input, option_flags, options, |state| {
+        (state.get(0), state.get(1))
+    })
+}
+
+/// Run the program with options; `extract` pulls the result out of the final
+/// state before the scratch returns to the pool.
+#[allow(clippy::cognitive_complexity)]
+fn run_with<S: HaystackInput + ?Sized, T>(
+    prog: &Prog,
+    input: &RegexInput<'_, S>,
+    option_flags: u32,
+    options: &HardRegexRuntimeOptions,
+    extract: impl FnOnce(&State) -> T,
+) -> Result<Option<T>> {
     if input.is_done() {
         return Ok(None);
     }
     let haystack = input.haystack();
     let pos = input.effective_start();
     let match_range = input.get_range();
-    let mut state = State::new(prog.n_saves, MAX_STACK, option_flags);
-    let mut inner_slots: Vec<Option<NonMaxUsize>> = Vec::new();
+    let mut scratch_guard = prog.scratch_pool.get();
+    let Scratch { state, inner_slots } = &mut *scratch_guard;
+    state.reset(prog.n_saves, option_flags);
+    inner_slots.clear();
     let look_matcher = LookMatcher::new();
     #[cfg(feature = "std")]
     if option_flags & OPTION_TRACE != 0 {
@@ -902,7 +973,7 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                     if state.get(0) < match_range.start || state.get(1) > match_range.end {
                         break 'fail;
                     }
-                    return Ok(Some(state.saves));
+                    return Ok(Some(extract(state)));
                 }
                 Insn::Any => {
                     if ix < haystack.len() {
@@ -1214,12 +1285,9 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                                         .anchored(Anchored::Yes);
                                     inner_slots.resize((range.end() - range.start() + 1) * 2, None);
 
-                                    if inner
-                                        .search_slots(&forward_input, &mut inner_slots)
-                                        .is_some()
-                                    {
+                                    if inner.search_slots(&forward_input, inner_slots).is_some() {
                                         // Store capture group positions, ignoring any whose range is earlier than what has been stored already
-                                        store_capture_groups(&mut state, &inner_slots, range, true);
+                                        store_capture_groups(state, inner_slots, range, true);
                                     } else {
                                         break 'fail;
                                     }
@@ -1254,9 +1322,9 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                     if let Some(range) = capture_groups {
                         // Has capture groups, need to extract them
                         inner_slots.resize((range.end() - range.start() + 1) * 2, None);
-                        if inner.search_slots(&input, &mut inner_slots).is_some() {
+                        if inner.search_slots(&input, inner_slots).is_some() {
                             // store the capture groups, no need to check current state to see if new values are further to the right
-                            store_capture_groups(&mut state, &inner_slots, range, false);
+                            store_capture_groups(state, inner_slots, range, false);
                             ix = inner_slots[1].unwrap().get();
                         } else {
                             break 'fail;

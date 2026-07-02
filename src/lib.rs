@@ -1435,8 +1435,9 @@ impl Regex {
                     } else {
                         0
                     };
-                let result = vm::run(prog, input, option_flags, options)?;
-                Ok(result.map(|saves| (saves[0], saves[1])))
+                // Span-only VM entry: nothing is moved out of the pooled
+                // scratch, so this path is allocation-free per call.
+                vm::run_spans(prog, input, option_flags, options)
             }
         }
     }
