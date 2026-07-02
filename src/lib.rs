@@ -1169,7 +1169,8 @@ impl Regex {
 
             // we do our own to_str because escapes are different
             // NOTE: there is a good opportunity here to use Hir to avoid regex-automata re-parsing it
-            let mut re_cooked = String::new();
+            // The cooked form is the pattern plus some flag-group decoration.
+            let mut re_cooked = String::with_capacity(pattern.len() + pattern.len() / 2);
             tree.expr.to_str(&mut re_cooked, 0);
             let compile_options = CompileOptions {
                 bytes_mode: options.bytes_mode,
