@@ -987,6 +987,25 @@ pub(crate) fn compile_inner(
     Ok(re)
 }
 
+/// Like [`compile_inner`], but from an already-built `Hir`, so the engine
+/// doesn't parse the pattern a second time. The syntax config set by
+/// `options_to_rabuilder` is ignored on this path — the `Hir` must already
+/// encode it (see `to_hir`).
+pub(crate) fn compile_inner_from_hir(
+    hir: &regex_syntax::hir::Hir,
+    options: &CompileOptions,
+    usage: DelegateUsage,
+) -> Result<RaRegex> {
+    let builder = options_to_rabuilder(options, usage);
+
+    let re = builder
+        .build_from_hir(hir)
+        .map_err(CompileError::InnerError)
+        .map_err(|e| Error::CompileError(Box::new(e)))?;
+
+    Ok(re)
+}
+
 pub(crate) fn options_to_rabuilder(options: &CompileOptions, usage: DelegateUsage) -> RaBuilder {
     use regex_automata::util::syntax::Config as SyntaxConfig;
 

@@ -62,6 +62,7 @@ mod parse_flags;
 mod regexset;
 mod replacer;
 mod seek;
+mod to_hir;
 mod vm;
 
 use crate::analyze::can_compile_as_anchored;
@@ -1175,8 +1176,10 @@ impl Regex {
             // easy case, wrap regex
 
             // we do our own to_str because escapes are different
-            // NOTE: there is a good opportunity here to use Hir to avoid regex-automata re-parsing it
-            // The cooked form is the pattern plus some flag-group decoration.
+            // The cooked form is the pattern plus some flag-group decoration. It is
+            // kept even though the engine is normally built from an Hir below,
+            // because it doubles as the seek pattern for RegexSet membership and
+            // as debug output.
             let mut re_cooked = String::with_capacity(pattern.len() + pattern.len() / 2);
             tree.expr.to_str(&mut re_cooked, 0);
             let compile_options = CompileOptions {
@@ -1199,7 +1202,15 @@ impl Regex {
             } else {
                 compile::DelegateUsage::unanchored_no_prefilter()
             };
-            let inner = compile::compile_inner(&re_cooked, &compile_options, usage)?;
+            // Build the engine from an Hir translated directly from the tree, so
+            // the engine doesn't re-parse the cooked pattern. Fall back to the
+            // string path for anything the translator doesn't cover.
+            let utf8 = matches!(compile_options.bytes_mode, BytesMode::Unicode);
+            let mut hir_ctx = to_hir::HirCtx::new(compile_options.unicode, utf8);
+            let inner = match to_hir::expr_to_hir(&tree.expr, &mut hir_ctx) {
+                Some(hir) => compile::compile_inner_from_hir(&hir, &compile_options, usage)?,
+                None => compile::compile_inner(&re_cooked, &compile_options, usage)?,
+            };
             return Ok(Regex {
                 inner: RegexImpl::Wrap {
                     inner,
@@ -2415,7 +2426,7 @@ fn is_special(c: char) -> bool {
     )
 }
 
-fn push_quoted(buf: &mut String, s: &str) {
+pub(crate) fn push_quoted(buf: &mut String, s: &str) {
     for c in s.chars() {
         if is_special(c) {
             buf.push('\\');
