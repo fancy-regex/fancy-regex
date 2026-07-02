@@ -41,6 +41,7 @@ use std::collections::HashMap as Map;
 
 use crate::analyze::Info;
 use crate::seek::build_seek_pattern;
+use crate::to_hir::{expr_to_hir, HirCtx};
 #[cfg(feature = "variable-lookbehinds")]
 use crate::vm::{CachePoolFn, ReverseBackwardsDelegate};
 use crate::vm::{CaptureGroupRange, CharClassMatcher, Delegate, Insn, Prog, Seek};
@@ -48,6 +49,7 @@ use crate::LookAround::*;
 use crate::{
     Absent, BacktrackingControlVerb, BytesMode, CompileError, Error, Expr, LookAround, Result,
 };
+use regex_syntax::hir::Hir;
 
 /// Maximum recursion depth for subroutine calls (matches Oniguruma's limit)
 pub(crate) const MAX_SUBROUTINE_RECURSION_DEPTH: usize = 19;
@@ -318,7 +320,7 @@ impl<'a> Compiler<'a> {
                     self.compile_hard_absent_repeater(child_info)?;
                 } else {
                     // Compile the child expression as a delegate
-                    let delegate = DelegateBuilder::new()
+                    let delegate = DelegateBuilder::new(&self.options)
                         .push(child_info)
                         .build_delegate(&self.options)?;
 
@@ -673,7 +675,7 @@ impl<'a> Compiler<'a> {
             } else if !inner.hard {
                 #[cfg(feature = "variable-lookbehinds")]
                 {
-                    let mut delegate_builder = DelegateBuilder::new();
+                    let mut delegate_builder = DelegateBuilder::new(&self.options);
                     delegate_builder.push(inner);
                     self.compile_variable_lookbehind(delegate_builder)
                 }
@@ -757,7 +759,7 @@ impl<'a> Compiler<'a> {
         if infos.is_empty() {
             Ok(())
         } else {
-            let mut delegate_builder = DelegateBuilder::new();
+            let mut delegate_builder = DelegateBuilder::new(&self.options);
             for info in infos.iter().rev() {
                 delegate_builder.push(info);
             }
@@ -835,7 +837,7 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
 
-        let mut delegate_builder = DelegateBuilder::new();
+        let mut delegate_builder = DelegateBuilder::new(&self.options);
         for info in infos {
             delegate_builder.push(info);
         }
@@ -853,7 +855,7 @@ impl<'a> Compiler<'a> {
             info.push_literal(&mut val);
             self.b.add(Insn::Lit(val));
         } else {
-            let mut builder = DelegateBuilder::new();
+            let mut builder = DelegateBuilder::new(&self.options);
             builder.push(info);
             // Skip emitting a delegate for an empty regex (e.g. DefineGroup),
             // as it would just match the empty string and is a no-op.
@@ -1063,7 +1065,6 @@ pub(crate) fn options_to_rabuilder(options: &CompileOptions, usage: DelegateUsag
 /// not exactly one character class, or when the class can't be matched natively
 /// for the current bytes mode.
 fn try_char_class_matcher(re: &str, options: &CompileOptions) -> Option<CharClassMatcher> {
-    use regex_syntax::hir::{Class, HirKind};
     use regex_syntax::ParserBuilder;
 
     // Parse with the same flags `options_to_rabuilder` would hand the engine, so
@@ -1076,6 +1077,14 @@ fn try_char_class_matcher(re: &str, options: &CompileOptions) -> Option<CharClas
         .build()
         .parse(re)
         .ok()?;
+
+    char_class_matcher_from_hir(&hir, options)
+}
+
+/// Build a [`CharClassMatcher`] from an `Hir` that is a single character class,
+/// or `None` if it isn't one (or can't be matched natively in this bytes mode).
+fn char_class_matcher_from_hir(hir: &Hir, options: &CompileOptions) -> Option<CharClassMatcher> {
+    use regex_syntax::hir::{Class, HirKind};
 
     match hir.kind() {
         HirKind::Class(Class::Unicode(cu)) => {
@@ -1256,15 +1265,23 @@ struct DelegateBuilder {
     min_size: usize,
     const_size: bool,
     capture_groups: Option<CaptureGroupRange>,
+    /// Hir translations of the pushed fragments, built alongside `re` so the
+    /// engine doesn't have to re-parse the string. `None` once any fragment
+    /// fails to translate; the string path is used instead.
+    hirs: Option<Vec<Hir>>,
+    hir_ctx: HirCtx,
 }
 
 impl DelegateBuilder {
-    fn new() -> Self {
+    fn new(options: &CompileOptions) -> Self {
+        let utf8 = matches!(options.bytes_mode, BytesMode::Unicode);
         Self {
             re: String::new(),
             min_size: 0,
             const_size: true,
             capture_groups: None,
+            hirs: Some(Vec::new()),
+            hir_ctx: HirCtx::new(options.unicode, utf8),
         }
     }
 
@@ -1299,22 +1316,40 @@ impl DelegateBuilder {
         // beginning, we need a group. Otherwise `["a|b"]` would be turned
         // into `"^a|b"` instead of `"^(?:a|b)"`.
         info.expr.to_str(&mut self.re, 1);
+
+        // Track the Hir form alongside the string. Group numbering continues
+        // across fragments (the ctx counter), matching how the parser would
+        // number the concatenated string.
+        if let Some(hirs) = &mut self.hirs {
+            match expr_to_hir(info.expr, &mut self.hir_ctx) {
+                Some(hir) => hirs.push(hir),
+                None => self.hirs = None,
+            }
+        }
         self
     }
 
-    fn build(&self, options: &CompileOptions) -> Result<Insn> {
+    fn build(&mut self, options: &CompileOptions) -> Result<Insn> {
         // A single character class is matched directly, skipping engine
         // construction entirely (see CharClassMatcher). A class has no capture
         // groups, so this only applies when none are needed.
         if self.capture_groups.map_or(false, |r| r.start() == r.end()) {
-            if let Some(matcher) = try_char_class_matcher(&self.re, options) {
+            let matcher = match &self.hirs {
+                // A single fragment whose Hir is a class; no parse needed.
+                Some(hirs) if hirs.len() == 1 => char_class_matcher_from_hir(&hirs[0], options),
+                // Multiple fragments can't be a single class.
+                Some(_) => None,
+                // Translation bailed; fall back to parsing the string.
+                None => try_char_class_matcher(&self.re, options),
+            };
+            if let Some(matcher) = matcher {
                 return Ok(Insn::CharClass(matcher));
             }
         }
         Ok(Insn::Delegate(self.build_delegate(options)?))
     }
 
-    fn build_delegate(&self, options: &CompileOptions) -> Result<Delegate> {
+    fn build_delegate(&mut self, options: &CompileOptions) -> Result<Delegate> {
         let capture_groups = self
             .capture_groups
             .expect("Expected at least one expression");
@@ -1324,7 +1359,10 @@ impl DelegateBuilder {
         // capture_groups is Some, and the faster search_half otherwise).
         let capture_groups = capture_groups.to_option_if_non_empty();
         let usage = DelegateUsage::anchored(capture_groups.is_some());
-        let compiled = compile_inner(&self.re, options, usage)?;
+        let compiled = match self.hirs.take() {
+            Some(hirs) => compile_inner_from_hir(&Hir::concat(hirs), options, usage)?,
+            None => compile_inner(&self.re, options, usage)?,
+        };
 
         Ok(Delegate {
             inner: compiled,
