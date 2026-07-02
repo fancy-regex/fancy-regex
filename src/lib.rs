@@ -516,6 +516,11 @@ struct RegexOptions {
     hard_regex_runtime_options: HardRegexRuntimeOptions,
     bytes_mode: BytesMode,
     seek_filter: Option<fn(&str) -> bool>,
+    /// Whether the top-level engine of an easy (`Wrap`) pattern should build a
+    /// prefilter. `RegexSet` turns this off for its internally-built members:
+    /// the set only ever searches them anchored at candidate positions, where
+    /// a prefilter is never consulted, so building one wastes time and memory.
+    delegate_prefilter: bool,
 }
 
 impl fmt::Debug for RegexOptions {
@@ -541,6 +546,7 @@ impl fmt::Debug for RegexOptions {
                 &self.hard_regex_runtime_options,
             )
             .field("seek_filter", &seek_filter_desc)
+            .field("delegate_prefilter", &self.delegate_prefilter)
             .finish()
     }
 }
@@ -556,6 +562,7 @@ impl Default for RegexOptions {
             hard_regex_runtime_options: HardRegexRuntimeOptions::default(),
             bytes_mode: BytesMode::default(),
             seek_filter: None, // when we are ready to enable seek by default, use: `Some(seek_pattern_is_useful)`
+            delegate_prefilter: true,
         }
     }
 }
@@ -1128,7 +1135,7 @@ impl Regex {
         Self::new_options(re.to_string(), &RegexOptions::default())
     }
 
-    fn new_options(pattern: String, options: &RegexOptions) -> Result<Regex> {
+    pub(crate) fn new_options(pattern: String, options: &RegexOptions) -> Result<Regex> {
         let mut tree = Expr::parse_tree_with_flags(&pattern, options.compute_flags())?;
 
         let find_not_empty = options.hard_regex_runtime_options.find_not_empty;
@@ -1185,11 +1192,14 @@ impl Regex {
             };
             // The whole pattern is delegated and searched unanchored, so it keeps
             // its prefilter and all capture groups (the user may request captures).
-            let inner = compile::compile_inner(
-                &re_cooked,
-                &compile_options,
-                compile::DelegateUsage::unanchored(),
-            )?;
+            // RegexSet members are the exception: they are only searched anchored,
+            // so their prefilter build is skipped (see `delegate_prefilter`).
+            let usage = if options.delegate_prefilter {
+                compile::DelegateUsage::unanchored()
+            } else {
+                compile::DelegateUsage::unanchored_no_prefilter()
+            };
+            let inner = compile::compile_inner(&re_cooked, &compile_options, usage)?;
             return Ok(Regex {
                 inner: RegexImpl::Wrap {
                     inner,

@@ -933,8 +933,9 @@ impl<'a> Compiler<'a> {
 /// compiled into the NFA.
 #[derive(Clone, Copy)]
 pub(crate) struct DelegateUsage {
-    /// True if the engine is only ever searched anchored (prefilter is useless).
-    anchored: bool,
+    /// True if the engine should spend build time constructing a prefilter.
+    /// Only useful for engines that are actually searched unanchored.
+    prefilter: bool,
     /// True if explicit capture-group spans must be reported by the engine.
     needs_captures: bool,
 }
@@ -945,7 +946,18 @@ impl DelegateUsage {
     /// default (prefilter on, all captures).
     pub(crate) const fn unanchored() -> Self {
         DelegateUsage {
-            anchored: false,
+            prefilter: true,
+            needs_captures: true,
+        }
+    }
+
+    /// An engine that reports full captures but is only ever searched anchored
+    /// in practice, so a prefilter would never be consulted: `Wrap` engines for
+    /// regexes built as members of a `RegexSet`, which the set only runs
+    /// anchored at candidate positions.
+    pub(crate) const fn unanchored_no_prefilter() -> Self {
+        DelegateUsage {
+            prefilter: false,
             needs_captures: true,
         }
     }
@@ -954,7 +966,7 @@ impl DelegateUsage {
     /// the delegate's explicit capture groups.
     pub(crate) const fn anchored(needs_captures: bool) -> Self {
         DelegateUsage {
-            anchored: true,
+            prefilter: false,
             needs_captures,
         }
     }
@@ -985,7 +997,7 @@ pub(crate) fn options_to_rabuilder(options: &CompileOptions, usage: DelegateUsag
     if let Some(limit) = options.delegate_dfa_size_limit {
         config = config.dfa_size_limit(Some(limit));
     }
-    if usage.anchored {
+    if !usage.prefilter {
         // Anchored searches never consult a prefilter, so don't spend build time
         // (literal extraction, Aho-Corasick/Teddy tables) or memory constructing one.
         //
