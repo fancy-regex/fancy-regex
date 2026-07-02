@@ -161,10 +161,24 @@ fn bench_regexset_mixed(c: &mut Criterion) {
     run_scenario_bench(c, "regexset_vs_individual_mixed", &patterns, &haystack);
 }
 
+fn bench_regexset_late_match(c: &mut Criterion) {
+    // Patterns whose regular approximations (used by the earliest-match finder)
+    // hit at many positions where the real patterns then fail to match: the
+    // lookbehind approximation is just `z`, and the backref approximation
+    // matches any 6-letter word. Only the very end of the haystack has real
+    // matches, so `find_input` churns through many failed candidate positions.
+    let patterns = [r"(?<=xy)z", r"\b([a-z]{3})\1\b"];
+    let line = "az bz cz dz ez fz gz hz iz jz abcdef ghijkl ";
+    let mut haystack = line.repeat(300);
+    haystack.push_str("xyz abcabc");
+    run_scenario_bench(c, "regexset_vs_individual_late_match", &patterns, &haystack);
+}
+
 criterion_group!(
     regexset_vs_individual_benches,
     bench_regexset_easy,
     bench_regexset_hard,
-    bench_regexset_mixed
+    bench_regexset_mixed,
+    bench_regexset_late_match
 );
 criterion_main!(regexset_vs_individual_benches);
