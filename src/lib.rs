@@ -1420,11 +1420,17 @@ impl Regex {
                 let result = if !*explicit_capture_group_0 {
                     inner.search(&delegated_input).map(|m| (m.start(), m.end()))
                 } else {
-                    let mut locations = inner.create_captures();
-                    inner.captures(delegated_input, &mut locations);
-                    locations
-                        .get_group(1)
-                        .map(|group1| (group1.start, group1.end))
+                    // Only group 1's span is needed (the real match bounds of
+                    // the rewritten pattern); a fixed 4-slot search avoids
+                    // allocating full captures on every find.
+                    let mut slots = [None; 4];
+                    if inner.search_slots(&delegated_input, &mut slots).is_some() {
+                        slots[2]
+                            .zip(slots[3])
+                            .map(|(start, end)| (start.get(), end.get()))
+                    } else {
+                        None
+                    }
                 };
                 Ok(result)
             }

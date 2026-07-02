@@ -508,14 +508,15 @@ impl RegexSet {
                     }
                 }
             } // release cache_guard back to pool before doing per-pattern matching
-            let candidate_pattern_indices = seen_pattern_indices
+              // Verify candidates straight off the PatternSet (ascending pattern
+              // order). Only when a match is found are the *remaining* indices
+              // collected, for lazy verification while the caller iterates — so
+              // a failed candidate position allocates nothing.
+            let mut candidate_pattern_indices = seen_pattern_indices
                 .iter()
-                .map(|pattern| pattern.as_usize())
-                .collect::<Vec<_>>();
-
-            let mut pending_pattern_indices = candidate_pattern_indices.into_iter();
+                .map(|pattern| pattern.as_usize());
             let mut first_match = None;
-            while let Some(pattern_index) = pending_pattern_indices.next() {
+            for pattern_index in &mut candidate_pattern_indices {
                 if let Some(candidate_match) =
                     self.match_pattern_at_input_position(pattern_index, &input, match_start)?
                 {
@@ -525,13 +526,14 @@ impl RegexSet {
             }
 
             if let Some(first_match) = first_match {
+                let pending_pattern_indices = candidate_pattern_indices.collect::<Vec<_>>();
                 return Ok(Some(RegexSetMatchesAt {
                     regex_set: self,
                     input,
                     haystack,
                     match_start,
                     first_match: Some(first_match),
-                    pending_pattern_indices,
+                    pending_pattern_indices: pending_pattern_indices.into_iter(),
                 }));
             }
 
