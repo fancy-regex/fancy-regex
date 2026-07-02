@@ -15,6 +15,7 @@ with the exception that 0.x versions can break between minor versions.
 - Add `RegexBuilder::disallow_empty_match_at_eof_after_newline` to reject empty matches at the end of the haystack following a trailing newline, to match Oniguruma behavior (#247)
 - Add `RegexSet` API for efficiently matching multiple patterns against the same text (#255)
 ### Changed
+- Case-insensitive backreference comparison of non-ASCII text now uses direct Unicode simple case folding instead of building a regex engine per comparison, which makes patterns like `(?i)(\w+)\1` orders of magnitude faster on non-ASCII haystacks. The comparison is now strict fold equality over the captured text's byte-length window: a case-folded *prefix* of the window no longer counts as a match (previously a substring search could accept one and misalign the match end)
 - `Matches`, `CaptureMatches`, `Captures`, and `SubCaptureMatches` are now generic over `RegexInput`, which is a breaking change for code that named these types explicitly (#248)
 - Patterns no longer force Unicode mode during parsing, and inline `(?u)` / `(?-u)` flags are accepted when they agree with the builder configuration
 ### Fixed

@@ -716,33 +716,45 @@ fn matches_literal<S: HaystackInput + ?Sized>(
 }
 
 fn matches_literal_casei_unicode(text: &str, literal: &str) -> bool {
-    use regex_syntax::ast::*;
-    let span = Span::splat(Position::new(0, 0, 0));
-    let literals = literal
-        .chars()
-        .map(|c| {
-            Ast::literal(Literal {
-                span,
-                kind: LiteralKind::Verbatim,
-                c,
-            })
-        })
-        .collect();
-    let ast = Ast::concat(Concat {
-        span,
-        asts: literals,
-    });
+    let mut text_chars = text.chars();
+    let mut literal_chars = literal.chars();
+    loop {
+        match (text_chars.next(), literal_chars.next()) {
+            (None, None) => return true,
+            (Some(t), Some(l)) => {
+                if t == l {
+                    continue;
+                }
+                if t.is_ascii() && l.is_ascii() {
+                    if t.eq_ignore_ascii_case(&l) {
+                        continue;
+                    }
+                    return false;
+                }
+                if !chars_fold_equal(t, l) {
+                    return false;
+                }
+            }
+            // One string ended before the other: not equal under folding.
+            _ => return false,
+        }
+    }
+}
 
-    let mut translator = regex_syntax::hir::translate::TranslatorBuilder::new()
-        .case_insensitive(true)
-        .build();
-    let hir = translator.translate(literal, &ast).unwrap();
-
-    use regex_automata::meta::Builder as RaBuilder;
-    let re = RaBuilder::new()
-        .build_from_hir(&hir)
-        .expect("literal hir should get built successfully");
-    re.find(text).is_some()
+/// Whether two codepoints are equal under Unicode simple case folding — the
+/// same equivalence a case-insensitive engine literal uses.
+fn chars_fold_equal(a: char, b: char) -> bool {
+    use regex_syntax::hir::{ClassUnicode, ClassUnicodeRange};
+    let mut class = ClassUnicode::new([ClassUnicodeRange::new(a, a)]);
+    match class.try_case_fold_simple() {
+        Ok(()) => class
+            .ranges()
+            .iter()
+            .any(|r| r.start() <= b && b <= r.end()),
+        // Case-folding tables unavailable (regex-syntax built without
+        // unicode-case): exact comparison already failed, so no match.
+        Err(_) => false,
+    }
 }
 
 fn matches_literal_casei<S: HaystackInput + ?Sized>(
@@ -1391,6 +1403,28 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
 mod tests {
     use super::*;
     use quickcheck::{quickcheck, Arbitrary, Gen};
+
+    #[test]
+    fn casei_unicode_fold_equality() {
+        // Same-case and simple-fold pairs match.
+        assert!(matches_literal_casei_unicode("ΑΛΦΑ", "αλφα"));
+        assert!(matches_literal_casei_unicode("σ", "ς"));
+        // Fold orbits that cross scripts/blocks: ſ (U+017F) folds to s,
+        // K (U+212A, Kelvin sign) folds to k, Å (U+212B, Angstrom sign)
+        // folds to å.
+        assert!(matches_literal_casei_unicode("ſ", "s"));
+        assert!(matches_literal_casei_unicode("S", "ſ"));
+        assert!(matches_literal_casei_unicode("\u{212A}", "k"));
+        assert!(matches_literal_casei_unicode("\u{212B}", "å"));
+        // Mixed ASCII/non-ASCII content.
+        assert!(matches_literal_casei_unicode("aΛb", "AλB"));
+        // Simple folding does not include full case folding (ß ≠ ss).
+        assert!(!matches_literal_casei_unicode("straße", "STRASSE"));
+        // Both strings must end together: a folded prefix is not a match.
+        assert!(!matches_literal_casei_unicode("sab", "ſa"));
+        assert!(!matches_literal_casei_unicode("ſa", "ſab"));
+        assert!(!matches_literal_casei_unicode("αα", "α"));
+    }
 
     #[test]
     fn state_push_pop() {

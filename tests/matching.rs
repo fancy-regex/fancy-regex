@@ -261,6 +261,24 @@ fn backrefs() {
 }
 
 #[test]
+fn backrefs_casei_unicode_fold_orbits() {
+    // Simple case folding relates all of σ/ς/Σ; same UTF-8 length, so the
+    // backref window lines up and these match.
+    assert_match(r"(σ)(?i:\1)", "σς");
+    assert_match(r"(Σ)(?i:\1)", "Σς");
+    // Simple folding is not full folding: ß does not fold to ss.
+    assert_no_match(r"(ß)(?i:\1)", "ßss");
+    // The backref must match the folded text exactly; a folded prefix of the
+    // window (previously accepted via a substring search) is not a match.
+    assert_no_match(r"(ſa)(?i:\1)", "ſasab");
+    // Fold orbits whose members differ in UTF-8 length (ſ U+017F vs s,
+    // K U+212A vs k, Å U+212B vs å) cannot match through a backref because
+    // the window is sized in bytes from the captured text.
+    assert_no_match("(å)(?i:\\1)", "å\u{212B}");
+    assert_no_match(r"(s)(?i:\1)", "sſ");
+}
+
+#[test]
 fn easy_trailing_positive_lookaheads() {
     common::assert_is_match(r"(?=c)", "abcabc");
     common::assert_is_match(r"abc(?=abc)", "abcabc");
