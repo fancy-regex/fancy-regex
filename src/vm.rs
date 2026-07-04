@@ -330,7 +330,7 @@ pub enum Insn {
     /// Match the literal string at the current index
     Lit(String), // should be cow?
     /// Match a single character class (e.g. `\d`, `[a-z]`) at the current index,
-    /// without delegating to a regex-automata engine. See [`CharClassMatcher`].
+    /// without delegating to a regex-automata engine.
     CharClass(CharClassMatcher),
     /// Split execution into two threads. The two fields are positions of instructions. Execution
     /// first tries the first thread. If that fails, the second position is tried.
