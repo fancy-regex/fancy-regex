@@ -26,6 +26,7 @@ pub struct RegexInput<'h, S: Input + ?Sized> {
     haystack: &'h S,
     start: usize,
     range: Range<usize>,
+    anchored: bool,
     start_text: Option<bool>,
     end_text: Option<bool>,
     continue_from_previous_match_end: Option<bool>,
@@ -39,6 +40,7 @@ impl<'h, S: Input + ?Sized> Clone for RegexInput<'h, S> {
             haystack: self.haystack,
             start: self.start,
             range: self.range.clone(),
+            anchored: self.anchored,
             start_text: self.start_text,
             end_text: self.end_text,
             continue_from_previous_match_end: self.continue_from_previous_match_end,
@@ -53,6 +55,7 @@ impl<'h, S: Input + ?Sized> RegexInput<'h, S> {
             haystack,
             start: 0,
             range: 0..haystack.len(),
+            anchored: false,
             start_text: None,
             end_text: None,
             continue_from_previous_match_end: None,
@@ -126,6 +129,17 @@ impl<'h, S: Input + ?Sized> RegexInput<'h, S> {
         self
     }
 
+    /// Return a copy of this input with an override for whether matching should
+    /// be anchored at the start position.
+    ///
+    /// When `true`, the regex will only match at the exact start position,
+    /// without scanning forward through the haystack. This is more efficient
+    /// when you already know where a potential match must occur.
+    pub fn anchored(mut self, yes: bool) -> Self {
+        self.anchored = yes;
+        self
+    }
+
     pub(crate) fn effective_start(&self) -> usize {
         self.start.max(self.range.start)
     }
@@ -148,6 +162,10 @@ impl<'h, S: Input + ?Sized> RegexInput<'h, S> {
 
     pub(crate) fn continue_from_previous_match_end_override(&self) -> Option<bool> {
         self.continue_from_previous_match_end
+    }
+
+    pub(crate) fn is_anchored(&self) -> bool {
+        self.anchored
     }
 }
 

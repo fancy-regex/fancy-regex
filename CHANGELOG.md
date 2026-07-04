@@ -11,6 +11,7 @@ with the exception that 0.x versions can break between minor versions.
 - Add `BytesMode` and the `RegexInput` trait so the matching and capture APIs can operate on strings or bytes, and allows to opt out of unicode handling if desired (#248)
   - Also allows searching within a range without slicing (#253)
   - Assertions can be overridden at runtime, if the regex builder `allow_input_assertion_overrides` option was used (#254)
+  - Search can be performed in anchored mode, searching only at the start position specified (#263)
 - Add experimental seek optimization to only invoke the VM at candidate positions where a match could occur (#246)
 - Add `RegexBuilder::disallow_empty_match_at_eof_after_newline` to reject empty matches at the end of the haystack following a trailing newline, to match Oniguruma behavior (#247)
 - Add `RegexSet` API for efficiently matching multiple patterns against the same text (#255)

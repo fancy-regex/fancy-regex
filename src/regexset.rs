@@ -132,7 +132,7 @@ use regex_automata::MatchKind;
 use regex_automata::PatternID;
 use regex_automata::PatternSet;
 
-use crate::vm::{OPTION_ANCHORED, OPTION_NOT_CONTINUED_FROM_PREVIOUS_MATCH};
+use crate::vm::OPTION_NOT_CONTINUED_FROM_PREVIOUS_MATCH;
 use crate::CompileError;
 use crate::Error;
 use crate::RegexOptions;
@@ -475,10 +475,14 @@ impl RegexSet {
         let mut seen_pattern_indices = PatternSet::new(self.regexes.len());
 
         while search_start <= match_range.end {
-            let Some(candidate) = self
-                .earliest_match_finder
-                .search(&RaInput::new(haystack.as_bytes()).range(search_start..match_range.end))
-            else {
+            let ra_input = RaInput::new(haystack.as_bytes())
+                .range(search_start..match_range.end)
+                .anchored(if input.is_anchored() {
+                    Anchored::Yes
+                } else {
+                    Anchored::No
+                });
+            let Some(candidate) = self.earliest_match_finder.search(&ra_input) else {
                 return Ok(None);
             };
             let match_start = candidate.start();
@@ -549,9 +553,9 @@ impl RegexSet {
         input: &RegexInput<'t, S>,
         match_start: usize,
     ) -> Result<Option<RegexSetMatch<'t, S>>> {
-        let candidate_input = input.clone().from_pos(match_start);
+        let candidate_input = input.clone().from_pos(match_start).anchored(true);
         let regex = &self.regexes[pattern_index];
-        let mut option_flags = OPTION_ANCHORED;
+        let mut option_flags = 0;
         if input.start() < match_start {
             option_flags |= OPTION_NOT_CONTINUED_FROM_PREVIOUS_MATCH;
         }
@@ -795,6 +799,33 @@ mod tests {
             .find_input(RegexInput::new("a").from_pos(2))
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn find_input_returns_none_when_input_is_anchored_and_match_not_at_start_position() {
+        let set = RegexSet::new(&[r"b"]).unwrap();
+
+        assert!(set
+            .find_input(RegexInput::new("ab").from_pos(0).anchored(true))
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn find_input_returns_match_when_input_is_anchored_and_match_at_start_position() {
+        let set = RegexSet::new(&[r"b"]).unwrap();
+
+        let mut matches = set
+            .find_input(RegexInput::new("ab").from_pos(1).anchored(true))
+            .unwrap()
+            .unwrap();
+
+        let only = matches.next().unwrap().unwrap();
+        assert_eq!(0, only.pattern());
+        assert_eq!(1, only.start());
+        assert_eq!(2, only.end());
+        assert_eq!("b", only.as_str());
+        assert!(matches.next().is_none());
     }
 
     #[test]

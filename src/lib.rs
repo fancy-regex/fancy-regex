@@ -71,9 +71,7 @@ use crate::compile::{compile, CompileOptions};
 use crate::optimize::optimize;
 use crate::parse::{ExprTree, NamedGroups, Parser};
 use crate::parse_flags::*;
-use crate::vm::{
-    Prog, OPTION_ANCHORED, OPTION_FIND_NOT_EMPTY, OPTION_NOT_CONTINUED_FROM_PREVIOUS_MATCH,
-};
+use crate::vm::{Prog, OPTION_FIND_NOT_EMPTY, OPTION_NOT_CONTINUED_FROM_PREVIOUS_MATCH};
 
 pub use crate::bytes::MatchBytes;
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
@@ -1414,7 +1412,7 @@ impl Regex {
                 ..
             } => {
                 let mut delegated_input = ra_input(input);
-                if option_flags & OPTION_ANCHORED != 0 {
+                if input.is_anchored() {
                     delegated_input = delegated_input.anchored(RaAnchored::Yes);
                 }
                 let result = if !*explicit_capture_group_0 {
@@ -1613,7 +1611,7 @@ impl Regex {
                 let explicit = *explicit_capture_group_0;
                 let mut locations = inner.create_captures();
                 let mut delegated_input = ra_input(input);
-                if option_flags & OPTION_ANCHORED != 0 {
+                if input.is_anchored() {
                     delegated_input = delegated_input.anchored(RaAnchored::Yes);
                 }
                 inner.captures(delegated_input, &mut locations);
@@ -3230,22 +3228,29 @@ mod tests {
     #[test]
     fn find_input_raw_honors_anchored_flag_for_wrapped_regex() {
         let regex = Regex::new("abc").unwrap();
+
+        // Unanchored search finds match at position 1
         let input = RegexInput::new("zabc");
-
-        assert_eq!(Some((1, 4)), regex.find_input_raw(&input, 0).unwrap());
-        assert_eq!(
-            None,
-            regex
-                .find_input_raw(&input, super::OPTION_ANCHORED)
-                .unwrap()
-        );
-
-        let anchored_at_match = input.clone().from_pos(1);
         assert_eq!(
             Some((1, 4)),
             regex
-                .find_input_raw(&anchored_at_match, super::OPTION_ANCHORED)
+                .find_input(input)
                 .unwrap()
+                .map(|m| (m.start(), m.end()))
+        );
+
+        // Anchored at position 0 returns None (abc doesn't match at pos 0)
+        let anchored_at_start = RegexInput::new("zabc").anchored(true);
+        assert!(regex.find_input(anchored_at_start).unwrap().is_none());
+
+        // Anchored at position 1 finds match
+        let anchored_at_match = RegexInput::new("zabc").from_pos(1).anchored(true);
+        assert_eq!(
+            regex
+                .find_input(anchored_at_match)
+                .unwrap()
+                .map(|m| (m.start(), m.end())),
+            Some((1, 4))
         );
     }
 }
