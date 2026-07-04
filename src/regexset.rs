@@ -688,7 +688,7 @@ impl<'r, 't, S: Input + ?Sized> Iterator for RegexSetMatchesAt<'r, 't, S> {
             return Some(Ok(first_match));
         }
 
-        while let Some(pattern_index) = self.pending_pattern_indices.next() {
+        for pattern_index in self.pending_pattern_indices.by_ref() {
             match self.regex_set.match_pattern_at_input_position(
                 pattern_index,
                 &self.input,
