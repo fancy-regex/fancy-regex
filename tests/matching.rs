@@ -274,7 +274,7 @@ fn backrefs_casei_unicode_fold_orbits() {
     // Fold orbits whose members differ in UTF-8 length (ſ U+017F vs s,
     // K U+212A vs k, Å U+212B vs å) cannot match through a backref because
     // the window is sized in bytes from the captured text.
-    assert_no_match("(å)(?i:\\1)", "å\u{212B}");
+    assert_no_match(r"(å)(?i:\1)", "å\u{212B}");
     assert_no_match(r"(s)(?i:\1)", "sſ");
 }
 
