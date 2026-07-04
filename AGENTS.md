@@ -63,7 +63,7 @@ See the @CONTRIBUTING.md guide for details.
 1. Follow Rust best practices and idiomatic patterns - avoid writing unsafe code
 2. Maintain existing code structure and organization unless asked to reorganize
 3. Write unit tests for new functionality
-5. Document public APIs and complex logic. Suggest changes to the Markdown documents when appropriate
+4. Document public APIs and complex logic. Suggest changes to the Markdown documents when appropriate
 
 ## Tests
 
