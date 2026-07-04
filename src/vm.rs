@@ -115,13 +115,6 @@ pub(crate) const OPTION_NOT_CONTINUED_FROM_PREVIOUS_MATCH: u32 = 1 << 1;
 /// \K is ignored as part of this check - so empty matches can still be reported if the engine
 /// consumed characters and then \K was used afterwards.
 pub(crate) const OPTION_FIND_NOT_EMPTY: u32 = 1 << 2;
-/// When this option is set, the VM will only attempt to match at the start position given by the
-/// input (`effective_start`), without scanning forward.  `SplitUnanchored` and `Seek` preamble
-/// instructions are treated as no-ops that simply advance to the real pattern body; no backtrack
-/// branch is pushed for retrying at later positions.  This is used by [`RegexSet`] verification,
-/// where the many-DFA has already identified candidate start positions and the VM only needs to
-/// confirm (or deny) a match anchored at that exact position.
-pub(crate) const OPTION_ANCHORED: u32 = 1 << 3;
 
 // TODO: make configurable
 const MAX_STACK: usize = 1_000_000;
@@ -928,7 +921,7 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                     match_attempt_start = ix;
                     slash_z_matched = false;
 
-                    if option_flags & OPTION_ANCHORED != 0 {
+                    if input.is_anchored() {
                         // Anchored mode: only try at the current position; do not push a
                         // backtrack branch for advancing to the next position.
                     } else {
@@ -1211,8 +1204,7 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                         // If \G is at the start of the pattern, and we are performing a non-anchored
                         // search, then we can fail early instead of checking at each position in the
                         // haystack because \G will never match at any other position
-                        if at_start && state.stack.len() == 1 && option_flags & OPTION_ANCHORED == 0
-                        {
+                        if at_start && state.stack.len() == 1 && !input.is_anchored() {
                             // The only item on the stack is from the SplitUnanchored (or Seek)
                             // instruction for non-anchored search.
                             // We can safely return None immediately.
@@ -1229,7 +1221,7 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                         return Ok(None);
                     }
 
-                    if option_flags & OPTION_ANCHORED != 0 {
+                    if input.is_anchored() {
                         // Anchored mode: the idea is that since the many-DFA from the regex-set has
                         // already confirmed a candidate match starting at this position, there is no
                         // need to verify the seek pattern matches here. We also don't push any backtracking
