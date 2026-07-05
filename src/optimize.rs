@@ -35,7 +35,14 @@ use core::mem;
 pub fn optimize(tree: &mut ExprTree) -> bool {
     // self recursion prevents us from moving the trailing lookahead out of group 0
     let requires_capture_group_fixup = if !tree.self_recursive {
-        optimize_trailing_lookahead(tree)
+        // KeepOut (\K) optimization is tried first; it also handles a trailing positive
+        // lookahead when both are present, so we skip the standalone lookahead pass in
+        // that case to avoid creating a second explicit capture group 0.
+        if optimize_keepout(tree) {
+            true
+        } else {
+            optimize_trailing_lookahead(tree)
+        }
     } else {
         false
     };
@@ -441,6 +448,78 @@ fn quantifier_kind(lo: usize, hi: usize) -> Option<QuantifierKind> {
     }
 }
 
+fn optimize_keepout(tree: &mut ExprTree) -> bool {
+    // Rewrites a root-level `\K` (KeepOut) in a Concat into an explicit capture group 0.
+    //
+    // `\K` resets the reported match start to the current position, so whatever follows it
+    // is the "real" match.  By wrapping the suffix in a capture group we can delegate the
+    // whole expression to regex-automata and read the result from group 1.
+    //
+    // Example: `\w+:\s*"\K[^"]*`  →  `\w+:\s*"([^"]*)`
+    //
+    // When a trailing positive lookahead is also present the two optimisations are merged
+    // into a single new capture group to avoid needing two explicit group-0 wrappers:
+    //
+    // Example: `\w+:\s*"\K[^"]*(?=")`  →  `\w+:\s*"([^"]*)"`
+    //
+    // The optimisation requires that none of the prefix children (before the \K) contain
+    // capture groups.  If they do, the new wrapper group would not be group 1, which
+    // breaks the `explicit_capture_group_0` mechanism that reads the match span from group 1.
+
+    let Expr::Concat(ref mut children) = tree.expr else {
+        return false;
+    };
+
+    // Find the first KeepOut at the root concat level.
+    let Some(keepout_pos) = children.iter().position(|e| matches!(e, Expr::KeepOut)) else {
+        return false;
+    };
+
+    // Safety check: any capture group in the prefix would be numbered before our new
+    // wrapper group, so it would become group 1 instead of our wrapper.
+    let prefix_has_capture_groups = children[..keepout_pos].iter().any(|child| {
+        matches!(child, Expr::Group(_)) || child.has_descendant(|e| matches!(e, Expr::Group(_)))
+    });
+    if prefix_has_capture_groups {
+        return false;
+    }
+
+    // Drain KeepOut and everything after it.
+    let mut tail: Vec<Expr> = children.drain(keepout_pos..).collect();
+    // Remove the KeepOut itself (first element of `tail`).
+    tail.remove(0);
+
+    // Check whether the last remaining child is a trailing positive lookahead.
+    // If so, pull its inner expression out so we can keep it outside the new group.
+    let lookahead_inner = if let Some(Expr::LookAround(_, LookAround::LookAhead)) = tail.last() {
+        let last = tail.pop().expect("just checked last is Some");
+        if let Expr::LookAround(inner, LookAround::LookAhead) = last {
+            Some(*inner)
+        } else {
+            unreachable!("already checked it is a lookahead");
+        }
+    } else {
+        None
+    };
+
+    // Build the content of the new capture group from the remaining tail.
+    let group_content = match tail.len() {
+        0 => Expr::Empty,
+        1 => tail.remove(0),
+        _ => Expr::Concat(tail),
+    };
+    let group0 = Expr::Group(Arc::new(group_content));
+
+    // Append: Group(suffix) and then the lookahead's inner expression (if any).
+    children.push(group0);
+    if let Some(la_inner) = lookahead_inner {
+        children.push(la_inner);
+    }
+
+    tree.total_groups += 1;
+    true
+}
+
 fn optimize_trailing_lookahead(tree: &mut ExprTree) -> bool {
     // returns a boolean to say whether the optimization was applied.
     // - if it was applied, capture group 0 is no longer implicit, but explicit
@@ -594,6 +673,69 @@ mod tests {
         assert_eq!(&optimized_tree.expr, &tree.expr);
 
         let tree = Expr::parse_tree(r"(?=(b))\1").unwrap();
+        let mut optimized_tree = tree.clone();
+        let requires_capture_group_fixup = optimize(&mut optimized_tree);
+        assert_eq!(requires_capture_group_fixup, false);
+        assert_eq!(&optimized_tree.expr, &tree.expr);
+    }
+
+    #[test]
+    fn keepout_optimized() {
+        let mut tree = Expr::parse_tree(r"ab\Kcd").unwrap();
+        let requires_capture_group_fixup = optimize(&mut tree);
+        assert_eq!(requires_capture_group_fixup, true);
+        let mut s = String::new();
+        tree.expr.to_str(&mut s, 0);
+        assert_eq!(s, "ab(cd)");
+    }
+
+    #[test]
+    fn keepout_at_start_of_concat_optimized() {
+        let mut tree = Expr::parse_tree(r"\Kcd").unwrap();
+        let requires_capture_group_fixup = optimize(&mut tree);
+        assert_eq!(requires_capture_group_fixup, true);
+        let mut s = String::new();
+        tree.expr.to_str(&mut s, 0);
+        assert_eq!(s, "(cd)");
+    }
+
+    #[test]
+    fn keepout_with_trailing_lookahead_optimized_into_single_group() {
+        // \K and trailing positive lookahead should be merged into one capture group,
+        // not two separate group-0 wrappers.
+        let mut tree = Expr::parse_tree(r#"ab\Kcd(?=e)"#).unwrap();
+        let requires_capture_group_fixup = optimize(&mut tree);
+        assert_eq!(requires_capture_group_fixup, true);
+        let mut s = String::new();
+        tree.expr.to_str(&mut s, 0);
+        assert_eq!(s, "ab(cd)e");
+    }
+
+    #[test]
+    fn keepout_left_alone_when_self_recursive() {
+        let tree = Expr::parse_tree(r"ab?\g<0>?\Kc").unwrap();
+        let mut optimized_tree = tree.clone();
+        let requires_capture_group_fixup = optimize(&mut optimized_tree);
+        assert_eq!(requires_capture_group_fixup, false);
+        assert_eq!(&optimized_tree.expr, &tree.expr);
+    }
+
+    #[test]
+    fn keepout_inside_group_left_alone() {
+        // \K inside a capturing group (not the root concat) should not be optimized
+        let tree = Expr::parse_tree(r"c(a\Kb)d").unwrap();
+        let mut optimized_tree = tree.clone();
+        let requires_capture_group_fixup = optimize(&mut optimized_tree);
+        assert_eq!(requires_capture_group_fixup, false);
+        assert_eq!(&optimized_tree.expr, &tree.expr);
+    }
+
+    #[test]
+    fn keepout_with_prefix_capture_group_left_alone() {
+        // When there's a capture group before \K, applying the optimization would make
+        // that group become the first group (group 1) instead of our new wrapper, so
+        // we must leave the pattern unchanged.
+        let tree = Expr::parse_tree(r"(\w+)\K\s*(\w+)").unwrap();
         let mut optimized_tree = tree.clone();
         let requires_capture_group_fixup = optimize(&mut optimized_tree);
         assert_eq!(requires_capture_group_fixup, false);
