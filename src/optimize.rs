@@ -255,7 +255,7 @@ fn check_repeated_concat(child: &Expr, outer_lo: usize) -> bool {
     let Expr::Concat(children) = child else {
         return false;
     };
-    let [prefix, tail_repeat] = children.as_slice() else {
+    let [prefix, optional_tail] = children.as_slice() else {
         return false;
     };
     let Expr::Repeat {
@@ -263,7 +263,7 @@ fn check_repeated_concat(child: &Expr, outer_lo: usize) -> bool {
         lo: tail_lo,
         hi: tail_hi,
         greedy: tail_greedy,
-    } = tail_repeat
+    } = optional_tail
     else {
         return false;
     };
@@ -273,7 +273,7 @@ fn check_repeated_concat(child: &Expr, outer_lo: usize) -> bool {
     let Expr::Concat(tail_children) = tail_inner.as_ref() else {
         return false;
     };
-    let [_, right] = tail_children.as_slice() else {
+    let [_middle_part, right] = tail_children.as_slice() else {
         return false;
     };
     let Expr::Repeat {
@@ -305,13 +305,13 @@ fn build_repeated_concat(child: Expr, outer_lo: usize) -> Expr {
     let Expr::Concat(mut children) = child else {
         unreachable!("check_repeated_concat guarantees child is a Concat");
     };
-    // children = [prefix_repeat, tail_repeat]
-    let tail_repeat = children.pop().unwrap();
+    // children = [prefix_repeat, optional_tail]
+    let optional_tail = children.pop().unwrap();
     let prefix = children.pop().unwrap();
 
     let Expr::Repeat {
         child: tail_inner, ..
-    } = tail_repeat
+    } = optional_tail
     else {
         unreachable!("check_repeated_concat guarantees tail is a Repeat");
     };
