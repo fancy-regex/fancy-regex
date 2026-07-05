@@ -660,6 +660,7 @@ mod tests {
     #[test]
     fn ambiguous_concat_repeats_simplified_with_plus_and_star() {
         assert_eq!(optimized_pattern(r"\s+\w{0,1}\s*"), r"\s*(?:\w{1}\s*)?");
+        assert_eq!(optimized_pattern(r"^\s+\w{0,1}\s*$"), r"^\s*(?:\w{1}\s*)?$");
     }
 
     #[test]
