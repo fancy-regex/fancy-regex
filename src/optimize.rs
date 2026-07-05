@@ -457,12 +457,12 @@ fn optimize_keepout(tree: &mut ExprTree) -> bool {
     //
     // Example: `\w+:\s*"\K[^"]*`  →  `\w+:\s*"([^"]*)`
     //
-    // When a trailing positive lookahead is also present the two optimisations are merged
+    // When a trailing positive lookahead is also present the two optimizations are merged
     // into a single new capture group to avoid needing two explicit group-0 wrappers:
     //
     // Example: `\w+:\s*"\K[^"]*(?=")`  →  `\w+:\s*"([^"]*)"`
     //
-    // The optimisation requires that none of the prefix children (before the \K) contain
+    // The optimization requires that none of the prefix children (before the \K) contain
     // capture groups.  If they do, the new wrapper group would not be group 1, which
     // breaks the `explicit_capture_group_0` mechanism that reads the match span from group 1.
 
@@ -477,6 +477,8 @@ fn optimize_keepout(tree: &mut ExprTree) -> bool {
 
     // Safety check: any capture group in the prefix would be numbered before our new
     // wrapper group, so it would become group 1 instead of our wrapper.
+    // Note: `has_descendant` checks only strict descendants, not the node itself,
+    // so we need the explicit `matches!(child, Expr::Group(_))` check alongside it.
     let prefix_has_capture_groups = children[..keepout_pos].iter().any(|child| {
         matches!(child, Expr::Group(_)) || child.has_descendant(|e| matches!(e, Expr::Group(_)))
     });
