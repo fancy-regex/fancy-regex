@@ -127,17 +127,22 @@ fn optimize_ambiguous_concat_repeats(expr: &mut Expr) {
         rewrite_concat_repeat_windows(children);
     }
 
-    if let Expr::Repeat {
+    let should_rewrite = if let Expr::Repeat {
         child,
         lo,
         hi,
         greedy,
-    } = expr
+    } = &*expr
     {
-        if *greedy && *hi == usize::MAX {
-            if let Some(replacement) = rewrite_repeated_concat(child.as_ref(), *lo) {
-                *expr = replacement;
-            }
+        *greedy && *hi == usize::MAX && check_repeated_concat(child.as_ref(), *lo)
+    } else {
+        false
+    };
+
+    if should_rewrite {
+        let owned = mem::replace(expr, Expr::Empty);
+        if let Expr::Repeat { child, lo, .. } = owned {
+            *expr = build_repeated_concat(*child, lo);
         }
     }
 }
@@ -145,9 +150,14 @@ fn optimize_ambiguous_concat_repeats(expr: &mut Expr) {
 fn rewrite_concat_repeat_windows(children: &mut Vec<Expr>) {
     let mut ix = 0;
     while ix + 2 < children.len() {
-        let replacement =
-            rewrite_concat_repeat_triplet(&children[ix], &children[ix + 1], &children[ix + 2]);
-        if let Some((prefix, optional_tail)) = replacement {
+        if check_concat_repeat_triplet(&children[ix], &children[ix + 1], &children[ix + 2]) {
+            let mut left = Expr::Empty;
+            let mut middle = Expr::Empty;
+            let mut right = Expr::Empty;
+            mem::swap(&mut left, &mut children[ix]);
+            mem::swap(&mut middle, &mut children[ix + 1]);
+            mem::swap(&mut right, &mut children[ix + 2]);
+            let (prefix, optional_tail) = build_concat_repeat_triplet(left, middle, right);
             children.splice(ix..ix + 3, [prefix, optional_tail]);
             ix += 2;
         } else {
@@ -156,7 +166,7 @@ fn rewrite_concat_repeat_windows(children: &mut Vec<Expr>) {
     }
 }
 
-fn rewrite_concat_repeat_triplet(left: &Expr, middle: &Expr, right: &Expr) -> Option<(Expr, Expr)> {
+fn check_concat_repeat_triplet(left: &Expr, middle: &Expr, right: &Expr) -> bool {
     let Expr::Repeat {
         child: left_inner,
         lo: left_lo,
@@ -164,7 +174,7 @@ fn rewrite_concat_repeat_triplet(left: &Expr, middle: &Expr, right: &Expr) -> Op
         greedy: left_greedy,
     } = left
     else {
-        return None;
+        return false;
     };
     let Expr::Repeat {
         child: right_inner,
@@ -173,58 +183,80 @@ fn rewrite_concat_repeat_triplet(left: &Expr, middle: &Expr, right: &Expr) -> Op
         greedy: right_greedy,
     } = right
     else {
-        return None;
+        return false;
+    };
+    let Expr::Repeat {
+        lo: middle_lo,
+        hi: middle_hi,
+        ..
+    } = middle
+    else {
+        return false;
+    };
+
+    is_unbounded_simple_repeat(*left_lo, *left_hi, *left_greedy)
+        && is_unbounded_simple_repeat(*right_lo, *right_hi, *right_greedy)
+        && compatible_edge_repeat_bounds(*left_lo, *right_lo)
+        && *middle_lo == 0
+        && *middle_hi != 0
+        && left_inner.as_ref() == right_inner.as_ref()
+}
+
+fn build_concat_repeat_triplet(left: Expr, middle: Expr, right: Expr) -> (Expr, Expr) {
+    let Expr::Repeat {
+        child: left_inner,
+        lo: left_lo,
+        ..
+    } = left
+    else {
+        unreachable!("check_concat_repeat_triplet guarantees left is a Repeat");
     };
     let Expr::Repeat {
         child: middle_inner,
-        lo: middle_lo,
         hi: middle_hi,
         greedy: middle_greedy,
+        ..
     } = middle
     else {
-        return None;
+        unreachable!("check_concat_repeat_triplet guarantees middle is a Repeat");
+    };
+    let right_lo = if let Expr::Repeat { lo, .. } = &right {
+        *lo
+    } else {
+        unreachable!("check_concat_repeat_triplet guarantees right is a Repeat");
     };
 
-    if !is_unbounded_simple_repeat(*left_lo, *left_hi, *left_greedy)
-        || !is_unbounded_simple_repeat(*right_lo, *right_hi, *right_greedy)
-    {
-        return None;
-    }
-    if !compatible_edge_repeat_bounds(*left_lo, *right_lo) {
-        return None;
-    }
-    if *middle_lo != 0 || *middle_hi == 0 || left_inner.as_ref() != right_inner.as_ref() {
-        return None;
-    }
-
     let prefix = Expr::Repeat {
-        child: Box::new(left_inner.as_ref().clone()),
-        lo: (*left_lo).min(*right_lo),
+        child: left_inner,
+        lo: left_lo.min(right_lo),
         hi: usize::MAX,
         greedy: true,
     };
     let mandatory_middle = Expr::Repeat {
-        child: Box::new(middle_inner.as_ref().clone()),
+        child: middle_inner,
         lo: 1,
-        hi: *middle_hi,
-        greedy: *middle_greedy,
+        hi: middle_hi,
+        greedy: middle_greedy,
     };
-    let tail = Expr::Concat(vec![mandatory_middle, right.clone()]);
+    let tail = Expr::Concat(vec![mandatory_middle, right]);
     let optional_tail = Expr::Repeat {
         child: Box::new(tail),
         lo: 0,
         hi: 1,
         greedy: true,
     };
-    Some((prefix, optional_tail))
+    (prefix, optional_tail)
 }
 
-fn rewrite_repeated_concat(child: &Expr, outer_lo: usize) -> Option<Expr> {
+fn check_repeated_concat(child: &Expr, outer_lo: usize) -> bool {
+    if outer_lo != 0 && outer_lo != 1 {
+        return false;
+    }
     let Expr::Concat(children) = child else {
-        return None;
+        return false;
     };
     let [prefix, tail_repeat] = children.as_slice() else {
-        return None;
+        return false;
     };
     let Expr::Repeat {
         child: tail_inner,
@@ -233,16 +265,16 @@ fn rewrite_repeated_concat(child: &Expr, outer_lo: usize) -> Option<Expr> {
         greedy: tail_greedy,
     } = tail_repeat
     else {
-        return None;
+        return false;
     };
     if !*tail_greedy || *tail_lo != 0 || *tail_hi != 1 {
-        return None;
+        return false;
     }
     let Expr::Concat(tail_children) = tail_inner.as_ref() else {
-        return None;
+        return false;
     };
-    let [middle_part, right] = tail_children.as_slice() else {
-        return None;
+    let [_, right] = tail_children.as_slice() else {
+        return false;
     };
     let Expr::Repeat {
         child: prefix_inner,
@@ -251,7 +283,7 @@ fn rewrite_repeated_concat(child: &Expr, outer_lo: usize) -> Option<Expr> {
         greedy: prefix_greedy,
     } = prefix
     else {
-        return None;
+        return false;
     };
     let Expr::Repeat {
         child: right_inner,
@@ -260,33 +292,52 @@ fn rewrite_repeated_concat(child: &Expr, outer_lo: usize) -> Option<Expr> {
         greedy: right_greedy,
     } = right
     else {
-        return None;
+        return false;
     };
 
-    if !is_unbounded_simple_repeat(*prefix_lo, *prefix_hi, *prefix_greedy)
-        || !is_unbounded_simple_repeat(*right_lo, *right_hi, *right_greedy)
-        || !compatible_edge_repeat_bounds(*prefix_lo, *right_lo)
-        || prefix_inner.as_ref() != right_inner.as_ref()
-    {
-        return None;
-    }
+    is_unbounded_simple_repeat(*prefix_lo, *prefix_hi, *prefix_greedy)
+        && is_unbounded_simple_repeat(*right_lo, *right_hi, *right_greedy)
+        && compatible_edge_repeat_bounds(*prefix_lo, *right_lo)
+        && prefix_inner.as_ref() == right_inner.as_ref()
+}
+
+fn build_repeated_concat(child: Expr, outer_lo: usize) -> Expr {
+    let Expr::Concat(mut children) = child else {
+        unreachable!("check_repeated_concat guarantees child is a Concat");
+    };
+    // children = [prefix_repeat, tail_repeat]
+    let tail_repeat = children.pop().unwrap();
+    let prefix = children.pop().unwrap();
+
+    let Expr::Repeat {
+        child: tail_inner, ..
+    } = tail_repeat
+    else {
+        unreachable!("check_repeated_concat guarantees tail is a Repeat");
+    };
+    let Expr::Concat(mut tail_children) = *tail_inner else {
+        unreachable!("check_repeated_concat guarantees tail inner is a Concat");
+    };
+    // tail_children = [middle_part, right_repeat]
+    let right = tail_children.pop().unwrap();
+    let middle_part = tail_children.pop().unwrap();
 
     let repeated_tail = Expr::Repeat {
-        child: Box::new(Expr::Concat(vec![middle_part.clone(), right.clone()])),
+        child: Box::new(Expr::Concat(vec![middle_part, right])),
         lo: 0,
         hi: usize::MAX,
         greedy: true,
     };
-    let core = Expr::Concat(vec![prefix.clone(), repeated_tail]);
+    let core = Expr::Concat(vec![prefix, repeated_tail]);
     match outer_lo {
-        1 => Some(core),
-        0 => Some(Expr::Repeat {
+        1 => core,
+        0 => Expr::Repeat {
             child: Box::new(core),
             lo: 0,
             hi: 1,
             greedy: true,
-        }),
-        _ => None,
+        },
+        _ => unreachable!("check_repeated_concat guarantees outer_lo is 0 or 1"),
     }
 }
 

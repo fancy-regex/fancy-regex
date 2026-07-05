@@ -24,7 +24,9 @@ extern crate criterion;
 use criterion::Criterion;
 use std::time::Duration;
 
-use fancy_regex::internal::{analyze, compile, run_default, AnalyzeContext, CompileOptions};
+use fancy_regex::internal::{
+    analyze, compile, optimize, run_default, AnalyzeContext, CompileOptions,
+};
 use fancy_regex::seek_pattern_is_useful;
 use fancy_regex::Expr;
 use fancy_regex::Regex as FancyRegex;
@@ -459,6 +461,57 @@ criterion_group!(
     is_match_fancy,
 );
 
+/// Shared logic for the optimized-vs-unoptimized concat-repeat benchmarks.
+///
+/// Compiles `(\w)(?:\s*\w?\s*)+\1` with or without calling `optimize()` on
+/// the parsed tree. The backreference makes the whole pattern hard, so the
+/// VM executes the ambiguous `(?:\s*\w?\s*)+` middle section. With
+/// optimization, that section is rewritten to the unambiguous `\s*(?:\w\s*)*`,
+/// reducing the number of backtracking paths the VM must explore.
+fn bench_concat_repeat_optimization(c: &mut Criterion, name: &str, with_optimize: bool) {
+    let pattern = r"(\w)(?:\s*\w?\s*)+\1";
+    let mut tree = Expr::parse_tree(pattern).unwrap();
+    if with_optimize {
+        optimize(&mut tree);
+    }
+    let a = analyze(
+        &tree,
+        AnalyzeContext {
+            explicit_capture_group_0: false,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let p = compile(
+        &a,
+        CompileOptions {
+            contains_subroutines: tree.contains_subroutines,
+            ..CompileOptions::default()
+        },
+    )
+    .unwrap();
+    // Haystack: 20 repetitions of "x " then a final "x" — the whole string
+    // matches because the captured 'x' equals the final \1.
+    let mut haystack = "x ".repeat(20);
+    haystack.push('x');
+    c.bench_function(name, |b| b.iter(|| run_default(&p, &haystack, 0).unwrap()));
+}
+
+fn run_concat_repeat_optimized(c: &mut Criterion) {
+    bench_concat_repeat_optimization(c, "run_concat_repeat_optimized", true);
+}
+
+fn run_concat_repeat_unoptimized(c: &mut Criterion) {
+    bench_concat_repeat_optimization(c, "run_concat_repeat_unoptimized", false);
+}
+
+criterion_group!(
+    name = optimize_benches;
+    config = Criterion::default();
+    targets = run_concat_repeat_optimized,
+    run_concat_repeat_unoptimized,
+);
+
 #[cfg(feature = "variable-lookbehinds")]
 criterion_main!(
     benches,
@@ -467,7 +520,8 @@ criterion_main!(
     continue_from_end_of_prev_match_benches,
     seek_benches,
     seek_worst_case_benches,
-    api_benches
+    api_benches,
+    optimize_benches
 );
 
 #[cfg(not(feature = "variable-lookbehinds"))]
@@ -477,5 +531,6 @@ criterion_main!(
     continue_from_end_of_prev_match_benches,
     seek_benches,
     seek_worst_case_benches,
-    api_benches
+    api_benches,
+    optimize_benches
 );
