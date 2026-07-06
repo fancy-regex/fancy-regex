@@ -226,26 +226,52 @@ fn build_concat_repeat_triplet(left: Expr, middle: Expr, right: Expr) -> (Expr, 
         unreachable!("check_concat_repeat_triplet guarantees right is a Repeat");
     };
 
-    let prefix = Expr::Repeat {
-        child: left_inner,
-        lo: left_lo.min(right_lo),
-        hi: usize::MAX,
-        greedy: true,
-    };
     let mandatory_middle = Expr::Repeat {
         child: middle_inner,
         lo: 1,
         hi: middle_hi,
         greedy: middle_greedy,
     };
-    let tail = Expr::Concat(vec![mandatory_middle, right]);
-    let optional_tail = Expr::Repeat {
-        child: Box::new(tail),
-        lo: 0,
-        hi: 1,
-        greedy: true,
-    };
-    (prefix, optional_tail)
+
+    if left_lo < right_lo {
+        // The right repeat is the less permissive (higher lo) side — keep it as a mandatory
+        // suffix. Make the left repeat and middle optional as a prefix instead, so that the
+        // rewritten expression is no more permissive than the original.
+        // E.g. `\w*\.?\w+` → `(?:\w*\.{1})?\w+`
+        let left_repeat = Expr::Repeat {
+            child: left_inner,
+            lo: left_lo,
+            hi: usize::MAX,
+            greedy: true,
+        };
+        let head = Expr::Concat(vec![left_repeat, mandatory_middle]);
+        let optional_head = Expr::Repeat {
+            child: Box::new(head),
+            lo: 0,
+            hi: 1,
+            greedy: true,
+        };
+        (optional_head, right)
+    } else {
+        // The left repeat is the less permissive (higher or equal lo) side — keep it as a
+        // mandatory prefix. Make the middle and right repeat optional as a suffix.
+        // E.g. `\w+\.?\w+` → `\w+(?:\.{1}\w+)?`
+        // E.g. `\w+\.?\w*` → `\w+(?:\.{1}\w*)?`
+        let prefix = Expr::Repeat {
+            child: left_inner,
+            lo: left_lo,
+            hi: usize::MAX,
+            greedy: true,
+        };
+        let tail = Expr::Concat(vec![mandatory_middle, right]);
+        let optional_tail = Expr::Repeat {
+            child: Box::new(tail),
+            lo: 0,
+            hi: 1,
+            greedy: true,
+        };
+        (prefix, optional_tail)
+    }
 }
 
 fn check_repeated_concat(child: &Expr, outer_lo: usize) -> bool {
@@ -643,24 +669,27 @@ mod tests {
 
     #[test]
     fn ambiguous_concat_repeats_simplified_with_bounded_middle() {
+        // left=\w* (lo=0) < right=\w+ (lo=1): right is mandatory suffix, left+middle become optional prefix
         assert_eq!(
             optimized_pattern(r"foo\w*\s{0,5}\w+"),
-            r"foo\w*(?:\s{1,5}\w+)?"
+            r"foo(?:\w*\s{1,5})?\w+"
         );
     }
 
     #[test]
     fn ambiguous_concat_repeats_simplified_with_nongreedy_middle() {
+        // left=\w* (lo=0) < right=\w+ (lo=1): same as above with non-greedy middle
         assert_eq!(
             optimized_pattern(r"foo\w*\s{0,5}?\w+"),
-            r"foo\w*(?:\s{1,5}?\w+)?"
+            r"foo(?:\w*\s{1,5}?)?\w+"
         );
     }
 
     #[test]
     fn ambiguous_concat_repeats_simplified_with_plus_and_star() {
-        assert_eq!(optimized_pattern(r"\s+\w{0,1}\s*"), r"\s*(?:\w{1}\s*)?");
-        assert_eq!(optimized_pattern(r"^\s+\w{0,1}\s*$"), r"^\s*(?:\w{1}\s*)?$");
+        // left=\s+ (lo=1) >= right=\s* (lo=0): left is mandatory prefix, right+middle become optional suffix
+        assert_eq!(optimized_pattern(r"\s+\w{0,1}\s*"), r"\s+(?:\w{1}\s*)?");
+        assert_eq!(optimized_pattern(r"^\s+\w{0,1}\s*$"), r"^\s+(?:\w{1}\s*)?$");
     }
 
     #[test]
@@ -674,5 +703,20 @@ mod tests {
             optimized_pattern(r"(?:\s*\w?\s*)*"),
             r"(?:\s*(?:\w{1}\s*)*)?"
         );
+    }
+
+    #[test]
+    fn ambiguous_concat_repeats_star_optional_plus_uses_suffix() {
+        // left=\w* (lo=0) < right=\w+ (lo=1): the more restrictive side becomes the mandatory
+        // suffix to avoid making the rewritten expression more permissive than the original.
+        // \w*\.?\w+ cannot match an empty string (requires at least one word char from \w+),
+        // so the rewritten form must also require at least one word char.
+        assert_eq!(optimized_pattern(r"\w*\.?\w+"), r"(?:\w*\.{1})?\w+");
+    }
+
+    #[test]
+    fn ambiguous_concat_repeats_plus_optional_star_uses_prefix() {
+        // left=\w+ (lo=1) >= right=\w* (lo=0): left is the mandatory prefix
+        assert_eq!(optimized_pattern(r"\w+\.?\w*"), r"\w+(?:\.{1}\w*)?");
     }
 }

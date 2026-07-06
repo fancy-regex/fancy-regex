@@ -1034,3 +1034,29 @@ fn native_char_class_matches_multibyte_unicode() {
     let re = fancy_regex::Regex::new(r"(?<=a)[^\d]").unwrap();
     assert!(re.is_match("aé").unwrap());
 }
+
+#[test]
+fn ambiguous_concat_repeat_optimization_not_more_permissive() {
+    // \w*\.?\w+ requires at least one word character (from \w+).
+    // After optimization to (?:\w*\.{1})?\w+, it must not match an empty string.
+    common::assert_is_match(r"\w*\.?\w+", "a");
+    common::assert_is_match(r"\w*\.?\w+", "ab");
+    common::assert_is_match(r"\w*\.?\w+", "a.b");
+    common::assert_no_match(r"^\w*\.?\w+$", "");
+    common::assert_no_match(r"^\w*\.?\w+$", ".");
+
+    // \w+\.?\w* requires at least one word character (from \w+).
+    // After optimization to \w+(?:\.{1}\w*)?, it must not match an empty string.
+    common::assert_is_match(r"\w+\.?\w*", "a");
+    common::assert_is_match(r"\w+\.?\w*", "ab");
+    common::assert_is_match(r"\w+\.?\w*", "a.b");
+    common::assert_no_match(r"^\w+\.?\w*$", "");
+    common::assert_no_match(r"^\w+\.?\w*$", ".");
+
+    // \s+\w?\s* requires at least one whitespace character (from \s+).
+    // After optimization to \s+(?:\w{1}\s*)?, it must not match an empty string.
+    common::assert_is_match(r"\s+\w?\s*", " ");
+    common::assert_is_match(r"\s+\w?\s*", " a ");
+    common::assert_no_match(r"^\s+\w?\s*$", "");
+    common::assert_no_match(r"^\s+\w?\s*$", "a");
+}
