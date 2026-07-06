@@ -65,6 +65,7 @@ See the @CONTRIBUTING.md guide for details.
 3. Write unit tests for new functionality
 4. Document public APIs and complex logic. Suggest changes to the Markdown documents when appropriate
 5. If you can avoid unnecessary cloning by doing a mem swap, please do. Performance is a feature.
+6. When adding strategies to the optimizer, remember that it runs before analysis, so avoid rewriting the expression tree in such a way that a (possibly) easy node could become a hard node, unless you can prove (with benchmarks) that it will improve performance in all situations. i.e. don't add possessiveness/atomic grouping to nodes which regex-automata can handle natively, because it would force use of the VM/backtracking-engine when it may have been able to go through a more efficient DFA previously.
 
 ## Tests
 
