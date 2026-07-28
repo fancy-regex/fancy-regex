@@ -62,6 +62,7 @@ mod parse_flags;
 mod regexset;
 mod replacer;
 mod seek;
+mod to_hir;
 mod vm;
 
 use crate::analyze::can_compile_as_anchored;
@@ -514,6 +515,11 @@ struct RegexOptions {
     hard_regex_runtime_options: HardRegexRuntimeOptions,
     bytes_mode: BytesMode,
     seek_filter: Option<fn(&str) -> bool>,
+    /// Whether the top-level engine of an easy (`Wrap`) pattern should build a
+    /// prefilter. `RegexSet` turns this off for its internally-built members:
+    /// the set only ever searches them anchored at candidate positions, where
+    /// a prefilter is never consulted, so building one wastes time and memory.
+    delegate_prefilter: bool,
 }
 
 impl fmt::Debug for RegexOptions {
@@ -539,6 +545,7 @@ impl fmt::Debug for RegexOptions {
                 &self.hard_regex_runtime_options,
             )
             .field("seek_filter", &seek_filter_desc)
+            .field("delegate_prefilter", &self.delegate_prefilter)
             .finish()
     }
 }
@@ -554,6 +561,7 @@ impl Default for RegexOptions {
             hard_regex_runtime_options: HardRegexRuntimeOptions::default(),
             bytes_mode: BytesMode::default(),
             seek_filter: None, // when we are ready to enable seek by default, use: `Some(seek_pattern_is_useful)`
+            delegate_prefilter: true,
         }
     }
 }
@@ -1126,7 +1134,7 @@ impl Regex {
         Self::new_options(re.to_string(), &RegexOptions::default())
     }
 
-    fn new_options(pattern: String, options: &RegexOptions) -> Result<Regex> {
+    pub(crate) fn new_options(pattern: String, options: &RegexOptions) -> Result<Regex> {
         let mut tree = Expr::parse_tree_with_flags(&pattern, options.compute_flags())?;
 
         let find_not_empty = options.hard_regex_runtime_options.find_not_empty;
@@ -1166,8 +1174,11 @@ impl Regex {
             // easy case, wrap regex
 
             // we do our own to_str because escapes are different
-            // NOTE: there is a good opportunity here to use Hir to avoid regex-automata re-parsing it
-            let mut re_cooked = String::new();
+            // The cooked form is the pattern plus some flag-group decoration. It is
+            // kept even though the engine is normally built from an Hir below,
+            // because it doubles as the seek pattern for RegexSet membership and
+            // as debug output.
+            let mut re_cooked = String::with_capacity(pattern.len() + pattern.len() / 2);
             tree.expr.to_str(&mut re_cooked, 0);
             let compile_options = CompileOptions {
                 bytes_mode: options.bytes_mode,
@@ -1180,7 +1191,24 @@ impl Regex {
                 // delegate compile in the easy path and their defaults are correct.
                 ..CompileOptions::default()
             };
-            let inner = compile::compile_inner(&re_cooked, &compile_options)?;
+            // The whole pattern is delegated and searched unanchored, so it keeps
+            // its prefilter and all capture groups (the user may request captures).
+            // RegexSet members are the exception: they are only searched anchored,
+            // so their prefilter build is skipped (see `delegate_prefilter`).
+            let usage = if options.delegate_prefilter {
+                compile::DelegateUsage::unanchored()
+            } else {
+                compile::DelegateUsage::unanchored_no_prefilter()
+            };
+            // Build the engine from an Hir translated directly from the tree, so
+            // the engine doesn't re-parse the cooked pattern. Fall back to the
+            // string path for anything the translator doesn't cover.
+            let utf8 = matches!(compile_options.bytes_mode, BytesMode::Unicode);
+            let mut hir_ctx = to_hir::HirCtx::new(compile_options.unicode, utf8);
+            let inner = match to_hir::expr_to_hir(&tree.expr, &mut hir_ctx) {
+                Some(hir) => compile::compile_inner_from_hir(&hir, &compile_options, usage)?,
+                None => compile::compile_inner(&re_cooked, &compile_options, usage)?,
+            };
             return Ok(Regex {
                 inner: RegexImpl::Wrap {
                     inner,
@@ -1390,11 +1418,17 @@ impl Regex {
                 let result = if !*explicit_capture_group_0 {
                     inner.search(&delegated_input).map(|m| (m.start(), m.end()))
                 } else {
-                    let mut locations = inner.create_captures();
-                    inner.captures(delegated_input, &mut locations);
-                    locations
-                        .get_group(1)
-                        .map(|group1| (group1.start, group1.end))
+                    // Only group 1's span is needed (the real match bounds of
+                    // the rewritten pattern); a fixed 4-slot search avoids
+                    // allocating full captures on every find.
+                    let mut slots = [None; 4];
+                    if inner.search_slots(&delegated_input, &mut slots).is_some() {
+                        slots[2]
+                            .zip(slots[3])
+                            .map(|(start, end)| (start.get(), end.get()))
+                    } else {
+                        None
+                    }
                 };
                 Ok(result)
             }
@@ -1405,8 +1439,9 @@ impl Regex {
                     } else {
                         0
                     };
-                let result = vm::run(prog, input, option_flags, options)?;
-                Ok(result.map(|saves| (saves[0], saves[1])))
+                // Span-only VM entry: nothing is moved out of the pooled
+                // scratch, so this path is allocation-free per call.
+                vm::run_spans(prog, input, option_flags, options)
             }
         }
     }
@@ -2396,7 +2431,7 @@ fn is_special(c: char) -> bool {
     )
 }
 
-fn push_quoted(buf: &mut String, s: &str) {
+pub(crate) fn push_quoted(buf: &mut String, s: &str) {
     for c in s.chars() {
         if is_special(c) {
             buf.push('\\');

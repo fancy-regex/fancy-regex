@@ -27,6 +27,7 @@ use std::time::Duration;
 use fancy_regex::internal::{analyze, compile, run_default, AnalyzeContext, CompileOptions};
 use fancy_regex::seek_pattern_is_useful;
 use fancy_regex::Expr;
+use fancy_regex::Regex as FancyRegex;
 use regex::Regex;
 
 fn parse_lifetime_re(c: &mut Criterion) {
@@ -373,6 +374,91 @@ criterion_group!(
     no_seek_digit_backref_worst_case_no_match,
 );
 
+/// Shared logic for the case-insensitive Unicode backref benchmarks.
+///
+/// `(?i)(\p{Greek}+) \1` forces every backref comparison to go through the
+/// non-ASCII case-folding path (`matches_literal_casei_unicode`). The haystack
+/// is a run of Greek word pairs that never match the backref, optionally
+/// followed by one case-folded pair at the very end, so the VM performs many
+/// folded comparisons per iteration.
+fn bench_casei_unicode_backref(c: &mut Criterion, name: &str, with_match: bool) {
+    let re = FancyRegex::new(r"(?i)(\p{Greek}+) \1").unwrap();
+    // The two words share no letters, so no suffix-of-one / prefix-of-the-next
+    // can satisfy the backref and the pattern never matches within the run.
+    let mut haystack = "αβγδ εζηθ ".repeat(20);
+    if with_match {
+        haystack.push_str("ωμεγα ΩΜΕΓΑ");
+    }
+    c.bench_function(name, |b| {
+        b.iter(|| {
+            let found = re.find(&haystack).unwrap();
+            assert_eq!(found.is_some(), with_match);
+            found
+        })
+    });
+}
+
+fn casei_unicode_backref(c: &mut Criterion) {
+    bench_casei_unicode_backref(c, "casei_unicode_backref", true);
+}
+
+fn casei_unicode_backref_no_match(c: &mut Criterion) {
+    bench_casei_unicode_backref(c, "casei_unicode_backref_no_match", false);
+}
+
+/// `find_iter` over a hard (VM-executed) pattern with many matches, to expose
+/// the per-`run` scratch allocation overhead paid on every iteration step.
+fn find_iter_fancy_many_matches(c: &mut Criterion) {
+    let re = FancyRegex::new(r"(?<=@)\w+").unwrap();
+    let haystack = "user@alpha beta@gamma ".repeat(500);
+    c.bench_function("find_iter_fancy_many_matches", |b| {
+        b.iter(|| {
+            let count = re.find_iter(&haystack).filter_map(Result::ok).count();
+            assert_eq!(count, 1000);
+            count
+        })
+    });
+}
+
+/// `find_iter` over an easy pattern that `optimize()` rewrites with an explicit
+/// capture group 0 (trailing lookahead). The Wrap fast path currently allocates
+/// full captures per step just to read group 1's span.
+fn find_iter_wrap_explicit_group0(c: &mut Criterion) {
+    let re = FancyRegex::new(r"\w+(?=!)").unwrap();
+    let haystack = "hello! world? foo! bar ".repeat(500);
+    c.bench_function("find_iter_wrap_explicit_group0", |b| {
+        b.iter(|| {
+            let count = re.find_iter(&haystack).filter_map(Result::ok).count();
+            assert_eq!(count, 1000);
+            count
+        })
+    });
+}
+
+/// `is_match` on a hard pattern; the VM allocates and discards its saves
+/// vector on every call.
+fn is_match_fancy(c: &mut Criterion) {
+    let re = FancyRegex::new(r"\b(\w{3})\1\b").unwrap();
+    let haystack = "one two three four five six seven abcabc";
+    c.bench_function("is_match_fancy", |b| {
+        b.iter(|| {
+            let matched = re.is_match(haystack).unwrap();
+            assert!(matched);
+            matched
+        })
+    });
+}
+
+criterion_group!(
+    name = api_benches;
+    config = Criterion::default().sample_size(30);
+    targets = casei_unicode_backref,
+    casei_unicode_backref_no_match,
+    find_iter_fancy_many_matches,
+    find_iter_wrap_explicit_group0,
+    is_match_fancy,
+);
+
 #[cfg(feature = "variable-lookbehinds")]
 criterion_main!(
     benches,
@@ -380,7 +466,8 @@ criterion_main!(
     lookbehind_benches,
     continue_from_end_of_prev_match_benches,
     seek_benches,
-    seek_worst_case_benches
+    seek_worst_case_benches,
+    api_benches
 );
 
 #[cfg(not(feature = "variable-lookbehinds"))]
@@ -389,5 +476,6 @@ criterion_main!(
     slow_benches,
     continue_from_end_of_prev_match_benches,
     seek_benches,
-    seek_worst_case_benches
+    seek_worst_case_benches,
+    api_benches
 );

@@ -69,7 +69,7 @@
 //! 5. We continue with the previously saved thread at PC 4 and IX 0 (backtracking)
 //! 6. Both `Lit("a")` and `Lit("c")` match and we reach `End` -> successful match (index 0 to 2)
 
-use alloc::collections::BTreeSet;
+use alloc::boxed::Box;
 use alloc::string::String;
 #[cfg(feature = "variable-lookbehinds")]
 use alloc::sync::Arc;
@@ -77,12 +77,10 @@ use alloc::vec;
 use alloc::vec::Vec;
 use regex_automata::meta::Regex;
 use regex_automata::util::look::LookMatcher;
+use regex_automata::util::pool::Pool;
 use regex_automata::util::primitives::NonMaxUsize;
 use regex_automata::Anchored;
 use regex_automata::Input;
-
-#[cfg(feature = "variable-lookbehinds")]
-use regex_automata::util::pool::Pool;
 
 #[cfg(feature = "variable-lookbehinds")]
 pub(crate) type CachePoolFn = alloc::boxed::Box<
@@ -142,6 +140,84 @@ impl CaptureGroupRange {
             Some(self)
         }
     }
+}
+
+/// Matches a single character class (e.g. `\d`, `[a-z]`, `\w`) without building
+/// a regex-automata engine.
+///
+/// Most "fancy" patterns interleave plain character classes with the features
+/// that force backtracking (look-around, back-references, ...). Each such class
+/// would otherwise be compiled to a full delegated `meta::Regex` whose
+/// construction (NFA + reverse NFA + lazy DFA) dominates both compile time and
+/// memory — and which is then searched, anchored, once per character inside the
+/// backtracking loop. Because a class matches exactly one codepoint/byte, we can
+/// instead test membership directly here, which is cheaper to build *and* faster
+/// to match than calling into the engine.
+///
+/// The ranges are taken verbatim from the `regex-syntax` `Hir` for the class
+/// (sorted, non-overlapping, and already case-folded / Unicode-expanded), so the
+/// matched set is identical to what the delegated engine would accept.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CharClassMatcher {
+    /// Match one Unicode scalar value against inclusive `char` ranges. Used in
+    /// Unicode bytes mode, where the haystack is valid UTF-8.
+    Codepoint(Box<[(char, char)]>),
+    /// Match one byte against inclusive byte ranges. Used in ASCII bytes mode
+    /// (and for ASCII-only `(?-u:...)` classes).
+    Byte(Box<[(u8, u8)]>),
+}
+
+impl CharClassMatcher {
+    /// If the character at `ix` is in the class, returns the number of bytes it
+    /// occupies (so the caller can advance). Returns `None` on no match or at the
+    /// end of input.
+    #[inline]
+    fn match_len<S: HaystackInput + ?Sized>(&self, s: &S, ix: usize) -> Option<usize> {
+        let bytes = s.as_bytes();
+        if ix >= bytes.len() {
+            return None;
+        }
+        match self {
+            CharClassMatcher::Byte(ranges) => {
+                if range_contains(ranges, bytes[ix]) {
+                    Some(1)
+                } else {
+                    None
+                }
+            }
+            CharClassMatcher::Codepoint(ranges) => {
+                let len = codepoint_len(bytes[ix]);
+                let end = ix + len;
+                if end > bytes.len() {
+                    return None;
+                }
+                // The haystack is valid UTF-8 in Unicode mode, so this decodes the
+                // codepoint; the `?` is a safety net for an unexpected boundary.
+                let c = core::str::from_utf8(&bytes[ix..end]).ok()?.chars().next()?;
+                if range_contains(ranges, c) {
+                    Some(len)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+}
+
+/// Binary-searches `ranges` (sorted, non-overlapping, inclusive) for `needle`.
+#[inline]
+fn range_contains<T: Ord + Copy>(ranges: &[(T, T)], needle: T) -> bool {
+    ranges
+        .binary_search_by(|&(lo, hi)| {
+            if needle < lo {
+                core::cmp::Ordering::Greater
+            } else if needle > hi {
+                core::cmp::Ordering::Less
+            } else {
+                core::cmp::Ordering::Equal
+            }
+        })
+        .is_ok()
 }
 
 #[derive(Clone)]
@@ -253,6 +329,9 @@ pub enum Insn {
     Assertion(Assertion),
     /// Match the literal string at the current index
     Lit(String), // should be cow?
+    /// Match a single character class (e.g. `\d`, `[a-z]`) at the current index,
+    /// without delegating to a regex-automata engine.
+    CharClass(CharClassMatcher),
     /// Split execution into two threads. The two fields are positions of instructions. Execution
     /// first tries the first thread. If that fails, the second position is tried.
     Split(usize, usize),
@@ -365,6 +444,23 @@ pub enum Insn {
     RejectEmptyMatchAtEOFFollowingNewline,
 }
 
+/// Reusable per-run working memory: the backtracking [`State`] plus the slot
+/// buffer used when calling delegated engines. Pooled on the [`Prog`] so that
+/// repeated runs (every `find_iter` step, every `RegexSet` candidate
+/// verification) don't re-allocate it; `run` resets it before use.
+#[derive(Debug)]
+struct Scratch {
+    state: State,
+    inner_slots: Vec<Option<NonMaxUsize>>,
+}
+
+fn new_scratch() -> Scratch {
+    Scratch {
+        state: State::new(0, MAX_STACK, 0),
+        inner_slots: Vec::new(),
+    }
+}
+
 /// Sequence of instructions for the VM to execute.
 #[derive(Debug)]
 pub struct Prog {
@@ -375,6 +471,7 @@ pub struct Prog {
     bytes_mode: BytesMode,
     /// A pattern compatible with a DFA which can be used to seek to candidate positions where the real/full pattern might match
     pub(crate) seek_pattern: String,
+    scratch_pool: Pool<Scratch, fn() -> Scratch>,
 }
 
 impl Prog {
@@ -389,6 +486,7 @@ impl Prog {
             n_saves,
             bytes_mode,
             seek_pattern,
+            scratch_pool: Pool::new(new_scratch),
         }
     }
 
@@ -414,6 +512,7 @@ struct Save {
     value: usize,
 }
 
+#[derive(Debug)]
 struct State {
     /// Saved values indexed by slot. Mostly indices to s, but can be repeat values etc.
     /// Always contains the saves of the current state.
@@ -430,6 +529,9 @@ struct State {
     max_stack: usize,
     #[allow(dead_code)]
     options: u32,
+    /// Reusable buffer for `backtrack_cut`'s slot dedup, kept to avoid
+    /// allocating on every atomic-group exit.
+    cut_scratch: Vec<usize>,
 }
 
 // Each element in the stack conceptually represents the entire state
@@ -450,7 +552,19 @@ impl State {
             explicit_sp: n_saves,
             max_stack,
             options,
+            cut_scratch: Vec::new(),
         }
+    }
+
+    /// Reset for a fresh run, keeping the allocated buffers.
+    fn reset(&mut self, n_saves: usize, options: u32) {
+        self.saves.clear();
+        self.saves.resize(n_saves, usize::MAX);
+        self.stack.clear();
+        self.oldsave.clear();
+        self.nsave = 0;
+        self.explicit_sp = n_saves;
+        self.options = options;
     }
 
     // push a backtrack branch
@@ -555,17 +669,22 @@ impl State {
             let start = end - self.stack[count].nsave;
             (start, end)
         };
-        let mut saved = BTreeSet::new();
+        // The seen-slot set is a plain Vec with linear lookup: per-branch save
+        // counts are small, and this avoids allocating on every atomic-group
+        // exit (the buffer is reused across calls).
+        let mut saved = core::mem::take(&mut self.cut_scratch);
+        saved.clear();
         // keep all the old saves of our branch (they're all for different slots)
         for &Save { slot, .. } in &self.oldsave[oldsave_start..oldsave_end] {
-            saved.insert(slot);
+            saved.push(slot);
         }
         let mut oldsave_ix = oldsave_end;
         // for other old saves, keep them only if they're for a slot that we haven't saved yet
         for ix in oldsave_end..self.oldsave.len() {
             let Save { slot, .. } = self.oldsave[ix];
-            let new_slot = saved.insert(slot);
+            let new_slot = !saved.contains(&slot);
             if new_slot {
+                saved.push(slot);
                 // put the save we want to keep (ix) after the ones we already have (oldsave_ix)
                 // note that it's fine if the indexes are the same (then swapping is a no-op)
                 self.oldsave.swap(oldsave_ix, ix);
@@ -575,6 +694,7 @@ impl State {
         self.stack.truncate(count);
         self.oldsave.truncate(oldsave_ix);
         self.nsave = oldsave_ix - oldsave_start;
+        self.cut_scratch = saved;
     }
 
     #[inline]
@@ -627,33 +747,45 @@ fn matches_literal<S: HaystackInput + ?Sized>(
 }
 
 fn matches_literal_casei_unicode(text: &str, literal: &str) -> bool {
-    use regex_syntax::ast::*;
-    let span = Span::splat(Position::new(0, 0, 0));
-    let literals = literal
-        .chars()
-        .map(|c| {
-            Ast::literal(Literal {
-                span,
-                kind: LiteralKind::Verbatim,
-                c,
-            })
-        })
-        .collect();
-    let ast = Ast::concat(Concat {
-        span,
-        asts: literals,
-    });
+    let mut text_chars = text.chars();
+    let mut literal_chars = literal.chars();
+    loop {
+        match (text_chars.next(), literal_chars.next()) {
+            (None, None) => return true,
+            (Some(t), Some(l)) => {
+                if t == l {
+                    continue;
+                }
+                if t.is_ascii() && l.is_ascii() {
+                    if t.eq_ignore_ascii_case(&l) {
+                        continue;
+                    }
+                    return false;
+                }
+                if !chars_fold_equal(t, l) {
+                    return false;
+                }
+            }
+            // One string ended before the other: not equal under folding.
+            _ => return false,
+        }
+    }
+}
 
-    let mut translator = regex_syntax::hir::translate::TranslatorBuilder::new()
-        .case_insensitive(true)
-        .build();
-    let hir = translator.translate(literal, &ast).unwrap();
-
-    use regex_automata::meta::Builder as RaBuilder;
-    let re = RaBuilder::new()
-        .build_from_hir(&hir)
-        .expect("literal hir should get built successfully");
-    re.find(text).is_some()
+/// Whether two codepoints are equal under Unicode simple case folding — the
+/// same equivalence a case-insensitive engine literal uses.
+fn chars_fold_equal(a: char, b: char) -> bool {
+    use regex_syntax::hir::{ClassUnicode, ClassUnicodeRange};
+    let mut class = ClassUnicode::new([ClassUnicodeRange::new(a, a)]);
+    match class.try_case_fold_simple() {
+        Ok(()) => class
+            .ranges()
+            .iter()
+            .any(|r| r.start() <= b && b <= r.end()),
+        // Case-folding tables unavailable (regex-syntax built without
+        // unicode-case): exact comparison already failed, so no match.
+        Err(_) => false,
+    }
 }
 
 fn matches_literal_casei<S: HaystackInput + ?Sized>(
@@ -741,22 +873,55 @@ pub fn run_default(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>
     )
 }
 
-/// Run the program with options.
-#[allow(clippy::cognitive_complexity)]
+/// Run the program with options, returning the full saves vector on a match.
 pub(crate) fn run<S: HaystackInput + ?Sized>(
     prog: &Prog,
     input: &RegexInput<'_, S>,
     option_flags: u32,
     options: &HardRegexRuntimeOptions,
 ) -> Result<Option<Vec<usize>>> {
+    // The clone is the one allocation the caller keeps (it owns the captures).
+    run_with(prog, input, option_flags, options, |state| {
+        state.saves.clone()
+    })
+}
+
+/// Run the program with options, returning only the overall match span.
+///
+/// Unlike [`run`], nothing is moved out of the pooled scratch, so `is_match`,
+/// `find`, `find_iter`, and RegexSet verification are allocation-free per call
+/// (after buffers have grown to steady state).
+pub(crate) fn run_spans<S: HaystackInput + ?Sized>(
+    prog: &Prog,
+    input: &RegexInput<'_, S>,
+    option_flags: u32,
+    options: &HardRegexRuntimeOptions,
+) -> Result<Option<(usize, usize)>> {
+    run_with(prog, input, option_flags, options, |state| {
+        (state.get(0), state.get(1))
+    })
+}
+
+/// Run the program with options; `extract` pulls the result out of the final
+/// state before the scratch returns to the pool.
+#[allow(clippy::cognitive_complexity)]
+fn run_with<S: HaystackInput + ?Sized, T>(
+    prog: &Prog,
+    input: &RegexInput<'_, S>,
+    option_flags: u32,
+    options: &HardRegexRuntimeOptions,
+    extract: impl FnOnce(&State) -> T,
+) -> Result<Option<T>> {
     if input.is_done() {
         return Ok(None);
     }
     let haystack = input.haystack();
     let pos = input.effective_start();
     let match_range = input.get_range();
-    let mut state = State::new(prog.n_saves, MAX_STACK, option_flags);
-    let mut inner_slots: Vec<Option<NonMaxUsize>> = Vec::new();
+    let mut scratch_guard = prog.scratch_pool.get();
+    let Scratch { state, inner_slots } = &mut *scratch_guard;
+    state.reset(prog.n_saves, option_flags);
+    inner_slots.clear();
     let look_matcher = LookMatcher::new();
     #[cfg(feature = "std")]
     if option_flags & OPTION_TRACE != 0 {
@@ -801,7 +966,7 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                     if state.get(0) < match_range.start || state.get(1) > match_range.end {
                         break 'fail;
                     }
-                    return Ok(Some(state.saves));
+                    return Ok(Some(extract(state)));
                 }
                 Insn::Any => {
                     if ix < haystack.len() {
@@ -834,6 +999,10 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                     }
                     ix = ix_end
                 }
+                Insn::CharClass(ref matcher) => match matcher.match_len(haystack, ix) {
+                    Some(len) => ix += len,
+                    None => break 'fail,
+                },
                 Insn::Assertion(assertion) => {
                     if !match assertion {
                         Assertion::StartText => input
@@ -1109,12 +1278,9 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                                         .anchored(Anchored::Yes);
                                     inner_slots.resize((range.end() - range.start() + 1) * 2, None);
 
-                                    if inner
-                                        .search_slots(&forward_input, &mut inner_slots)
-                                        .is_some()
-                                    {
+                                    if inner.search_slots(&forward_input, inner_slots).is_some() {
                                         // Store capture group positions, ignoring any whose range is earlier than what has been stored already
-                                        store_capture_groups(&mut state, &inner_slots, range, true);
+                                        store_capture_groups(state, inner_slots, range, true);
                                     } else {
                                         break 'fail;
                                     }
@@ -1149,9 +1315,9 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
                     if let Some(range) = capture_groups {
                         // Has capture groups, need to extract them
                         inner_slots.resize((range.end() - range.start() + 1) * 2, None);
-                        if inner.search_slots(&input, &mut inner_slots).is_some() {
+                        if inner.search_slots(&input, inner_slots).is_some() {
                             // store the capture groups, no need to check current state to see if new values are further to the right
-                            store_capture_groups(&mut state, &inner_slots, range, false);
+                            store_capture_groups(state, inner_slots, range, false);
                             ix = inner_slots[1].unwrap().get();
                         } else {
                             break 'fail;
@@ -1297,6 +1463,28 @@ pub(crate) fn run<S: HaystackInput + ?Sized>(
 mod tests {
     use super::*;
     use quickcheck::{quickcheck, Arbitrary, Gen};
+
+    #[test]
+    fn casei_unicode_fold_equality() {
+        // Same-case and simple-fold pairs match.
+        assert!(matches_literal_casei_unicode("ΑΛΦΑ", "αλφα"));
+        assert!(matches_literal_casei_unicode("σ", "ς"));
+        // Fold orbits that cross scripts/blocks: ſ (U+017F) folds to s,
+        // K (U+212A, Kelvin sign) folds to k, Å (U+212B, Angstrom sign)
+        // folds to å.
+        assert!(matches_literal_casei_unicode("ſ", "s"));
+        assert!(matches_literal_casei_unicode("S", "ſ"));
+        assert!(matches_literal_casei_unicode("\u{212A}", "k"));
+        assert!(matches_literal_casei_unicode("\u{212B}", "å"));
+        // Mixed ASCII/non-ASCII content.
+        assert!(matches_literal_casei_unicode("aΛb", "AλB"));
+        // Simple folding does not include full case folding (ß ≠ ss).
+        assert!(!matches_literal_casei_unicode("straße", "STRASSE"));
+        // Both strings must end together: a folded prefix is not a match.
+        assert!(!matches_literal_casei_unicode("sab", "ſa"));
+        assert!(!matches_literal_casei_unicode("ſa", "ſab"));
+        assert!(!matches_literal_casei_unicode("αα", "α"));
+    }
 
     #[test]
     fn state_push_pop() {

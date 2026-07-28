@@ -261,6 +261,24 @@ fn backrefs() {
 }
 
 #[test]
+fn backrefs_casei_unicode_fold_orbits() {
+    // Simple case folding relates all of σ/ς/Σ; same UTF-8 length, so the
+    // backref window lines up and these match.
+    assert_match(r"(σ)(?i:\1)", "σς");
+    assert_match(r"(Σ)(?i:\1)", "Σς");
+    // Simple folding is not full folding: ß does not fold to ss.
+    assert_no_match(r"(ß)(?i:\1)", "ßss");
+    // The backref must match the folded text exactly; a folded prefix of the
+    // window (previously accepted via a substring search) is not a match.
+    assert_no_match(r"(ſa)(?i:\1)", "ſasab");
+    // Fold orbits whose members differ in UTF-8 length (ſ U+017F vs s,
+    // K U+212A vs k, Å U+212B vs å) cannot match through a backref because
+    // the window is sized in bytes from the captured text.
+    assert_no_match(r"(å)(?i:\1)", "å\u{212B}");
+    assert_no_match(r"(s)(?i:\1)", "sſ");
+}
+
+#[test]
 fn easy_trailing_positive_lookaheads() {
     common::assert_is_match(r"(?=c)", "abcabc");
     common::assert_is_match(r"abc(?=abc)", "abcabc");
@@ -941,4 +959,52 @@ fn test_subroutine_calls_with_unrestricted_names() {
     assert_match(balanced, "(a)");
     assert_match(balanced, "((a))");
     assert_no_match(balanced, "(a");
+}
+
+/// A single character class sitting next to a "fancy" feature is compiled to the
+/// native single-character-class instruction (`Insn::CharClass`) rather than a
+/// delegated regex-automata engine. These cases verify it still matches exactly
+/// what the engine would, in both str (Unicode) and ASCII bytes modes. The
+/// leading look-behind forces the class through the backtracking VM (a trailing
+/// look-ahead would be optimized away).
+#[test]
+fn native_char_class_matches_like_engine() {
+    // Builtin classes.
+    common::assert_is_match(r"(?<=a)\d", "a5");
+    common::assert_no_match(r"(?<=a)\d", "ab");
+    common::assert_is_match(r"(?<=a)\w", "a_");
+    common::assert_no_match(r"(?<=a)\w", "a-");
+
+    // Explicit ranges, including multiple ranges in one class.
+    common::assert_is_match(r"(?<=a)[xyz]", "ay");
+    common::assert_no_match(r"(?<=a)[xyz]", "aw");
+    common::assert_is_match(r"(?<=a)[a-f0-9]", "a3");
+    common::assert_no_match(r"(?<=a)[a-f0-9]", "ag");
+
+    // Negated class.
+    common::assert_is_match(r"(?<=a)[^0-9]", "ab");
+    common::assert_no_match(r"(?<=a)[^0-9]", "a5");
+
+    // Case-insensitive class (ASCII case folding applies in both modes).
+    common::assert_is_match(r"(?<=a)(?i:[p-t])", "aR");
+    common::assert_no_match(r"(?<=a)(?i:[p-t])", "aZ");
+}
+
+/// The native codepoint matcher must decode multi-byte UTF-8 in Unicode (str)
+/// mode. ASCII bytes mode is covered by `assert_is_match` above for ASCII inputs.
+#[test]
+fn native_char_class_matches_multibyte_unicode() {
+    // `\w` is Unicode-aware in str mode, so it matches non-ASCII letters.
+    let re = fancy_regex::Regex::new(r"(?<=a)\w").unwrap();
+    assert!(re.is_match("aé").unwrap());
+    assert!(re.is_match("añ").unwrap());
+    assert!(!re.is_match("a.").unwrap());
+
+    // Case-insensitive Unicode folding (ſ folds to s).
+    let re = fancy_regex::Regex::new(r"(?<=a)(?i:s)").unwrap();
+    assert!(re.is_match("a\u{17F}").unwrap());
+
+    // Negated class still consumes exactly one (multi-byte) codepoint.
+    let re = fancy_regex::Regex::new(r"(?<=a)[^\d]").unwrap();
+    assert!(re.is_match("aé").unwrap());
 }

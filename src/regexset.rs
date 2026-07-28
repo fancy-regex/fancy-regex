@@ -118,9 +118,11 @@ use crate::Input;
 use crate::RegexInput;
 use crate::RegexOptionsBuilder;
 use regex_automata::hybrid::dfa;
+use regex_automata::meta::Builder as RaBuilder;
 use regex_automata::meta::Config as RaConfig;
 use regex_automata::meta::Regex as RaRegex;
 use regex_automata::nfa::thompson;
+use regex_automata::nfa::thompson::WhichCaptures;
 use regex_automata::util::pool::Pool;
 use regex_automata::util::syntax::Config as SyntaxConfig;
 use regex_automata::Anchored;
@@ -130,7 +132,6 @@ use regex_automata::MatchKind;
 use regex_automata::PatternID;
 use regex_automata::PatternSet;
 
-use crate::compile::options_to_rabuilder;
 use crate::vm::OPTION_NOT_CONTINUED_FROM_PREVIOUS_MATCH;
 use crate::CompileError;
 use crate::Error;
@@ -282,12 +283,15 @@ impl RegexSet {
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
+        // Set members are only ever searched anchored at candidate positions
+        // (see `match_pattern_at_input_position`), where the engine never
+        // consults a prefilter — skip spending build time and memory on one.
+        let mut member_options = options_builder.options.clone();
+        member_options.delegate_prefilter = false;
         let regexes = patterns
             .into_iter()
             .map(|pattern| {
-                options_builder
-                    .build(pattern.as_ref().to_string())
-                    .map(Arc::new)
+                Regex::new_options(pattern.as_ref().to_string(), &member_options).map(Arc::new)
             })
             .collect::<Result<Vec<_>>>()?;
 
@@ -361,7 +365,22 @@ impl RegexSet {
 
         let utf8 = matches!(compile_options.bytes_mode, BytesMode::Unicode);
 
-        let mut earliest_builder = options_to_rabuilder(&compile_options);
+        // Parse each pattern once and share the resulting Hirs between the two
+        // set-wide engines (the "earliest match" meta regex and the overlapping
+        // DFA), instead of letting each engine re-parse every pattern string.
+        let syntax_config = SyntaxConfig::new()
+            .utf8(utf8)
+            .unicode(compile_options.unicode);
+        let hirs = regex_automata::util::syntax::parse_many_with(&patterns, &syntax_config)
+            .map_err(|e| {
+                Error::CompileError(Box::new(CompileError::UnexpectedGeneralError(
+                    alloc::format!("failed to parse regex set pattern: {}", e),
+                )))
+            })?;
+
+        // The multi-pattern "earliest match" engine is searched unanchored. The
+        // syntax options are already encoded in the Hirs.
+        let mut earliest_builder = RaBuilder::new();
         earliest_builder.configure(
             RaConfig::new()
                 .match_kind(MatchKind::LeftmostFirst)
@@ -369,9 +388,36 @@ impl RegexSet {
                 .hybrid_cache_capacity(config.meta_hybrid_cache_capacity),
         );
         let earliest_match_finder = earliest_builder
-            .build_many(&patterns)
+            .build_many_from_hir(&hirs)
             .map_err(CompileError::InnerError)
             .map_err(|e| Error::CompileError(Box::new(e)))?;
+
+        let format_patterns = || {
+            patterns
+                .iter()
+                .enumerate()
+                .map(|(i, p)| alloc::format!("[{}]: {}", i, p))
+                .collect::<Vec<_>>()
+                .join("\n---\n")
+        };
+
+        // Build the overlapping DFA from a Thompson NFA compiled from the same
+        // Hirs. This replicates what `dfa::Builder::build_many` does internally
+        // (it forces `WhichCaptures::None` and calls `build_from_nfa`), minus
+        // the extra pattern parse.
+        let mut thompson_config = thompson::Config::new().which_captures(WhichCaptures::None);
+        if let Some(limit) = compile_options.delegate_size_limit {
+            thompson_config = thompson_config.nfa_size_limit(Some(limit));
+        }
+        let nfa = thompson::Compiler::new()
+            .configure(thompson_config)
+            .build_many_from_hir(&hirs)
+            .map_err(|e| {
+                Error::CompileError(Box::new(CompileError::DfaBuildError(
+                    format_patterns(),
+                    e.to_string(),
+                )))
+            })?;
 
         let mut overlapping_dfa_builder = dfa::DFA::builder();
         let mut overlapping_config = dfa::Config::new()
@@ -381,30 +427,11 @@ impl RegexSet {
         if config.overlapping_dfa_skip_cache_capacity_check {
             overlapping_config = overlapping_config.skip_cache_capacity_check(true);
         }
-        overlapping_dfa_builder
-            .configure(overlapping_config)
-            .syntax(
-                SyntaxConfig::new()
-                    .utf8(utf8)
-                    .unicode(compile_options.unicode),
-            )
-            .thompson({
-                let mut config = thompson::Config::new();
-                if let Some(limit) = compile_options.delegate_size_limit {
-                    config = config.nfa_size_limit(Some(limit));
-                }
-                config
-            });
+        overlapping_dfa_builder.configure(overlapping_config);
         let overlapping_dfa =
-            Arc::new(overlapping_dfa_builder.build_many(&patterns).map_err(|e| {
-                let all_patterns = patterns
-                    .iter()
-                    .enumerate()
-                    .map(|(i, p)| alloc::format!("[{}]: {}", i, p))
-                    .collect::<Vec<_>>()
-                    .join("\n---\n");
+            Arc::new(overlapping_dfa_builder.build_from_nfa(nfa).map_err(|e| {
                 Error::CompileError(Box::new(CompileError::DfaBuildError(
-                    all_patterns,
+                    format_patterns(),
                     e.to_string(),
                 )))
             })?);
@@ -485,14 +512,15 @@ impl RegexSet {
                     }
                 }
             } // release cache_guard back to pool before doing per-pattern matching
-            let candidate_pattern_indices = seen_pattern_indices
+              // Verify candidates straight off the PatternSet (ascending pattern
+              // order). Only when a match is found are the *remaining* indices
+              // collected, for lazy verification while the caller iterates — so
+              // a failed candidate position allocates nothing.
+            let mut candidate_pattern_indices = seen_pattern_indices
                 .iter()
-                .map(|pattern| pattern.as_usize())
-                .collect::<Vec<_>>();
-
-            let mut pending_pattern_indices = candidate_pattern_indices.into_iter();
+                .map(|pattern| pattern.as_usize());
             let mut first_match = None;
-            while let Some(pattern_index) = pending_pattern_indices.next() {
+            for pattern_index in &mut candidate_pattern_indices {
                 if let Some(candidate_match) =
                     self.match_pattern_at_input_position(pattern_index, &input, match_start)?
                 {
@@ -502,13 +530,14 @@ impl RegexSet {
             }
 
             if let Some(first_match) = first_match {
+                let pending_pattern_indices = candidate_pattern_indices.collect::<Vec<_>>();
                 return Ok(Some(RegexSetMatchesAt {
                     regex_set: self,
                     input,
                     haystack,
                     match_start,
                     first_match: Some(first_match),
-                    pending_pattern_indices,
+                    pending_pattern_indices: pending_pattern_indices.into_iter(),
                 }));
             }
 
@@ -659,7 +688,7 @@ impl<'r, 't, S: Input + ?Sized> Iterator for RegexSetMatchesAt<'r, 't, S> {
             return Some(Ok(first_match));
         }
 
-        while let Some(pattern_index) = self.pending_pattern_indices.next() {
+        for pattern_index in self.pending_pattern_indices.by_ref() {
             match self.regex_set.match_pattern_at_input_position(
                 pattern_index,
                 &self.input,

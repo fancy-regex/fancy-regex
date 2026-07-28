@@ -154,7 +154,10 @@ impl<'a> Analyzer<'a> {
         enclosing_group: usize,
     ) -> Result<Info<'a>> {
         let start_group = self.next_group_number;
-        let mut children = Vec::new();
+        let mut children = match *expr {
+            Expr::Concat(ref v) | Expr::Alt(ref v) => Vec::with_capacity(v.len()),
+            _ => Vec::new(),
+        };
         let mut min_size = 0;
         let mut const_size = false;
         let mut hard = false;

@@ -1416,10 +1416,10 @@ impl Resolver {
             // we can destructure and move the inner Box<Expr> without cloning.
             let node = core::mem::replace(expr, Expr::Empty);
             if let Expr::AstNode(AstNode::AstGroup { name, inner }, ix) = node {
-                let group_index = if let Some(ref name) = name {
+                let group_index = if let Some(name) = name {
                     self.named_groups
-                        .insert(name.to_string(), self.next_group_index);
-                    self.named_group_positions.insert(name.to_string(), ix);
+                        .insert(name.clone(), self.next_group_index);
+                    self.named_group_positions.insert(name, ix);
                     Some(self.next_group_index)
                 } else if !self.ignore_numbered_groups {
                     Some(self.next_group_index)

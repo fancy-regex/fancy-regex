@@ -108,5 +108,41 @@ inner part of the look-ahead can be delegated to regex-automata entirely.
   the lookahead). The Seek pre-filter can be turned on or off via
   `RegexBuilder::seek(seek_enabled)` if needed.
 
+## Compilation performance
+
+The sections above are about *match* time. Compiling a pattern
+(`Regex::new`) has its own cost, which matters if you build many regexes
+or build them on a hot path.
+
+For a pattern with no fancy features, fancy-regex is a thin wrapper: it
+parses the pattern, confirms it needs no backtracking, and hands it to
+regex-automata. The hand-off goes through a directly-built `Hir` (see
+`src/to_hir.rs`) rather than a re-serialized pattern string, so the
+pattern is only parsed once; compile time is then essentially
+regex-automata's engine build plus a small fixed overhead.
+
+For a pattern that *does* use fancy features, the compiler splits it into
+the parts that need the backtracking VM and the parts it can delegate to
+regex-automata. Each delegated sub-expression that is more than a single
+character class becomes its own compiled regex-automata engine (also built
+from an `Hir`, without re-parsing), and building those engines (their NFAs
+and lazy DFAs) is the dominant cost. Compile time and memory therefore
+scale roughly with the *number* of such sub-expressions, not the length of
+the pattern.
+
+Single character classes (`\d`, `\w`, `[a-z]`, …) — by far the most common
+delegated piece, including the body of a repeat like `\w+` — are matched
+directly by the VM instead of building an engine, which keeps compilation
+of class-heavy fancy patterns cheap.
+
+A `RegexSet` compiles each member pattern individually and additionally
+builds two set-wide engines: a multi-pattern meta regex that finds the
+earliest candidate position, and an overlapping lazy DFA that identifies
+which patterns can match there. Each member's regular approximation is
+parsed once and the `Hir` is shared between both set-wide engines, and
+members built by the set skip constructing prefilters (the set only ever
+searches them anchored at candidate positions). Set compile cost is
+still roughly `N` member compiles plus the two combined engine builds.
+
 [Runaway Regular Expressions: Catastrophic Backtracking]: https://www.regular-expressions.info/catastrophic.html
 [Oniguruma]: https://github.com/kkos/oniguruma
