@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
-## [Unreleased]
+## [0.19.0] - 2026-07-28
 ### Added
 - Add `BytesMode` and the `RegexInput` trait so the matching and capture APIs can operate on strings or bytes, and allows to opt out of unicode handling if desired (#248)
   - Also allows searching within a range without slicing (#253)
@@ -283,6 +283,9 @@ If you previously stored i.e. `Captures`, you would need to change the type to `
 - Initial release
 
 
+[0.19.0]: https://github.com/fancy-regex/fancy-regex/compare/0.18.0...0.19.0
+[0.18.0]: https://github.com/fancy-regex/fancy-regex/compare/0.17.0...0.18.0
+[0.17.0]: https://github.com/fancy-regex/fancy-regex/compare/0.16.2...0.17.0
 [0.16.2]: https://github.com/fancy-regex/fancy-regex/compare/0.16.1...0.16.2
 [0.16.1]: https://github.com/fancy-regex/fancy-regex/compare/0.16.0...0.16.1
 [0.16.0]: https://github.com/fancy-regex/fancy-regex/compare/0.15.0...0.16.0
