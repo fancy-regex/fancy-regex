@@ -1321,7 +1321,7 @@ fn seek_regex(re: &str) -> fancy_regex::Regex {
 }
 
 /// Assert that `seek(true)` produces the same first match as the default.
-fn assert_seek_same(re: &str, text: &str) {
+fn assert_seek_same(re: &str, text: &str) -> Option<(usize, usize)> {
     let default_result = common::regex(re).find(text).unwrap();
     let seek_result = seek_regex(re).find(text).unwrap();
     assert_eq!(
@@ -1330,6 +1330,7 @@ fn assert_seek_same(re: &str, text: &str) {
         "seek=true gave different result for /{re}/ on {:?}",
         text
     );
+    seek_result.map(|m| (m.start(), m.end()))
 }
 
 #[test]
@@ -1337,6 +1338,20 @@ fn seek_backref_finds_match() {
     // The seek pattern inlines the group body ("abc") and jumps past irrelevant text.
     assert_seek_same(r"(abc)\1", "xxxabcabcyyy");
     assert_seek_same(r"(abc)\1", "xabcabcx");
+}
+
+#[test]
+fn seek_overlapping_alternatives_finds_leftmost_match() {
+    // https://github.com/rust-lang/regex/issues/1354
+    let result = assert_seek_same(r".abb|b", "zabb");
+    assert_eq!(result, Some((0, 4)));
+}
+
+#[test]
+fn seek_negated_char_class_optional_finds_leftmost_match() {
+    // https://github.com/rust-lang/regex/issues/1345
+    let result = assert_seek_same(r"[^()]*(?:\([^()]*\))?[^()]*:", "$(:):");
+    assert_eq!(result, Some((0, 5)));
 }
 
 #[test]
