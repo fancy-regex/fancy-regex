@@ -64,6 +64,7 @@ See the @CONTRIBUTING.md guide for details.
 2. Maintain existing code structure and organization unless asked to reorganize
 3. Write unit tests for new functionality
 4. Document public APIs and complex logic. Suggest changes to the Markdown documents when appropriate
+5. If you can avoid unnecessary cloning by doing a mem swap, please do. Performance is a feature.
 
 ## Tests
 
