@@ -237,6 +237,138 @@ impl CharClassMatcher {
     }
 }
 
+/// A zero-width assertion inside a [`ClassSeqMatcher`], replicating the
+/// corresponding `regex-automata` `Look` exactly: positions are absolute in
+/// the haystack (a delegated engine checks them against the full haystack, not
+/// the search span, and never sees fancy-regex's input assertion overrides).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SeqLook {
+    /// `\A`: at absolute position 0.
+    Start,
+    /// `\z`: at the end of the haystack.
+    End,
+    /// `(?m:^)`: at position 0 or right after a `\n`.
+    StartLF,
+    /// `(?m:$)`: at the end of the haystack or right before a `\n`.
+    EndLF,
+}
+
+impl SeqLook {
+    fn matches(self, bytes: &[u8], ix: usize) -> bool {
+        match self {
+            SeqLook::Start => ix == 0,
+            SeqLook::End => ix == bytes.len(),
+            SeqLook::StartLF => ix == 0 || bytes[ix - 1] == b'\n',
+            SeqLook::EndLF => ix == bytes.len() || bytes[ix] == b'\n',
+        }
+    }
+}
+
+/// One element of a [`ClassSeqMatcher`] sequence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SeqElem {
+    /// A zero-width assertion.
+    Look(SeqLook),
+    /// An exact literal, compared byte-wise (case-insensitivity has already
+    /// been resolved into classes/alternations by Hir translation).
+    Lit(Box<[u8]>),
+    /// A single character class.
+    Class(CharClassMatcher),
+    /// A repetition of a character class. Valid as the final element of the
+    /// sequence, or earlier when the class is disjoint from the effective
+    /// first-character set of everything that can follow it (checked at build
+    /// time): a maximal-munch loop is then exactly equivalent to the engine —
+    /// giving characters back would put the next element on a character of
+    /// this class, which by disjointness can never match. Mid-sequence lazy
+    /// repetitions are normalized to `greedy: true` under the same argument,
+    /// so `greedy: false` only occurs in final position (consume exactly
+    /// `min`).
+    ClassRepeat {
+        class: CharClassMatcher,
+        min: u32,
+        max: Option<u32>,
+        greedy: bool,
+    },
+}
+
+/// A delegated fragment that is a plain sequence of literals and character
+/// classes (with at most a trailing class repetition), matched natively by the
+/// VM instead of being delegated to a `meta::Regex` engine.
+///
+/// Such fragments are extremely common as branches of alternations in
+/// lookbehinds (e.g. `[^\w]return`) and as whitespace runs (`\s*`), and
+/// building an engine per fragment dominates compile time. Matching is
+/// deterministic — each element either consumes a fixed amount or fails, and
+/// the trailing repetition consumes maximally (greedy) or minimally (lazy) —
+/// which is exactly what the anchored, atomic delegate search would return.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ClassSeqMatcher {
+    elems: Box<[SeqElem]>,
+    /// The delegate pattern this replaces, for debug output.
+    pattern: String,
+}
+
+impl fmt::Debug for ClassSeqMatcher {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ClassSeq {}", self.pattern)
+    }
+}
+
+impl ClassSeqMatcher {
+    pub(crate) fn new(elems: Box<[SeqElem]>, pattern: String) -> Self {
+        ClassSeqMatcher { elems, pattern }
+    }
+
+    /// If the sequence matches at `ix`, returns the number of bytes consumed
+    /// (the same end position the delegated engine's anchored search would
+    /// report). Returns `None` on no match.
+    fn match_len<S: HaystackInput + ?Sized>(&self, s: &S, ix: usize) -> Option<usize> {
+        let bytes = s.as_bytes();
+        let mut pos = ix;
+        for elem in self.elems.iter() {
+            match elem {
+                SeqElem::Look(look) => {
+                    if !look.matches(bytes, pos) {
+                        return None;
+                    }
+                }
+                SeqElem::Lit(lit) => {
+                    let end = pos + lit.len();
+                    if end > bytes.len() || &bytes[pos..end] != &lit[..] {
+                        return None;
+                    }
+                    pos = end;
+                }
+                SeqElem::Class(class) => {
+                    pos += class.match_len(s, pos)?;
+                }
+                SeqElem::ClassRepeat {
+                    class,
+                    min,
+                    max,
+                    greedy,
+                } => {
+                    let mut count = 0u32;
+                    let limit = if *greedy { max.unwrap_or(u32::MAX) } else { *min };
+                    while count < limit {
+                        match class.match_len(s, pos) {
+                            Some(len) => {
+                                pos += len;
+                                count += 1;
+                            }
+                            None => break,
+                        }
+                    }
+                    if count < *min {
+                        return None;
+                    }
+                }
+            }
+        }
+        Some(pos - ix)
+    }
+}
+
 /// A case-insensitive literal, matched natively by the VM instead of being
 /// delegated to a `meta::Regex` engine.
 ///
@@ -427,6 +559,10 @@ pub enum Insn {
     /// Match a single character class (e.g. `\d`, `[a-z]`) at the current index,
     /// without delegating to a regex-automata engine.
     CharClass(CharClassMatcher),
+    /// Match a sequence of literals and character classes (e.g. `[^\w]return`,
+    /// `\s*`) at the current index, without delegating to a regex-automata
+    /// engine.
+    ClassSeq(ClassSeqMatcher),
     /// Split execution into two threads. The two fields are positions of instructions. Execution
     /// first tries the first thread. If that fails, the second position is tried.
     Split(usize, usize),
@@ -1133,6 +1269,10 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                     None => break 'fail,
                 },
                 Insn::CharClass(ref matcher) => match matcher.match_len(haystack, ix) {
+                    Some(len) => ix += len,
+                    None => break 'fail,
+                },
+                Insn::ClassSeq(ref matcher) => match matcher.match_len(haystack, ix) {
                     Some(len) => ix += len,
                     None => break 'fail,
                 },
