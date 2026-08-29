@@ -46,7 +46,7 @@ use crate::to_hir::{expr_to_hir, HirCtx};
 use crate::vm::{CachePoolFn, ReverseBackwardsDelegate};
 use crate::vm::{
     CaptureGroupRange, CaseiLiteral, CharClassMatcher, ClassSeqMatcher, Delegate, Insn, Prog, Seek,
-    SeqElem, SeqLook,
+    SeqElem, SeqLook, CLASS_SEQ_MAX_SLOTS,
 };
 use crate::LookAround::*;
 use crate::{
@@ -1168,14 +1168,16 @@ fn char_class_matcher_from_hir(
 }
 
 /// Build a [`ClassSeqMatcher`] from delegate `Hir` fragments that form a plain
-/// sequence of literals and character classes, with at most a trailing class
-/// repetition. Returns `None` for anything else (assertions, alternations,
-/// captures, non-class repetitions, a repetition before the end, ...) so the
+/// sequence of literals, character classes, capture-group markers, class
+/// repetitions and optional deterministic sub-sequences (`(async)?`). Returns
+/// `None` for anything else (alternations, other repetitions, too many
+/// groups/optionals, an overlapping mid-sequence repetition, ...) so the
 /// caller falls back to building an engine.
 fn class_seq_matcher_from_hirs(
     hirs: &[Hir],
     options: &CompileOptions,
     pattern: String,
+    capture_groups: Option<CaptureGroupRange>,
 ) -> Option<ClassSeqMatcher> {
     fn collect(hir: &Hir, options: &CompileOptions, out: &mut Vec<SeqElem>) -> Option<()> {
         use regex_syntax::hir::{HirKind, Look};
@@ -1208,15 +1210,48 @@ fn class_seq_matcher_from_hirs(
                 }
                 Some(())
             }
-            HirKind::Repetition(rep) => {
-                let class = char_class_matcher_from_hir(&rep.sub, options, None)?;
-                out.push(SeqElem::ClassRepeat {
-                    class,
-                    min: rep.min,
-                    max: rep.max,
-                    greedy: rep.greedy,
-                });
+            HirKind::Capture(cap) => {
+                out.push(SeqElem::GroupStart(cap.index));
+                collect(&cap.sub, options, out)?;
+                out.push(SeqElem::GroupEnd(cap.index));
                 Some(())
+            }
+            HirKind::Repetition(rep) => {
+                if let Some(class) = char_class_matcher_from_hir(&rep.sub, options, None) {
+                    out.push(SeqElem::ClassRepeat {
+                        class,
+                        min: rep.min,
+                        max: rep.max,
+                        greedy: rep.greedy,
+                    });
+                    return Some(());
+                }
+                // `X?` over a deterministic sub-sequence (typically an
+                // optional capture group like `(async)?`) becomes a bounded
+                // choice point. Anything beyond literals/classes/group
+                // markers inside would make the take-branch itself
+                // non-deterministic, so bail.
+                if rep.min == 0 && rep.max == Some(1) {
+                    let mut inner = Vec::new();
+                    collect(&rep.sub, options, &mut inner)?;
+                    if inner.iter().any(|e| {
+                        !matches!(
+                            e,
+                            SeqElem::Lit(_)
+                                | SeqElem::Class(_)
+                                | SeqElem::GroupStart(_)
+                                | SeqElem::GroupEnd(_)
+                        )
+                    }) {
+                        return None;
+                    }
+                    out.push(SeqElem::Optional {
+                        elems: inner.into_boxed_slice(),
+                        greedy: rep.greedy,
+                    });
+                    return Some(());
+                }
+                None
             }
             _ => None,
         }
@@ -1249,6 +1284,31 @@ fn class_seq_matcher_from_hirs(
         return None;
     }
 
+    // Each Optional is a binary choice point in the matcher's bounded
+    // backtracking, so cap how many we accept; and group spans must fit the
+    // matcher's fixed slot array.
+    let optionals = elems
+        .iter()
+        .filter(|e| matches!(e, SeqElem::Optional { .. }))
+        .count();
+    if optionals > 4 {
+        return None;
+    }
+    fn max_group(elems: &[SeqElem]) -> u32 {
+        elems
+            .iter()
+            .map(|e| match e {
+                SeqElem::GroupStart(g) | SeqElem::GroupEnd(g) => *g,
+                SeqElem::Optional { elems, .. } => max_group(elems),
+                _ => 0,
+            })
+            .max()
+            .unwrap_or(0)
+    }
+    if (max_group(&elems) as usize * 2 + 1) >= CLASS_SEQ_MAX_SLOTS {
+        return None;
+    }
+
     let unicode_mode = matches!(options.bytes_mode, BytesMode::Unicode);
     let mut eff_first: Vec<(u32, u32)> = Vec::new();
     let last = elems.len() - 1;
@@ -1265,18 +1325,43 @@ fn class_seq_matcher_from_hirs(
         // Zero-width or possibly-zero-width elements are transparent: the
         // element after them also contributes to the first set seen from the
         // left.
-        let nullable = matches!(
-            &elems[i],
-            SeqElem::ClassRepeat { min: 0, .. } | SeqElem::Look(_)
-        );
-        if nullable {
+        if elem_nullable(&elems[i]) {
             eff_first.extend(this);
         } else {
             eff_first = this;
         }
     }
 
-    Some(ClassSeqMatcher::new(elems.into_boxed_slice(), pattern))
+    Some(ClassSeqMatcher::new(
+        elems.into_boxed_slice(),
+        capture_groups,
+        pattern,
+    ))
+}
+
+/// Whether an element can succeed without consuming input.
+fn elem_nullable(elem: &SeqElem) -> bool {
+    matches!(
+        elem,
+        SeqElem::ClassRepeat { min: 0, .. }
+            | SeqElem::Look(_)
+            | SeqElem::GroupStart(_)
+            | SeqElem::GroupEnd(_)
+            | SeqElem::Optional { .. }
+    )
+}
+
+/// First set of a sequence: union of element first sets from the left, up to
+/// and including the first non-nullable element.
+fn seq_first_ranges(elems: &[SeqElem], unicode_mode: bool) -> Option<Vec<(u32, u32)>> {
+    let mut out = Vec::new();
+    for elem in elems {
+        out.extend(elem_first_ranges(elem, unicode_mode)?);
+        if !elem_nullable(elem) {
+            break;
+        }
+    }
+    Some(out)
 }
 
 /// The code units a class matches, as inclusive u32 ranges — chars in Unicode
@@ -1302,6 +1387,8 @@ fn elem_first_ranges(elem: &SeqElem, unicode_mode: bool) -> Option<Vec<(u32, u32
     match elem {
         SeqElem::Look(SeqLook::EndLF) => Some(vec![(u32::from(b'\n'), u32::from(b'\n'))]),
         SeqElem::Look(_) => Some(Vec::new()),
+        SeqElem::GroupStart(_) | SeqElem::GroupEnd(_) => Some(Vec::new()),
+        SeqElem::Optional { elems, .. } => seq_first_ranges(elems, unicode_mode),
         SeqElem::Lit(bytes) => {
             let cu = if unicode_mode {
                 core::str::from_utf8(bytes).ok()?.chars().next()? as u32
@@ -1571,16 +1658,19 @@ impl DelegateBuilder {
             if let Some(matcher) = matcher {
                 return Ok(Insn::CharClass(matcher));
             }
-            // Not a single class: try a plain literal/class sequence, which is
-            // also matched natively (see ClassSeqMatcher).
-            if let Some(hirs) = &self.hirs {
-                if let Some(matcher) = class_seq_matcher_from_hirs(
-                    hirs,
-                    options,
-                    strip_delegate_flags(&self.re).to_string(),
-                ) {
-                    return Ok(Insn::ClassSeq(matcher));
-                }
+        }
+        // Not a single class: try a plain literal/class sequence, which is
+        // also matched natively (see ClassSeqMatcher) and, unlike the single
+        // class above, can record capture-group spans.
+        if let Some(hirs) = &self.hirs {
+            let capture_groups = self.capture_groups.and_then(|r| r.to_option_if_non_empty());
+            if let Some(matcher) = class_seq_matcher_from_hirs(
+                hirs,
+                options,
+                strip_delegate_flags(&self.re).to_string(),
+                capture_groups,
+            ) {
+                return Ok(Insn::ClassSeq(matcher));
             }
         }
         Ok(Insn::Delegate(self.build_delegate(options, memo)?))
@@ -2233,7 +2323,7 @@ mod tests {
         assert_eq!(prog.len(), 12, "prog: {:?}", prog);
 
         assert_matches!(prog[0], SaveCaptureGroupStart(0));
-        assert_delegate_insn(&prog[1], ".(b)", Some(CaptureGroupRange(1, 2)));
+        assert_class_seq_capture_insn(&prog[1], ".(b)", Some(CaptureGroupRange(1, 2)));
         assert_matches!(prog[2], SaveCaptureGroupStart(2));
         assert_char_class_insn(&prog[3], "[^a]");
         assert_matches!(prog[4], Split(3, 5));
@@ -2241,7 +2331,7 @@ mod tests {
         assert_matches!(prog[6], Split(7, 9));
         assert_matches!(prog[7], Lit(ref l) if l == "c");
         assert_matches!(prog[8], FailNegativeLookAround);
-        assert_delegate_insn(&prog[9], r"(\w)", Some(CaptureGroupRange(3, 4)));
+        assert_class_seq_capture_insn(&prog[9], r"(\w)", Some(CaptureGroupRange(3, 4)));
         assert_matches!(prog[10], Save(1));
         assert_matches!(prog[11], End);
     }
@@ -2253,7 +2343,7 @@ mod tests {
         assert_eq!(prog.len(), 7, "prog: {:?}", prog);
 
         assert_matches!(prog[0], SaveCaptureGroupStart(0));
-        assert_delegate_insn(&prog[1], "(.)", Some(CaptureGroupRange(1, 2)));
+        assert_class_seq_capture_insn(&prog[1], "(.)", Some(CaptureGroupRange(1, 2)));
         assert_matches!(prog[2], SaveCaptureGroupStart(1));
         assert_matches!(prog[3], AnyNoNL);
         assert_matches!(prog[4], Save(3));
@@ -2271,7 +2361,7 @@ mod tests {
         assert_matches!(prog[1], SaveCaptureGroupStart(1));
         assert_matches!(prog[2], AnyNoNL);
         assert_matches!(prog[3], Save(3));
-        assert_delegate_insn(&prog[4], "(.)", Some(CaptureGroupRange(1, 2)));
+        assert_class_seq_capture_insn(&prog[4], "(.)", Some(CaptureGroupRange(1, 2)));
         assert_matches!(prog[5], Save(1));
         assert_matches!(prog[6], End);
     }
@@ -2447,9 +2537,16 @@ mod tests {
 
     /// Assert that `insn` is a native `ClassSeq` for the delegate pattern `re`.
     fn assert_class_seq_insn(insn: &Insn, re: &str) {
+        assert_class_seq_capture_insn(insn, re, None);
+    }
+
+    /// Assert that `insn` is a native `ClassSeq` for the delegate pattern `re`
+    /// mapping its local groups to `captures`.
+    fn assert_class_seq_capture_insn(insn: &Insn, re: &str, captures: Option<CaptureGroupRange>) {
         match insn {
             Insn::ClassSeq(matcher) => {
                 assert_eq!(format!("{:?}", matcher), format!("ClassSeq {}", re));
+                assert_eq!(matcher.capture_groups(), captures);
             }
             _ => {
                 panic!("Expected Insn::ClassSeq but was {:#?}", insn);

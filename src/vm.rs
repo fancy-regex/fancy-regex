@@ -289,7 +289,31 @@ pub(crate) enum SeqElem {
         max: Option<u32>,
         greedy: bool,
     },
+    /// Start of the capture group with this delegate-local index (1-based, in
+    /// order of appearance — exactly how a delegated engine numbers them).
+    GroupStart(u32),
+    /// End of the capture group with this delegate-local index.
+    GroupEnd(u32),
+    /// An optional sub-sequence (`X?`), the only branching construct. The
+    /// inner sequence is restricted to literals, classes and group markers,
+    /// so each branch is deterministic; trying take-then-skip (greedy) or
+    /// skip-then-take (lazy) reproduces the engine's leftmost-first semantics
+    /// exactly.
+    Optional {
+        elems: Box<[SeqElem]>,
+        greedy: bool,
+    },
 }
+
+/// Maximum engine-style capture slots a [`ClassSeqMatcher`] tracks (slots 0/1
+/// are unused, then two per group): up to 7 capture groups. Fragments with
+/// more groups fall back to a delegated engine.
+pub(crate) const CLASS_SEQ_MAX_SLOTS: usize = 16;
+
+/// Capture slots recorded while matching a sequence, laid out like a
+/// delegated engine's slots: group `g` at `[2g]`/`[2g + 1]`. `Copy` so branch
+/// rollback in [`ClassSeqMatcher::run`] is a plain assignment.
+pub(crate) type SeqSlots = [Option<usize>; CLASS_SEQ_MAX_SLOTS];
 
 /// A delegated fragment that is a plain sequence of literals and character
 /// classes (with at most a trailing class repetition), matched natively by the
@@ -304,6 +328,9 @@ pub(crate) enum SeqElem {
 #[derive(Clone, PartialEq, Eq)]
 pub struct ClassSeqMatcher {
     elems: Box<[SeqElem]>,
+    /// The fancy-regex group numbers the local groups map to, like
+    /// `Delegate::capture_groups`. `None` when the fragment has no groups.
+    capture_groups: Option<CaptureGroupRange>,
     /// The delegate pattern this replaces, for debug output.
     pattern: String,
 }
@@ -315,21 +342,82 @@ impl fmt::Debug for ClassSeqMatcher {
 }
 
 impl ClassSeqMatcher {
-    pub(crate) fn new(elems: Box<[SeqElem]>, pattern: String) -> Self {
-        ClassSeqMatcher { elems, pattern }
+    pub(crate) fn new(
+        elems: Box<[SeqElem]>,
+        capture_groups: Option<CaptureGroupRange>,
+        pattern: String,
+    ) -> Self {
+        ClassSeqMatcher {
+            elems,
+            capture_groups,
+            pattern,
+        }
+    }
+
+    pub(crate) fn capture_groups(&self) -> Option<CaptureGroupRange> {
+        self.capture_groups
     }
 
     /// If the sequence matches at `ix`, returns the number of bytes consumed
     /// (the same end position the delegated engine's anchored search would
-    /// report). Returns `None` on no match.
-    fn match_len<S: HaystackInput + ?Sized>(&self, s: &S, ix: usize) -> Option<usize> {
+    /// report) and fills `slots` with the local group spans. Returns `None`
+    /// on no match.
+    fn match_len<S: HaystackInput + ?Sized>(
+        &self,
+        s: &S,
+        ix: usize,
+        slots: &mut SeqSlots,
+    ) -> Option<usize> {
+        self.run(&self.elems, s, ix, slots).map(|end| end - ix)
+    }
+
+    /// Matches `elems` at `pos`, returning the end position. The only choice
+    /// points are `Optional` elements (their inner sequences are
+    /// deterministic), so this is bounded backtracking: greedy tries
+    /// take-then-skip, lazy skip-then-take — leftmost-first, like the engine.
+    /// `slots` is `Copy`, so a failed branch restores it by assignment.
+    fn run<S: HaystackInput + ?Sized>(
+        &self,
+        elems: &[SeqElem],
+        s: &S,
+        mut pos: usize,
+        slots: &mut SeqSlots,
+    ) -> Option<usize> {
         let bytes = s.as_bytes();
-        let mut pos = ix;
-        for elem in self.elems.iter() {
+        for (i, elem) in elems.iter().enumerate() {
             match elem {
                 SeqElem::Look(look) => {
                     if !look.matches(bytes, pos) {
                         return None;
+                    }
+                }
+                SeqElem::GroupStart(g) => {
+                    slots[*g as usize * 2] = Some(pos);
+                }
+                SeqElem::GroupEnd(g) => {
+                    slots[*g as usize * 2 + 1] = Some(pos);
+                }
+                SeqElem::Optional {
+                    elems: inner,
+                    greedy,
+                } => {
+                    let rest = &elems[i + 1..];
+                    let snapshot = *slots;
+                    if *greedy {
+                        if let Some(p) = self.run(inner, s, pos, slots) {
+                            if let Some(end) = self.run(rest, s, p, slots) {
+                                return Some(end);
+                            }
+                        }
+                        *slots = snapshot;
+                        return self.run(rest, s, pos, slots);
+                    } else {
+                        if let Some(end) = self.run(rest, s, pos, slots) {
+                            return Some(end);
+                        }
+                        *slots = snapshot;
+                        let p = self.run(inner, s, pos, slots)?;
+                        return self.run(rest, s, p, slots);
                     }
                 }
                 SeqElem::Lit(lit) => {
@@ -365,7 +453,7 @@ impl ClassSeqMatcher {
                 }
             }
         }
-        Some(pos - ix)
+        Some(pos)
     }
 }
 
@@ -1272,10 +1360,28 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                     Some(len) => ix += len,
                     None => break 'fail,
                 },
-                Insn::ClassSeq(ref matcher) => match matcher.match_len(haystack, ix) {
-                    Some(len) => ix += len,
-                    None => break 'fail,
-                },
+                Insn::ClassSeq(ref matcher) => {
+                    let mut seq_slots: SeqSlots = [None; CLASS_SEQ_MAX_SLOTS];
+                    match matcher.match_len(haystack, ix, &mut seq_slots) {
+                        Some(len) => {
+                            // Store group spans exactly like a captures
+                            // Delegate does (see store_capture_groups): local
+                            // group g + 1 maps to fancy group start + g.
+                            if let Some(range) = matcher.capture_groups() {
+                                for g in 0..(range.end() - range.start()) {
+                                    if let (Some(start), Some(end)) =
+                                        (seq_slots[(g + 1) * 2], seq_slots[(g + 1) * 2 + 1])
+                                    {
+                                        state.save((range.start() + g) * 2, start);
+                                        state.save((range.start() + g) * 2 + 1, end);
+                                    }
+                                }
+                            }
+                            ix += len;
+                        }
+                        None => break 'fail,
+                    }
+                }
                 Insn::Assertion(assertion) => {
                     if !match assertion {
                         Assertion::StartText => input
