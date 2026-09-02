@@ -21,11 +21,17 @@ unicode = ["regex-automata/unicode", "regex-syntax/unicode"]
 std = ["regex-automata/std", "regex-syntax/std", "bit-set/std"]
 # Enable variable-length lookbehinds using reverse DFA search
 variable-lookbehinds = ["regex-automata/dfa-search"]
+# Let regex-automata eagerly build a fully compiled dense DFA for small
+# patterns (and delegated fragments). Trades noticeably slower compiles and
+# more memory for the fastest search engine; without it searches use the lazy
+# DFA, which performs about the same on typical workloads. Mirrors the `regex`
+# crate's `perf-dfa-full` opt-in.
+perf-dfa-full = ["regex-automata/dfa-build"]
 
 [dependencies.regex-automata]
 version = "0.4.16"
 default-features = false
-features = ["alloc", "syntax", "meta", "nfa", "dfa", "hybrid"]
+features = ["alloc", "syntax", "meta", "nfa", "dfa-onepass", "dfa-search", "hybrid"]
 
 [dependencies.regex-syntax]
 version = "0.8"

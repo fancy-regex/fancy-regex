@@ -417,7 +417,7 @@ pub enum Insn {
     /// Assertions
     Assertion(Assertion),
     /// Match the literal string at the current index
-    Lit(String), // should be cow?
+    Lit(String),
     /// Match a case-insensitive literal at the current index, without
     /// delegating to a regex-automata engine.
     LitCasei(CaseiLiteral),
