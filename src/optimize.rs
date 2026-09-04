@@ -638,6 +638,7 @@ mod tests {
     use super::optimize;
     use super::vec;
     use super::Arc;
+    use super::Box;
     use crate::parse::make_literal;
     use crate::Expr;
     use alloc::string::String;
