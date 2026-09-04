@@ -193,6 +193,21 @@ fn lookbehind_containing_const_size_backref() {
 }
 
 #[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn hard_variable_lookbehind_tries_all_candidates() {
+    // when the rightmost seek-pattern candidate fails to verify as a lookbehind match,
+    // the engine must try the next candidate to the left while still anchored at the
+    // original lookbehind position — not re-anchor at a shorter range.
+    //
+    // Pattern `(?<=(a+)\1)x` at position 4 of "aaaax":
+    // - seek pattern `a+` matches ending at 4 at offsets 0,1,2,3
+    // - body `(a+)\1` needs >= 2 a's, so only offsets 0 and 2 are matches
+    //   so if the test passes, it means it successfully skipped over offset 3
+    assert_eq!(find(r"(?<=(a+)\1)x", "aaaax"), Some((4, 5)));
+    assert_eq!(find(r"(?<=(?!^)(a+)\1)x", "aaaax"), Some((4, 5)));
+}
+
+#[test]
 fn lookahead_looks_left() {
     assert_eq!(find(r"a(?=\b)", "ab"), None);
     assert_eq!(find(r"a(?=\b)", "a."), Some((0, 1)));
