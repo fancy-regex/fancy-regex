@@ -57,6 +57,20 @@ fn captures_fancy_unmatched_group() {
 }
 
 #[test]
+fn optional_capture_group_unmatched_is_none() {
+    let captures = common::assert_captures(r"(\w+)?@(\w+).", "@host.").unwrap();
+    assert!(captures.get(1).is_none());
+    assert_match(captures.get(2), "host", 1, 5);
+}
+
+#[test]
+fn optional_capture_group_matched_is_some() {
+    let captures = common::assert_captures(r"(\w+)?@(\w+).", "user@host.").unwrap();
+    assert_match(captures.get(1), "user", 0, 4);
+    assert_match(captures.get(2), "host", 5, 9);
+}
+
+#[test]
 fn captures_after_lookbehind() {
     let captures = captures(
         r"\s*(?<=[() ])(@\w+)(\([^)]*\))?\s*",

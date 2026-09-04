@@ -15,6 +15,7 @@ with the exception that 0.x versions can break between minor versions.
 ### Fixed
 - The playground didn't show when a literal or backreference was being matched case insensitively in the analysis tree view (#269)
 - Seek patterns could become very large when recursive backrefs and subroutine calls were inlined, without bringing much benefit (#270)
+- The `optimize_nested_repeats` pass could rewrite an optional capture group like `(\w+)?` into `(\w*)`, causing an unmatched optional group to be reported as an empty match (`Some("")`) instead of `None` (#270)
 
 ## [0.19.0] - 2026-07-28
 ### Added
