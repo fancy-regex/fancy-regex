@@ -701,9 +701,6 @@ struct State {
     /// Reusable buffer for `backtrack_cut`'s slot dedup, kept to avoid
     /// allocating on every atomic-group exit.
     cut_scratch: Vec<usize>,
-    /// Stack length saved by `HardVariableLookbehind` before running inner
-    /// instructions, so `ReverseLookaroundPosCheck` can truncate inner backtrack states on failure.
-    saved_stack_len: usize,
     #[cfg(feature = "variable-lookbehinds")]
     /// Candidate start positions collected by `HardVariableLookbehind` for the
     /// current lookbehind assertion. Empty when not inside a hard lookbehind.
@@ -732,7 +729,6 @@ impl State {
             max_stack,
             options,
             cut_scratch: Vec::new(),
-            saved_stack_len: 0,
             #[cfg(feature = "variable-lookbehinds")]
             hard_lb_candidates: Vec::new(),
             #[cfg(feature = "variable-lookbehinds")]
@@ -749,7 +745,6 @@ impl State {
         self.nsave = 0;
         self.explicit_sp = n_saves;
         self.options = options;
-        self.saved_stack_len = 0;
         #[cfg(feature = "variable-lookbehinds")]
         {
             self.hard_lb_candidates.clear();
@@ -1433,23 +1428,26 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                 Insn::ReverseLookbehindPosCheck {
                     slot,
                     candidate_pos_slot: _,
-                    hard_lb_pc,
+                    hard_lb_pc: _,
                 } => {
                     if ix == state.get(slot) {
-                        // Inner instructions matched exactly up to the lookbehind end — success.
-                        #[cfg(feature = "variable-lookbehinds")]
-                        {
-                            state.hard_lb_candidates.clear();
-                            state.hard_lb_candidate_idx = 0;
-                        }
+                        // Inner instructions matched exactly up to the lookbehind end —
+                        // success.  We deliberately do *not* clear the candidate list
+                        // here: the candidate index has already advanced past the current
+                        // candidate, so if the surrounding pattern later fails and
+                        // backtracking pops our checkpoint, the next candidate will be
+                        // tried instead of re-collecting and re-trying the same one —
+                        // which would loop forever.
                         pc += 1;
                         continue;
                     } else {
-                        // Inner instructions failed to consume the full lookbehind — discard
-                        // any backtrack states they pushed and try the next candidate.
-                        state.stack.truncate(state.saved_stack_len);
-                        pc = hard_lb_pc;
-                        continue;
+                        // Inner instructions consumed the wrong span (ix !=
+                        // end_pos).  Let normal backtracking explore alternatives
+                        // within the inner expression.  When all inner states are
+                        // exhausted, the checkpoint branch pushed by
+                        // HardVariableLookbehind will be popped, redirecting
+                        // to the next candidate with nsave properly restored.
+                        break 'fail;
                     }
                 }
                 Insn::FailNegativeLookAround => {
@@ -1591,7 +1589,15 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                         state.hard_lb_candidate_idx += 1;
                         state.save(*candidate_pos_slot, candidate);
                         ix = candidate;
-                        state.saved_stack_len = state.stack.len();
+                        // Push a checkpoint branch: when all inner backtrack
+                        // states are exhausted (via normal `break 'fail`
+                        // backtracking), this branch is popped and re-enters
+                        // HardVariableLookbehind to try the next candidate.
+                        // The stored `nsave` ensures save-delta from the inner
+                        // expression is properly restored.  This handles nested
+                        // lookbehinds naturally — each level has its own
+                        // checkpoint on the stack.
+                        state.push(pc, candidate)?;
                         pc += 1;
                         continue;
                     } else {
