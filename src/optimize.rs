@@ -47,15 +47,23 @@ pub fn optimize(tree: &mut ExprTree) -> bool {
         false
     };
 
-    optimize_nested_repeats(&mut tree.expr);
+    let has_backrefs = !tree.backrefs.is_empty();
+    optimize_nested_repeats(&mut tree.expr, has_backrefs);
     optimize_ambiguous_concat_repeats(&mut tree.expr);
 
     requires_capture_group_fixup
 }
 
-fn optimize_nested_repeats(expr: &mut Expr) {
+/// Simplify nested repeat quantifiers (e.g. `(?:x+)+` → `x+`) to help
+/// the VM avoid catastrophic backtracking from deeply nested quantifiers.
+/// Repeats around capture groups get special consideration not to affect
+/// capture semantics. This means that:
+/// - if backreferences are used, the optimization is not valid.
+/// - if the outer group is optional, the capture group can be skipped entirely,
+///   so we need to preserve that behavior.
+fn optimize_nested_repeats(expr: &mut Expr, has_backrefs: bool) {
     for child in expr.children_iter_mut() {
-        optimize_nested_repeats(child);
+        optimize_nested_repeats(child, has_backrefs);
     }
 
     let replacement = if let Expr::Repeat {
@@ -72,6 +80,9 @@ fn optimize_nested_repeats(expr: &mut Expr) {
             greedy: inner_greedy,
         } = child.as_ref()
         {
+            // the outer repeat's child is itself a bare Repeat (no
+            // capture group involved). Folding the two quantifiers together is
+            // always safe.
             if let Some(result_kind) = can_simplify(
                 *outer_lo,
                 *outer_hi,
@@ -80,6 +91,8 @@ fn optimize_nested_repeats(expr: &mut Expr) {
                 *inner_hi,
                 *inner_greedy,
             ) {
+                let result_kind =
+                    downgrade_to_optional(result_kind, has_backrefs, inner_child.as_ref());
                 Some(compose_repeat(
                     Box::new(inner_child.as_ref().clone()),
                     result_kind,
@@ -95,20 +108,44 @@ fn optimize_nested_repeats(expr: &mut Expr) {
                 greedy: inner_greedy,
             } = group.as_ref()
             {
-                if let Some(result_kind) = can_simplify(
-                    *outer_lo,
-                    *outer_hi,
-                    *outer_greedy,
-                    *inner_lo,
-                    *inner_hi,
-                    *inner_greedy,
-                ) {
-                    Some(Expr::Group(Arc::new(compose_repeat(
-                        Box::new(inner_child.as_ref().clone()),
-                        result_kind,
-                    ))))
-                } else {
+                if *outer_lo == 0 {
+                    // outer_lo == 0 (ZeroOrMore or Optional). When there are no
+                    // backreferences and the group's content is self-absorbing (an
+                    // unbounded repeat like `x+`), downgrade the outer {0,} (ZeroOrMore)
+                    // to ? (Optional). This is safe because (X+)* = (X+)? when X is
+                    // self-absorbing, and without backreferences the differing group
+                    // participation count is unobservable. The ? form is more efficient
+                    // for the VM (single backtrack point instead of a loop).
+                    if !has_backrefs && *outer_hi == usize::MAX && is_self_absorbing(group.as_ref())
+                    {
+                        *outer_hi = 1;
+                    }
                     None
+                } else {
+                    // Here we only optimize when outer_lo is > 0 (i.e. not Optional or ZeroOrMore)
+                    // This is because, when the outer repeat is optional, the capture group can be
+                    // skipped entirely, correctly yielding an unmatched (None) capture.
+                    // If we were to use the simplified form, it would always enter the group,
+                    // yielding Some(""). So we must not simplify in that case to preserve
+                    // capture semantics.
+
+                    if let Some(result_kind) = can_simplify(
+                        *outer_lo,
+                        *outer_hi,
+                        *outer_greedy,
+                        *inner_lo,
+                        *inner_hi,
+                        *inner_greedy,
+                    ) {
+                        let result_kind =
+                            downgrade_to_optional(result_kind, has_backrefs, inner_child.as_ref());
+                        Some(Expr::Group(Arc::new(compose_repeat(
+                            Box::new(inner_child.as_ref().clone()),
+                            result_kind,
+                        ))))
+                    } else {
+                        None
+                    }
                 }
             } else {
                 None
@@ -392,6 +429,38 @@ fn compose_repeat(child: Box<Expr>, result_kind: QuantifierKind) -> Expr {
     }
 }
 
+/// Checks whether `(expr)*` is equivalent to `(expr)?`, i.e. whether the language
+/// of `expr` is closed under concatenation (L(expr)·L(expr) ⊆ L(expr)).
+///
+/// This is true for unbounded repeats (`X+` and `X*`) and `Empty`, but not for
+/// bounded repeats like `X?` (where two iterations can match `X{2}` which a single
+/// iteration cannot) or for simple atoms like a `Literal`.
+fn is_self_absorbing(expr: &Expr) -> bool {
+    match expr {
+        Expr::Repeat { hi, .. } => *hi == usize::MAX,
+        Expr::Group(inner) => is_self_absorbing(inner.as_ref()),
+        Expr::Empty => true,
+        _ => false,
+    }
+}
+
+/// When the pattern has no backreferences, a `ZeroOrMore` result can be downgraded
+/// to `Optional` if the inner child is self-absorbing (its language is closed under
+/// concatenation). This produces a more efficient VM program because `?` creates a
+/// single backtrack point instead of a loop, and the match result is unchanged.
+fn downgrade_to_optional(
+    result_kind: QuantifierKind,
+    has_backrefs: bool,
+    inner_child: &Expr,
+) -> QuantifierKind {
+    if !has_backrefs && result_kind == QuantifierKind::ZeroOrMore && is_self_absorbing(inner_child)
+    {
+        QuantifierKind::Optional
+    } else {
+        result_kind
+    }
+}
+
 fn can_simplify(
     outer_lo: usize,
     outer_hi: usize,
@@ -569,6 +638,7 @@ mod tests {
     use super::optimize;
     use super::vec;
     use super::Arc;
+    use super::Box;
     use crate::parse::make_literal;
     use crate::Expr;
     use alloc::string::String;
@@ -760,13 +830,27 @@ mod tests {
     }
 
     #[test]
-    fn nested_optional_optional_simplified() {
-        assert_eq!(optimized_pattern(r"(x?){0,1}"), "(x?)");
+    fn nested_optional_optional_not_simplified() {
+        // (x?)? — outer is Optional (lo=0), so the capture group can be
+        // skipped entirely (→ None). Simplifying to (x?) would always enter
+        // the group (→ Some("")), changing capture semantics.
+        assert_eq!(optimized_pattern(r"(x?){0,1}"), "(x?)?");
+    }
+
+    #[test]
+    fn nested_optional_star_not_simplified() {
+        // Outer (x*){?} has lo=0, so the capture group can be
+        // skipped (→ None). Simplifying would always enter the group.
+        assert_eq!(optimized_pattern(r"(x*){0,1}"), "(x*)?");
     }
 
     #[test]
     fn nested_repeats_in_children_simplified() {
-        assert_eq!(optimized_pattern(r"(x+){1,}(y*){0,}"), "(x+)(y*)");
+        // (x+){1,} is simplified (outer lo=1, group always participates).
+        // (y*){0,} has outer lo=0, so the group can be skipped → None.
+        // With no backreferences and a self-absorbing group content (y*),
+        // the outer {0,} (*) is downgraded to ? since (y*)* = (y*)? = y*.
+        assert_eq!(optimized_pattern(r"(x+){1,}(y*){0,}"), "(x+)(y*)?");
     }
 
     #[test]
@@ -778,6 +862,19 @@ mod tests {
     fn non_greedy_nested_repeats_left_alone() {
         assert_eq!(optimized_pattern(r"(x+?){1,}"), "(x+?)+");
         assert_eq!(optimized_pattern(r"(x+){0,1}?"), "(x+)??");
+    }
+
+    #[test]
+    fn non_capturing_group_nested_repeats_still_simplified() {
+        // Non-capturing groups are transparent (unwrapped by the parser), so
+        // they hit the bare-Repeat branch which has no outer_lo guard.
+        // These are safe because there is no capture group to preserve.
+        assert_eq!(optimized_pattern(r"(?:x+){1,}"), "x+");
+        assert_eq!(optimized_pattern(r"(?:x*){0,}"), "x*");
+        assert_eq!(optimized_pattern(r"(?:x+)+"), "x+");
+        assert_eq!(optimized_pattern(r"(?:x*)*"), "x*");
+        assert_eq!(optimized_pattern(r"(?:x*)+"), "x*");
+        assert_eq!(optimized_pattern(r"(?:x+)*"), "x*");
     }
 
     #[test]
@@ -799,11 +896,54 @@ mod tests {
     }
 
     #[test]
-    fn nested_repeats_from_oniguruma_adjacent_quantifiers_simplified() {
+    fn nested_repeats_from_oniguruma_adjacent_quantifiers_not_simplified() {
+        // (x+){1,}{0,} — the outer {0,} has lo=0 so the capture group can be
+        // skipped (→ None). Simplifying to (x*) would always enter the group.
+        // With no backreferences, the trailing * is downgraded to ? since
+        // (x+)* and (x+)? are equivalent (both match zero or more x) and
+        // (x+)? is more efficient for the VM (single backtrack point).
         assert_eq!(
             optimized_pattern_with_flags(r"(x+){1,}{0,}", oniguruma_flags()),
-            "(x*)"
+            "(x+)?"
         );
+    }
+
+    #[test]
+    fn backref_prevents_star_to_optional_downgrade() {
+        // When there's a backreference, the * → ? downgrade must NOT happen
+        // because the group participation count is observable via \1.
+        let mut tree = Expr::parse_tree_with_flags(r"(x+){1,}{0,}\1", oniguruma_flags()).unwrap();
+        optimize(&mut tree);
+        // The inner {1,} is simplified to (x+), but the outer {0,} stays
+        // as ZeroOrMore (not downgraded to Optional) because has_backrefs is true.
+        assert_eq!(
+            tree.expr,
+            Expr::Concat(vec![
+                Expr::Repeat {
+                    child: Box::new(Expr::Group(Arc::new(Expr::Repeat {
+                        child: Box::new(make_literal("x")),
+                        lo: 1,
+                        hi: usize::MAX,
+                        greedy: true,
+                    }))),
+                    lo: 0,
+                    hi: usize::MAX,
+                    greedy: true,
+                },
+                Expr::Backref {
+                    group: 1,
+                    casei: false,
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn non_self_absorbing_group_not_downgraded() {
+        // (x?){0,} — inner is Optional (lo=0, hi=1), not self-absorbing.
+        // Even without backreferences, * is NOT downgraded to ? because
+        // (x?)* = x* ≠ (x?)? = x? (they match different strings).
+        assert_eq!(optimized_pattern(r"(x?){0,}"), "(x?)*");
     }
 
     #[test]
