@@ -124,6 +124,12 @@ struct Compiler<'a> {
     subroutine_recursion_stack: Vec<usize>,
     /// Root Info node for handling group 0 subroutine calls
     root_info: &'a Info<'a>,
+    /// Delegated engines already built during this compile, keyed by the
+    /// delegate pattern string and whether capture slots were compiled in.
+    /// Alternations (lookbehind branches especially) often repeat the same
+    /// fragment, and building a `meta::Regex` dominates compile time, so
+    /// identical fragments share one engine (cloning it is a cheap Arc copy).
+    delegate_memo: Map<(String, bool), RaRegex>,
 }
 
 impl<'a> Compiler<'a> {
@@ -322,7 +328,7 @@ impl<'a> Compiler<'a> {
                     // Compile the child expression as a delegate
                     let delegate = DelegateBuilder::new(&self.options)
                         .push(child_info)
-                        .build_delegate(&self.options)?;
+                        .build_delegate(&self.options, &mut self.delegate_memo)?;
 
                     // Add the Absent instruction
                     self.b.add(Insn::AbsentRepeater(delegate));
@@ -862,7 +868,8 @@ impl<'a> Compiler<'a> {
         // Skip emitting a delegate for an empty regex (e.g. a batch of
         // only DefineGroups), as it would just match the empty string.
         if !delegate_builder.is_empty() {
-            self.b.add(delegate_builder.build(&self.options)?);
+            self.b
+                .add(delegate_builder.build(&self.options, &mut self.delegate_memo)?);
         }
         Ok(())
     }
@@ -1260,6 +1267,7 @@ pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
         group_info_map,
         subroutine_recursion_stack: Vec::new(),
         root_info: info,
+        delegate_memo: Map::new(),
     };
 
     let mut seek_pattern = String::new();
@@ -1380,7 +1388,11 @@ impl DelegateBuilder {
         self
     }
 
-    fn build(&mut self, options: &CompileOptions) -> Result<Insn> {
+    fn build(
+        &mut self,
+        options: &CompileOptions,
+        memo: &mut Map<(String, bool), RaRegex>,
+    ) -> Result<Insn> {
         // A single character class is matched directly, skipping engine
         // construction entirely (see CharClassMatcher). A class has no capture
         // groups, so this only applies when none are needed.
@@ -1401,10 +1413,14 @@ impl DelegateBuilder {
                 return Ok(Insn::CharClass(matcher));
             }
         }
-        Ok(Insn::Delegate(self.build_delegate(options)?))
+        Ok(Insn::Delegate(self.build_delegate(options, memo)?))
     }
 
-    fn build_delegate(&mut self, options: &CompileOptions) -> Result<Delegate> {
+    fn build_delegate(
+        &mut self,
+        options: &CompileOptions,
+        memo: &mut Map<(String, bool), RaRegex>,
+    ) -> Result<Delegate> {
         let capture_groups = self
             .capture_groups
             .expect("Expected at least one expression");
@@ -1414,9 +1430,22 @@ impl DelegateBuilder {
         // capture_groups is Some, and the faster search_half otherwise).
         let capture_groups = capture_groups.to_option_if_non_empty();
         let usage = DelegateUsage::anchored(capture_groups.is_some());
-        let compiled = match self.hirs.take() {
-            Some(hirs) => compile_inner_from_hir(&Hir::concat(hirs), options, usage)?,
-            None => compile_inner(&self.re, options, usage)?,
+        // The engine is fully determined by the delegate pattern string plus
+        // whether capture slots are compiled in (options are fixed per compile),
+        // so an identical fragment seen earlier in this compile shares its
+        // engine. Outer group numbering may differ between the two sites; that
+        // lives in `capture_groups` below, not in the engine.
+        let memo_key = (self.re.clone(), capture_groups.is_some());
+        let compiled = match memo.get(&memo_key) {
+            Some(engine) => engine.clone(),
+            None => {
+                let engine = match self.hirs.take() {
+                    Some(hirs) => compile_inner_from_hir(&Hir::concat(hirs), options, usage)?,
+                    None => compile_inner(&self.re, options, usage)?,
+                };
+                memo.insert(memo_key, engine.clone());
+                engine
+            }
         };
 
         Ok(Delegate {
