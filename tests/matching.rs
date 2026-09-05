@@ -1112,17 +1112,46 @@ fn casei_literal_in_hard_pattern() {
 
     // Unicode folding applies in str mode only (the shared both-modes helpers
     // also run in ASCII bytes mode, where (?i) folds ASCII only).
-    let is_match =
-        |re: &str, text: &str| fancy_regex::Regex::new(re).unwrap().is_match(text).unwrap();
 
     // Cyrillic folding
-    assert!(is_match(r"(?<=x)(?i)привет", "xПРИВЕТ"));
-    assert!(is_match(r"(?<=x)(?i)ПРИВЕТ", "xпривет"));
+    assert!(match_text(r"(?<=x)(?i)привет", "xПРИВЕТ"));
+    assert!(match_text(r"(?<=x)(?i)ПРИВЕТ", "xпривет"));
 
     // Width-changing fold variants: U+212A KELVIN SIGN (3 bytes) matches
     // literal `k` (1 byte), and U+017F LATIN SMALL LETTER LONG S matches `s`.
-    assert!(is_match(r"(?<=x)(?i)k", "x\u{212A}"));
-    assert!(is_match(r"(?<=x)(?i)s", "x\u{17F}"));
+    assert!(match_text(r"(?<=x)(?i)k", "x\u{212A}"));
+    assert!(match_text(r"(?<=x)(?i)s", "x\u{17F}"));
+
+    assert!(match_text(r"(?<=ß)ß", "ßß"));
+}
+
+#[test]
+fn casei_width_changing_fold_in_lookbehind() {
+    // Fancy-regex uses Unicode simple case folding, which preserves codepoint
+    // width: each codepoint in the fold class is exactly 1 codepoint. The
+    // GoBack instruction in lookbehinds steps back by codepoint count, so it
+    // is correct for all case-insensitive literals that fancy-regex supports.
+    //
+    // These verify lookbehind works when the matched text has a different UTF-8
+    // byte length than the pattern literal, even though the codepoint count
+    // is the same.
+    assert!(match_text(r"(?<=x)(?i)k", "x\u{212A}")); // KELVIN SIGN (3 bytes) matches `k` (1 byte)
+    assert!(match_text(r"(?<=x)(?i)s", "x\u{17F}")); // LONG S (2 bytes) matches `s` (1 byte)
+}
+
+#[test]
+fn casei_width_changing_fold() {
+    // currently fancy-regex doesn't support full Unicode case folding. This test would need to change when it does
+    let re = regex::Regex::new("(?i:ß)").unwrap();
+    if re.is_match("SS") {
+        assert!(match_text(r"(?i)(ß)\1", "ßss"));
+        assert!(match_text(r"(?i)(ss)\1", "ssß"));
+        assert!(match_text(r"(?<=ß)x", "ssx"));
+    } else {
+        assert!(!match_text(r"(?i)(ß)\1", "ßss"));
+        assert!(!match_text(r"(?i)(ss)\1", "ssß"));
+        assert!(!match_text(r"(?<=ß)x", "ssx"));
+    }
 }
 
 #[test]

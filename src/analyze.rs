@@ -90,7 +90,7 @@ impl<'a> Info<'a> {
     pub(crate) fn is_literal_get_casei(&self) -> Option<bool> {
         match *self.expr {
             Expr::Literal { casei, .. } => Some(casei),
-            Expr::LiteralBytes { .. } => None,
+            Expr::LiteralBytes { .. } => None, // LiteralBytes counts as not a literal so that we compile a VM instruction for it
             Expr::Concat(_) => self.children.iter().try_fold(false, |any, child| {
                 child.is_literal_get_casei().map(|c| any || c)
             }),
@@ -799,10 +799,11 @@ impl<'a> Analyzer<'a> {
     }
 }
 
-fn literal_const_size(_: &str, _: bool) -> bool {
-    // Right now, regex doesn't do sophisticated case folding,
-    // test below will fail when that changes, then we need to
-    // do something fancier here.
+fn literal_const_size(_literal: &str, _casei: bool) -> bool {
+    // regex-automata and fancy-regex currently don't do sophisticated case folding
+    // so we always return const size
+    // the case_folding_safe test should fail if it changes in regex-automata,
+    // then we would change this implementation
     true
 }
 
@@ -944,7 +945,7 @@ pub fn can_compile_as_anchored(root_expr: &Expr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{analyze, AnalyzeContext};
-    // use super::literal_const_size;
+    use super::literal_const_size;
     use crate::parse::ExprTree;
     use crate::{can_compile_as_anchored, CompileError, Error, Expr};
     use matches::assert_matches;
@@ -990,19 +991,38 @@ mod tests {
         );
     }
 
-    // #[test]
-    // fn case_folding_safe() {
-    //     let re = regex::Regex::new("(?i:ß)").unwrap();
-    //     if re.is_match("SS") {
-    //         assert!(!literal_const_size("ß", true));
-    //     }
+    #[test]
+    fn case_folding_safe() {
+        // ß has a full case fold (ß → ss), so its byte length can change.
+        let re = regex::Regex::new("(?i:ß)").unwrap();
+        if re.is_match("SS") {
+            assert!(!literal_const_size("ß", true));
+        }
+        // check the same in reverse
+        let re = regex::Regex::new("(?i:ss)").unwrap();
+        if re.is_match("ß") {
+            assert!(!literal_const_size("ss", true));
+        }
 
-    //     // Another tricky example, Armenian ECH YIWN
-    //     let re = regex::Regex::new("(?i:\\x{0587})").unwrap();
-    //     if re.is_match("\u{0565}\u{0582}") {
-    //         assert!(!literal_const_size("\u{0587}", true));
-    //     }
-    // }
+        // Another tricky example, Armenian ECH YIWN folds to a 2-char sequence.
+        let re = regex::Regex::new("(?i:\\x{0587})").unwrap();
+        if re.is_match("\u{0565}\u{0582}") {
+            assert!(!literal_const_size("\u{0587}", true));
+        }
+    }
+
+    #[test]
+    fn chars_without_full_case_folding_are_const_size() {
+        // Characters without full case folding are still const-size.
+        // as well as case sensitive characters
+        assert!(literal_const_size("a", true));
+        assert!(literal_const_size("A", true));
+        assert!(literal_const_size("ą", true));
+        assert!(literal_const_size("Ą", true));
+        assert!(literal_const_size("\u{00DF}", false));
+        assert!(literal_const_size("\u{0587}", false));
+        assert!(literal_const_size("ß", false));
+    }
 
     #[test]
     fn invalid_backref_zero() {
@@ -1380,6 +1400,14 @@ mod tests {
         let tree = Expr::parse_tree("(?i)abc").unwrap();
         let info = analyze(&tree, AnalyzeContext::default()).unwrap();
         assert_eq!(info.is_literal_get_casei(), Some(true));
+    }
+
+    #[test]
+    fn is_literal_casei_byte() {
+        let tree = Expr::parse_tree(r"(?i)\xFF").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_eq!(info.is_literal_get_casei(), None);
+        assert_eq!(info.expr, &Expr::LiteralBytes { bytes: [255].to_vec()});
     }
 
     #[test]
