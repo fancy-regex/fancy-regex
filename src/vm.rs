@@ -418,6 +418,8 @@ pub enum Insn {
     Assertion(Assertion),
     /// Match the literal string at the current index
     Lit(String),
+    /// Match a literal byte sequence at the current index (used in bytes modes)
+    LitBytes(Vec<u8>),
     /// Match a case-insensitive literal at the current index, without
     /// delegating to a regex-automata engine.
     LitCasei(CaseiLiteral),
@@ -1087,6 +1089,13 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                 Insn::Lit(ref val) => {
                     let ix_end = ix + val.len();
                     if !matches_literal(haystack, ix, ix_end, val.as_bytes()) {
+                        break 'fail;
+                    }
+                    ix = ix_end
+                }
+                Insn::LitBytes(ref bytes) => {
+                    let ix_end = ix + bytes.len();
+                    if !matches_literal(haystack, ix, ix_end, bytes) {
                         break 'fail;
                     }
                     ix = ix_end

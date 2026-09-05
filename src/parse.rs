@@ -618,13 +618,13 @@ impl<'a> Parser<'a> {
             )
         } else if b == b'x' {
             let end = self.optional_whitespace(end)?;
-            return self.parse_hex(end, 2);
+            return self.parse_hex(end, 2, true);
         } else if b == b'u' {
             let end = self.optional_whitespace(end)?;
-            return self.parse_hex(end, 4);
+            return self.parse_hex(end, 4, false);
         } else if b == b'U' {
             let end = self.optional_whitespace(end)?;
-            return self.parse_hex(end, 8);
+            return self.parse_hex(end, 8, false);
         } else if (b | 32) == b'p' && end != bytes.len() {
             let mut end = end;
             let b = bytes[end];
@@ -733,7 +733,7 @@ impl<'a> Parser<'a> {
     }
 
     // ix points after '\x', eg to 'A0' or '{12345}', or after `\u` or `\U`
-    fn parse_hex(&self, ix: usize, digits: usize) -> Result<(usize, Expr)> {
+    fn parse_hex(&self, ix: usize, digits: usize, byte_escape: bool) -> Result<(usize, Expr)> {
         if ix >= self.re.len() {
             // Incomplete escape sequence
             return Err(Error::ParseError(ix, ParseError::InvalidHex));
@@ -743,7 +743,7 @@ impl<'a> Parser<'a> {
         // Parse fixed-width hex (e.g., \xAB)
         if ix + digits <= self.re.len() && bytes[ix..ix + digits].iter().all(|&b| is_hex_digit(b)) {
             let hex_str = &self.re[ix..ix + digits];
-            return self.hex_to_literal(ix, ix + digits, hex_str);
+            return self.hex_to_literal(ix, ix + digits, hex_str, byte_escape);
         }
         // Parse brace-enclosed hex (e.g., \u{00AB})
         if b == b'{' {
@@ -757,7 +757,9 @@ impl<'a> Parser<'a> {
                 }
                 let b = bytes[pos];
                 if b == b'}' && !hex_chars.is_empty() {
-                    return self.hex_to_literal(ix, pos + 1, &hex_chars);
+                    let is_byte = byte_escape
+                        && u32::from_str_radix(&hex_chars, 16).map_or(false, |v| v <= 0xFF);
+                    return self.hex_to_literal(ix, pos + 1, &hex_chars, is_byte);
                 }
                 if is_hex_digit(b) && hex_chars.len() < 8 {
                     hex_chars.push(b as char);
@@ -770,9 +772,23 @@ impl<'a> Parser<'a> {
         Err(Error::ParseError(ix, ParseError::InvalidHex))
     }
 
-    fn hex_to_literal(&self, ix: usize, end: usize, hex_str: &str) -> Result<(usize, Expr)> {
-        let codepoint = u32::from_str_radix(hex_str, 16).unwrap();
-        if let Some(c) = char::from_u32(codepoint) {
+    fn hex_to_literal(
+        &self,
+        ix: usize,
+        end: usize,
+        hex_str: &str,
+        byte_escape: bool,
+    ) -> Result<(usize, Expr)> {
+        let value = u32::from_str_radix(hex_str, 16).unwrap();
+        if byte_escape {
+            Ok((
+                end,
+                Expr::LiteralBytes {
+                    bytes: vec![value as u8],
+                    casei: self.flag(FLAG_CASEI),
+                },
+            ))
+        } else if let Some(c) = char::from_u32(value) {
             Ok((
                 end,
                 Expr::Literal {
@@ -894,6 +910,11 @@ impl<'a> Parser<'a> {
                         Expr::Literal { val, .. } => {
                             debug_assert_eq!(val.chars().count(), 1);
                             escape_into(&val, &mut class);
+                        }
+                        Expr::LiteralBytes { bytes, .. } => {
+                            for b in bytes {
+                                class.push_str(&format!("\\x{b:02X}"));
+                            }
                         }
                         Expr::Delegate { inner, .. } => {
                             // Check if this is a negated property that needs && prefix
@@ -2022,9 +2043,21 @@ mod tests {
         assert_eq!(p("\\'"), make_literal("'"));
         assert_eq!(p("\\\""), make_literal("\""));
         assert_eq!(p("\\ "), make_literal(" "));
-        assert_eq!(p("\\xA0"), make_literal("\u{A0}"));
+        assert_eq!(
+            p("\\xA0"),
+            Expr::LiteralBytes {
+                bytes: vec![0xA0],
+                casei: false
+            }
+        );
         assert_eq!(p("\\x{1F4A9}"), make_literal("\u{1F4A9}"));
-        assert_eq!(p("\\x{000000B7}"), make_literal("\u{B7}"));
+        assert_eq!(
+            p("\\x{000000B7}"),
+            Expr::LiteralBytes {
+                bytes: vec![0xB7],
+                casei: false
+            }
+        );
         assert_eq!(p("\\u21D2"), make_literal("\u{21D2}"));
         assert_eq!(p("\\u{21D2}"), make_literal("\u{21D2}"));
         assert_eq!(p("\\u21D2x"), p("\u{21D2}x"));
