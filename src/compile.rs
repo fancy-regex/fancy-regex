@@ -133,6 +133,19 @@ struct Compiler<'a> {
 }
 
 impl<'a> Compiler<'a> {
+    #[inline]
+    fn emit_literal_bytes(&mut self, bytes: &[u8]) {
+        if matches!(self.options.bytes_mode, BytesMode::Unicode) {
+            let s: String = bytes
+                .iter()
+                .map(|&b| char::from_u32(b as u32).unwrap())
+                .collect();
+            self.b.add(Insn::Lit(s));
+        } else {
+            self.b.add(Insn::LitBytes(bytes.to_vec()));
+        }
+    }
+
     fn visit(&mut self, info: &Info<'_>, hard: bool) -> Result<()> {
         if !hard && !info.hard {
             // easy case, delegate entire subexpr
@@ -143,6 +156,13 @@ impl<'a> Compiler<'a> {
             Expr::Literal { ref val, casei } => {
                 if !casei {
                     self.b.add(Insn::Lit(val.clone()));
+                } else {
+                    self.compile_delegate(info)?;
+                }
+            }
+            Expr::LiteralBytes { ref bytes, casei } => {
+                if !casei {
+                    self.emit_literal_bytes(bytes);
                 } else {
                     self.compile_delegate(info)?;
                 }
@@ -831,6 +851,16 @@ impl<'a> Compiler<'a> {
     fn compile_delegates(&mut self, infos: &[Info<'_>]) -> Result<()> {
         if infos.is_empty() {
             return Ok(());
+        }
+        if infos.len() == 1 {
+            if let Expr::LiteralBytes { ref bytes, casei } = infos[0].expr {
+                if !casei {
+                    self.emit_literal_bytes(bytes);
+                } else {
+                    return self.compile_delegate(&infos[0]);
+                }
+                return Ok(());
+            }
         }
         // A batch that is entirely literal compiles to a native literal
         // instruction instead of a delegated engine. Case-sensitive literals

@@ -96,6 +96,27 @@ pub(crate) fn expr_to_hir(expr: &Expr, ctx: &mut HirCtx) -> Option<Hir> {
                 parse_fragment(&cooked, ctx)?
             }
         }
+        Expr::LiteralBytes { ref bytes, casei } => {
+            if !casei {
+                if ctx.utf8 {
+                    let s: String = bytes
+                        .iter()
+                        .map(|&b| char::from_u32(b as u32).unwrap())
+                        .collect();
+                    Hir::literal(s.as_bytes())
+                } else {
+                    Hir::literal(bytes.as_slice())
+                }
+            } else {
+                let mut cooked = String::with_capacity(bytes.len() * 4 + 5);
+                cooked.push_str("(?i:");
+                for &b in bytes {
+                    cooked.push_str(&format!("\\x{b:02X}"));
+                }
+                cooked.push(')');
+                parse_fragment(&cooked, ctx)?
+            }
+        }
         Expr::Assertion(assertion) => Hir::look(match assertion {
             Assertion::StartText => Look::Start,
             Assertion::EndText => Look::End,

@@ -455,3 +455,27 @@ fn match_bytes(re: &str, text: &[u8]) -> bool {
     );
     result.unwrap()
 }
+
+#[test]
+fn bytes_hex_escape_ascii_matches_raw_byte() {
+    assert_match_bytes(r"\xFF", b"\xFF");
+    assert_no_match_bytes(r"\xFF", b"\xC3\xBF");
+    assert_match_bytes(r"\x{FF}", b"\xFF");
+}
+
+#[test]
+fn bytes_hex_escape_unicode_bytes_matches_raw_byte() {
+    let re = RegexBuilder::new(r"\xFF")
+        .bytes_mode(BytesMode::UnicodeBytes)
+        .build()
+        .unwrap();
+    assert!(re.is_match(b"\xFF").unwrap());
+    assert!(!re.is_match(b"\xC3\xBF").unwrap());
+}
+
+#[test]
+fn bytes_hex_escape_unicode_matches_utf8() {
+    let re = RegexBuilder::new(r"\xFF").build().unwrap();
+    assert!(re.is_match("\u{00FF}").unwrap());
+    assert!(!re.is_match(b"\xFF").unwrap());
+}

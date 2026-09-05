@@ -2175,6 +2175,15 @@ pub enum Expr {
         /// Whether match is case-insensitive or not
         casei: bool,
     },
+    /// A literal consisting of raw bytes, produced by `\xHH` escapes.
+    /// In Unicode mode these are re-encoded as UTF-8; in bytes modes they
+    /// match the exact byte sequence.
+    LiteralBytes {
+        /// The raw bytes to match
+        bytes: Vec<u8>,
+        /// Whether match is case-insensitive or not
+        casei: bool,
+    },
     /// Concatenation of multiple expressions, must match in order, e.g. `a.` is a concatenation of
     /// the literal `a` and `.` for any character
     Concat(Vec<Expr>),
@@ -2696,6 +2705,7 @@ impl Expr {
                 | Expr::Assertion(_)
                 | Expr::GeneralNewline { .. }
                 | Expr::Literal { .. }
+                | Expr::LiteralBytes { .. }
                 | Expr::Delegate { .. }
                 | Expr::Backref { .. }
                 | Expr::BackrefWithRelativeRecursionLevel { .. }
@@ -2761,6 +2771,17 @@ impl Expr {
                     buf.push_str("(?i:");
                 }
                 push_quoted(buf, val);
+                if casei {
+                    buf.push(')');
+                }
+            }
+            Expr::LiteralBytes { ref bytes, casei } => {
+                if casei {
+                    buf.push_str("(?i:");
+                }
+                for &b in bytes {
+                    buf.push_str(&format!("\\x{b:02X}"));
+                }
                 if casei {
                     buf.push(')');
                 }
@@ -3134,6 +3155,11 @@ mod tests {
         assert!(Expr::Assertion(crate::Assertion::StartText).is_leaf_node());
         assert!(Expr::Literal {
             val: "test".to_string(),
+            casei: false
+        }
+        .is_leaf_node());
+        assert!(Expr::LiteralBytes {
+            bytes: vec![0x80],
             casei: false
         }
         .is_leaf_node());

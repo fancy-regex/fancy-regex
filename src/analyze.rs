@@ -90,6 +90,7 @@ impl<'a> Info<'a> {
     pub(crate) fn is_literal_get_casei(&self) -> Option<bool> {
         match *self.expr {
             Expr::Literal { casei, .. } => Some(casei),
+            Expr::LiteralBytes { .. } => None,
             Expr::Concat(_) => self.children.iter().try_fold(false, |any, child| {
                 child.is_literal_get_casei().map(|c| any || c)
             }),
@@ -217,6 +218,10 @@ impl<'a> Analyzer<'a> {
                 // right now each character in a literal gets its own node, that might change
                 min_size = 1;
                 const_size = literal_const_size(val, casei);
+            }
+            Expr::LiteralBytes { ref bytes, casei } => {
+                min_size = bytes.len();
+                const_size = literal_const_size("", casei);
             }
             Expr::Concat(ref v) => {
                 const_size = true;
