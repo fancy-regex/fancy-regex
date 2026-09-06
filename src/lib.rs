@@ -1675,7 +1675,9 @@ impl Regex {
         let mut names = Vec::new();
         names.resize(self.captures_len(), None);
         for (name, &i) in self.named_groups.iter() {
-            names[i] = Some(name.as_str());
+            if let Some(slot) = names.get_mut(i) {
+                *slot = Some(name.as_str());
+            }
         }
         CaptureNames(names.into_iter())
     }
