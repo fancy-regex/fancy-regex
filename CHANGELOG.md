@@ -6,7 +6,12 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html),
 with the exception that 0.x versions can break between minor versions.
 
-## [0.19.1]
+## [Unreleased]
+### Added
+### Changed
+### Fixed
+
+## [0.19.1] - 2026-09-06
 ### Added
 - Add a `perf-dfa-full` feature (off by default, mirroring the `regex` crate) that lets regex-automata eagerly build fully compiled dense DFAs for small patterns, for workloads that compile few regexes and match them very heavily (#272)
 ### Changed
