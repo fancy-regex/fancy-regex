@@ -2085,5 +2085,278 @@ mod tests {
         assert_eq!(info.children[0].start_group(), 1);
         assert_eq!(info.children[1].children[0].start_group(), 2);
         assert_eq!(info.children[2].start_group(), 5);
+        assert_eq!(info.children[2].end_group(), 6);
+    }
+
+    // Tests for max_size
+
+    #[test]
+    fn max_size_for_literal() {
+        let tree = Expr::parse_tree("a").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_eq!(info.max_size, 1);
+    }
+
+    #[test]
+    fn max_size_for_concat_of_literals() {
+        let tree = Expr::parse_tree("abc").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_eq!(info.max_size, 3);
+    }
+
+    #[test]
+    fn max_size_for_general_newline() {
+        let tree = Expr::parse_tree(r"\R").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_eq!(info.max_size, 2);
+    }
+
+    #[test]
+    fn max_size_for_greedy_star() {
+        let tree = Expr::parse_tree("a*").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_eq!(info.max_size, usize::MAX);
+    }
+
+    #[test]
+    fn max_size_for_greedy_plus() {
+        let tree = Expr::parse_tree("a+").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_eq!(info.max_size, usize::MAX);
+    }
+
+    #[test]
+    fn max_size_for_optional() {
+        let tree = Expr::parse_tree("a?").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_eq!(info.max_size, 1);
+    }
+
+    #[test]
+    fn max_size_for_bounded_repeat() {
+        let tree = Expr::parse_tree("a{1,3}").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_eq!(info.max_size, 3);
+    }
+
+    #[test]
+    fn max_size_for_exact_repeat() {
+        let tree = Expr::parse_tree("a{3}").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_eq!(info.max_size, 3);
+    }
+
+    #[test]
+    fn max_size_for_alternation() {
+        let tree = Expr::parse_tree("a|bc").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_eq!(info.max_size, 2);
+    }
+
+    #[test]
+    fn max_size_for_group() {
+        let tree = Expr::parse_tree(r"(abc)").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_eq!(info.max_size, 3);
+    }
+
+    #[test]
+    fn max_size_for_backref_inherits_group() {
+        let tree = Expr::parse_tree(r"(ab)\1").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_eq!(info.max_size, 4);
+    }
+
+    #[test]
+    fn max_size_for_concat_accumulates() {
+        // ab*cd = concat(literal a, repeat b*, literal c, literal d)
+        // max_size = 1 + MAX + 1 + 1 = MAX
+        let tree = Expr::parse_tree("ab*cd").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_eq!(info.max_size, usize::MAX);
+    }
+
+    #[test]
+    fn max_size_for_empty_assertion_is_zero() {
+        let tree = Expr::parse_tree(r"\b").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_eq!(info.max_size, 0);
+    }
+
+    // Tests for leftmost_longest flag
+
+    #[test]
+    fn leftmost_longest_rejects_non_greedy_star() {
+        let tree = Expr::parse_tree(r"a*?").unwrap();
+        let result = analyze(
+            &tree,
+            AnalyzeContext {
+                leftmost_longest: true,
+                ..Default::default()
+            },
+        );
+        assert_compile_error(
+            result,
+            |e| matches!(e, CompileError::FeatureNotYetSupported(s) if s.contains("non-greedy")),
+        );
+    }
+
+    #[test]
+    fn leftmost_longest_rejects_non_greedy_plus() {
+        let tree = Expr::parse_tree(r"a+?").unwrap();
+        let result = analyze(
+            &tree,
+            AnalyzeContext {
+                leftmost_longest: true,
+                ..Default::default()
+            },
+        );
+        assert_compile_error(
+            result,
+            |e| matches!(e, CompileError::FeatureNotYetSupported(s) if s.contains("non-greedy")),
+        );
+    }
+
+    #[test]
+    fn leftmost_longest_rejects_non_greedy_optional() {
+        let tree = Expr::parse_tree(r"a??").unwrap();
+        let result = analyze(
+            &tree,
+            AnalyzeContext {
+                leftmost_longest: true,
+                ..Default::default()
+            },
+        );
+        assert_compile_error(
+            result,
+            |e| matches!(e, CompileError::FeatureNotYetSupported(s) if s.contains("non-greedy")),
+        );
+    }
+
+    #[test]
+    fn leftmost_longest_rejects_non_greedy_bounded() {
+        let tree = Expr::parse_tree(r"a{1,3}?").unwrap();
+        let result = analyze(
+            &tree,
+            AnalyzeContext {
+                leftmost_longest: true,
+                ..Default::default()
+            },
+        );
+        assert_compile_error(
+            result,
+            |e| matches!(e, CompileError::FeatureNotYetSupported(s) if s.contains("non-greedy")),
+        );
+    }
+
+    #[test]
+    fn leftmost_longest_accepts_greedy_quantifiers() {
+        assert_analyze_ok(
+            &Expr::parse_tree(r"a*").unwrap(),
+            AnalyzeContext {
+                leftmost_longest: true,
+                ..Default::default()
+            },
+        );
+        assert_analyze_ok(
+            &Expr::parse_tree(r"a+").unwrap(),
+            AnalyzeContext {
+                leftmost_longest: true,
+                ..Default::default()
+            },
+        );
+        assert_analyze_ok(
+            &Expr::parse_tree(r"a?").unwrap(),
+            AnalyzeContext {
+                leftmost_longest: true,
+                ..Default::default()
+            },
+        );
+        assert_analyze_ok(
+            &Expr::parse_tree(r"a{1,3}").unwrap(),
+            AnalyzeContext {
+                leftmost_longest: true,
+                ..Default::default()
+            },
+        );
+    }
+
+    #[test]
+    fn leftmost_longest_promotes_non_const_to_hard() {
+        // Without leftmost_longest, a* is not hard (can be delegated to regex-automata)
+        let tree = Expr::parse_tree(r"a*").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert!(!info.hard);
+        assert!(!info.const_size);
+
+        // With leftmost_longest, a* becomes hard because it's not const_size
+        let info = analyze(
+            &tree,
+            AnalyzeContext {
+                leftmost_longest: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(info.hard);
+        assert!(!info.const_size);
+    }
+
+    #[test]
+    fn leftmost_longest_keeps_const_size_easy() {
+        let tree = Expr::parse_tree(r"abc").unwrap();
+        let info = analyze(
+            &tree,
+            AnalyzeContext {
+                leftmost_longest: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(!info.hard);
+        assert!(info.const_size);
+    }
+
+    // Tests for EndText assertion with find_not_empty
+
+    #[test]
+    fn end_text_hard_with_find_not_empty() {
+        let tree = Expr::parse_tree(r"$").unwrap();
+        let info = analyze(
+            &tree,
+            AnalyzeContext {
+                find_not_empty: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(info.hard);
+        assert!(info.const_size);
+    }
+
+    #[test]
+    fn end_text_not_hard_without_find_not_empty() {
+        let tree = Expr::parse_tree(r"$").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert!(!info.hard);
+        assert!(info.const_size);
+    }
+
+    #[test]
+    fn end_text_not_hard_in_lookaround_with_find_not_empty() {
+        // Inside a lookaround, $ does not get the find_not_empty hard treatment
+        let tree = Expr::parse_tree(r"(?=$)").unwrap();
+        let info = analyze(
+            &tree,
+            AnalyzeContext {
+                find_not_empty: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        // The lookahead's child is directly the EndText assertion
+        let end_text_info = &info.children[0];
+        assert!(!end_text_info.hard);
+        assert!(end_text_info.const_size);
     }
 }
