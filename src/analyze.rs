@@ -157,6 +157,7 @@ struct Analyzer<'a> {
     /// so they run on the VM.
     allow_input_assertion_overrides: bool,
     /// When true, leftmost-longest match semantics are enabled.
+    #[cfg(feature = "leftmost_longest")]
     leftmost_longest: bool,
     /// Oniguruma's `^` rejects the empty match at the absolute end of the haystack after a trailing
     /// newline when it anchors the match itself. When used as a sub-assertion inside a lookaround,
@@ -313,9 +314,11 @@ impl<'a> Analyzer<'a> {
                 ref child,
                 lo,
                 hi,
+                #[cfg(feature = "leftmost_longest")]
                 greedy,
                 ..
             } => {
+                #[cfg(feature = "leftmost_longest")]
                 if !greedy && self.leftmost_longest {
                     return Err(Error::CompileError(Box::new(
                         CompileError::FeatureNotYetSupported(
@@ -627,7 +630,9 @@ impl<'a> Analyzer<'a> {
         // must be handled by the VM so it can backtrack past it to find a non-empty match.
         if self.find_not_empty && min_size == 0 && !const_size {
             hard = true;
-        } else if self.leftmost_longest && !const_size {
+        }
+        #[cfg(feature = "leftmost_longest")]
+        if self.leftmost_longest && !const_size {
             hard = true;
         }
 
@@ -899,6 +904,7 @@ pub struct AnalyzeContext {
     /// as hard so that they execute on the VM.
     pub allow_input_assertion_overrides: bool,
     /// When true, leftmost-longest match semantics are enabled.
+    #[cfg(feature = "leftmost_longest")]
     pub leftmost_longest: bool,
 }
 
@@ -908,6 +914,7 @@ pub fn analyze<'a>(tree: &'a ExprTree, ctx: AnalyzeContext) -> Result<Info<'a>> 
     let find_not_empty = ctx.find_not_empty;
     let disallow_empty_match_at_eof_after_newline = ctx.disallow_empty_match_at_eof_after_newline;
     let allow_input_assertion_overrides = ctx.allow_input_assertion_overrides;
+    #[cfg(feature = "leftmost_longest")]
     let leftmost_longest = ctx.leftmost_longest;
 
     // Check that numeric capture group references (backrefs and subroutine calls) and named groups are not mixed
@@ -943,6 +950,7 @@ pub fn analyze<'a>(tree: &'a ExprTree, ctx: AnalyzeContext) -> Result<Info<'a>> 
         find_not_empty,
         disallow_empty_match_at_eof_after_newline,
         allow_input_assertion_overrides,
+        #[cfg(feature = "leftmost_longest")]
         leftmost_longest,
         in_lookaround: false,
     };
@@ -2185,6 +2193,7 @@ mod tests {
 
     // Tests for leftmost_longest flag
 
+    #[cfg(feature = "leftmost_longest")]
     #[test]
     fn leftmost_longest_rejects_non_greedy_star() {
         let tree = Expr::parse_tree(r"a*?").unwrap();
@@ -2201,6 +2210,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "leftmost_longest")]
     #[test]
     fn leftmost_longest_rejects_non_greedy_plus() {
         let tree = Expr::parse_tree(r"a+?").unwrap();
@@ -2217,6 +2227,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "leftmost_longest")]
     #[test]
     fn leftmost_longest_rejects_non_greedy_optional() {
         let tree = Expr::parse_tree(r"a??").unwrap();
@@ -2233,6 +2244,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "leftmost_longest")]
     #[test]
     fn leftmost_longest_rejects_non_greedy_bounded() {
         let tree = Expr::parse_tree(r"a{1,3}?").unwrap();
@@ -2249,6 +2261,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "leftmost_longest")]
     #[test]
     fn leftmost_longest_accepts_greedy_quantifiers() {
         assert_analyze_ok(
@@ -2281,6 +2294,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "leftmost_longest")]
     #[test]
     fn leftmost_longest_promotes_non_const_to_hard() {
         // Without leftmost_longest, a* is not hard (can be delegated to regex-automata)
@@ -2302,6 +2316,7 @@ mod tests {
         assert!(!info.const_size);
     }
 
+    #[cfg(feature = "leftmost_longest")]
     #[test]
     fn leftmost_longest_keeps_const_size_easy() {
         let tree = Expr::parse_tree(r"abc").unwrap();

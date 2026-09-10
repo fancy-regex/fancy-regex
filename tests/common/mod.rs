@@ -92,6 +92,7 @@ pub fn assert_find(re: &str, text: &str) -> Option<(usize, usize)> {
     str_result
 }
 
+#[cfg(feature = "leftmost_longest")]
 #[cfg_attr(feature = "track_caller", track_caller)]
 #[allow(dead_code)]
 pub fn assert_match_lr(re: &str, text: &str, expected: &str) {

@@ -71,9 +71,9 @@ use crate::compile::{compile, CompileOptions};
 use crate::optimize::optimize;
 use crate::parse::{ExprTree, NamedGroups, Parser};
 use crate::parse_flags::*;
-use crate::vm::{
-    Prog, OPTION_FIND_NOT_EMPTY, OPTION_LEFTMOST_LONGEST, OPTION_NOT_CONTINUED_FROM_PREVIOUS_MATCH,
-};
+#[cfg(feature = "leftmost_longest")]
+use crate::vm::OPTION_LEFTMOST_LONGEST;
+use crate::vm::{Prog, OPTION_FIND_NOT_EMPTY, OPTION_NOT_CONTINUED_FROM_PREVIOUS_MATCH};
 
 pub use crate::bytes::MatchBytes;
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
@@ -522,6 +522,7 @@ struct RegexOptions {
     /// the set only ever searches them anchored at candidate positions, where
     /// a prefilter is never consulted, so building one wastes time and memory.
     delegate_prefilter: bool,
+    #[cfg(feature = "leftmost_longest")]
     leftmost_longest: bool,
 }
 
@@ -534,7 +535,8 @@ impl fmt::Debug for RegexOptions {
             }
             Some(_) => "Some(<custom>)",
         };
-        f.debug_struct("RegexOptions")
+        let mut debug = f.debug_struct("RegexOptions");
+        debug
             .field("syntaxc", &self.syntaxc)
             .field("delegate_size_limit", &self.delegate_size_limit)
             .field("delegate_dfa_size_limit", &self.delegate_dfa_size_limit)
@@ -548,9 +550,10 @@ impl fmt::Debug for RegexOptions {
                 &self.hard_regex_runtime_options,
             )
             .field("seek_filter", &seek_filter_desc)
-            .field("delegate_prefilter", &self.delegate_prefilter)
-            .field("leftmost_longest", &self.leftmost_longest)
-            .finish()
+            .field("delegate_prefilter", &self.delegate_prefilter);
+        #[cfg(feature = "leftmost_longest")]
+        debug.field("leftmost_longest", &self.leftmost_longest);
+        debug.finish()
     }
 }
 
@@ -566,6 +569,7 @@ impl Default for RegexOptions {
             bytes_mode: BytesMode::default(),
             seek_filter: None, // when we are ready to enable seek by default, use: `Some(seek_pattern_is_useful)`
             delegate_prefilter: true,
+            #[cfg(feature = "leftmost_longest")]
             leftmost_longest: false,
         }
     }
@@ -577,6 +581,7 @@ struct HardRegexRuntimeOptions {
     find_not_empty: bool,
     disallow_empty_match_at_eof_after_newline: bool,
     allow_input_assertion_overrides: bool,
+    #[cfg(feature = "leftmost_longest")]
     leftmost_longest: bool,
 }
 
@@ -624,6 +629,7 @@ impl Default for HardRegexRuntimeOptions {
             find_not_empty: false,
             disallow_empty_match_at_eof_after_newline: false,
             allow_input_assertion_overrides: false,
+            #[cfg(feature = "leftmost_longest")]
             leftmost_longest: false,
         }
     }
@@ -802,6 +808,9 @@ impl RegexOptionsBuilder {
     /// (PCRE-style) semantics.
     ///
     /// Default is `false`.
+    ///
+    /// **Note:** This requires the `leftmost_longest` feature to be enabled.
+    #[cfg(feature = "leftmost_longest")]
     pub fn leftmost_longest(&mut self, yes: bool) -> &mut Self {
         self.options.leftmost_longest = yes;
         self.options.hard_regex_runtime_options.leftmost_longest = yes;
@@ -1092,6 +1101,7 @@ impl RegexBuilder {
     }
 
     /// See [`RegexOptionsBuilder::leftmost_longest`]
+    #[cfg(feature = "leftmost_longest")]
     pub fn leftmost_longest(&mut self, yes: bool) -> &mut Self {
         self.options.leftmost_longest(yes);
         self
@@ -1170,6 +1180,7 @@ impl Regex {
         let allow_input_assertion_overrides = options
             .hard_regex_runtime_options
             .allow_input_assertion_overrides;
+        #[cfg(feature = "leftmost_longest")]
         let leftmost_longest = options.leftmost_longest;
 
         let requires_capture_group_fixup = if find_not_empty {
@@ -1190,6 +1201,7 @@ impl Regex {
                 find_not_empty,
                 disallow_empty_match_at_eof_after_newline,
                 allow_input_assertion_overrides,
+                #[cfg(feature = "leftmost_longest")]
                 leftmost_longest,
             },
         )?;
@@ -1461,17 +1473,21 @@ impl Regex {
                 Ok(result)
             }
             RegexImpl::Fancy { prog, options, .. } => {
-                let option_flags = option_flags
+                #[allow(unused_mut)]
+                let mut option_flags = option_flags
                     | if options.find_not_empty {
                         OPTION_FIND_NOT_EMPTY
                     } else {
                         0
-                    }
-                    | if options.leftmost_longest {
+                    };
+                #[cfg(feature = "leftmost_longest")]
+                {
+                    option_flags |= if options.leftmost_longest {
                         OPTION_LEFTMOST_LONGEST
                     } else {
                         0
                     };
+                }
                 // Span-only VM entry: nothing is moved out of the pooled
                 // scratch, so this path is allocation-free per call.
                 vm::run_spans(prog, input, option_flags, options)
@@ -1663,17 +1679,21 @@ impl Regex {
                 options,
                 ..
             } => {
-                let option_flags = option_flags
+                #[allow(unused_mut)]
+                let mut option_flags = option_flags
                     | if options.find_not_empty {
                         OPTION_FIND_NOT_EMPTY
                     } else {
                         0
-                    }
-                    | if options.leftmost_longest {
+                    };
+                #[cfg(feature = "leftmost_longest")]
+                {
+                    option_flags |= if options.leftmost_longest {
                         OPTION_LEFTMOST_LONGEST
                     } else {
                         0
                     };
+                }
                 let result = vm::run(prog, input, option_flags, options)?;
                 Ok(result.map(|mut saves| {
                     saves.truncate(n_groups * 2);
@@ -3124,6 +3144,7 @@ mod tests {
         assert_eq!(s, format!("{:?}", regex));
     }
 
+    #[cfg(feature = "leftmost_longest")]
     #[test]
     fn leftmost_longest_alt_compiles_to_fancy() {
         let regex = RegexBuilder::new(r"a|ab")

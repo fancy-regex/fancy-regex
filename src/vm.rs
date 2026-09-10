@@ -115,6 +115,7 @@ pub(crate) const OPTION_NOT_CONTINUED_FROM_PREVIOUS_MATCH: u32 = 1 << 1;
 /// consumed characters and then \K was used afterwards.
 pub(crate) const OPTION_FIND_NOT_EMPTY: u32 = 1 << 2;
 /// When set, the VM uses leftmost-longest match semantics instead of leftmost-first.
+#[cfg(feature = "leftmost_longest")]
 pub(crate) const OPTION_LEFTMOST_LONGEST: u32 = 1 << 3;
 
 // TODO: make configurable
@@ -1031,8 +1032,11 @@ fn run_with<S: HaystackInput + ?Sized, T>(
     let mut ix = pos;
     let mut slash_z_matched = false;
     let mut match_attempt_start = pos;
+    #[cfg(feature = "leftmost_longest")]
     let leftmost_longest = option_flags & OPTION_LEFTMOST_LONGEST != 0;
+    #[cfg(feature = "leftmost_longest")]
     let mut best_saves: Option<Vec<usize>> = None;
+    #[cfg(feature = "leftmost_longest")]
     let mut best_match_len = 0;
     loop {
         // break from this loop to fail, causes stack to pop
@@ -1068,6 +1072,7 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                     if state.get(0) < match_range.start || state.get(1) > match_range.end {
                         break 'fail;
                     }
+                    #[cfg(feature = "leftmost_longest")]
                     if leftmost_longest {
                         let match_len = state.get(1) - state.get(0);
                         if best_saves.is_none() || match_len > best_match_len {
@@ -1562,6 +1567,7 @@ fn run_with<S: HaystackInput + ?Sized, T>(
         }
         // "break 'fail" goes here
         if state.stack.is_empty() {
+            #[cfg(feature = "leftmost_longest")]
             if leftmost_longest {
                 if let Some(saves) = best_saves {
                     state.saves.copy_from_slice(&saves);
@@ -1571,6 +1577,7 @@ fn run_with<S: HaystackInput + ?Sized, T>(
             return Ok(None);
         }
 
+        #[cfg(feature = "leftmost_longest")]
         if leftmost_longest && best_match_len == prog.max_size {
             if let Some(saves) = best_saves {
                 state.saves.copy_from_slice(&saves);

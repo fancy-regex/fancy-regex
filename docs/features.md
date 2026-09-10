@@ -9,3 +9,4 @@ This crate supports several optional features that can be enabled or disabled:
   assertions (e.g., `(?<=a+)`). Without this feature, only constant-length lookbehinds are supported.
   This feature uses reverse DFA matching from the `regex-automata` crate to efficiently handle
   variable-length patterns that don't use backreferences or other fancy features.
+- **`leftmost_longest`** (disabled by default): Enables support for switching on leftmost-longest match semantics in the `RegexBuilder`/`RegexOptionsBuilder`, as opposed to the usual leftmost-first.
