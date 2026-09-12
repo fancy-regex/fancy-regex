@@ -92,6 +92,30 @@ pub fn assert_find(re: &str, text: &str) -> Option<(usize, usize)> {
     str_result
 }
 
+#[cfg_attr(feature = "track_caller", track_caller)]
+#[allow(dead_code)]
+pub fn assert_match_lr(re: &str, text: &str, expected: &str) {
+    let str_re = RegexBuilder::new(re)
+        .leftmost_longest(true)
+        .build()
+        .expect("regex should compile");
+    let str_result = str_re.find(text).unwrap();
+    assert!(
+        str_result.is_some(),
+        "Expected regex '{}' to match '{}' in leftmost-longest mode",
+        re,
+        text
+    );
+    assert_eq!(
+        str_result.unwrap().as_str(),
+        expected,
+        "Expected leftmost-longest match of '{}' on '{}' to be '{}'",
+        re,
+        text,
+        expected
+    );
+}
+
 /// Run `find_input` against `text` in both str mode and ASCII bytes mode, assert
 /// that both agree, and return the common result.
 #[cfg_attr(feature = "track_caller", track_caller)]

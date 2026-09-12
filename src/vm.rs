@@ -114,6 +114,8 @@ pub(crate) const OPTION_NOT_CONTINUED_FROM_PREVIOUS_MATCH: u32 = 1 << 1;
 /// \K is ignored as part of this check - so empty matches can still be reported if the engine
 /// consumed characters and then \K was used afterwards.
 pub(crate) const OPTION_FIND_NOT_EMPTY: u32 = 1 << 2;
+/// When set, the VM uses leftmost-longest match semantics instead of leftmost-first.
+pub(crate) const OPTION_LEFTMOST_LONGEST: u32 = 1 << 3;
 
 // TODO: make configurable
 const MAX_STACK: usize = 1_000_000;
@@ -1024,6 +1026,9 @@ fn run_with<S: HaystackInput + ?Sized, T>(
     let mut ix = pos;
     let mut slash_z_matched = false;
     let mut match_attempt_start = pos;
+    let leftmost_longest = option_flags & OPTION_LEFTMOST_LONGEST != 0;
+    let mut best_saves: Option<Vec<usize>> = None;
+    let mut best_match_len = 0;
     loop {
         // break from this loop to fail, causes stack to pop
         'fail: loop {
@@ -1056,6 +1061,14 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                         }
                     }
                     if state.get(0) < match_range.start || state.get(1) > match_range.end {
+                        break 'fail;
+                    }
+                    if leftmost_longest {
+                        let match_len = state.get(1) - state.get(0);
+                        if best_saves.is_none() || match_len > best_match_len {
+                            best_saves = Some(state.saves.clone());
+                            best_match_len = match_len;
+                        }
                         break 'fail;
                     }
                     return Ok(Some(extract(state)));
@@ -1541,6 +1554,12 @@ fn run_with<S: HaystackInput + ?Sized, T>(
         }
         // "break 'fail" goes here
         if state.stack.is_empty() {
+            if leftmost_longest {
+                if let Some(saves) = best_saves {
+                    state.saves.copy_from_slice(&saves);
+                    return Ok(Some(extract(state)));
+                }
+            }
             return Ok(None);
         }
 

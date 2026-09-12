@@ -153,6 +153,8 @@ struct Analyzer<'a> {
     /// When true, assertions with runtime input suppression overrides are promoted to hard
     /// so they run on the VM.
     allow_input_assertion_overrides: bool,
+    /// When true, leftmost-longest match semantics are enabled.
+    leftmost_longest: bool,
     /// Oniguruma's `^` rejects the empty match at the absolute end of the haystack after a trailing
     /// newline when it anchors the match itself. When used as a sub-assertion inside a lookaround,
     /// it behaves as a plain line start. So we need to track when we are analyzing inside a lookaround.
@@ -288,8 +290,20 @@ impl<'a> Analyzer<'a> {
                 children.push(child_info);
             }
             Expr::Repeat {
-                ref child, lo, hi, ..
+                ref child,
+                lo,
+                hi,
+                greedy,
+                ..
             } => {
+                if !greedy && self.leftmost_longest {
+                    return Err(Error::CompileError(Box::new(
+                        CompileError::FeatureNotYetSupported(
+                            "non-greedy quantifiers are not supported in leftmost-longest mode"
+                                .to_string(),
+                        ),
+                    )));
+                }
                 // If lo and hi are both 0, we're in a zero-repetition (unreachable)
                 let child_inside_zero_rep = if lo == 0 && hi == 0 {
                     true
@@ -571,6 +585,8 @@ impl<'a> Analyzer<'a> {
         // must be handled by the VM so it can backtrack past it to find a non-empty match.
         if self.find_not_empty && min_size == 0 && !const_size {
             hard = true;
+        } else if self.leftmost_longest && !const_size {
+            hard = true;
         }
 
         Ok(Info {
@@ -839,6 +855,8 @@ pub struct AnalyzeContext {
     /// When true, treat assertions that support runtime input suppression overrides (`\A`, `\z`)
     /// as hard so that they execute on the VM.
     pub allow_input_assertion_overrides: bool,
+    /// When true, leftmost-longest match semantics are enabled.
+    pub leftmost_longest: bool,
 }
 
 /// Analyze the parsed expression to determine whether it requires fancy features.
@@ -847,6 +865,7 @@ pub fn analyze<'a>(tree: &'a ExprTree, ctx: AnalyzeContext) -> Result<Info<'a>> 
     let find_not_empty = ctx.find_not_empty;
     let disallow_empty_match_at_eof_after_newline = ctx.disallow_empty_match_at_eof_after_newline;
     let allow_input_assertion_overrides = ctx.allow_input_assertion_overrides;
+    let leftmost_longest = ctx.leftmost_longest;
 
     // Check that numeric capture group references (backrefs and subroutine calls) and named groups are not mixed
     if tree.numbered_groups_ignored
@@ -881,6 +900,7 @@ pub fn analyze<'a>(tree: &'a ExprTree, ctx: AnalyzeContext) -> Result<Info<'a>> 
         find_not_empty,
         disallow_empty_match_at_eof_after_newline,
         allow_input_assertion_overrides,
+        leftmost_longest,
         in_lookaround: false,
     };
 

@@ -71,7 +71,9 @@ use crate::compile::{compile, CompileOptions};
 use crate::optimize::optimize;
 use crate::parse::{ExprTree, NamedGroups, Parser};
 use crate::parse_flags::*;
-use crate::vm::{Prog, OPTION_FIND_NOT_EMPTY, OPTION_NOT_CONTINUED_FROM_PREVIOUS_MATCH};
+use crate::vm::{
+    Prog, OPTION_FIND_NOT_EMPTY, OPTION_LEFTMOST_LONGEST, OPTION_NOT_CONTINUED_FROM_PREVIOUS_MATCH,
+};
 
 pub use crate::bytes::MatchBytes;
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
@@ -520,6 +522,7 @@ struct RegexOptions {
     /// the set only ever searches them anchored at candidate positions, where
     /// a prefilter is never consulted, so building one wastes time and memory.
     delegate_prefilter: bool,
+    leftmost_longest: bool,
 }
 
 impl fmt::Debug for RegexOptions {
@@ -546,6 +549,7 @@ impl fmt::Debug for RegexOptions {
             )
             .field("seek_filter", &seek_filter_desc)
             .field("delegate_prefilter", &self.delegate_prefilter)
+            .field("leftmost_longest", &self.leftmost_longest)
             .finish()
     }
 }
@@ -562,6 +566,7 @@ impl Default for RegexOptions {
             bytes_mode: BytesMode::default(),
             seek_filter: None, // when we are ready to enable seek by default, use: `Some(seek_pattern_is_useful)`
             delegate_prefilter: true,
+            leftmost_longest: false,
         }
     }
 }
@@ -572,6 +577,7 @@ struct HardRegexRuntimeOptions {
     find_not_empty: bool,
     disallow_empty_match_at_eof_after_newline: bool,
     allow_input_assertion_overrides: bool,
+    leftmost_longest: bool,
 }
 
 impl RegexOptions {
@@ -618,6 +624,7 @@ impl Default for HardRegexRuntimeOptions {
             find_not_empty: false,
             disallow_empty_match_at_eof_after_newline: false,
             allow_input_assertion_overrides: false,
+            leftmost_longest: false,
         }
     }
 }
@@ -785,6 +792,19 @@ impl RegexOptionsBuilder {
     /// combination to execute pointlessly at runtime.
     pub fn find_not_empty(&mut self, yes: bool) -> &mut Self {
         self.options.hard_regex_runtime_options.find_not_empty = yes;
+        self
+    }
+
+    /// Enable leftmost-longest match semantics.
+    ///
+    /// When enabled, among all matches starting at the leftmost possible position,
+    /// the longest match is returned. This contrasts with the default leftmost-first
+    /// (PCRE-style) semantics.
+    ///
+    /// Default is `false`.
+    pub fn leftmost_longest(&mut self, yes: bool) -> &mut Self {
+        self.options.leftmost_longest = yes;
+        self.options.hard_regex_runtime_options.leftmost_longest = yes;
         self
     }
 
@@ -1071,6 +1091,12 @@ impl RegexBuilder {
         self
     }
 
+    /// See [`RegexOptionsBuilder::leftmost_longest`]
+    pub fn leftmost_longest(&mut self, yes: bool) -> &mut Self {
+        self.options.leftmost_longest(yes);
+        self
+    }
+
     /// See [`RegexOptionsBuilder::ignore_numbered_groups_when_named_groups_exist`]
     pub fn ignore_numbered_groups_when_named_groups_exist(&mut self, yes: bool) -> &mut Self {
         self.options
@@ -1144,6 +1170,7 @@ impl Regex {
         let allow_input_assertion_overrides = options
             .hard_regex_runtime_options
             .allow_input_assertion_overrides;
+        let leftmost_longest = options.leftmost_longest;
 
         let requires_capture_group_fixup = if find_not_empty {
             // if the find_not_empty flag is set, we skip optimizations
@@ -1163,6 +1190,7 @@ impl Regex {
                 find_not_empty,
                 disallow_empty_match_at_eof_after_newline,
                 allow_input_assertion_overrides,
+                leftmost_longest,
             },
         )?;
 
@@ -1438,6 +1466,11 @@ impl Regex {
                         OPTION_FIND_NOT_EMPTY
                     } else {
                         0
+                    }
+                    | if options.leftmost_longest {
+                        OPTION_LEFTMOST_LONGEST
+                    } else {
+                        0
                     };
                 // Span-only VM entry: nothing is moved out of the pooled
                 // scratch, so this path is allocation-free per call.
@@ -1633,6 +1666,11 @@ impl Regex {
                 let option_flags = option_flags
                     | if options.find_not_empty {
                         OPTION_FIND_NOT_EMPTY
+                    } else {
+                        0
+                    }
+                    | if options.leftmost_longest {
+                        OPTION_LEFTMOST_LONGEST
                     } else {
                         0
                     };
@@ -3084,6 +3122,18 @@ mod tests {
         );
         assert_eq!(s, regex.as_str());
         assert_eq!(s, format!("{:?}", regex));
+    }
+
+    #[test]
+    fn leftmost_longest_alt_compiles_to_fancy() {
+        let regex = RegexBuilder::new(r"a|ab")
+            .leftmost_longest(true)
+            .build()
+            .unwrap();
+        assert!(
+            matches!(regex.inner, RegexImpl::Fancy { .. }),
+            "alternation with non-const size should compile to VM when leftmost_longest is enabled"
+        );
     }
 
     #[test]
