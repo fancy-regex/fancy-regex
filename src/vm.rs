@@ -953,6 +953,17 @@ fn store_capture_groups(
     }
 }
 
+#[cfg(feature = "leftmost_longest")]
+#[inline]
+fn apply_best_saves(state: &mut State, best_saves: &Option<Vec<usize>>) -> bool {
+    if let Some(saves) = best_saves {
+        state.saves.copy_from_slice(saves);
+        true
+    } else {
+        false
+    }
+}
+
 /// Run the program with trace printing for debugging.
 pub fn run_trace(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
     run(
@@ -1207,11 +1218,8 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                 }
                 Insn::SplitUnanchored(x, y) => {
                     #[cfg(feature = "leftmost_longest")]
-                    if leftmost_longest {
-                        if let Some(saves) = best_saves {
-                            state.saves.copy_from_slice(&saves);
-                            return Ok(Some(extract(state)));
-                        }
+                    if leftmost_longest && apply_best_saves(state, &best_saves) {
+                        return Ok(Some(extract(state)));
                     }
                     if ix > match_range.end {
                         return Ok(None);
@@ -1510,11 +1518,8 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                 }
                 Insn::Seek(Seek { ref inner, .. }) => {
                     #[cfg(feature = "leftmost_longest")]
-                    if leftmost_longest {
-                        if let Some(saves) = best_saves {
-                            state.saves.copy_from_slice(&saves);
-                            return Ok(Some(extract(state)));
-                        }
+                    if leftmost_longest && apply_best_saves(state, &best_saves) {
+                        return Ok(Some(extract(state)));
                     }
                     // A sentinel value greater than haystack.len() is pushed onto the backtrack stack
                     // when the seek found a zero-width match at end-of-string.  On re-entry with
@@ -1582,21 +1587,18 @@ fn run_with<S: HaystackInput + ?Sized, T>(
         // "break 'fail" goes here
         if state.stack.is_empty() {
             #[cfg(feature = "leftmost_longest")]
-            if leftmost_longest {
-                if let Some(saves) = best_saves {
-                    state.saves.copy_from_slice(&saves);
-                    return Ok(Some(extract(state)));
-                }
+            if leftmost_longest && apply_best_saves(state, &best_saves) {
+                return Ok(Some(extract(state)));
             }
             return Ok(None);
         }
 
         #[cfg(feature = "leftmost_longest")]
-        if leftmost_longest && best_match_len == prog.max_size {
-            if let Some(saves) = best_saves {
-                state.saves.copy_from_slice(&saves);
-                return Ok(Some(extract(state)));
-            }
+        if leftmost_longest
+            && best_match_len == prog.max_size
+            && apply_best_saves(state, &best_saves)
+        {
+            return Ok(Some(extract(state)));
         }
 
         backtrack_count += 1;
