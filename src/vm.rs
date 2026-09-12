@@ -114,8 +114,8 @@ pub(crate) const OPTION_NOT_CONTINUED_FROM_PREVIOUS_MATCH: u32 = 1 << 1;
 /// \K is ignored as part of this check - so empty matches can still be reported if the engine
 /// consumed characters and then \K was used afterwards.
 pub(crate) const OPTION_FIND_NOT_EMPTY: u32 = 1 << 2;
-/// When set, the VM uses leftmost-longest match semantics instead of leftmost-first.
 #[cfg(feature = "leftmost_longest")]
+/// When set, the VM uses leftmost-longest match semantics instead of leftmost-first.
 pub(crate) const OPTION_LEFTMOST_LONGEST: u32 = 1 << 3;
 
 // TODO: make configurable
@@ -1206,6 +1206,13 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                     continue;
                 }
                 Insn::SplitUnanchored(x, y) => {
+                    #[cfg(feature = "leftmost_longest")]
+                    if leftmost_longest {
+                        if let Some(saves) = best_saves {
+                            state.saves.copy_from_slice(&saves);
+                            return Ok(Some(extract(state)));
+                        }
+                    }
                     if ix > match_range.end {
                         return Ok(None);
                     }
@@ -1502,6 +1509,13 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                     }
                 }
                 Insn::Seek(Seek { ref inner, .. }) => {
+                    #[cfg(feature = "leftmost_longest")]
+                    if leftmost_longest {
+                        if let Some(saves) = best_saves {
+                            state.saves.copy_from_slice(&saves);
+                            return Ok(Some(extract(state)));
+                        }
+                    }
                     // A sentinel value greater than haystack.len() is pushed onto the backtrack stack
                     // when the seek found a zero-width match at end-of-string.  On re-entry with
                     // that sentinel, there are no more positions to try.

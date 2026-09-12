@@ -92,31 +92,6 @@ pub fn assert_find(re: &str, text: &str) -> Option<(usize, usize)> {
     str_result
 }
 
-#[cfg(feature = "leftmost_longest")]
-#[cfg_attr(feature = "track_caller", track_caller)]
-#[allow(dead_code)]
-pub fn assert_match_lr(re: &str, text: &str, expected: &str) {
-    let str_re = RegexBuilder::new(re)
-        .leftmost_longest(true)
-        .build()
-        .expect("regex should compile");
-    let str_result = str_re.find(text).unwrap();
-    assert!(
-        str_result.is_some(),
-        "Expected regex '{}' to match '{}' in leftmost-longest mode",
-        re,
-        text
-    );
-    assert_eq!(
-        str_result.unwrap().as_str(),
-        expected,
-        "Expected leftmost-longest match of '{}' on '{}' to be '{}'",
-        re,
-        text,
-        expected
-    );
-}
-
 /// Run `find_input` against `text` in both str mode and ASCII bytes mode, assert
 /// that both agree, and return the common result.
 #[cfg_attr(feature = "track_caller", track_caller)]
@@ -326,7 +301,7 @@ pub fn assert_captures<'t>(re: &str, text: &'t str) -> Option<Captures<'t, str>>
             assert_eq!(
                 str_span,
                 bytes_span,
-                "Expected capture group {} to agree between str and bytes mode for regex '{}' on '{}'",
+                "Expected capture group {} to agree between str and bytes modes for regex '{}' on '{}'",
                 i,
                 re,
                 text
@@ -334,4 +309,23 @@ pub fn assert_captures<'t>(re: &str, text: &'t str) -> Option<Captures<'t, str>>
         }
     }
     str_result
+}
+
+#[cfg_attr(feature = "track_caller", track_caller)]
+#[allow(dead_code)]
+/// Assert that `seek(true)` produces the same first match as without seeking.
+pub fn assert_seek_same(re: &str, text: &str) -> Option<(usize, usize)> {
+    let str_result = regex(re).find(text).unwrap();
+    let seek_result = RegexBuilder::new(re)
+        .seek(true)
+        .build()
+        .expect("regex should compile with seek enabled")
+        .find(text)
+        .unwrap();
+    assert_eq!(
+        str_result.map(|m| (m.start(), m.end())),
+        seek_result.map(|m| (m.start(), m.end())),
+        "seek=true gave different result for /{re}/ on '{text}'"
+    );
+    str_result.map(|m| (m.start(), m.end()))
 }

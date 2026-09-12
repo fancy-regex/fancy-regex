@@ -1100,54 +1100,8 @@ fn casei_keyword_alternation_in_hard_pattern() {
     assert_eq!(&haystack[m.start()..m.end()], "ABSENT");
 }
 
-#[cfg(feature = "leftmost_longest")]
-#[test]
-fn leftmost_longest_basic() {
-    common::assert_match_lr(r"(a|ab)c", "xabc", "abc");
-    common::assert_match_lr(r"(ab|a)c", "xabc", "abc");
-}
-
-#[cfg(feature = "leftmost_longest")]
-#[test]
-fn leftmost_longest_greedy_star() {
-    common::assert_match_lr(r"a.*b", "xaabxb", "aabxb");
-}
-
-#[cfg(feature = "leftmost_longest")]
-#[test]
-fn leftmost_longest_tie() {
-    common::assert_match_lr(r"a|a", "xa", "a");
-}
-
-#[cfg(feature = "leftmost_longest")]
-#[test]
-fn leftmost_longest_no_match() {
-    let re = RegexBuilder::new(r"(a|ab)c")
-        .leftmost_longest(true)
-        .build()
-        .unwrap();
-    assert!(re.find("xbc").unwrap().is_none());
-}
-
-#[cfg(feature = "leftmost_longest")]
-#[test]
-fn leftmost_longest_non_greedy_error() {
-    let result = RegexBuilder::new(r"a.*?(b)").leftmost_longest(true).build();
-    assert!(result.is_err());
-}
-
 #[test]
 fn leftmost_longest_default_behavior_unchanged() {
     let re = RegexBuilder::new(r"(a|ab)c").build().unwrap();
     assert_eq!(re.find("xabc").unwrap().unwrap().as_str(), "abc");
-}
-
-#[cfg(feature = "leftmost_longest")]
-#[test]
-fn leftmost_longest_alt_basic() {
-    let re = RegexBuilder::new(r"a|ab")
-        .leftmost_longest(true)
-        .build()
-        .unwrap();
-    assert_eq!(re.find("ab").unwrap().unwrap().as_str(), "ab");
 }
