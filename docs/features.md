@@ -5,6 +5,7 @@ This crate supports several optional features that can be enabled or disabled:
 - **`std`** (enabled by default): Enables standard library support. Disable for `no_std` environments.
 - **`unicode`** (enabled by default): Enables Unicode support for character classes and word boundaries.
 - **`perf`** (enabled by default): Enables performance optimizations in the underlying regex engine.
+- **`perf-dfa-full`** (disabled by default): Let regex-automata eagerly build a fully compiled dense DFA for small patterns (and delegated fragments). Trades noticeably slower compiles and more memory for the fastest search engine; without it searches use the lazy DFA, which performs about the same on typical workloads. Mirrors the `regex` crate's `perf-dfa-full` opt-in.
 - **`variable-lookbehinds`** (enabled by default): Enables support for variable-length lookbehind
   assertions (e.g., `(?<=a+)`). Without this feature, only constant-length lookbehinds are supported.
   This feature uses reverse DFA matching from the `regex-automata` crate to efficiently handle
