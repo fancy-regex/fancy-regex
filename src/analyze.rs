@@ -24,7 +24,7 @@ use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::cmp::min;
+use core::cmp::{max, min};
 
 use bit_set::BitSet;
 
@@ -48,6 +48,8 @@ pub struct Info<'a> {
     pub(crate) capture_groups: CaptureGroupRange,
     /// The minimum number of characters this expression will match
     pub min_size: usize,
+    /// The maximum number of characters this expression can match
+    pub max_size: usize,
     /// Whether this expression always matches the same number of characters
     pub const_size: bool,
     /// Tracks the minimum number of characters that would be consumed in the innermost capture group
@@ -114,6 +116,7 @@ impl<'a> Info<'a> {
 struct SizeInfo {
     min_size: usize,
     const_size: bool,
+    max_size: usize,
 }
 
 /// Represents a subroutine call and its minimum position within a group
@@ -177,8 +180,9 @@ impl<'a> Analyzer<'a> {
             Expr::Concat(ref v) | Expr::Alt(ref v) => Vec::with_capacity(v.len()),
             _ => Vec::new(),
         };
-        let mut min_size = 0;
+        let mut min_size: usize = 0;
         let mut const_size = false;
+        let mut max_size: usize = 0;
         let mut hard = false;
         match *expr {
             Expr::Assertion(assertion) if assertion.is_always_hard() => {
@@ -201,12 +205,17 @@ impl<'a> Analyzer<'a> {
                 const_size = true;
                 hard = true; // NOTE: \Z is already considered hard and covered in the branch above
             }
+            Expr::Assertion(Assertion::EndText) if self.find_not_empty && !self.in_lookaround => {
+                const_size = true;
+                hard = true;
+            }
             Expr::Empty | Expr::Assertion(_) => {
                 const_size = true;
             }
             Expr::Any { .. } => {
                 min_size = 1;
                 const_size = true;
+                max_size = 1;
             }
             Expr::GeneralNewline { .. } => {
                 // \R matches either \r\n (2 chars) or single newline chars (1 char)
@@ -214,11 +223,13 @@ impl<'a> Analyzer<'a> {
                 min_size = 1;
                 const_size = false;
                 hard = true; // requires backtracking to handle \r\n without backtracking to \r
+                max_size = 2;
             }
             Expr::Literal { ref val, casei } => {
                 // right now each character in a literal gets its own node, that might change
                 min_size = 1;
                 const_size = literal_const_size(val, casei);
+                max_size = 1;
             }
             Expr::Concat(ref v) => {
                 const_size = true;
@@ -226,10 +237,15 @@ impl<'a> Analyzer<'a> {
                 for child in v {
                     let child_info =
                         self.visit(child, pos_in_group, inside_zero_rep, enclosing_group)?;
-                    min_size += child_info.min_size;
+                    min_size = min_size.saturating_add(child_info.min_size);
+                    max_size = if max_size == usize::MAX || child_info.max_size == usize::MAX {
+                        usize::MAX
+                    } else {
+                        max_size.saturating_add(child_info.max_size)
+                    };
                     const_size &= child_info.const_size;
                     hard |= child_info.hard;
-                    pos_in_group += child_info.min_size;
+                    pos_in_group = pos_in_group.saturating_add(child_info.min_size);
                     children.push(child_info);
                 }
             }
@@ -237,6 +253,7 @@ impl<'a> Analyzer<'a> {
                 let child_info =
                     self.visit(&v[0], min_pos_in_group, inside_zero_rep, enclosing_group)?;
                 min_size = child_info.min_size;
+                max_size = child_info.max_size;
                 const_size = child_info.const_size;
                 hard = child_info.hard;
                 children.push(child_info);
@@ -245,6 +262,7 @@ impl<'a> Analyzer<'a> {
                         self.visit(child, min_pos_in_group, inside_zero_rep, enclosing_group)?;
                     const_size &= child_info.const_size && min_size == child_info.min_size;
                     min_size = min(min_size, child_info.min_size);
+                    max_size = max(max_size, child_info.max_size);
                     hard |= child_info.hard;
                     children.push(child_info);
                 }
@@ -262,6 +280,7 @@ impl<'a> Analyzer<'a> {
                 let child_info = self.visit(child, 0, inside_zero_rep, group)?;
                 self.analyzing_groups.remove(group);
                 min_size = child_info.min_size;
+                max_size = child_info.max_size;
                 const_size = child_info.const_size;
                 // Store the group info for use by backrefs
                 self.group_info.insert(
@@ -269,6 +288,7 @@ impl<'a> Analyzer<'a> {
                     SizeInfo {
                         min_size,
                         const_size,
+                        max_size,
                     },
                 );
                 // If there's a backref to this group, we potentially have to backtrack within the
@@ -317,6 +337,11 @@ impl<'a> Analyzer<'a> {
                     enclosing_group,
                 )?;
                 min_size = child_info.min_size * lo;
+                max_size = if hi == usize::MAX || child_info.max_size == usize::MAX {
+                    usize::MAX
+                } else {
+                    child_info.max_size.saturating_mul(hi)
+                };
                 const_size = child_info.const_size && lo == hi;
                 hard = child_info.hard;
                 children.push(child_info);
@@ -326,6 +351,7 @@ impl<'a> Analyzer<'a> {
                 // This constraint ensures consistency in the AST representation.
                 min_size = 1;
                 const_size = true;
+                max_size = 1;
             }
             Expr::Backref { group, .. } => {
                 if group == 0 {
@@ -354,10 +380,13 @@ impl<'a> Analyzer<'a> {
                 // Look up the referenced group's size information
                 if let Some(&SizeInfo {
                     min_size: group_min_size,
+                    max_size: group_max_size,
                     const_size: group_const_size,
+                    ..
                 }) = self.group_info.get(&group)
                 {
                     min_size = group_min_size;
+                    max_size = group_max_size;
                     const_size = group_const_size;
                 }
                 hard = true;
@@ -366,6 +395,7 @@ impl<'a> Analyzer<'a> {
                 let child_info =
                     self.visit(child, min_pos_in_group, inside_zero_rep, enclosing_group)?;
                 min_size = child_info.min_size;
+                max_size = child_info.max_size;
                 const_size = child_info.const_size;
                 hard = true; // TODO: possibly could weaken
                 children.push(child_info);
@@ -414,6 +444,7 @@ impl<'a> Analyzer<'a> {
 
                 min_size = child_info_condition.min_size
                     + min(child_info_truth.min_size, child_info_false.min_size);
+                max_size = max(child_info_truth.max_size, child_info_false.max_size);
                 const_size = child_info_condition.const_size
                     && child_info_truth.const_size
                     && child_info_false.const_size
@@ -444,14 +475,17 @@ impl<'a> Analyzer<'a> {
                 if let Some(&SizeInfo {
                     min_size: group_min_size,
                     const_size: group_const_size,
+                    max_size: group_max_size,
                 }) = self.group_info.get(&target_group)
                 {
                     min_size = group_min_size;
+                    max_size = group_max_size;
                     const_size = group_const_size;
                 } else if self.analyzing_groups.contains(target_group) {
                     // Currently analyzing this group - circular reference
                     // Use conservative defaults to avoid infinite recursion
                     min_size = 0;
+                    max_size = usize::MAX;
                     const_size = false;
                 } else if let Some(&group_expr) = self.group_exprs.get(&target_group) {
                     // If the group hasn't been seen yet (forward reference),
@@ -467,6 +501,7 @@ impl<'a> Analyzer<'a> {
                     self.analyzing_groups.remove(target_group);
 
                     min_size = group_info.min_size;
+                    max_size = group_info.max_size;
                     const_size = group_info.const_size;
                     // Store the analysis result for future lookups
                     self.group_info.insert(
@@ -474,11 +509,13 @@ impl<'a> Analyzer<'a> {
                         SizeInfo {
                             min_size,
                             const_size,
+                            max_size,
                         },
                     );
                 } else {
                     // Group doesn't exist - this shouldn't happen as the parser would have caught it
                     min_size = 0;
+                    max_size = usize::MAX;
                     const_size = false;
                 }
                 hard = true;
@@ -534,6 +571,7 @@ impl<'a> Analyzer<'a> {
                         let child_info =
                             self.visit(child, min_pos_in_group, inside_zero_rep, enclosing_group)?;
                         min_size = 0;
+                        max_size = usize::MAX;
                         const_size = false;
                         hard = true;
                         children.push(child_info);
@@ -547,6 +585,7 @@ impl<'a> Analyzer<'a> {
                         let exp_info =
                             self.visit(exp, min_pos_in_group, inside_zero_rep, enclosing_group)?;
                         min_size = exp_info.min_size;
+                        max_size = exp_info.max_size;
                         const_size = false;
                         hard = true;
                         children.push(absent_info);
@@ -557,6 +596,7 @@ impl<'a> Analyzer<'a> {
                             self.visit(child, min_pos_in_group, inside_zero_rep, enclosing_group)?;
                         // Absent stopper doesn't consume any characters itself
                         min_size = 0;
+                        max_size = 0;
                         const_size = true;
                         hard = true;
                         children.push(child_info);
@@ -564,6 +604,7 @@ impl<'a> Analyzer<'a> {
                     Clear => {
                         // Range clear doesn't consume any characters
                         min_size = 0;
+                        max_size = 0;
                         const_size = true;
                         hard = true;
                     }
@@ -576,6 +617,7 @@ impl<'a> Analyzer<'a> {
                 // delegated (as an empty string) to the underlying engine.
                 let def_info = self.visit(definitions, 0, inside_zero_rep, enclosing_group)?;
                 min_size = 0;
+                max_size = 0;
                 const_size = true;
                 children.push(def_info);
             }
@@ -594,6 +636,7 @@ impl<'a> Analyzer<'a> {
             children,
             capture_groups: CaptureGroupRange(start_group, self.next_group_number),
             min_size,
+            max_size,
             const_size,
             hard,
             min_pos_in_group,

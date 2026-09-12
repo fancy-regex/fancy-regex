@@ -566,6 +566,9 @@ pub struct Prog {
     /// A pattern compatible with a DFA which can be used to seek to candidate positions where the real/full pattern might match
     pub(crate) seek_pattern: String,
     scratch_pool: Pool<Scratch, fn() -> Scratch>,
+    /// Maximum number of bytes this pattern can match. When `leftmost_longest` is enabled and a match
+    /// of this length is found, no longer match is possible, so backtracking can stop early.
+    pub max_size: usize,
 }
 
 impl Prog {
@@ -574,6 +577,7 @@ impl Prog {
         n_saves: usize,
         bytes_mode: BytesMode,
         seek_pattern: String,
+        max_size: usize,
     ) -> Prog {
         Prog {
             body,
@@ -581,6 +585,7 @@ impl Prog {
             bytes_mode,
             seek_pattern,
             scratch_pool: Pool::new(new_scratch),
+            max_size,
         }
     }
 
@@ -1068,6 +1073,9 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                         if best_saves.is_none() || match_len > best_match_len {
                             best_saves = Some(state.saves.clone());
                             best_match_len = match_len;
+                        }
+                        if best_match_len == prog.max_size {
+                            return Ok(Some(extract(state)));
                         }
                         break 'fail;
                     }
@@ -1561,6 +1569,13 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                 }
             }
             return Ok(None);
+        }
+
+        if leftmost_longest && best_match_len == prog.max_size {
+            if let Some(saves) = best_saves {
+                state.saves.copy_from_slice(&saves);
+                return Ok(Some(extract(state)));
+            }
         }
 
         backtrack_count += 1;
