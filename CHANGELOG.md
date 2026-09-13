@@ -8,6 +8,11 @@ with the exception that 0.x versions can break between minor versions.
 
 ## [Unreleased]
 ### Added
+### Changed
+### Fixed
+
+## [0.19.2] - 2026-09-13
+### Added
 - Add a `leftmost_longest` feature (off by default) that adds a method to the `RegexBuilder`/`RegexOptionsBuilder` for building a VM which would operate in leftmost-longest match mode instead of the regular leftmost-first mode. Useful for POSIX compliance. (#281)
 ### Changed
 ### Fixed
@@ -300,7 +305,8 @@ If you previously stored i.e. `Captures`, you would need to change the type to `
 ### Added
 - Initial release
 
-[Unreleased]: https://github.com/fancy-regex/fancy-regex/compare/0.19.1...HEAD
+[Unreleased]: https://github.com/fancy-regex/fancy-regex/compare/0.19.2...HEAD
+[0.19.1]: https://github.com/fancy-regex/fancy-regex/compare/0.19.1...0.19.2
 [0.19.1]: https://github.com/fancy-regex/fancy-regex/compare/0.19.0...0.19.1
 [0.19.0]: https://github.com/fancy-regex/fancy-regex/compare/0.18.0...0.19.0
 [0.18.0]: https://github.com/fancy-regex/fancy-regex/compare/0.17.0...0.18.0
