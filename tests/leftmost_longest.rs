@@ -34,6 +34,7 @@ fn leftmost_longest_basic() {
 #[test]
 fn leftmost_longest_greedy_star() {
     assert_match_longest(r"a.*b", "xaabxb", "aabxb");
+    assert_match_longest(r"aaaaa|a*", "aaaaaa", "aaaaaa");
 }
 
 #[test]
