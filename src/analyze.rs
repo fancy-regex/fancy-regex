@@ -24,7 +24,7 @@ use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::cmp::min;
+use core::cmp::{max, min};
 
 use bit_set::BitSet;
 
@@ -48,6 +48,8 @@ pub struct Info<'a> {
     pub(crate) capture_groups: CaptureGroupRange,
     /// The minimum number of characters this expression will match
     pub min_size: usize,
+    /// The maximum number of characters this expression can match
+    pub max_size: usize,
     /// Whether this expression always matches the same number of characters
     pub const_size: bool,
     /// Tracks the minimum number of characters that would be consumed in the innermost capture group
@@ -114,6 +116,7 @@ impl<'a> Info<'a> {
 struct SizeInfo {
     min_size: usize,
     const_size: bool,
+    max_size: usize,
 }
 
 /// Represents a subroutine call and its minimum position within a group
@@ -153,6 +156,9 @@ struct Analyzer<'a> {
     /// When true, assertions with runtime input suppression overrides are promoted to hard
     /// so they run on the VM.
     allow_input_assertion_overrides: bool,
+    /// When true, leftmost-longest match semantics are enabled.
+    #[cfg(feature = "leftmost_longest")]
+    leftmost_longest: bool,
     /// Oniguruma's `^` rejects the empty match at the absolute end of the haystack after a trailing
     /// newline when it anchors the match itself. When used as a sub-assertion inside a lookaround,
     /// it behaves as a plain line start. So we need to track when we are analyzing inside a lookaround.
@@ -175,8 +181,9 @@ impl<'a> Analyzer<'a> {
             Expr::Concat(ref v) | Expr::Alt(ref v) => Vec::with_capacity(v.len()),
             _ => Vec::new(),
         };
-        let mut min_size = 0;
+        let mut min_size: usize = 0;
         let mut const_size = false;
+        let mut max_size: usize = 0;
         let mut hard = false;
         match *expr {
             Expr::Assertion(assertion) if assertion.is_always_hard() => {
@@ -199,12 +206,17 @@ impl<'a> Analyzer<'a> {
                 const_size = true;
                 hard = true; // NOTE: \Z is already considered hard and covered in the branch above
             }
+            Expr::Assertion(Assertion::EndText) if self.find_not_empty && !self.in_lookaround => {
+                const_size = true;
+                hard = true;
+            }
             Expr::Empty | Expr::Assertion(_) => {
                 const_size = true;
             }
             Expr::Any { .. } => {
                 min_size = 1;
                 const_size = true;
+                max_size = 1;
             }
             Expr::GeneralNewline { .. } => {
                 // \R matches either \r\n (2 chars) or single newline chars (1 char)
@@ -212,11 +224,13 @@ impl<'a> Analyzer<'a> {
                 min_size = 1;
                 const_size = false;
                 hard = true; // requires backtracking to handle \r\n without backtracking to \r
+                max_size = 2;
             }
             Expr::Literal { ref val, casei } => {
                 // right now each character in a literal gets its own node, that might change
                 min_size = 1;
                 const_size = literal_const_size(val, casei);
+                max_size = 1;
             }
             Expr::Concat(ref v) => {
                 const_size = true;
@@ -224,10 +238,15 @@ impl<'a> Analyzer<'a> {
                 for child in v {
                     let child_info =
                         self.visit(child, pos_in_group, inside_zero_rep, enclosing_group)?;
-                    min_size += child_info.min_size;
+                    min_size = min_size.saturating_add(child_info.min_size);
+                    max_size = if max_size == usize::MAX || child_info.max_size == usize::MAX {
+                        usize::MAX
+                    } else {
+                        max_size.saturating_add(child_info.max_size)
+                    };
                     const_size &= child_info.const_size;
                     hard |= child_info.hard;
-                    pos_in_group += child_info.min_size;
+                    pos_in_group = pos_in_group.saturating_add(child_info.min_size);
                     children.push(child_info);
                 }
             }
@@ -235,6 +254,7 @@ impl<'a> Analyzer<'a> {
                 let child_info =
                     self.visit(&v[0], min_pos_in_group, inside_zero_rep, enclosing_group)?;
                 min_size = child_info.min_size;
+                max_size = child_info.max_size;
                 const_size = child_info.const_size;
                 hard = child_info.hard;
                 children.push(child_info);
@@ -243,6 +263,7 @@ impl<'a> Analyzer<'a> {
                         self.visit(child, min_pos_in_group, inside_zero_rep, enclosing_group)?;
                     const_size &= child_info.const_size && min_size == child_info.min_size;
                     min_size = min(min_size, child_info.min_size);
+                    max_size = max(max_size, child_info.max_size);
                     hard |= child_info.hard;
                     children.push(child_info);
                 }
@@ -260,6 +281,7 @@ impl<'a> Analyzer<'a> {
                 let child_info = self.visit(child, 0, inside_zero_rep, group)?;
                 self.analyzing_groups.remove(group);
                 min_size = child_info.min_size;
+                max_size = child_info.max_size;
                 const_size = child_info.const_size;
                 // Store the group info for use by backrefs
                 self.group_info.insert(
@@ -267,6 +289,7 @@ impl<'a> Analyzer<'a> {
                     SizeInfo {
                         min_size,
                         const_size,
+                        max_size,
                     },
                 );
                 // If there's a backref to this group, we potentially have to backtrack within the
@@ -288,8 +311,22 @@ impl<'a> Analyzer<'a> {
                 children.push(child_info);
             }
             Expr::Repeat {
-                ref child, lo, hi, ..
+                ref child,
+                lo,
+                hi,
+                #[cfg(feature = "leftmost_longest")]
+                greedy,
+                ..
             } => {
+                #[cfg(feature = "leftmost_longest")]
+                if !greedy && self.leftmost_longest {
+                    return Err(Error::CompileError(Box::new(
+                        CompileError::FeatureNotYetSupported(
+                            "non-greedy quantifiers are not supported in leftmost-longest mode"
+                                .to_string(),
+                        ),
+                    )));
+                }
                 // If lo and hi are both 0, we're in a zero-repetition (unreachable)
                 let child_inside_zero_rep = if lo == 0 && hi == 0 {
                     true
@@ -303,6 +340,11 @@ impl<'a> Analyzer<'a> {
                     enclosing_group,
                 )?;
                 min_size = child_info.min_size * lo;
+                max_size = if hi == usize::MAX || child_info.max_size == usize::MAX {
+                    usize::MAX
+                } else {
+                    child_info.max_size.saturating_mul(hi)
+                };
                 const_size = child_info.const_size && lo == hi;
                 hard = child_info.hard;
                 children.push(child_info);
@@ -312,6 +354,7 @@ impl<'a> Analyzer<'a> {
                 // This constraint ensures consistency in the AST representation.
                 min_size = 1;
                 const_size = true;
+                max_size = 1;
             }
             Expr::Backref { group, .. } => {
                 if group == 0 {
@@ -340,10 +383,13 @@ impl<'a> Analyzer<'a> {
                 // Look up the referenced group's size information
                 if let Some(&SizeInfo {
                     min_size: group_min_size,
+                    max_size: group_max_size,
                     const_size: group_const_size,
+                    ..
                 }) = self.group_info.get(&group)
                 {
                     min_size = group_min_size;
+                    max_size = group_max_size;
                     const_size = group_const_size;
                 }
                 hard = true;
@@ -352,6 +398,7 @@ impl<'a> Analyzer<'a> {
                 let child_info =
                     self.visit(child, min_pos_in_group, inside_zero_rep, enclosing_group)?;
                 min_size = child_info.min_size;
+                max_size = child_info.max_size;
                 const_size = child_info.const_size;
                 hard = true; // TODO: possibly could weaken
                 children.push(child_info);
@@ -400,6 +447,7 @@ impl<'a> Analyzer<'a> {
 
                 min_size = child_info_condition.min_size
                     + min(child_info_truth.min_size, child_info_false.min_size);
+                max_size = max(child_info_truth.max_size, child_info_false.max_size);
                 const_size = child_info_condition.const_size
                     && child_info_truth.const_size
                     && child_info_false.const_size
@@ -430,14 +478,17 @@ impl<'a> Analyzer<'a> {
                 if let Some(&SizeInfo {
                     min_size: group_min_size,
                     const_size: group_const_size,
+                    max_size: group_max_size,
                 }) = self.group_info.get(&target_group)
                 {
                     min_size = group_min_size;
+                    max_size = group_max_size;
                     const_size = group_const_size;
                 } else if self.analyzing_groups.contains(target_group) {
                     // Currently analyzing this group - circular reference
                     // Use conservative defaults to avoid infinite recursion
                     min_size = 0;
+                    max_size = usize::MAX;
                     const_size = false;
                 } else if let Some(&group_expr) = self.group_exprs.get(&target_group) {
                     // If the group hasn't been seen yet (forward reference),
@@ -453,6 +504,7 @@ impl<'a> Analyzer<'a> {
                     self.analyzing_groups.remove(target_group);
 
                     min_size = group_info.min_size;
+                    max_size = group_info.max_size;
                     const_size = group_info.const_size;
                     // Store the analysis result for future lookups
                     self.group_info.insert(
@@ -460,11 +512,13 @@ impl<'a> Analyzer<'a> {
                         SizeInfo {
                             min_size,
                             const_size,
+                            max_size,
                         },
                     );
                 } else {
                     // Group doesn't exist - this shouldn't happen as the parser would have caught it
                     min_size = 0;
+                    max_size = usize::MAX;
                     const_size = false;
                 }
                 hard = true;
@@ -520,6 +574,7 @@ impl<'a> Analyzer<'a> {
                         let child_info =
                             self.visit(child, min_pos_in_group, inside_zero_rep, enclosing_group)?;
                         min_size = 0;
+                        max_size = usize::MAX;
                         const_size = false;
                         hard = true;
                         children.push(child_info);
@@ -533,6 +588,7 @@ impl<'a> Analyzer<'a> {
                         let exp_info =
                             self.visit(exp, min_pos_in_group, inside_zero_rep, enclosing_group)?;
                         min_size = exp_info.min_size;
+                        max_size = exp_info.max_size;
                         const_size = false;
                         hard = true;
                         children.push(absent_info);
@@ -543,6 +599,7 @@ impl<'a> Analyzer<'a> {
                             self.visit(child, min_pos_in_group, inside_zero_rep, enclosing_group)?;
                         // Absent stopper doesn't consume any characters itself
                         min_size = 0;
+                        max_size = 0;
                         const_size = true;
                         hard = true;
                         children.push(child_info);
@@ -550,6 +607,7 @@ impl<'a> Analyzer<'a> {
                     Clear => {
                         // Range clear doesn't consume any characters
                         min_size = 0;
+                        max_size = 0;
                         const_size = true;
                         hard = true;
                     }
@@ -562,6 +620,7 @@ impl<'a> Analyzer<'a> {
                 // delegated (as an empty string) to the underlying engine.
                 let def_info = self.visit(definitions, 0, inside_zero_rep, enclosing_group)?;
                 min_size = 0;
+                max_size = 0;
                 const_size = true;
                 children.push(def_info);
             }
@@ -572,12 +631,17 @@ impl<'a> Analyzer<'a> {
         if self.find_not_empty && min_size == 0 && !const_size {
             hard = true;
         }
+        #[cfg(feature = "leftmost_longest")]
+        if self.leftmost_longest && !const_size {
+            hard = true;
+        }
 
         Ok(Info {
             expr,
             children,
             capture_groups: CaptureGroupRange(start_group, self.next_group_number),
             min_size,
+            max_size,
             const_size,
             hard,
             min_pos_in_group,
@@ -839,6 +903,9 @@ pub struct AnalyzeContext {
     /// When true, treat assertions that support runtime input suppression overrides (`\A`, `\z`)
     /// as hard so that they execute on the VM.
     pub allow_input_assertion_overrides: bool,
+    /// When true, leftmost-longest match semantics are enabled.
+    #[cfg(feature = "leftmost_longest")]
+    pub leftmost_longest: bool,
 }
 
 /// Analyze the parsed expression to determine whether it requires fancy features.
@@ -847,6 +914,8 @@ pub fn analyze<'a>(tree: &'a ExprTree, ctx: AnalyzeContext) -> Result<Info<'a>> 
     let find_not_empty = ctx.find_not_empty;
     let disallow_empty_match_at_eof_after_newline = ctx.disallow_empty_match_at_eof_after_newline;
     let allow_input_assertion_overrides = ctx.allow_input_assertion_overrides;
+    #[cfg(feature = "leftmost_longest")]
+    let leftmost_longest = ctx.leftmost_longest;
 
     // Check that numeric capture group references (backrefs and subroutine calls) and named groups are not mixed
     if tree.numbered_groups_ignored
@@ -881,6 +950,8 @@ pub fn analyze<'a>(tree: &'a ExprTree, ctx: AnalyzeContext) -> Result<Info<'a>> 
         find_not_empty,
         disallow_empty_match_at_eof_after_newline,
         allow_input_assertion_overrides,
+        #[cfg(feature = "leftmost_longest")]
+        leftmost_longest,
         in_lookaround: false,
     };
 
@@ -2022,5 +2093,285 @@ mod tests {
         assert_eq!(info.children[0].start_group(), 1);
         assert_eq!(info.children[1].children[0].start_group(), 2);
         assert_eq!(info.children[2].start_group(), 5);
+        assert_eq!(info.children[2].end_group(), 6);
+    }
+
+    // Tests for max_size
+
+    #[test]
+    fn max_size_for_literal() {
+        let tree = Expr::parse_tree("a").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_eq!(info.max_size, 1);
+    }
+
+    #[test]
+    fn max_size_for_concat_of_literals() {
+        let tree = Expr::parse_tree("abc").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_eq!(info.max_size, 3);
+    }
+
+    #[test]
+    fn max_size_for_general_newline() {
+        let tree = Expr::parse_tree(r"\R").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_eq!(info.max_size, 2);
+    }
+
+    #[test]
+    fn max_size_for_greedy_star() {
+        let tree = Expr::parse_tree("a*").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_eq!(info.max_size, usize::MAX);
+    }
+
+    #[test]
+    fn max_size_for_greedy_plus() {
+        let tree = Expr::parse_tree("a+").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_eq!(info.max_size, usize::MAX);
+    }
+
+    #[test]
+    fn max_size_for_optional() {
+        let tree = Expr::parse_tree("a?").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_eq!(info.max_size, 1);
+    }
+
+    #[test]
+    fn max_size_for_bounded_repeat() {
+        let tree = Expr::parse_tree("a{1,3}").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_eq!(info.max_size, 3);
+    }
+
+    #[test]
+    fn max_size_for_exact_repeat() {
+        let tree = Expr::parse_tree("a{3}").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_eq!(info.max_size, 3);
+    }
+
+    #[test]
+    fn max_size_for_alternation() {
+        let tree = Expr::parse_tree("a|bc").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_eq!(info.max_size, 2);
+    }
+
+    #[test]
+    fn max_size_for_group() {
+        let tree = Expr::parse_tree(r"(abc)").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_eq!(info.max_size, 3);
+    }
+
+    #[test]
+    fn max_size_for_backref_inherits_group() {
+        let tree = Expr::parse_tree(r"(ab)\1").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_eq!(info.max_size, 4);
+    }
+
+    #[test]
+    fn max_size_for_concat_accumulates() {
+        // ab*cd = concat(literal a, repeat b*, literal c, literal d)
+        // max_size = 1 + MAX + 1 + 1 = MAX
+        let tree = Expr::parse_tree("ab*cd").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_eq!(info.max_size, usize::MAX);
+    }
+
+    #[test]
+    fn max_size_for_empty_assertion_is_zero() {
+        let tree = Expr::parse_tree(r"\b").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_eq!(info.max_size, 0);
+    }
+
+    // Tests for leftmost_longest flag
+
+    #[cfg(feature = "leftmost_longest")]
+    #[test]
+    fn leftmost_longest_rejects_non_greedy_star() {
+        let tree = Expr::parse_tree(r"a*?").unwrap();
+        let result = analyze(
+            &tree,
+            AnalyzeContext {
+                leftmost_longest: true,
+                ..Default::default()
+            },
+        );
+        assert_compile_error(
+            result,
+            |e| matches!(e, CompileError::FeatureNotYetSupported(s) if s.contains("non-greedy")),
+        );
+    }
+
+    #[cfg(feature = "leftmost_longest")]
+    #[test]
+    fn leftmost_longest_rejects_non_greedy_plus() {
+        let tree = Expr::parse_tree(r"a+?").unwrap();
+        let result = analyze(
+            &tree,
+            AnalyzeContext {
+                leftmost_longest: true,
+                ..Default::default()
+            },
+        );
+        assert_compile_error(
+            result,
+            |e| matches!(e, CompileError::FeatureNotYetSupported(s) if s.contains("non-greedy")),
+        );
+    }
+
+    #[cfg(feature = "leftmost_longest")]
+    #[test]
+    fn leftmost_longest_rejects_non_greedy_optional() {
+        let tree = Expr::parse_tree(r"a??").unwrap();
+        let result = analyze(
+            &tree,
+            AnalyzeContext {
+                leftmost_longest: true,
+                ..Default::default()
+            },
+        );
+        assert_compile_error(
+            result,
+            |e| matches!(e, CompileError::FeatureNotYetSupported(s) if s.contains("non-greedy")),
+        );
+    }
+
+    #[cfg(feature = "leftmost_longest")]
+    #[test]
+    fn leftmost_longest_rejects_non_greedy_bounded() {
+        let tree = Expr::parse_tree(r"a{1,3}?").unwrap();
+        let result = analyze(
+            &tree,
+            AnalyzeContext {
+                leftmost_longest: true,
+                ..Default::default()
+            },
+        );
+        assert_compile_error(
+            result,
+            |e| matches!(e, CompileError::FeatureNotYetSupported(s) if s.contains("non-greedy")),
+        );
+    }
+
+    #[cfg(feature = "leftmost_longest")]
+    #[test]
+    fn leftmost_longest_accepts_greedy_quantifiers() {
+        assert_analyze_ok(
+            &Expr::parse_tree(r"a*").unwrap(),
+            AnalyzeContext {
+                leftmost_longest: true,
+                ..Default::default()
+            },
+        );
+        assert_analyze_ok(
+            &Expr::parse_tree(r"a+").unwrap(),
+            AnalyzeContext {
+                leftmost_longest: true,
+                ..Default::default()
+            },
+        );
+        assert_analyze_ok(
+            &Expr::parse_tree(r"a?").unwrap(),
+            AnalyzeContext {
+                leftmost_longest: true,
+                ..Default::default()
+            },
+        );
+        assert_analyze_ok(
+            &Expr::parse_tree(r"a{1,3}").unwrap(),
+            AnalyzeContext {
+                leftmost_longest: true,
+                ..Default::default()
+            },
+        );
+    }
+
+    #[cfg(feature = "leftmost_longest")]
+    #[test]
+    fn leftmost_longest_promotes_non_const_to_hard() {
+        // Without leftmost_longest, a* is not hard (can be delegated to regex-automata)
+        let tree = Expr::parse_tree(r"a*").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert!(!info.hard);
+        assert!(!info.const_size);
+
+        // With leftmost_longest, a* becomes hard because it's not const_size
+        let info = analyze(
+            &tree,
+            AnalyzeContext {
+                leftmost_longest: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(info.hard);
+        assert!(!info.const_size);
+    }
+
+    #[cfg(feature = "leftmost_longest")]
+    #[test]
+    fn leftmost_longest_keeps_const_size_easy() {
+        let tree = Expr::parse_tree(r"abc").unwrap();
+        let info = analyze(
+            &tree,
+            AnalyzeContext {
+                leftmost_longest: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(!info.hard);
+        assert!(info.const_size);
+    }
+
+    // Tests for EndText assertion with find_not_empty
+
+    #[test]
+    fn end_text_hard_with_find_not_empty() {
+        let tree = Expr::parse_tree(r"$").unwrap();
+        let info = analyze(
+            &tree,
+            AnalyzeContext {
+                find_not_empty: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(info.hard);
+        assert!(info.const_size);
+    }
+
+    #[test]
+    fn end_text_not_hard_without_find_not_empty() {
+        let tree = Expr::parse_tree(r"$").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert!(!info.hard);
+        assert!(info.const_size);
+    }
+
+    #[test]
+    fn end_text_not_hard_in_lookaround_with_find_not_empty() {
+        // Inside a lookaround, $ does not get the find_not_empty hard treatment
+        let tree = Expr::parse_tree(r"(?=$)").unwrap();
+        let info = analyze(
+            &tree,
+            AnalyzeContext {
+                find_not_empty: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        // The lookahead's child is directly the EndText assertion
+        let end_text_info = &info.children[0];
+        assert!(!end_text_info.hard);
+        assert!(end_text_info.const_size);
     }
 }

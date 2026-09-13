@@ -51,7 +51,9 @@ See the @CONTRIBUTING.md guide for details.
 - Full CI check:
   - `cargo check --no-default-features`
   - `cargo check --no-default-features --features "unicode,perf,variable-lookbehinds"`
+  - `cargo check --no-default-features --features "unicode,perf,variable-lookbehinds,leftmost_longest"`
   - `cargo test --examples`
+  - `cargo test --features leftmost_longest`
   - `cargo check --benches`
   - `cd playground && cargo test`
 

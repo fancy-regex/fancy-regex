@@ -51,6 +51,7 @@ pub struct RegexFlags {
     pub find_not_empty: bool,
     pub ignore_numbered_groups_when_named_groups_exist: bool,
     pub ignore_trailing_newline: bool,
+    pub leftmost_longest: bool,
 }
 
 impl Default for RegexFlags {
@@ -65,6 +66,7 @@ impl Default for RegexFlags {
             find_not_empty: false,
             ignore_numbered_groups_when_named_groups_exist: false,
             ignore_trailing_newline: false,
+            leftmost_longest: false,
         }
     }
 }
@@ -93,6 +95,7 @@ fn build_regex(pattern: &str, flags: &RegexFlags) -> Result<Regex, String> {
         flags.ignore_numbered_groups_when_named_groups_exist,
     );
     builder.disallow_empty_match_at_eof_after_newline(flags.ignore_trailing_newline);
+    builder.leftmost_longest(flags.leftmost_longest);
 
     builder
         .build()
@@ -210,6 +213,7 @@ pub fn analyze_regex(pattern: &str, flags: JsValue) -> Result<String, String> {
                     find_not_empty: flags.find_not_empty,
                     disallow_empty_match_at_eof_after_newline: flags.ignore_trailing_newline,
                     allow_input_assertion_overrides: false,
+                    leftmost_longest: flags.leftmost_longest,
                 },
             ) {
                 Ok(info) => Ok(format!("{:#?}", info)),
@@ -516,6 +520,7 @@ pub fn analyze_regex_tree(pattern: &str, flags: JsValue) -> Result<JsValue, Stri
                     find_not_empty: flags.find_not_empty,
                     disallow_empty_match_at_eof_after_newline: flags.ignore_trailing_newline,
                     allow_input_assertion_overrides: false,
+                    leftmost_longest: flags.leftmost_longest,
                 },
             ) {
                 Ok(info) => {
@@ -1103,6 +1108,31 @@ mod tests {
         assert!(
             re.is_match("world\nhello\nfoo").unwrap(),
             "^ should match start of line with multi_line"
+        );
+    }
+
+    /// Leftmost-longest flag is wired through correctly.
+    #[test]
+    fn smoke_leftmost_longest_flag() {
+        let default_flags = RegexFlags::default();
+        let re = build_regex(r"a|ab", &default_flags).unwrap();
+        let caps = re.captures("ab").unwrap().unwrap();
+        assert_eq!(
+            caps.get(0).unwrap().as_str(),
+            "a",
+            "default leftmost-first should prefer first alternative"
+        );
+
+        let leftmost_longest_flags = RegexFlags {
+            leftmost_longest: true,
+            ..Default::default()
+        };
+        let re = build_regex(r"a|ab", &leftmost_longest_flags).unwrap();
+        let caps = re.captures("ab").unwrap().unwrap();
+        assert_eq!(
+            caps.get(0).unwrap().as_str(),
+            "ab",
+            "leftmost-longest should prefer longer match at same position"
         );
     }
 }

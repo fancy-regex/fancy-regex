@@ -1099,3 +1099,9 @@ fn casei_keyword_alternation_in_hard_pattern() {
         .unwrap();
     assert_eq!(&haystack[m.start()..m.end()], "ABSENT");
 }
+
+#[test]
+fn leftmost_longest_default_behavior_unchanged() {
+    let re = RegexBuilder::new(r"(a|ab)c").build().unwrap();
+    assert_eq!(re.find("xabc").unwrap().unwrap().as_str(), "abc");
+}

@@ -114,6 +114,9 @@ pub(crate) const OPTION_NOT_CONTINUED_FROM_PREVIOUS_MATCH: u32 = 1 << 1;
 /// \K is ignored as part of this check - so empty matches can still be reported if the engine
 /// consumed characters and then \K was used afterwards.
 pub(crate) const OPTION_FIND_NOT_EMPTY: u32 = 1 << 2;
+#[cfg(feature = "leftmost_longest")]
+/// When set, the VM uses leftmost-longest match semantics instead of leftmost-first.
+pub(crate) const OPTION_LEFTMOST_LONGEST: u32 = 1 << 3;
 
 // TODO: make configurable
 const MAX_STACK: usize = 1_000_000;
@@ -564,6 +567,9 @@ pub struct Prog {
     /// A pattern compatible with a DFA which can be used to seek to candidate positions where the real/full pattern might match
     pub(crate) seek_pattern: String,
     scratch_pool: Pool<Scratch, fn() -> Scratch>,
+    /// Maximum number of bytes this pattern can match. When `leftmost_longest` is enabled and a match
+    /// of this length is found, no longer match is possible, so backtracking can stop early.
+    pub max_size: usize,
 }
 
 impl Prog {
@@ -572,6 +578,7 @@ impl Prog {
         n_saves: usize,
         bytes_mode: BytesMode,
         seek_pattern: String,
+        max_size: usize,
     ) -> Prog {
         Prog {
             body,
@@ -579,6 +586,7 @@ impl Prog {
             bytes_mode,
             seek_pattern,
             scratch_pool: Pool::new(new_scratch),
+            max_size,
         }
     }
 
@@ -945,6 +953,17 @@ fn store_capture_groups(
     }
 }
 
+#[cfg(feature = "leftmost_longest")]
+#[inline]
+fn apply_best_saves(state: &mut State, best_saves: &Option<Vec<usize>>) -> bool {
+    if let Some(saves) = best_saves {
+        state.saves.copy_from_slice(saves);
+        true
+    } else {
+        false
+    }
+}
+
 /// Run the program with trace printing for debugging.
 pub fn run_trace(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
     run(
@@ -1024,6 +1043,12 @@ fn run_with<S: HaystackInput + ?Sized, T>(
     let mut ix = pos;
     let mut slash_z_matched = false;
     let mut match_attempt_start = pos;
+    #[cfg(feature = "leftmost_longest")]
+    let leftmost_longest = option_flags & OPTION_LEFTMOST_LONGEST != 0;
+    #[cfg(feature = "leftmost_longest")]
+    let mut best_saves: Option<Vec<usize>> = None;
+    #[cfg(feature = "leftmost_longest")]
+    let mut best_match_len = 0;
     loop {
         // break from this loop to fail, causes stack to pop
         'fail: loop {
@@ -1056,6 +1081,18 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                         }
                     }
                     if state.get(0) < match_range.start || state.get(1) > match_range.end {
+                        break 'fail;
+                    }
+                    #[cfg(feature = "leftmost_longest")]
+                    if leftmost_longest {
+                        let match_len = state.get(1) - state.get(0);
+                        if best_saves.is_none() || match_len > best_match_len {
+                            best_saves = Some(state.saves.clone());
+                            best_match_len = match_len;
+                        }
+                        if best_match_len == prog.max_size {
+                            return Ok(Some(extract(state)));
+                        }
                         break 'fail;
                     }
                     return Ok(Some(extract(state)));
@@ -1180,6 +1217,10 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                     continue;
                 }
                 Insn::SplitUnanchored(x, y) => {
+                    #[cfg(feature = "leftmost_longest")]
+                    if leftmost_longest && apply_best_saves(state, &best_saves) {
+                        return Ok(Some(extract(state)));
+                    }
                     if ix > match_range.end {
                         return Ok(None);
                     }
@@ -1476,6 +1517,10 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                     }
                 }
                 Insn::Seek(Seek { ref inner, .. }) => {
+                    #[cfg(feature = "leftmost_longest")]
+                    if leftmost_longest && apply_best_saves(state, &best_saves) {
+                        return Ok(Some(extract(state)));
+                    }
                     // A sentinel value greater than haystack.len() is pushed onto the backtrack stack
                     // when the seek found a zero-width match at end-of-string.  On re-entry with
                     // that sentinel, there are no more positions to try.
@@ -1541,7 +1586,19 @@ fn run_with<S: HaystackInput + ?Sized, T>(
         }
         // "break 'fail" goes here
         if state.stack.is_empty() {
+            #[cfg(feature = "leftmost_longest")]
+            if leftmost_longest && apply_best_saves(state, &best_saves) {
+                return Ok(Some(extract(state)));
+            }
             return Ok(None);
+        }
+
+        #[cfg(feature = "leftmost_longest")]
+        if leftmost_longest
+            && best_match_len == prog.max_size
+            && apply_best_saves(state, &best_saves)
+        {
+            return Ok(Some(extract(state)));
         }
 
         backtrack_count += 1;
