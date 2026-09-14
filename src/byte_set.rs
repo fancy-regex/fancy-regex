@@ -36,6 +36,16 @@ impl ByteSet {
     pub fn iter(&self) -> impl Iterator<Item = u8> + '_ {
         set_bits(&self.0).map(|i| i as u8)
     }
+
+    /// The underlying bitmap.
+    pub fn words(&self) -> &[u64; 4] {
+        &self.0
+    }
+
+    /// Builds a set from a bitmap returned by [`ByteSet::words`].
+    pub const fn from_words(words: [u64; 4]) -> Self {
+        Self(words)
+    }
 }
 
 /// Get an iterator for the bits set, starting from the lowest
