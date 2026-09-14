@@ -40,7 +40,7 @@ use core::convert::TryFrom;
 
 use regex_syntax::hir::{Capture, Dot, Hir, Look, Repetition};
 
-use crate::{push_quoted, Assertion, Expr};
+use crate::{push_quoted, Assertion, BytesMode, Expr, RegexOptions};
 
 /// Context threaded through a translation: the syntax options the string path
 /// would hand to the engine's parser, plus the capture-group counter (groups
@@ -59,6 +59,20 @@ impl HirCtx {
             utf8,
             next_group: 1,
         }
+    }
+
+    /// Whether the UTF8 mode is enabled
+    pub(crate) fn utf8(&self) -> bool {
+        self.utf8
+    }
+}
+
+impl From<&RegexOptions> for HirCtx {
+    fn from(options: &RegexOptions) -> Self {
+        let unicode =
+            options.syntaxc.get_unicode() && !matches!(options.bytes_mode, BytesMode::Ascii);
+        let utf8 = matches!(options.bytes_mode, BytesMode::Unicode);
+        Self::new(unicode, utf8)
     }
 }
 
@@ -171,7 +185,7 @@ pub(crate) fn expr_to_hir(expr: &Expr, ctx: &mut HirCtx) -> Option<Hir> {
     })
 }
 
-fn parse_fragment(fragment: &str, ctx: &HirCtx) -> Option<Hir> {
+pub(crate) fn parse_fragment(fragment: &str, ctx: &HirCtx) -> Option<Hir> {
     regex_syntax::ParserBuilder::new()
         .utf8(ctx.utf8)
         .unicode(ctx.unicode)
