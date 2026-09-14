@@ -997,6 +997,14 @@ impl RegexOptionsBuilder {
             .allow_input_assertion_overrides = yes;
         self
     }
+
+    /// Whether to build a prefilter for this Regex.
+    /// If you only do anchored search, the prefilter would not be used and would just waste
+    /// time and memory to build it.
+    pub fn build_delegate_prefilter(&mut self, yes: bool) -> &mut Self {
+        self.options.delegate_prefilter = yes;
+        self
+    }
 }
 
 impl RegexBuilder {
