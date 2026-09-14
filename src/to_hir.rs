@@ -34,6 +34,7 @@
 //! string path, preserving both behavior and error reporting.
 
 use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::convert::TryFrom;
@@ -50,6 +51,8 @@ pub(crate) struct HirCtx {
     unicode: bool,
     utf8: bool,
     next_group: u32,
+    /// Memoize case-insensitive fragments
+    fragments: BTreeMap<String, Option<Hir>>,
 }
 
 impl HirCtx {
@@ -58,6 +61,7 @@ impl HirCtx {
             unicode,
             utf8,
             next_group: 1,
+            fragments: BTreeMap::new(),
         }
     }
 
@@ -185,13 +189,25 @@ pub(crate) fn expr_to_hir(expr: &Expr, ctx: &mut HirCtx) -> Option<Hir> {
     })
 }
 
-pub(crate) fn parse_fragment(fragment: &str, ctx: &HirCtx) -> Option<Hir> {
-    regex_syntax::ParserBuilder::new()
+pub(crate) fn parse_fragment(fragment: &str, ctx: &mut HirCtx) -> Option<Hir> {
+    // Only case-insensitive fragments are worth memoizing since folding
+    // is the expensive piece
+    let memoize = fragment.starts_with("(?i:");
+    if memoize {
+        if let Some(hir) = ctx.fragments.get(fragment) {
+            return hir.clone();
+        }
+    }
+    let hir = regex_syntax::ParserBuilder::new()
         .utf8(ctx.utf8)
         .unicode(ctx.unicode)
         .build()
         .parse(fragment)
-        .ok()
+        .ok();
+    if memoize {
+        ctx.fragments.insert(fragment.into(), hir.clone());
+    }
+    hir
 }
 
 #[cfg(test)]
