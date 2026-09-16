@@ -8,6 +8,9 @@ with the exception that 0.x versions can break between minor versions.
 
 ## [Unreleased]
 ### Added
+- Add `RegexOptionsBuilder::build_delegate_prefilter` to disable building the prefilter
+- Add `ByteSet` that returns the first bytes that can match a pattern so you can build your own prefiler
+
 ### Changed
 ### Fixed
 

@@ -51,6 +51,7 @@ use regex_automata::Anchored as RaAnchored;
 use regex_automata::Input as RaInput;
 
 mod analyze;
+mod byte_set;
 mod bytes;
 mod compile;
 mod error;
@@ -75,6 +76,7 @@ use crate::parse_flags::*;
 use crate::vm::OPTION_LEFTMOST_LONGEST;
 use crate::vm::{Prog, OPTION_FIND_NOT_EMPTY, OPTION_NOT_CONTINUED_FROM_PREVIOUS_MATCH};
 
+pub use crate::byte_set::ByteSet;
 pub use crate::bytes::MatchBytes;
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
 pub use crate::expand::Expander;
@@ -996,6 +998,35 @@ impl RegexOptionsBuilder {
             .hard_regex_runtime_options
             .allow_input_assertion_overrides = yes;
         self
+    }
+
+    /// Whether to build a prefilter for this Regex.
+    /// If you only do anchored search, the prefilter would not be used and would just waste
+    /// time and memory to build it.
+    pub fn build_delegate_prefilter(&mut self, yes: bool) -> &mut Self {
+        self.options.delegate_prefilter = yes;
+        self
+    }
+
+    /// Computes the bytes a match of `pattern` can start with, without compiling it.
+    /// The possible return values are:
+    ///
+    /// - `Ok(Some(set))`: a byte set could be built and you can quickly check whether a byte
+    ///   could match the pattern without calling the regex
+    /// - `Ok(None)`: we couldn't built a byte set from the pattern so any byte could match
+    /// - `Err(..)`: the pattern is invalid
+    ///
+    /// This is useful if you are building your own prefilter.
+    ///
+    /// ```
+    /// # use fancy_regex::RegexOptionsBuilder;
+    /// let builder = RegexOptionsBuilder::new();
+    /// let set = builder.start_bytes(r"fn|let|impl").unwrap().unwrap();
+    /// assert_eq!(set.iter().collect::<Vec<_>>(), vec![b'f', b'i', b'l']);
+    /// assert!(builder.start_bytes(r"a?").unwrap().is_none());
+    /// ```
+    pub fn start_bytes(&self, pattern: &str) -> Result<Option<ByteSet>> {
+        crate::byte_set::start_bytes(pattern, &self.options)
     }
 }
 
