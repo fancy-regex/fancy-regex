@@ -132,6 +132,23 @@ struct Compiler<'a> {
     delegate_memo: Map<(String, bool), RaRegex>,
 }
 
+#[cfg(feature = "variable-lookbehinds")]
+const LOOKBEHIND_ALT_DELEGATE_MIN_BRANCHES: usize = 4;
+
+#[cfg(feature = "variable-lookbehinds")]
+fn lookbehind_alt_as_delegate(inner: &Info<'_>) -> bool {
+    // Captures inside the alternation are extracted by a forward search that is
+    // anchored only at the reverse match's start, so delegate only expressions
+    // without captures. Small literal alternatives are cheaper as VM probes.
+    !inner.hard
+        && inner.start_group() == inner.end_group()
+        && (inner.children.len() >= LOOKBEHIND_ALT_DELEGATE_MIN_BRANCHES
+            || inner
+                .children
+                .iter()
+                .any(|branch| branch.is_literal_get_casei().is_none()))
+}
+
 impl<'a> Compiler<'a> {
     fn visit(&mut self, info: &Info<'_>, hard: bool) -> Result<()> {
         if !hard && !info.hard {
@@ -623,6 +640,12 @@ impl<'a> Compiler<'a> {
                     ..
                 } = inner
                 {
+                    // One reverse-DFA delegate over the whole alternation is much cheaper per
+                    // attempt than trying every branch as its own const-size lookbehind
+                    #[cfg(feature = "variable-lookbehinds")]
+                    if lookbehind_alt_as_delegate(inner) {
+                        return self.compile_positive_lookaround(inner, la);
+                    }
                     // Make const size by transforming `(?<=a|bb)` to `(?<=a)|(?<=bb)`
                     let alternatives = &inner.children;
                     self.compile_alt(alternatives.len(), |compiler, i| {
@@ -640,6 +663,10 @@ impl<'a> Compiler<'a> {
                     ..
                 } = inner
                 {
+                    #[cfg(feature = "variable-lookbehinds")]
+                    if lookbehind_alt_as_delegate(inner) {
+                        return self.compile_negative_lookaround(inner, la);
+                    }
                     // Make const size by transforming `(?<!a|bb)` to `(?<!a)(?<!bb)`
                     let alternatives = &inner.children;
                     for alternative in alternatives {
@@ -783,10 +810,29 @@ impl<'a> Compiler<'a> {
         // Use reverse matching for variable-sized lookbehinds without fancy features
         use regex_automata::hybrid::dfa;
         use regex_automata::nfa::thompson;
+        use regex_automata::util::syntax::Config as SyntaxConfig;
+
+        let mut dfa_config = dfa::Config::new().unicode_word_boundary(true);
+        if let Some(limit) = self.options.delegate_dfa_size_limit {
+            dfa_config = dfa_config.cache_capacity(limit);
+        }
+        let mut thompson_config = thompson::Config::new().reverse(true);
+        if let Some(limit) = self.options.delegate_size_limit {
+            thompson_config = thompson_config.nfa_size_limit(Some(limit));
+        }
+        // This builder parses `pattern` itself instead of going through
+        // `options_to_rabuilder`, so the caller's Unicode and bytes-mode settings
+        // have to be applied to its syntax config too. Without them the reverse
+        // DFA would use regex-automata's defaults while the forward
+        // capture-extraction engine below uses the configured ones.
+        let syntax = SyntaxConfig::new()
+            .utf8(matches!(self.options.bytes_mode, BytesMode::Unicode))
+            .unicode(self.options.unicode);
         // Build a reverse DFA for the pattern
         let dfa = match dfa::DFA::builder()
-            .configure(dfa::Config::new().unicode_word_boundary(true))
-            .thompson(thompson::Config::new().reverse(true))
+            .configure(dfa_config)
+            .thompson(thompson_config)
+            .syntax(syntax)
             .build(pattern)
         {
             Ok(dfa) => Arc::new(dfa),

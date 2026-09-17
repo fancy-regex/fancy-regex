@@ -53,6 +53,10 @@ const EASY_EMAIL: &str = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}";
 /// compiler emits several `Insn::Delegate` engines. Exercises bottleneck #2.
 const DELEGATE_HEAVY: &str = r"(\d{3})(?=x)[a-z]+(?<=ab)\w+\1[A-Z]{2}(?!q)\s+foo";
 
+/// A wide alternation from a TextMate grammar (see `bench.rs`). With
+/// `variable-lookbehinds` it compiles to one reverse-DFA delegate.
+const LOOKBEHIND_ALT_WIDE: &str = r"(?<!\+\+|--)(?<=[(*,:=>?\[{]|&&|\|\||\?|\*/|^await|[^$._[:alnum:]]await|^return|[^$._[:alnum:]]return|^default|[^$._[:alnum:]]default|^yield|[^$._[:alnum:]]yield|^)\s*<[a-z]+";
+
 /// Build a pattern with many fancy-separated easy runs to stress the
 /// "one meta engine per easy run" cost.
 fn delegate_stress() -> String {
@@ -138,6 +142,12 @@ fn compile_delegate_heavy(c: &mut Criterion) {
     group.finish();
 }
 
+fn compile_lookbehind_alternation(c: &mut Criterion) {
+    c.bench_function("compile_lookbehind_alternation_wide_16", |b| {
+        b.iter(|| Regex::new(black_box(LOOKBEHIND_ALT_WIDE)).unwrap())
+    });
+}
+
 fn compile_regexset(c: &mut Criterion) {
     let pats = regexset_patterns();
     let mut group = c.benchmark_group("compile_regexset");
@@ -155,6 +165,7 @@ criterion_group!(
         compile_easy,
         compile_large_alternation,
         compile_delegate_heavy,
+        compile_lookbehind_alternation,
         compile_regexset,
 );
 criterion_main!(compile_benches);

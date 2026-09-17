@@ -124,6 +124,16 @@ fn captures_both_inside_and_outside_variable_lookbehind() {
 }
 
 #[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn captures_inside_variable_lookbehind_alternation() {
+    let captures = captures(r"(?<=(a)|(ab))x", "abx");
+    assert_eq!(captures.len(), 3);
+    assert_match(captures.get(0), "x", 2, 3);
+    assert!(captures.get(1).is_none());
+    assert_match(captures.get(2), "ab", 0, 2);
+}
+
+#[test]
 fn captures_with_keepout_inside_at_end() {
     let captures = captures(r"\s*(\w+\K)(?=\.)", "foo bar.");
     assert_eq!(captures.len(), 2);
