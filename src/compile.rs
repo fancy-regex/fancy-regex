@@ -1156,11 +1156,11 @@ fn char_class_matcher_from_hir(
                 return None;
             }
             let ranges = cu.ranges().iter().map(|r| (r.start(), r.end())).collect();
-            Some(CharClassMatcher::Codepoint { ranges, name })
+            Some(CharClassMatcher::codepoint(ranges, name))
         }
         HirKind::Class(Class::Bytes(cb)) => {
             let ranges = cb.ranges().iter().map(|r| (r.start(), r.end())).collect();
-            Some(CharClassMatcher::Byte { ranges, name })
+            Some(CharClassMatcher::byte(ranges, name))
         }
         _ => None,
     }

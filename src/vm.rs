@@ -95,6 +95,7 @@ pub(crate) type CachePoolFn = alloc::boxed::Box<
 use crate::error::RuntimeError;
 use crate::input::{Input as HaystackInput, RegexInput};
 use crate::Assertion;
+use crate::ByteSet;
 use crate::BytesMode;
 use crate::Error;
 use crate::Formatter;
@@ -167,14 +168,49 @@ pub enum CharClassMatcher {
     /// Unicode bytes mode, where the haystack is valid UTF-8.
     Codepoint {
         ranges: Box<[(char, char)]>,
+        /// The ASCII members of `ranges`, for an O(1) test on ASCII bytes
+        /// (the common case) instead of a binary search over the ranges.
+        ascii: ByteSet,
         name: Option<String>,
     },
     /// Match one byte against inclusive byte ranges. Used in ASCII bytes mode
     /// (and for ASCII-only `(?-u:...)` classes).
     Byte {
         ranges: Box<[(u8, u8)]>,
+        /// All members of `ranges` as a bitmap; `ranges` is kept for the
+        /// first-set analysis at compile time.
+        set: ByteSet,
         name: Option<String>,
     },
+}
+
+impl CharClassMatcher {
+    pub(crate) fn codepoint(ranges: Box<[(char, char)]>, name: Option<String>) -> Self {
+        let mut ascii = ByteSet::default();
+        for &(lo, hi) in ranges.iter() {
+            if lo as u32 >= 0x80 {
+                break;
+            }
+            for b in (lo as u32)..=(hi as u32).min(0x7f) {
+                ascii.insert(b as u8);
+            }
+        }
+        CharClassMatcher::Codepoint {
+            ranges,
+            ascii,
+            name,
+        }
+    }
+
+    pub(crate) fn byte(ranges: Box<[(u8, u8)]>, name: Option<String>) -> Self {
+        let mut set = ByteSet::default();
+        for &(lo, hi) in ranges.iter() {
+            for b in lo..=hi {
+                set.insert(b);
+            }
+        }
+        CharClassMatcher::Byte { ranges, set, name }
+    }
 }
 
 impl fmt::Debug for CharClassMatcher {
@@ -211,14 +247,21 @@ impl CharClassMatcher {
             return None;
         }
         match self {
-            CharClassMatcher::Byte { ranges, .. } => {
-                if range_contains(ranges, bytes[ix]) {
+            CharClassMatcher::Byte { set, .. } => {
+                if set.contains(bytes[ix]) {
                     Some(1)
                 } else {
                     None
                 }
             }
-            CharClassMatcher::Codepoint { ranges, .. } => {
+            CharClassMatcher::Codepoint { ranges, ascii, .. } => {
+                if bytes[ix] < 0x80 {
+                    return if ascii.contains(bytes[ix]) {
+                        Some(1)
+                    } else {
+                        None
+                    };
+                }
                 let len = codepoint_len(bytes[ix]);
                 let end = ix + len;
                 if end > bytes.len() {
