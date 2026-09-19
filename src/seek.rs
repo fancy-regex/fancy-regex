@@ -69,20 +69,18 @@ pub(crate) fn expr_contains_positional_anchor(expr: &Expr) -> bool {
 /// and never decides matches, so a less-selective approximation stays correct.
 pub(crate) const MAX_SEEK_PATTERN_LEN: usize = 4096;
 
-/// Emit a permissive size placeholder — `(?s:.)+` or `(?s:.){N,}` — into `buf`.
+/// Emit a permissive size placeholder — `(?s:.)*`, `(?s:.)+`, or `(?s:.){N,}` — into `buf`.
 ///
 /// Used when a hard node cannot be represented in the seek pattern but has a known minimum
 /// size.  The placeholder is an over-approximation that avoids false negatives: it admits any
 /// run of characters of at least `min_size` length.
 pub(crate) fn emit_min_size_placeholder(buf: &mut String, min_size: usize, precedence: u8) {
-    if min_size == 0 {
-        return; // zero width: safe to drop without emitting anything
-    }
     if precedence > 2 {
         buf.push_str("(?:");
     }
     buf.push_str("(?s:.)");
     match min_size {
+        0 => buf.push('*'),
         1 => buf.push('+'),
         n => {
             buf.push('{');
@@ -353,10 +351,17 @@ pub(crate) fn build_seek_pattern_impl<'a>(
             emit_min_size_placeholder(buf, info.min_size, precedence);
         }
         Expr::SubroutineCall(target_group) => {
-            // Inline the body of the target group, honouring the recursion depth limit.
+            // Inline the body of the target group once, honouring the recursion depth limit.
             if depth < MAX_SUBROUTINE_RECURSION_DEPTH && buf.len() < MAX_SEEK_PATTERN_LEN {
                 if let Some(group_info) = group_info_map.get(target_group) {
+                    if inlined_groups.contains(target_group) {
+                        let placeholder_min = usize::from(group_info.min_size > 0);
+                        emit_min_size_placeholder(buf, placeholder_min, precedence);
+                        return;
+                    }
+
                     if !group_info.children.is_empty() {
+                        inlined_groups.push(*target_group);
                         build_seek_pattern_impl(
                             &group_info.children[0],
                             group_info_map,
@@ -366,6 +371,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                             drop_positional_anchors,
                             inlined_groups,
                         );
+                        inlined_groups.pop();
                         return;
                     }
                     return;
@@ -526,6 +532,7 @@ mod tests {
     use crate::compile::populate_group_info_map;
     use crate::optimize;
     use crate::Regex;
+    use alloc::string::ToString;
 
     /// Build the seek pattern for a regex string and return it.
     fn get_seek_pattern(re: &str) -> String {
@@ -688,5 +695,33 @@ mod tests {
         );
         // Compiling it must succeed and stay well-formed.
         Regex::new(r"(end)(\s+(function))?(\s+((\3|\4|\5)))?").unwrap();
+    }
+
+    #[test]
+    fn seek_recursive_subroutine_with_empty_base_preserves_leftmost_match() {
+        let pattern = r"(?<g>(?:a\g<g>)?)b";
+        let haystack = "aab";
+
+        let expected = Regex::new(pattern).unwrap().find(haystack).unwrap();
+
+        let mut options = crate::RegexOptionsBuilder::new();
+        options.seek(true);
+        let actual = options
+            .build(pattern.to_string())
+            .unwrap()
+            .find(haystack)
+            .unwrap();
+
+        assert_eq!(
+            expected.map(|m| (m.start(), m.end())),
+            actual.map(|m| (m.start(), m.end()))
+        );
+    }
+
+    #[test]
+    fn seek_pattern_recursive_subroutine_is_inlined_once() {
+        let pattern = r"(?<tuple>\((?:[^()]|\g<tuple>)+\))\s*(?!=[=>])(?==)";
+        let seek = get_seek_pattern(pattern);
+        assert_eq!(seek, r#"(?:(?:\((?:[^()]|\((?:[^()]|(?s:.)+)+\))+\))\s*)="#);
     }
 }
