@@ -123,6 +123,11 @@ fn case_insensitive_property() {
     assert_match(r"(?-i)\p{Ll}", "a");
     assert_no_match(r"(?-i)\p{Ll}", "A");
 
+    assert_match(r"(?i)\p{Lowercase_Letter}", "A");
+    assert_match(r"(?i)\p{Lowercase_Letter}", "a");
+    assert_match(r"(?-i)\p{Lowercase_Letter}", "a");
+    assert_no_match(r"(?-i)\p{Lowercase_Letter}", "A");
+
     assert_match(r"(?i)\p{Lu}", "A");
     assert_match(r"(?i)\p{Lu}", "a");
     assert_match(r"(?-i)\p{Lu}", "A");

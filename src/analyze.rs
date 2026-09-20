@@ -1016,8 +1016,8 @@ pub fn can_compile_as_anchored(root_expr: &Expr) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{analyze, AnalyzeContext};
     use super::literal_const_size;
+    use super::{analyze, AnalyzeContext};
     use crate::parse::ExprTree;
     use crate::{can_compile_as_anchored, CompileError, Error, Expr};
     use matches::assert_matches;
@@ -1479,7 +1479,12 @@ mod tests {
         let tree = Expr::parse_tree(r"(?i)\xFF").unwrap();
         let info = analyze(&tree, AnalyzeContext::default()).unwrap();
         assert_eq!(info.is_literal_get_casei(), None);
-        assert_eq!(info.expr, &Expr::LiteralBytes { bytes: [255].to_vec()});
+        assert_eq!(
+            info.expr,
+            &Expr::LiteralBytes {
+                bytes: [255].to_vec()
+            }
+        );
     }
 
     #[test]

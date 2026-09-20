@@ -36,6 +36,16 @@ fn bytes_non_utf8_input() {
 }
 
 #[test]
+fn bytes_non_utf8_input_literal_bytes() {
+    let re = RegexBuilder::new(r"\xFF")
+        .bytes_mode(BytesMode::Ascii)
+        .build()
+        .unwrap();
+
+    assert!(re.is_match(b"\xFF").unwrap());
+}
+
+#[test]
 fn bytes_ascii_dot_matches_non_utf8() {
     let re = RegexBuilder::new(r".+")
         .bytes_mode(BytesMode::Ascii)

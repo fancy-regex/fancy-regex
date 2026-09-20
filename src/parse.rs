@@ -2052,6 +2052,7 @@ mod tests {
         assert_eq!(p("\\u21D2x"), p("\u{21D2}x"));
         assert_eq!(p("\\U0001F60A"), make_literal("\u{1F60A}"));
         assert_eq!(p("\\U{0001F60A}"), make_literal("\u{1F60A}"));
+        assert_eq!(p("\\xFF"), Expr::LiteralBytes { bytes: vec![255] });
     }
 
     #[test]
