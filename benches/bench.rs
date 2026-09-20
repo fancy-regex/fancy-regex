@@ -137,8 +137,15 @@ fn run_class_seq(c: &mut Criterion) {
     group.bench_function("plain", |b| {
         b.iter(|| run_default(&plain, black_box("#return"), 0).unwrap())
     });
+    group.bench_function("plain_miss", |b| {
+        b.iter(|| run_default(&plain, black_box("#returx"), 0).unwrap())
+    });
     group.bench_function("captures_optional", |b| {
         b.iter(|| run_default(&captures, black_box("  async"), 0).unwrap())
+    });
+    let rollback = compile_pattern(r"(?=.)(a)?a");
+    group.bench_function("optional_rollback", |b| {
+        b.iter(|| run_default(&rollback, black_box("a"), 0).unwrap())
     });
     group.finish();
 }
