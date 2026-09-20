@@ -301,7 +301,7 @@ pub fn assert_captures<'t>(re: &str, text: &'t str) -> Option<Captures<'t, str>>
             assert_eq!(
                 str_span,
                 bytes_span,
-                "Expected capture group {} to agree between str and bytes mode for regex '{}' on '{}'",
+                "Expected capture group {} to agree between str and bytes modes for regex '{}' on '{}'",
                 i,
                 re,
                 text
@@ -309,4 +309,23 @@ pub fn assert_captures<'t>(re: &str, text: &'t str) -> Option<Captures<'t, str>>
         }
     }
     str_result
+}
+
+#[cfg_attr(feature = "track_caller", track_caller)]
+#[allow(dead_code)]
+/// Assert that `seek(true)` produces the same first match as without seeking.
+pub fn assert_seek_same(re: &str, text: &str) -> Option<(usize, usize)> {
+    let str_result = regex(re).find(text).unwrap();
+    let seek_result = RegexBuilder::new(re)
+        .seek(true)
+        .build()
+        .expect("regex should compile with seek enabled")
+        .find(text)
+        .unwrap();
+    assert_eq!(
+        str_result.map(|m| (m.start(), m.end())),
+        seek_result.map(|m| (m.start(), m.end())),
+        "seek=true gave different result for /{re}/ on '{text}'"
+    );
+    str_result.map(|m| (m.start(), m.end()))
 }

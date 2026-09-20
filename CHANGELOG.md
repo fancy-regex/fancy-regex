@@ -8,16 +8,31 @@ with the exception that 0.x versions can break between minor versions.
 
 ## [Unreleased]
 ### Added
-- Add a `perf-dfa-full` feature (off by default, mirroring the `regex` crate) that lets regex-automata eagerly build fully compiled dense DFAs for small patterns, for workloads that compile few regexes and match them very heavily
+- Add `RegexOptionsBuilder::build_delegate_prefilter` to disable building the prefilter
+- Add `ByteSet` that returns the first bytes that can match a pattern so you can build your own prefiler
+
+### Changed
+### Fixed
+
+## [0.19.2] - 2026-09-13
+### Added
+- Add a `leftmost_longest` feature (off by default) that adds a method to the `RegexBuilder`/`RegexOptionsBuilder` for building a VM which would operate in leftmost-longest match mode instead of the regular leftmost-first mode. Useful for POSIX compliance. (#281)
+### Changed
+### Fixed
+- Fix a panic in `capture_names()` for a pattern with a zero-repeated named group such as `(?<n>a){0}` (#275)
+- Literal bytes were being encoded as utf-8 in Ascii mode, now they match the exact byte literal
+
+## [0.19.1] - 2026-09-06
+### Added
+- Add a `perf-dfa-full` feature (off by default, mirroring the `regex` crate) that lets regex-automata eagerly build fully compiled dense DFAs for small patterns, for workloads that compile few regexes and match them very heavily (#272)
 ### Changed
 - Add VM instruction for case insensitive literals when in Unicode mode, to keep the build cost bounded (#268) and ensured the toy example graph output remains readable instead of being super verbose (#269)
-- Compilation performance: the `regex-automata` dependency no longer enables the `dfa-build` feature by default. With `dfa-build` enabled, `meta::Regex` eagerly determinizes a full dense DFA for every small pattern, which dominated build time of simple class-containing patterns (e.g. `\b(extern)\s+(crate)` compiled ~4x slower than with the `regex` crate, which also ships without `dfa-build`); searches use the lazy DFA instead, with no measurable match-time difference
-- Compilation performance: identical delegated fragments within one compile now share a single regex-automata engine instead of each building their own. Alternation-heavy patterns (TextMate grammar lookbehinds especially) often repeat the same fragment many times; on such patterns this removes a large share of build time
+- Compilation performance: the `regex-automata` dependency no longer enables the `dfa-build` feature by default. With `dfa-build` enabled, `meta::Regex` eagerly determinizes a full dense DFA for every small pattern, which dominated build time of simple class-containing patterns (e.g. `\b(extern)\s+(crate)` compiled ~4x slower than with the `regex` crate, which also ships without `dfa-build`); searches use the lazy DFA instead, with no measurable match-time difference (#272)
+- Compilation performance: identical delegated fragments within one compile now share a single regex-automata engine instead of each building their own. Alternation-heavy patterns (TextMate grammar lookbehinds especially) often repeat the same fragment many times; on such patterns this removes a large share of build time (#277)
 ### Fixed
 - The playground didn't show when a literal or backreference was being matched case insensitively in the analysis tree view (#269)
 - Seek patterns could become very large when recursive backrefs and subroutine calls were inlined, without bringing much benefit (#270)
-- The `optimize_nested_repeats` pass could rewrite an optional capture group like `(\w+)?` into `(\w*)`, causing an unmatched optional group to be reported as an empty match (`Some("")`) instead of `None` (#270)
-- Literal bytes were being encoded as utf-8 in Ascii mode, now they match the exact byte literal
+- The `optimize_nested_repeats` pass could rewrite an optional capture group like `(\w+)?` into `(\w*)`, causing an unmatched optional group to be reported as an empty match (`Some("")`) instead of `None` (#276)
 
 ## [0.19.0] - 2026-07-28
 ### Added
@@ -295,7 +310,9 @@ If you previously stored i.e. `Captures`, you would need to change the type to `
 ### Added
 - Initial release
 
-[Unreleased]: https://github.com/fancy-regex/fancy-regex/compare/0.19.0...HEAD
+[Unreleased]: https://github.com/fancy-regex/fancy-regex/compare/0.19.2...HEAD
+[0.19.1]: https://github.com/fancy-regex/fancy-regex/compare/0.19.1...0.19.2
+[0.19.1]: https://github.com/fancy-regex/fancy-regex/compare/0.19.0...0.19.1
 [0.19.0]: https://github.com/fancy-regex/fancy-regex/compare/0.18.0...0.19.0
 [0.18.0]: https://github.com/fancy-regex/fancy-regex/compare/0.17.0...0.18.0
 [0.17.0]: https://github.com/fancy-regex/fancy-regex/compare/0.16.2...0.17.0

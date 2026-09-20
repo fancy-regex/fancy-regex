@@ -1,6 +1,6 @@
 [package]
 name = "fancy-regex"
-version = "0.19.0"
+version = "0.19.2"
 authors = ["Raph Levien <raph@google.com>", "Robin Stocker <robin@nibor.org>", "Keith Hall <keith.hall@available.systems>"]
 edition = "2018"
 license = "MIT"
@@ -21,6 +21,8 @@ unicode = ["regex-automata/unicode", "regex-syntax/unicode"]
 std = ["regex-automata/std", "regex-syntax/std", "bit-set/std"]
 # Enable variable-length lookbehinds using reverse DFA search
 variable-lookbehinds = ["regex-automata/dfa-search"]
+# Enable builder support for leftmost-longest match semantics (as opposed to default leftmost-first).
+leftmost_longest = []
 # Let regex-automata eagerly build a fully compiled dense DFA for small
 # patterns (and delegated fragments). Trades noticeably slower compiles and
 # more memory for the fastest search engine; without it searches use the lazy

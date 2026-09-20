@@ -33,6 +33,7 @@ jobs:
       - run: cargo check --no-default-features
       - run: cargo check --no-default-features --features "unicode,perf,variable-lookbehinds"
       - run: cargo check --no-default-features --features "std"
+      - run: cargo check --no-default-features --features "unicode,perf,leftmost_longest"
       - run: cargo check --examples
       - run: cargo check --benches
 
@@ -69,6 +70,7 @@ jobs:
       - run: cargo test
       - run: cargo test --no-default-features
       - run: cargo test --no-default-features --features "unicode,perf,variable-lookbehinds"
+      - run: cargo test --no-default-features --features "unicode,perf,leftmost_longest"
 
   example:
     name: example

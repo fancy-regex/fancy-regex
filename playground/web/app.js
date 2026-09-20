@@ -41,6 +41,7 @@ class FancyRegexPlayground {
                 ignoreWhitespace: document.getElementById('flag-ignore-whitespace'),
                 onigurumaMode: document.getElementById('flag-oniguruma-mode'),
                 findNotEmpty: document.getElementById('flag-find-not-empty'),
+                leftmostLongest: document.getElementById('flag-leftmost-longest'),
                 ignoreNumberedGroups: document.getElementById('flag-ignore-numbered-groups'),
                 unicode: document.getElementById('flag-unicode'),
                 ignoreTrailingNewline: document.getElementById('flag-no-match-at-trailing-newline'),
@@ -87,6 +88,7 @@ class FancyRegexPlayground {
             unicode: this.elements.flags.unicode.checked,
             oniguruma_mode: this.elements.flags.onigurumaMode.checked,
             find_not_empty: this.elements.flags.findNotEmpty.checked,
+            leftmost_longest: this.elements.flags.leftmostLongest.checked,
             ignore_numbered_groups_when_named_groups_exist: this.elements.flags.ignoreNumberedGroups.checked,
             ignore_trailing_newline: this.elements.flags.ignoreTrailingNewline.checked,
         };
@@ -101,6 +103,7 @@ class FancyRegexPlayground {
             { param: 'u', key: 'unicode', element: this.elements.flags.unicode },
             { param: 'O', key: 'oniguruma_mode', element: this.elements.flags.onigurumaMode },
             { param: 'N', key: 'find_not_empty', element: this.elements.flags.findNotEmpty },
+            { param: 'L', key: 'leftmost_longest', element: this.elements.flags.leftmostLongest },
             { param: 'G', key: 'ignore_numbered_groups_when_named_groups_exist', element: this.elements.flags.ignoreNumberedGroups },
             { param: 'T', key: 'ignore_trailing_newline', element: this.elements.flags.ignoreTrailingNewline },
         ];

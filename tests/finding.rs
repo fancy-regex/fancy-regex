@@ -1320,44 +1320,31 @@ fn seek_regex(re: &str) -> fancy_regex::Regex {
     result.unwrap()
 }
 
-/// Assert that `seek(true)` produces the same first match as the default.
-fn assert_seek_same(re: &str, text: &str) -> Option<(usize, usize)> {
-    let default_result = common::regex(re).find(text).unwrap();
-    let seek_result = seek_regex(re).find(text).unwrap();
-    assert_eq!(
-        default_result.map(|m| (m.start(), m.end())),
-        seek_result.map(|m| (m.start(), m.end())),
-        "seek=true gave different result for /{re}/ on {:?}",
-        text
-    );
-    seek_result.map(|m| (m.start(), m.end()))
-}
-
 #[test]
 fn seek_backref_finds_match() {
     // The seek pattern inlines the group body ("abc") and jumps past irrelevant text.
-    assert_seek_same(r"(abc)\1", "xxxabcabcyyy");
-    assert_seek_same(r"(abc)\1", "xabcabcx");
+    common::assert_seek_same(r"(abc)\1", "xxxabcabcyyy");
+    common::assert_seek_same(r"(abc)\1", "xabcabcx");
 }
 
 #[test]
 fn seek_overlapping_alternatives_finds_leftmost_match() {
     // https://github.com/rust-lang/regex/issues/1354
-    let result = assert_seek_same(r".abb|b", "zabb");
+    let result = common::assert_seek_same(r".abb|b", "zabb");
     assert_eq!(result, Some((0, 4)));
 }
 
 #[test]
 fn seek_negated_char_class_optional_finds_leftmost_match() {
     // https://github.com/rust-lang/regex/issues/1345
-    let result = assert_seek_same(r"[^()]*(?:\([^()]*\))?[^()]*:", "$(:):");
+    let result = common::assert_seek_same(r"[^()]*(?:\([^()]*\))?[^()]*:", "$(:):");
     assert_eq!(result, Some((0, 5)));
 }
 
 #[test]
 fn seek_backref_no_match() {
-    assert_seek_same(r"(abc)\1", "xxxyyy");
-    assert_seek_same(r"(abc)\1", "abcxabc");
+    common::assert_seek_same(r"(abc)\1", "xxxyyy");
+    common::assert_seek_same(r"(abc)\1", "abcxabc");
 }
 
 #[test]
@@ -1385,7 +1372,7 @@ fn seek_matches_identical_to_default() {
         (r"(?<=)\tbaz", "foobar\n\tbaz\n\ttest"),
     ];
     for (re, text) in cases {
-        assert_seek_same(re, text);
+        common::assert_seek_same(re, text);
     }
 }
 
