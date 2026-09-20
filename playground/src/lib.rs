@@ -661,6 +661,14 @@ mod tests {
     }
 
     #[test]
+    fn test_info_to_tree_node_literal_bytes() {
+        let node = parse_and_analyze(r"\xFF");
+
+        assert_eq!(node.kind, "LiteralBytes");
+        assert_eq!(node.summary.as_deref(), Some(r"\xFF"));
+    }
+
+    #[test]
     fn test_info_to_tree_node_backref_case_insensitive() {
         use fancy_regex::internal::FLAG_CASEI;
 
