@@ -51,6 +51,8 @@ fn bytes_non_utf8_input_literal_bytes() {
         .unwrap();
 
     assert!(re.is_match(b"\xFF\xFF").unwrap());
+    assert!(!re.is_match(b"\xFF\xAC").unwrap());
+    assert!(!re.is_match(b"\xAC\xFF").unwrap());
 }
 
 #[test]

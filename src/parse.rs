@@ -4443,4 +4443,15 @@ mod tests {
             ])
         );
     }
+
+    #[test]
+    fn char_class() {
+        assert_eq!(
+            p(r"[a-z\n\xFF]"),
+            Expr::Delegate {
+                inner: "[a-z\n\\xFF]".to_string(),
+                casei: false
+            }
+        );
+    }
 }
