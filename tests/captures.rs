@@ -48,12 +48,48 @@ fn capture_names_with_zero_repetition() {
     let capture_names = regex.capture_names().collect::<Vec<_>>();
     assert_eq!(capture_names, vec![None, Some("foo"), Some("bar")]);
 
+    // non-named groups mixed with named groups
     let regex = common::regex(r"(a)(?<foo>x){0}(b)(?<bar>y)(c)");
     let capture_names = regex.capture_names().collect::<Vec<_>>();
     assert_eq!(
         capture_names,
         vec![None, None, Some("foo"), None, Some("bar"), None]
     );
+
+    // Alternations, nested groups etc.
+    let regex = common::regex(r"(?<a>x|y){0}(?<b>z){0}(?<c>z(?<d>foo){0})|(?<e>bar)");
+    let capture_names = regex.capture_names().collect::<Vec<_>>();
+    assert_eq!(
+        capture_names,
+        vec![None, Some("a"), Some("b"), Some("c"), Some("d"), Some("e")]
+    );
+    assert_eq!(regex.captures_len(), 6);
+
+    // Backrefs, subroutine calls etc.
+    let regex = common::regex(r"(?<a>x|y){0}(?<b>z\g<a>){0}(?<c>z(?<d>foo){0})|(?<e>bar)\n<e>");
+    let capture_names = regex.capture_names().collect::<Vec<_>>();
+    assert_eq!(
+        capture_names,
+        vec![None, Some("a"), Some("b"), Some("c"), Some("d"), Some("e")]
+    );
+    assert_eq!(regex.captures_len(), 6);
+
+    // trailing positive lookahead
+    let regex = common::regex(
+        r"(example)(?<a>x|y){0}(?=(?<b>z)(foo)(?<bar>hello)(?:not-a-capture-group))(test)",
+    );
+    let capture_names = regex.capture_names().collect::<Vec<_>>();
+    assert_eq!(
+        capture_names,
+        vec![None, None, Some("a"), Some("b"), None, Some("bar"), None]
+    );
+    assert_eq!(regex.captures_len(), 7);
+
+    // define groups
+    let regex = common::regex(r"(?(DEFINE)(a)(?<b>b))\g<b>(?<c>c)(d)");
+    let capture_names = regex.capture_names().collect::<Vec<_>>();
+    assert_eq!(capture_names, vec![None, None, Some("b"), Some("c"), None]);
+    assert_eq!(regex.captures_len(), 5);
 }
 
 #[test]
