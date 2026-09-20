@@ -279,10 +279,9 @@ pub(crate) enum SeqElem {
     /// first-character set of everything that can follow it (checked at build
     /// time): a maximal-munch loop is then exactly equivalent to the engine —
     /// giving characters back would put the next element on a character of
-    /// this class, which by disjointness can never match. Mid-sequence lazy
-    /// repetitions are normalized to `greedy: true` under the same argument,
-    /// so `greedy: false` only occurs in final position (consume exactly
-    /// `min`).
+    /// this class, which by disjointness can never match. Lazy repetitions are
+    /// only accepted in effectively final position, where consuming exactly
+    /// `min` reproduces an anchored engine search.
     ClassRepeat {
         class: CharClassMatcher,
         min: u32,
@@ -299,10 +298,7 @@ pub(crate) enum SeqElem {
     /// so each branch is deterministic; trying take-then-skip (greedy) or
     /// skip-then-take (lazy) reproduces the engine's leftmost-first semantics
     /// exactly.
-    Optional {
-        elems: Box<[SeqElem]>,
-        greedy: bool,
-    },
+    Optional { elems: Box<[SeqElem]>, greedy: bool },
 }
 
 /// Maximum engine-style capture slots a [`ClassSeqMatcher`] tracks (slots 0/1
@@ -316,8 +312,8 @@ pub(crate) const CLASS_SEQ_MAX_SLOTS: usize = 16;
 pub(crate) type SeqSlots = [Option<usize>; CLASS_SEQ_MAX_SLOTS];
 
 /// A delegated fragment that is a plain sequence of literals and character
-/// classes (with at most a trailing class repetition), matched natively by the
-/// VM instead of being delegated to a `meta::Regex` engine.
+/// classes, matched natively by the VM instead of being delegated to a
+/// `meta::Regex` engine.
 ///
 /// Such fragments are extremely common as branches of alternations in
 /// lookbehinds (e.g. `[^\w]return`) and as whitespace runs (`\s*`), and
@@ -437,7 +433,11 @@ impl ClassSeqMatcher {
                     greedy,
                 } => {
                     let mut count = 0u32;
-                    let limit = if *greedy { max.unwrap_or(u32::MAX) } else { *min };
+                    let limit = if *greedy {
+                        max.unwrap_or(u32::MAX)
+                    } else {
+                        *min
+                    };
                     while count < limit {
                         match class.match_len(s, pos) {
                             Some(len) => {

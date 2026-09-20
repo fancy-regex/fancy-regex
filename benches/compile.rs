@@ -49,17 +49,18 @@ const EASY_LITERAL: &str =
 /// A second easy pattern resembling a real-world tokenizer rule.
 const EASY_EMAIL: &str = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}";
 
-/// Hard pattern (lookarounds + backreference) interleaved with easy runs, so the
-/// compiler emits several `Insn::Delegate` engines. Exercises bottleneck #2.
+/// Hard pattern (lookarounds + backreference) interleaved with easy runs. This
+/// benchmarks ClassSeq compilation: supported runs avoid building their former
+/// `Insn::Delegate` engines, while unsupported runs retain the fallback.
 const DELEGATE_HEAVY: &str = r"(\d{3})(?=x)[a-z]+(?<=ab)\w+\1[A-Z]{2}(?!q)\s+foo";
 
-/// Build a pattern with many fancy-separated easy runs to stress the
-/// "one meta engine per easy run" cost.
+/// Build a pattern with many fancy-separated easy runs that each compile to a
+/// ClassSeq instruction.
 fn delegate_stress() -> String {
     let mut s = String::new();
     for _ in 0..20 {
-        // each `[a-z]{2}` easy run is separated by a lookahead (a hard part),
-        // forcing a separate delegate engine for each run.
+        // Each `[a-z]{2}` easy run is separated by a lookahead (a hard part),
+        // forcing a separate VM fragment for each run.
         s.push_str("[a-z]{2}(?=x)");
     }
     s

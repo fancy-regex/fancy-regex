@@ -25,7 +25,6 @@ use alloc::format;
 use alloc::string::{String, ToString};
 #[cfg(feature = "variable-lookbehinds")]
 use alloc::sync::Arc;
-#[cfg(feature = "variable-lookbehinds")]
 use alloc::vec;
 use alloc::vec::Vec;
 use regex_automata::meta::Regex as RaRegex;
@@ -1272,21 +1271,29 @@ fn class_seq_matcher_from_hirs(
     // next element on a character of the repeated class, which by
     // disjointness can never match. The effective first set is accumulated
     // right to left, absorbing elements that can match empty (`min: 0`
-    // repetitions). Under the same argument a mid-sequence lazy repetition is
-    // forced to consume the maximal run too, so it is normalized to greedy.
+    // repetitions). Lazy repetitions are only handled when they are
+    // effectively trailing (possibly followed by capture markers). A later
+    // consuming or asserting element may require trying multiple repetition
+    // lengths, which this deterministic matcher deliberately does not do.
     // A start-of-text/line assertion can only be allowed before anything has
     // consumed: after a give-back of a preceding repetition down to zero, it
     // could succeed at the delegate start regardless of the character there,
     // which the first-set analysis below cannot express.
     if elems.iter().enumerate().any(|(i, e)| {
-        i > 0 && matches!(e, SeqElem::Look(SeqLook::Start) | SeqElem::Look(SeqLook::StartLF))
+        i > 0
+            && matches!(
+                e,
+                SeqElem::Look(SeqLook::Start) | SeqElem::Look(SeqLook::StartLF)
+            )
     }) {
         return None;
     }
 
     // Each Optional is a binary choice point in the matcher's bounded
     // backtracking, so cap how many we accept; and group spans must fit the
-    // matcher's fixed slot array.
+    // matcher's fixed slot array. `capture_groups` already tells us how many
+    // delegate-local groups there are, so there is no need to walk the
+    // elements (and nested optionals) a second time.
     let optionals = elems
         .iter()
         .filter(|e| matches!(e, SeqElem::Optional { .. }))
@@ -1294,31 +1301,25 @@ fn class_seq_matcher_from_hirs(
     if optionals > 4 {
         return None;
     }
-    fn max_group(elems: &[SeqElem]) -> u32 {
-        elems
-            .iter()
-            .map(|e| match e {
-                SeqElem::GroupStart(g) | SeqElem::GroupEnd(g) => *g,
-                SeqElem::Optional { elems, .. } => max_group(elems),
-                _ => 0,
-            })
-            .max()
-            .unwrap_or(0)
-    }
-    if (max_group(&elems) as usize * 2 + 1) >= CLASS_SEQ_MAX_SLOTS {
+    let capture_count = capture_groups.map_or(0, |range| range.end() - range.start());
+    if (capture_count + 1) * 2 > CLASS_SEQ_MAX_SLOTS {
         return None;
     }
 
     let unicode_mode = matches!(options.bytes_mode, BytesMode::Unicode);
     let mut eff_first: Vec<(u32, u32)> = Vec::new();
-    let last = elems.len() - 1;
     for i in (0..elems.len()).rev() {
-        if let SeqElem::ClassRepeat { class, greedy, .. } = &mut elems[i] {
-            if i < last {
+        if let SeqElem::ClassRepeat { class, greedy, .. } = &elems[i] {
+            let effectively_trailing = elems[i + 1..]
+                .iter()
+                .all(|e| matches!(e, SeqElem::GroupStart(_) | SeqElem::GroupEnd(_)));
+            if !effectively_trailing {
+                if !greedy {
+                    return None;
+                }
                 if ranges_overlap(&class_ranges_u32(class), &eff_first) {
                     return None;
                 }
-                *greedy = true;
             }
         }
         let this = elem_first_ranges(&elems[i], unicode_mode)?;
@@ -1397,9 +1398,7 @@ fn elem_first_ranges(elem: &SeqElem, unicode_mode: bool) -> Option<Vec<(u32, u32
             };
             Some(vec![(cu, cu)])
         }
-        SeqElem::Class(class) | SeqElem::ClassRepeat { class, .. } => {
-            Some(class_ranges_u32(class))
-        }
+        SeqElem::Class(class) | SeqElem::ClassRepeat { class, .. } => Some(class_ranges_u32(class)),
     }
 }
 
@@ -1770,6 +1769,49 @@ mod tests {
             "no branch should need a forward delegate: {:?}",
             prog
         );
+    }
+
+    #[test]
+    fn class_seq_accepts_safe_mid_sequence_repetition() {
+        let prog = compile_prog_forced_hard(r"\s*=");
+        assert_eq!(prog.len(), 2, "prog: {:?}", prog);
+        assert_class_seq_insn(&prog[0], r"\s*=");
+        assert_matches!(prog[1], End);
+    }
+
+    #[test]
+    fn class_seq_rejects_overlapping_mid_sequence_repetition() {
+        let prog = compile_prog_forced_hard(r"\s*\s");
+        assert_eq!(prog.len(), 2, "prog: {:?}", prog);
+        assert_delegate_insn(&prog[0], r"\s*\s", None);
+        assert_matches!(prog[1], End);
+    }
+
+    #[test]
+    fn class_seq_only_accepts_effectively_trailing_lazy_repetition() {
+        let prog = compile_prog_forced_hard(r"x\s*?");
+        assert_eq!(prog.len(), 3, "prog: {:?}", prog);
+        assert_matches!(prog[0], Lit(ref l) if l == "x");
+        assert_class_seq_insn(&prog[1], r"\s*?");
+        assert_matches!(prog[2], End);
+
+        let prog = compile_prog_forced_hard(r"\s*?\d*");
+        assert_eq!(prog.len(), 2, "prog: {:?}", prog);
+        assert_delegate_insn(&prog[0], r"\s*?\d*", None);
+        assert_matches!(prog[1], End);
+    }
+
+    #[test]
+    fn class_seq_accepts_captures_and_optional_sequences() {
+        let prog = compile_prog_forced_hard(r"\s*(async)?");
+        assert_eq!(prog.len(), 2, "prog: {:?}", prog);
+        assert_class_seq_capture_insn(&prog[0], r"\s*(async)?", Some(CaptureGroupRange(0, 1)));
+        assert_matches!(prog[1], End);
+
+        let prog = compile_prog_forced_hard(r"(a)?a");
+        assert_eq!(prog.len(), 2, "prog: {:?}", prog);
+        assert_class_seq_capture_insn(&prog[0], r"(a)?a", Some(CaptureGroupRange(0, 1)));
+        assert_matches!(prog[1], End);
     }
 
     #[test]

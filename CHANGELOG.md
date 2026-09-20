@@ -12,8 +12,6 @@ with the exception that 0.x versions can break between minor versions.
 - Add `ByteSet` that returns the first bytes that can match a pattern so you can build your own prefiler
 
 ### Changed
-- Compilation and match performance: delegated fragments that are a plain sequence of literals and character classes — optionally with leading `\A`/`^` and trailing `\z`/`$` assertions and class repetitions like `\s*` (mid-sequence only when the repeated class is disjoint from what follows) — are now matched by a native VM instruction (`ClassSeq`) instead of building a regex-automata engine per fragment. Fragments like `[^\w]return`, `\s*=` or `\s*$` are common in TextMate grammars, where this cuts compile time of lookbehind-heavy patterns by an order of magnitude (compile_delegate_heavy/realistic bench: −93%) while also matching slightly faster
-- Compilation performance: `ClassSeq` sequences may now contain capture groups and optional deterministic sub-sequences (`(async)?`), recording group spans natively instead of requiring an engine — capture-carrying fragments like `\s*(async)?` or `(b?r)(#*)(")` are very common in TextMate grammars
 ### Fixed
 
 ## [0.19.2] - 2026-09-13

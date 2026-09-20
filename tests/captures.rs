@@ -71,6 +71,31 @@ fn optional_capture_group_matched_is_some() {
 }
 
 #[test]
+fn class_seq_optional_capture_backtracks() {
+    // The leading lookahead routes the easy suffix through the VM, where it is
+    // handled by ClassSeq. The greedy optional must give its `a` back so
+    // the following literal can match, and its capture must be rolled back.
+    let captures = common::assert_captures(r"(?=a)(a)?a", "a").unwrap();
+    assert!(captures.get(1).is_none());
+
+    let captures = common::assert_captures(r"(?=a)(a)??a", "a").unwrap();
+    assert!(captures.get(1).is_none());
+
+    let captures = common::assert_captures(r"(?=a)(a)?a", "aa").unwrap();
+    assert_eq!(captures.get(1).unwrap().as_str(), "a");
+}
+
+#[test]
+fn class_seq_preserves_lazy_class_repetitions() {
+    // The lookahead delegates its easy body to ClassSeq while the
+    // backreference makes the captured endpoint observable. A trailing lazy
+    // repeat must remain lazy.
+    let captures = common::assert_captures(r"(?=(\s*?))\1", "   ").unwrap();
+    assert_eq!(captures.get(0).unwrap().as_str(), "");
+    assert_eq!(captures.get(1).unwrap().as_str(), "");
+}
+
+#[test]
 fn captures_after_lookbehind() {
     let captures = captures(
         r"\s*(?<=[() ])(@\w+)(\([^)]*\))?\s*",
