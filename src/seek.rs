@@ -20,6 +20,9 @@
 
 //! Seek pre-filter: build a simplified approximation of a pattern used to
 //! skip to plausible match positions before handing off to the backtracking VM.
+//!
+//! Every quantifier in the approximation is emitted lazily because we only care about
+//! the start and being lazy doesn't change the result.
 
 use alloc::format;
 use alloc::string::String;
@@ -69,7 +72,7 @@ pub(crate) fn expr_contains_positional_anchor(expr: &Expr) -> bool {
 /// and never decides matches, so a less-selective approximation stays correct.
 pub(crate) const MAX_SEEK_PATTERN_LEN: usize = 4096;
 
-/// Emit a permissive size placeholder — `(?s:.)*`, `(?s:.)+`, or `(?s:.){N,}` — into `buf`.
+/// Emit a lazy permissive size placeholder — `(?s:.)*?`, `(?s:.)+?`, or `(?s:.){N,}?` — into `buf`.
 ///
 /// Used when a hard node cannot be represented in the seek pattern but has a known minimum
 /// size.  The placeholder is an over-approximation that avoids false negatives: it admits any
@@ -79,15 +82,7 @@ pub(crate) fn emit_min_size_placeholder(buf: &mut String, min_size: usize, prece
         buf.push_str("(?:");
     }
     buf.push_str("(?s:.)");
-    match min_size {
-        0 => buf.push('*'),
-        1 => buf.push('+'),
-        n => {
-            buf.push('{');
-            crate::push_usize(buf, n);
-            buf.push_str(",}");
-        }
-    }
+    write_quantifier(buf, min_size, usize::MAX, false);
     if precedence > 2 {
         buf.push(')');
     }
@@ -267,7 +262,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                 );
             }
         }
-        Expr::Repeat { lo, hi, greedy, .. } => {
+        Expr::Repeat { lo, hi, .. } => {
             if precedence > 2 {
                 buf.push_str("(?:");
             }
@@ -282,7 +277,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                     inlined_groups,
                 );
             }
-            write_quantifier(buf, *lo, *hi, *greedy);
+            write_quantifier(buf, *lo, *hi, false);
             if precedence > 2 {
                 buf.push(')');
             }
@@ -473,9 +468,9 @@ pub(crate) fn build_seek_pattern_impl<'a>(
             }
         }
         // Absent repeater `(?~expr)` matches any content not containing `expr`.
-        // Approximate with `(?s:.*)` (any characters, including newline) since the repeater
+        // Approximate with `(?s:.*?)` (any characters, including newline) since the repeater
         // can consume an arbitrary number of characters.
-        Expr::Absent(Absent::Repeater(_)) => buf.push_str("(?s:.*)"),
+        Expr::Absent(Absent::Repeater(_)) => buf.push_str("(?s:.*?)"),
         // Absent expression `(?~|absent|exp)` matches `exp` subject to the absent constraint.
         // Approximate by seeking only for `exp`, dropping the constraint — this is a safe
         // over-approximation since any position where `exp` matches (ignoring the constraint)
@@ -729,6 +724,9 @@ mod tests {
     fn seek_pattern_recursive_subroutine_is_inlined_once() {
         let pattern = r"(?<tuple>\((?:[^()]|\g<tuple>)+\))\s*(?!=[=>])(?==)";
         let seek = get_seek_pattern(pattern);
-        assert_eq!(seek, r#"(?:(?:\((?:[^()]|\((?:[^()]|(?s:.)+)+\))+\))\s*)="#);
+        assert_eq!(
+            seek,
+            r#"(?:(?:\((?:[^()]|\((?:[^()]|(?s:.)+?)+?\))+?\))\s*)="#
+        );
     }
 }
