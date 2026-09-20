@@ -133,6 +133,19 @@ struct Compiler<'a> {
 }
 
 impl<'a> Compiler<'a> {
+    #[inline]
+    fn emit_literal_bytes(&mut self, bytes: &[u8]) {
+        if matches!(self.options.bytes_mode, BytesMode::Unicode) {
+            let s: String = bytes
+                .iter()
+                .map(|&b| char::from_u32(b as u32).unwrap())
+                .collect();
+            self.b.add(Insn::Lit(s));
+        } else {
+            self.b.add(Insn::LitBytes(bytes.to_vec()));
+        }
+    }
+
     fn visit(&mut self, info: &Info<'_>, hard: bool) -> Result<()> {
         if !hard && !info.hard {
             // easy case, delegate entire subexpr
@@ -146,6 +159,9 @@ impl<'a> Compiler<'a> {
                 } else {
                     self.compile_delegate(info)?;
                 }
+            }
+            Expr::LiteralBytes { ref bytes, .. } => {
+                self.emit_literal_bytes(bytes);
             }
             Expr::Any { newline: true, .. } => {
                 self.b.add(Insn::Any);
@@ -831,6 +847,12 @@ impl<'a> Compiler<'a> {
     fn compile_delegates(&mut self, infos: &[Info<'_>]) -> Result<()> {
         if infos.is_empty() {
             return Ok(());
+        }
+        if infos.len() == 1 {
+            if let Expr::LiteralBytes { ref bytes, .. } = infos[0].expr {
+                self.emit_literal_bytes(bytes);
+                return Ok(());
+            }
         }
         // A batch that is entirely literal compiles to a native literal
         // instruction instead of a delegated engine. Case-sensitive literals
@@ -1525,6 +1547,16 @@ mod tests {
         assert_matches!(prog[5], Jmp(7));
         assert_matches!(prog[6], Lit(ref l) if l == "c");
         assert_matches!(prog[7], End);
+    }
+
+    #[test]
+    fn ascii_literal_bytes_compiled_as_distinct_instruction() {
+        let prog = compile_prog_ascii(r"\xFF");
+        assert_eq!(prog.len(), 4, "prog: {:?}", prog);
+        assert_matches!(prog[0], Save(0));
+        assert_matches!(&prog[1], LitBytes(bytes) if bytes.len() == 1 && bytes[0] == 255);
+        assert_matches!(prog[2], Save(1));
+        assert_matches!(prog[3], End);
     }
 
     #[test]
@@ -2248,6 +2280,28 @@ mod tests {
                     CompileOptions {
                         anchored: true,
                         contains_subroutines: tree.contains_subroutines,
+                        ..CompileOptions::default()
+                    },
+                )
+                .unwrap()
+                .body
+            },
+        )
+    }
+
+    fn compile_prog_ascii(re: &str) -> Vec<Insn> {
+        compile_prog_with(
+            re,
+            AnalyzeContext {
+                ..Default::default()
+            },
+            |info, tree| {
+                compile(
+                    info,
+                    CompileOptions {
+                        anchored: true,
+                        contains_subroutines: tree.contains_subroutines,
+                        bytes_mode: BytesMode::Ascii,
                         ..CompileOptions::default()
                     },
                 )

@@ -497,9 +497,10 @@ pub(crate) fn build_seek_pattern_impl<'a>(
         // Easy leaf nodes (Literal, Any, Delegate) are always handled by the easy no-captures
         // early return above and never reach here. Listed explicitly so that adding a new
         // Expr variant produces a compile error until the seek-pattern case is handled.
-        Expr::Literal { .. } | Expr::Any { .. } | Expr::Delegate { .. } => {
-            info.expr.to_str(buf, precedence)
-        }
+        Expr::Literal { .. }
+        | Expr::LiteralBytes { .. }
+        | Expr::Any { .. }
+        | Expr::Delegate { .. } => info.expr.to_str(buf, precedence),
         // These variants cause a compile error during analysis and are therefore unreachable
         // after a successful `analyze()` call.
         Expr::AstNode(..) => {
@@ -728,5 +729,10 @@ mod tests {
             seek,
             r#"(?:(?:\((?:[^()]|\((?:[^()]|(?s:.)+?)+?\))+?\))\s*)="#
         );
+    }
+
+    #[test]
+    fn seek_pattern_literal_bytes() {
+        assert_eq!(get_seek_pattern(r"\xFF"), r"\xFF");
     }
 }

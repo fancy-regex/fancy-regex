@@ -34,6 +34,7 @@ extern crate alloc;
 
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
+use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 use alloc::vec;
@@ -2266,6 +2267,13 @@ pub enum Expr {
         /// Whether match is case-insensitive or not
         casei: bool,
     },
+    /// A literal consisting of raw bytes, produced by `\xHH` escapes where
+    /// the byte value is greater than 0x7F. In Unicode mode these are
+    /// re-encoded as UTF-8; in bytes modes they match the exact byte sequence.
+    LiteralBytes {
+        /// The raw bytes to match
+        bytes: Vec<u8>,
+    },
     /// Concatenation of multiple expressions, must match in order, e.g. `a.` is a concatenation of
     /// the literal `a` and `.` for any character
     Concat(Vec<Expr>),
@@ -2787,6 +2795,7 @@ impl Expr {
                 | Expr::Assertion(_)
                 | Expr::GeneralNewline { .. }
                 | Expr::Literal { .. }
+                | Expr::LiteralBytes { .. }
                 | Expr::Delegate { .. }
                 | Expr::Backref { .. }
                 | Expr::BackrefWithRelativeRecursionLevel { .. }
@@ -2854,6 +2863,11 @@ impl Expr {
                 push_quoted(buf, val);
                 if casei {
                     buf.push(')');
+                }
+            }
+            Expr::LiteralBytes { ref bytes, .. } => {
+                for &b in bytes {
+                    buf.push_str(&format!("\\x{b:02X}"));
                 }
             }
             Expr::Assertion(Assertion::StartText) => buf.push('^'),
@@ -3241,6 +3255,7 @@ mod tests {
             casei: false
         }
         .is_leaf_node());
+        assert!(Expr::LiteralBytes { bytes: vec![0x80] }.is_leaf_node());
         assert!(Expr::Delegate {
             inner: "[0-9]".to_string(),
             casei: false,
