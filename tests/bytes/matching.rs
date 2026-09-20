@@ -43,6 +43,14 @@ fn bytes_non_utf8_input_literal_bytes() {
         .unwrap();
 
     assert!(re.is_match(b"\xFF").unwrap());
+
+    // hard expression because it contains a backref
+    let re = RegexBuilder::new(r"(\xFF)\1")
+        .bytes_mode(BytesMode::Ascii)
+        .build()
+        .unwrap();
+
+    assert!(re.is_match(b"\xFF\xFF").unwrap());
 }
 
 #[test]
@@ -488,4 +496,9 @@ fn bytes_hex_escape_unicode_matches_utf8() {
     let re = RegexBuilder::new(r"\xFF").build().unwrap();
     assert!(re.is_match("\u{00FF}").unwrap());
     assert!(!re.is_match(b"\xFF").unwrap());
+
+    // hard expression because it contains a backref
+    let re = RegexBuilder::new(r"(\xFF)\1").build().unwrap();
+    assert!(re.is_match("\u{00FF}\u{00FF}").unwrap());
+    assert!(!re.is_match(b"\xFF\xFF").unwrap());
 }
