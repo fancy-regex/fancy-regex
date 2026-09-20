@@ -236,6 +236,7 @@ impl<'a> Analyzer<'a> {
             Expr::LiteralBytes { ref bytes, .. } => {
                 min_size = bytes.len();
                 const_size = true;
+                max_size = min_size;
             }
             Expr::Concat(ref v) => {
                 const_size = true;
