@@ -76,6 +76,8 @@ use crate::parse_flags::*;
 use crate::vm::OPTION_LEFTMOST_LONGEST;
 use crate::vm::{Prog, OPTION_FIND_NOT_EMPTY, OPTION_NOT_CONTINUED_FROM_PREVIOUS_MATCH};
 
+use bit_set::BitSet;
+
 pub use crate::byte_set::ByteSet;
 pub use crate::bytes::MatchBytes;
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
@@ -177,6 +179,11 @@ enum RegexImpl {
         explicit_capture_group_0: bool,
         /// The actual pattern passed to regex-automata for delegation
         delegated_pattern: String,
+        /// Group indices that are inside {0} (zero-repetition) quantifiers.
+        /// These groups never participate in matching, so their captures
+        /// return None even though they exist in the regex-automata engine
+        /// for correct group-counting.
+        zero_rep_groups: BitSet,
     },
     Fancy {
         prog: Arc<Prog>,
@@ -351,6 +358,9 @@ enum CapturesImpl {
         /// Therefore what is actually capture group 1 should be treated as capture group 0, and all other
         /// capture groups should have their index reduced by one as well to line up with what the pattern specifies.
         explicit_capture_group_0: bool,
+        /// Group indices that are inside {0} (zero-repetition) quantifiers.
+        /// These groups never participate in matching, so their captures return None.
+        zero_rep_groups: BitSet,
     },
     Fancy {
         saves: Vec<usize>,
@@ -363,9 +373,15 @@ impl CapturesImpl {
             CapturesImpl::Wrap {
                 locations,
                 explicit_capture_group_0,
-            } => locations
-                .get_group(i + if *explicit_capture_group_0 { 1 } else { 0 })
-                .map(|span| (span.start, span.end)),
+                zero_rep_groups,
+            } => {
+                if zero_rep_groups.contains(i) {
+                    return None;
+                }
+                locations
+                    .get_group(i + if *explicit_capture_group_0 { 1 } else { 0 })
+                    .map(|span| (span.start, span.end))
+            }
             CapturesImpl::Fancy { saves } => {
                 let slot = i * 2;
                 if slot >= saves.len() {
@@ -386,6 +402,7 @@ impl CapturesImpl {
             CapturesImpl::Wrap {
                 locations,
                 explicit_capture_group_0,
+                ..
             } => locations.group_len() - if *explicit_capture_group_0 { 1 } else { 0 },
             CapturesImpl::Fancy { saves } => saves.len() / 2,
         }
@@ -1276,6 +1293,7 @@ impl Regex {
             // string path for anything the translator doesn't cover.
             let utf8 = matches!(compile_options.bytes_mode, BytesMode::Unicode);
             let mut hir_ctx = to_hir::HirCtx::new(compile_options.unicode, utf8);
+            hir_ctx.enable_preserve_zero_rep_captures();
             let inner = match to_hir::expr_to_hir(&tree.expr, &mut hir_ctx) {
                 Some(hir) => compile::compile_inner_from_hir(&hir, &compile_options, usage)?,
                 None => compile::compile_inner(&re_cooked, &compile_options, usage)?,
@@ -1286,6 +1304,7 @@ impl Regex {
                     pattern,
                     explicit_capture_group_0: requires_capture_group_fixup,
                     delegated_pattern: re_cooked,
+                    zero_rep_groups: hir_ctx.into_zero_rep_groups(),
                 },
                 named_groups: Arc::new(tree.named_groups),
             });
@@ -1684,11 +1703,13 @@ impl Regex {
             RegexImpl::Wrap {
                 inner,
                 explicit_capture_group_0,
+                zero_rep_groups,
                 ..
             } => {
                 // find_not_empty patterns are always compiled as Fancy, so find_not_empty is
                 // always false here.
                 let explicit = *explicit_capture_group_0;
+                let zero_rep_groups = zero_rep_groups.clone();
                 let mut locations = inner.create_captures();
                 let mut delegated_input = ra_input(input);
                 if input.is_anchored() {
@@ -1699,6 +1720,7 @@ impl Regex {
                     inner: CapturesImpl::Wrap {
                         locations,
                         explicit_capture_group_0: explicit,
+                        zero_rep_groups,
                     },
                     named_groups,
                     input: haystack,
