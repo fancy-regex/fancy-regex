@@ -351,6 +351,14 @@ fn info_to_tree_node<'a>(
             }
             ("Literal".to_string(), Some(summary), None)
         }
+        Expr::LiteralBytes { bytes, .. } => {
+            let summary = bytes
+                .iter()
+                .map(|b| format!("\\x{b:02X}"))
+                .collect::<Vec<_>>()
+                .join("");
+            ("LiteralBytes".to_string(), Some(summary), None)
+        }
         Expr::Concat(v) => ("Concat".to_string(), Some(format!("({})", v.len())), None),
         Expr::Alt(v) => ("Alt".to_string(), Some(format!("({})", v.len())), None),
         Expr::Group(_) => {

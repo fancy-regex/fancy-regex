@@ -160,12 +160,8 @@ impl<'a> Compiler<'a> {
                     self.compile_delegate(info)?;
                 }
             }
-            Expr::LiteralBytes { ref bytes, casei } => {
-                if !casei {
-                    self.emit_literal_bytes(bytes);
-                } else {
-                    self.compile_delegate(info)?;
-                }
+            Expr::LiteralBytes { ref bytes, .. } => {
+                self.emit_literal_bytes(bytes);
             }
             Expr::Any { newline: true, .. } => {
                 self.b.add(Insn::Any);
@@ -853,12 +849,8 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
         if infos.len() == 1 {
-            if let Expr::LiteralBytes { ref bytes, casei } = infos[0].expr {
-                if !casei {
-                    self.emit_literal_bytes(bytes);
-                } else {
-                    return self.compile_delegate(&infos[0]);
-                }
+            if let Expr::LiteralBytes { ref bytes, .. } = infos[0].expr {
+                self.emit_literal_bytes(bytes);
                 return Ok(());
             }
         }

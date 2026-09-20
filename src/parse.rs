@@ -758,7 +758,8 @@ impl<'a> Parser<'a> {
                 let b = bytes[pos];
                 if b == b'}' && !hex_chars.is_empty() {
                     let is_byte = byte_escape
-                        && u32::from_str_radix(&hex_chars, 16).map_or(false, |v| v <= 0xFF);
+                        && u32::from_str_radix(&hex_chars, 16)
+                            .map_or(false, |v| v > 0x7F && v <= 0xFF);
                     return self.hex_to_literal(ix, pos + 1, &hex_chars, is_byte);
                 }
                 if is_hex_digit(b) && hex_chars.len() < 8 {
@@ -780,12 +781,11 @@ impl<'a> Parser<'a> {
         byte_escape: bool,
     ) -> Result<(usize, Expr)> {
         let value = u32::from_str_radix(hex_str, 16).unwrap();
-        if byte_escape {
+        if byte_escape && value > 0x7F {
             Ok((
                 end,
                 Expr::LiteralBytes {
                     bytes: vec![value as u8],
-                    casei: self.flag(FLAG_CASEI),
                 },
             ))
         } else if let Some(c) = char::from_u32(value) {
@@ -2043,21 +2043,10 @@ mod tests {
         assert_eq!(p("\\'"), make_literal("'"));
         assert_eq!(p("\\\""), make_literal("\""));
         assert_eq!(p("\\ "), make_literal(" "));
-        assert_eq!(
-            p("\\xA0"),
-            Expr::LiteralBytes {
-                bytes: vec![0xA0],
-                casei: false
-            }
-        );
+        assert_eq!(p("\\x41"), make_literal("A"));
+        assert_eq!(p("\\xA0"), Expr::LiteralBytes { bytes: vec![0xA0] });
         assert_eq!(p("\\x{1F4A9}"), make_literal("\u{1F4A9}"));
-        assert_eq!(
-            p("\\x{000000B7}"),
-            Expr::LiteralBytes {
-                bytes: vec![0xB7],
-                casei: false
-            }
-        );
+        assert_eq!(p("\\x{000000B7}"), Expr::LiteralBytes { bytes: vec![0xB7] });
         assert_eq!(p("\\u21D2"), make_literal("\u{21D2}"));
         assert_eq!(p("\\u{21D2}"), make_literal("\u{21D2}"));
         assert_eq!(p("\\u21D2x"), p("\u{21D2}x"));

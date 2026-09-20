@@ -117,12 +117,48 @@ fn case_insensitive_character_class() {
 }
 
 #[test]
-fn case_insensitive_escape() {
-    // `\x61` is lowercase `a`
-    assert_match(r"(?i)\x61", "A");
-
-    // `\p{Ll}` is the "Letter, lowercase" category
+fn case_insensitive_property() {
     assert_match(r"(?i)\p{Ll}", "A");
+    assert_match(r"(?i)\p{Ll}", "a");
+    assert_match(r"(?-i)\p{Ll}", "a");
+    assert_no_match(r"(?-i)\p{Ll}", "A");
+
+    assert_match(r"(?i)\p{Lu}", "A");
+    assert_match(r"(?i)\p{Lu}", "a");
+    assert_match(r"(?-i)\p{Lu}", "A");
+    assert_no_match(r"(?-i)\p{Lu}", "a");
+}
+
+#[test]
+fn case_insensitive_escape() {
+    assert_match(r"(?i)\x61", "a");
+    assert_match(r"(?i)\x61", "A");
+    assert_match(r"(?i)\x41", "A");
+    assert_match(r"(?i)\x41", "a");
+}
+
+#[test]
+fn case_insensitive_unicode_escape() {
+    // Ñ (U+00D1) and ñ (U+00F1) are case variants, both non-ASCII
+    // (Latin-1 Supplement block).
+    assert_match(r"(?i)\u{00D1}", "ñ");
+    assert_match(r"(?i)\u{00D1}", "Ñ");
+    assert_match(r"(?i)\u{00F1}", "Ñ");
+    assert_match(r"(?i)\u{00F1}", "ñ");
+    assert_no_match(r"(?i)\u{00F1}", "n");
+    assert_no_match(r"(?i)\u{00F1}", "N");
+    assert_no_match(r"(?i)\u{00D1}", "n");
+    assert_no_match(r"(?i)\u{00D1}", "N");
+
+    // Lithuanian letter
+    assert_match(r"(?i)\u{0116}", "ė");
+    assert_match(r"(?i)\u{0116}", "Ė");
+    assert_match(r"(?i)\u{0117}", "Ė");
+    assert_match(r"(?i)\u{0117}", "ė");
+    assert_no_match(r"(?i)\u{0116}", "e");
+    assert_no_match(r"(?i)\u{0116}", "E");
+    assert_no_match(r"(?i)\u{0117}", "E");
+    assert_no_match(r"(?i)\u{0117}", "E");
 }
 
 #[test]

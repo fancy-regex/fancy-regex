@@ -219,9 +219,9 @@ impl<'a> Analyzer<'a> {
                 min_size = 1;
                 const_size = literal_const_size(val, casei);
             }
-            Expr::LiteralBytes { ref bytes, casei } => {
+            Expr::LiteralBytes { ref bytes, .. } => {
                 min_size = bytes.len();
-                const_size = literal_const_size("", casei);
+                const_size = true;
             }
             Expr::Concat(ref v) => {
                 const_size = true;
