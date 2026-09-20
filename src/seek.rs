@@ -730,4 +730,9 @@ mod tests {
             r#"(?:(?:\((?:[^()]|\((?:[^()]|(?s:.)+?)+?\))+?\))\s*)="#
         );
     }
+
+    #[test]
+    fn seek_pattern_literal_bytes() {
+        assert_eq!(get_seek_pattern(r"\xFF"), r"\xFF");
+    }
 }

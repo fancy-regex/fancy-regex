@@ -1550,6 +1550,16 @@ mod tests {
     }
 
     #[test]
+    fn ascii_literal_bytes_compiled_as_distinct_instruction() {
+        let prog = compile_prog_ascii(r"\xFF");
+        assert_eq!(prog.len(), 4, "prog: {:?}", prog);
+        assert_matches!(prog[0], Save(0));
+        assert_matches!(&prog[1], LitBytes(bytes) if bytes.len() == 1 && bytes[0] == 255);
+        assert_matches!(prog[2], Save(1));
+        assert_matches!(prog[3], End);
+    }
+
+    #[test]
     fn look_around_pattern_can_be_delegated() {
         let prog = compile_prog("(?=ab*)c");
 
@@ -2270,6 +2280,28 @@ mod tests {
                     CompileOptions {
                         anchored: true,
                         contains_subroutines: tree.contains_subroutines,
+                        ..CompileOptions::default()
+                    },
+                )
+                .unwrap()
+                .body
+            },
+        )
+    }
+
+    fn compile_prog_ascii(re: &str) -> Vec<Insn> {
+        compile_prog_with(
+            re,
+            AnalyzeContext {
+                ..Default::default()
+            },
+            |info, tree| {
+                compile(
+                    info,
+                    CompileOptions {
+                        anchored: true,
+                        contains_subroutines: tree.contains_subroutines,
+                        bytes_mode: BytesMode::Ascii,
                         ..CompileOptions::default()
                     },
                 )
