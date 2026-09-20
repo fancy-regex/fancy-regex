@@ -702,7 +702,13 @@ mod tests {
         let pattern = r"(?<g>(?:a\g<g>)?)b";
         let haystack = "aab";
 
-        let expected = Regex::new(pattern).unwrap().find(haystack).unwrap();
+        let mut options_no_seek = crate::RegexOptionsBuilder::new();
+        let expected = options_no_seek
+            .seek(false)
+            .build(pattern.to_string())
+            .unwrap()
+            .find(haystack)
+            .unwrap();
 
         let mut options = crate::RegexOptionsBuilder::new();
         options.seek(true);
@@ -716,6 +722,7 @@ mod tests {
             expected.map(|m| (m.start(), m.end())),
             actual.map(|m| (m.start(), m.end()))
         );
+        assert_eq!(expected.unwrap().start, 0);
     }
 
     #[test]
