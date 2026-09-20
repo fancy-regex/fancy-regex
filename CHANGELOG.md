@@ -10,8 +10,8 @@ with the exception that 0.x versions can break between minor versions.
 ### Added
 - Add `RegexOptionsBuilder::build_delegate_prefilter` to disable building the prefilter
 - Add `ByteSet` that returns the first bytes that can match a pattern so you can build your own prefiler
-
 ### Changed
+- If a lookbehind consists of an Alt containing only easy expressions and at least 4 branches (and no capture groups), compile it as a variable lookbehind (if the feature is enabled) instead of trying every branch as its own const-size lookbehind. One reverse-DFA delegate over the whole alternation is much cheaper per attempt, and grants a perf boost.
 ### Fixed
 
 ## [0.19.2] - 2026-09-13
