@@ -188,6 +188,21 @@ fn variable_size_alt_lookbehind(c: &mut Criterion) {
     });
 }
 
+/// The 16-branch JSX tag-start guard from the TypeScript TextMate grammar.
+/// The pattern is open, so the lookbehind is attempted at almost every position.
+#[cfg(feature = "variable-lookbehinds")]
+const LOOKBEHIND_ALT_WIDE: &str = r"(?<!\+\+|--)(?<=[(*,:=>?\[{]|&&|\|\||\?|\*/|^await|[^$._[:alnum:]]await|^return|[^$._[:alnum:]]return|^default|[^$._[:alnum:]]default|^yield|[^$._[:alnum:]]yield|^)\s*<[a-z]+";
+
+#[cfg(feature = "variable-lookbehinds")]
+fn lookbehind_alternation(c: &mut Criterion) {
+    let wide = FancyRegex::new(LOOKBEHIND_ALT_WIDE).unwrap();
+    let wide_hay =
+        "  return <div>\n    {items.map((x) => <li key={x}>{x}</li>)}\n  </div>;\n".repeat(200);
+    c.bench_function("lookbehind_alternation_wide_16", |b| {
+        b.iter(|| wide.find_iter(&wide_hay).count())
+    });
+}
+
 #[cfg(feature = "variable-lookbehinds")]
 criterion_group!(
     name = lookbehind_benches;
@@ -195,6 +210,7 @@ criterion_group!(
     targets = const_size_lookbehind,
     variable_size_lookbehind,
     variable_size_alt_lookbehind,
+    lookbehind_alternation,
 );
 
 criterion_group!(

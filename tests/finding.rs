@@ -72,6 +72,43 @@ fn negative_lookbehind_variable_sized_alt() {
 
 #[test]
 #[cfg(feature = "variable-lookbehinds")]
+fn lookbehind_alt_delegate_respects_unicode_and_bytes_mode() {
+    // Four or more literal branches route the whole alternation through the
+    // reverse DFA, which must honour the same syntax settings as every other
+    // delegated engine rather than regex-automata's defaults.
+    let pattern = r"(?<=\w|aa|bb|cc)x";
+    let ascii = RegexBuilder::new(pattern)
+        .bytes_mode(BytesMode::Ascii)
+        .build()
+        .unwrap();
+    // ASCII \w cannot match the two bytes of 'é', so the lookbehind fails.
+    assert_eq!(
+        ascii.find("\u{e9}x").unwrap().map(|m| (m.start(), m.end())),
+        None
+    );
+    assert_eq!(
+        ascii.find("ax").unwrap().map(|m| (m.start(), m.end())),
+        Some((1, 2))
+    );
+
+    let unicode = RegexBuilder::new(pattern).build().unwrap();
+    assert_eq!(
+        unicode
+            .find("\u{e9}x")
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
+        Some((2, 3))
+    );
+
+    // A caller's delegate size limit must still be enforced on the reverse NFA.
+    assert!(RegexBuilder::new(r"(?<=\d\d|aa|bb|[a-z]{200})x")
+        .delegate_size_limit(500)
+        .build()
+        .is_err());
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
 fn lookbehind_positive_variable_sized_functionality_easy() {
     assert_eq!(find(r"(?<=a(?:b|cd))x", "abx"), Some((2, 3)));
     assert_eq!(find(r"(?<=a(?:b|cd))x", "acdx"), Some((3, 4)));
