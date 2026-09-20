@@ -2275,6 +2275,40 @@ mod tests {
         assert_matches!(prog[7], End);
     }
 
+    #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn compile_many_alts_inside_lookbehind_as_variable_lookbehind() {
+        let prog = compile_prog("(?<=hello|world|foo|bar)");
+        assert_eq!(prog.len(), 4, "prog: {:?}", prog);
+        assert_matches!(prog[0], Save(0));
+        assert_matches!(&prog[1], BackwardsDelegate(ReverseBackwardsDelegate { pattern, capture_groups: None, .. }) if pattern == "(?:hello|world|foo|bar)");
+        assert_matches!(prog[2], Restore(0));
+        assert_matches!(prog[3], End);
+    }
+
+    #[test]
+    fn compile_non_const_size_alts_inside_lookbehind() {
+        let prog = compile_prog("(?<=hello|world|foo)");
+        assert_eq!(prog.len(), 17, "prog: {:?}", prog);
+        assert_matches!(prog[0], Split(1, 6));
+        assert_matches!(prog[1], Save(0));
+        assert_matches!(prog[2], GoBack(5));
+        assert_matches!(prog[3], Lit(ref l) if l == "hello");
+        assert_matches!(prog[4], Restore(0));
+        assert_matches!(prog[5], Jmp(16));
+        assert_matches!(prog[6], Split(7, 12));
+        assert_matches!(prog[7], Save(1));
+        assert_matches!(prog[8], GoBack(5));
+        assert_matches!(prog[9], Lit(ref l) if l == "world");
+        assert_matches!(prog[10], Restore(1));
+        assert_matches!(prog[11], Jmp(16));
+        assert_matches!(prog[12], Save(2));
+        assert_matches!(prog[13], GoBack(3));
+        assert_matches!(prog[14], Lit(ref l) if l == "foo");
+        assert_matches!(prog[15], Restore(2));
+        assert_matches!(prog[16], End);
+    }
+
     fn compile_prog(re: &str) -> Vec<Insn> {
         compile_prog_with(
             re,
