@@ -1445,3 +1445,38 @@ fn seek_find_iter_matches_identical_to_default() {
         .collect();
     assert_eq!(default_matches, seek_matches);
 }
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn hard_variable_lookbehind() {
+    let p = r"(?<=(\G|(?m:^)\s*\*?)\s*)x";
+    let re = common::regex(p);
+    let m = re.find("* x").unwrap().unwrap();
+    assert_eq!(m.start(), 2);
+    assert_eq!(m.end(), 3);
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn hard_variable_lookbehind_match_at_bol_optional_whitespace_and_asterisk() {
+    let re = common::regex(r"(?<=(\G|^\s*\*?)\s*)(?i:(todo\b:?)|(fixme\b:?)|(note\b:?))");
+    let tests = vec![
+        ("TODO: fix this", Some((0, 5))),
+        ("# TODO: fix this", None),
+        ("* note", Some((2, 6))),
+    ];
+
+    for (text, expected) in tests {
+        match expected {
+            Some((start, end)) => {
+                let m = re.find(text).unwrap().unwrap();
+                assert_eq!(m.start(), start, "{}", text);
+                assert_eq!(m.end(), end, "{}", text);
+                assert_eq!(m.as_str(), &text[start..end], "{}", text);
+            }
+            None => {
+                assert!(re.find(text).unwrap().is_none(), "{}", text);
+            }
+        }
+    }
+}
