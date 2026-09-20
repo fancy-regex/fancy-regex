@@ -355,6 +355,14 @@ fn info_to_tree_node<'a>(
             }
             ("Literal".to_string(), Some(summary), None)
         }
+        Expr::LiteralBytes { bytes, .. } => {
+            let summary = bytes
+                .iter()
+                .map(|b| format!("\\x{b:02X}"))
+                .collect::<Vec<_>>()
+                .join("");
+            ("LiteralBytes".to_string(), Some(summary), None)
+        }
         Expr::Concat(v) => ("Concat".to_string(), Some(format!("({})", v.len())), None),
         Expr::Alt(v) => ("Alt".to_string(), Some(format!("({})", v.len())), None),
         Expr::Group(_) => {
@@ -650,6 +658,14 @@ mod tests {
         let node = parse_and_analyze_with_flags(r"\w", FLAG_CASEI);
         assert_eq!(node.kind, "Delegate");
         assert_eq!(node.casei, None);
+    }
+
+    #[test]
+    fn test_info_to_tree_node_literal_bytes() {
+        let node = parse_and_analyze(r"\xFF");
+
+        assert_eq!(node.kind, "LiteralBytes");
+        assert_eq!(node.summary.as_deref(), Some(r"\xFF"));
     }
 
     #[test]

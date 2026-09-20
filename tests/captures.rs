@@ -16,6 +16,17 @@ fn capture_names() {
 }
 
 #[test]
+fn capture_names_with_zero_repeated_named_group() {
+    let regex = common::regex("(?<n>a){0}");
+    let names: Vec<_> = regex.capture_names().collect();
+    assert_eq!(names, vec![None]);
+
+    let regex = common::regex("(?<n>a){0,0}");
+    let names: Vec<_> = regex.capture_names().collect();
+    assert_eq!(names, vec![None]);
+}
+
+#[test]
 fn captures_fancy() {
     let captures = common::assert_captures(r"\s*(\w+)(?=\.)", "foo bar.").unwrap();
     assert_eq!(captures.len(), 2);

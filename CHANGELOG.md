@@ -19,6 +19,8 @@ with the exception that 0.x versions can break between minor versions.
 - Add a `leftmost_longest` feature (off by default) that adds a method to the `RegexBuilder`/`RegexOptionsBuilder` for building a VM which would operate in leftmost-longest match mode instead of the regular leftmost-first mode. Useful for POSIX compliance. (#281)
 ### Changed
 ### Fixed
+- Fix a panic in `capture_names()` for a pattern with a zero-repeated named group such as `(?<n>a){0}` (#275)
+- Literal bytes were being encoded as utf-8 in Ascii mode, now they match the exact byte literal
 
 ## [0.19.1] - 2026-09-06
 ### Added

@@ -34,7 +34,7 @@ extern crate criterion;
 
 use criterion::{black_box, Criterion};
 
-use fancy_regex::{Regex, RegexSet};
+use fancy_regex::{Regex, RegexOptionsBuilder, RegexSet};
 use regex::Regex as StdRegex;
 
 // ---------------------------------------------------------------------------
@@ -53,6 +53,7 @@ const EASY_EMAIL: &str = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}";
 /// compiler emits several `Insn::Delegate` engines. Exercises bottleneck #2.
 const DELEGATE_HEAVY: &str = r"(\d{3})(?=x)[a-z]+(?<=ab)\w+\1[A-Z]{2}(?!q)\s+foo";
 
+const SEEK_RECURSION: &str = r"(?<tuple>\((?:[^()]|\g<tuple>)+\))\s*(?!=[=>])(?==)";
 /// A wide alternation from a TextMate grammar (see `bench.rs`). With
 /// `variable-lookbehinds` it compiles to one reverse-DFA delegate.
 const LOOKBEHIND_ALT_WIDE: &str = r"(?<!\+\+|--)(?<=[(*,:=>?\[{]|&&|\|\||\?|\*/|^await|[^$._[:alnum:]]await|^return|[^$._[:alnum:]]return|^default|[^$._[:alnum:]]default|^yield|[^$._[:alnum:]]yield|^)\s*<[a-z]+";
@@ -158,6 +159,22 @@ fn compile_regexset(c: &mut Criterion) {
     group.finish();
 }
 
+fn compile_regex_with_seek_recursion(c: &mut Criterion) {
+    let mut group = c.benchmark_group("compile_seek_recursion");
+    group.bench_function("fancy/seek_recursion_set", |b| {
+        b.iter(|| RegexSet::new([black_box(SEEK_RECURSION)]).unwrap())
+    });
+
+    group.bench_function("fancy/seek_recursion_seek_on", |b| {
+        b.iter(|| {
+            let mut opts = RegexOptionsBuilder::new();
+            opts.seek(true);
+            opts.build(black_box(SEEK_RECURSION).to_string()).unwrap()
+        })
+    });
+    group.finish();
+}
+
 criterion_group!(
     name = compile_benches;
     config = Criterion::default();
@@ -167,5 +184,6 @@ criterion_group!(
         compile_delegate_heavy,
         compile_lookbehind_alternation,
         compile_regexset,
+        compile_regex_with_seek_recursion,
 );
 criterion_main!(compile_benches);
