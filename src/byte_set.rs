@@ -327,6 +327,11 @@ fn required_byte_set_from_expr(expr: &Expr) -> ByteSet {
                 }
             }
         }
+        Expr::LiteralBytes { bytes } => {
+            for byte in bytes {
+                byte_set.insert(*byte);
+            }
+        }
         Expr::Concat(children) => {
             for child in children {
                 byte_set.union(&required_byte_set_from_expr(child));
@@ -357,8 +362,7 @@ fn required_byte_set_from_expr(expr: &Expr) -> ByteSet {
         Expr::AtomicGroup(child)
         | Expr::LookAround(child, LookAround::LookAhead | LookAround::LookBehind)
         | Expr::Repeat { child, lo: 1.., .. } => return required_byte_set_from_expr(child),
-        Expr::LiteralBytes { .. }
-        | Expr::Empty
+        Expr::Empty
         | Expr::Assertion(_)
         | Expr::DefineGroup { .. }
         | Expr::KeepOut
@@ -536,12 +540,15 @@ mod tests {
             ("(x)(?(1)ab)", "x"),
             ("(?(a)b|ac)", "a"),
             ("(?(a)b|zc)", ""),
+            ("(?(a)b|b)", "b"),
         ];
 
         for (pattern, bytes) in inputs {
             assert_eq!(
                 required_bytes(pattern, &RegexOptions::default()).unwrap(),
-                get_required_byte_set_from_pattern(bytes)
+                get_required_byte_set_from_pattern(bytes),
+                "expected byte set for pattern {} doesn't match",
+                pattern
             );
         }
     }
