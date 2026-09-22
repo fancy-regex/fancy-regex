@@ -36,9 +36,11 @@ use crate::{
 };
 
 #[cfg(not(feature = "std"))]
-pub(crate) type NamedGroups = alloc::collections::BTreeMap<String, usize>;
+use alloc::collections::BTreeMap as Map;
 #[cfg(feature = "std")]
-pub(crate) type NamedGroups = std::collections::HashMap<String, usize>;
+use std::collections::HashMap as Map;
+
+pub(crate) type NamedGroups = Map<String, Vec<usize>>;
 
 #[derive(Debug, Clone)]
 pub struct ExprTree {
@@ -85,7 +87,7 @@ impl<'a> Parser<'a> {
 
         let mut resolver = Resolver {
             named_groups: NamedGroups::default(),
-            named_group_positions: NamedGroups::default(),
+            named_group_positions: Map::default(),
             ignore_numbered_groups: p.flag(FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST)
                 && p.has_named_groups,
             next_group_index: 1,
@@ -1406,7 +1408,7 @@ struct Resolver {
     /// Used to enforce that named backrefs (`\k<name>`) cannot refer to groups that appear
     /// later in the pattern (forward references by name are not supported for backrefs,
     /// only for subroutine calls).
-    named_group_positions: NamedGroups,
+    named_group_positions: Map<String, usize>,
     ignore_numbered_groups: bool,
     next_group_index: usize,
     /// Total number of capture groups in the pattern, set after the first resolution pass.
@@ -1439,7 +1441,9 @@ impl Resolver {
             if let Expr::AstNode(AstNode::AstGroup { name, inner }, ix) = node {
                 let group_index = if let Some(name) = name {
                     self.named_groups
-                        .insert(name.clone(), self.next_group_index);
+                        .entry(name.clone())
+                        .or_default()
+                        .push(self.next_group_index);
                     self.named_group_positions.insert(name, ix);
                     Some(self.next_group_index)
                 } else if !self.ignore_numbered_groups {
@@ -1496,7 +1500,10 @@ impl Resolver {
                 })
             }
             CaptureGroupTarget::ByName(name) => {
-                let group = self.named_groups.get(name.as_str()).copied();
+                let group = self
+                    .named_groups
+                    .get(name.as_str())
+                    .and_then(|groups| groups.last().copied());
                 // For backrefs, reject forward references: the group's opening `(` must appear
                 // before the backref in the pattern.
                 if let (Some(backref_ix), Some(group_ix)) = (
@@ -2161,14 +2168,48 @@ mod tests {
 
         // Name that looks numeric with hyphens (treated as named, not numeric)
         let tree = Expr::parse_tree("(?<1-2>a)").unwrap();
-        assert_eq!(tree.named_groups.get("1-2"), Some(&1));
+        assert_eq!(tree.named_groups.get("1-2"), Some(&vec![1]));
 
         // Verify named_groups map is populated correctly for hyphenated names
         let tree = Expr::parse_tree("(?<foo-bar>a)").unwrap();
-        assert_eq!(tree.named_groups.get("foo-bar"), Some(&1));
+        assert_eq!(tree.named_groups.get("foo-bar"), Some(&vec![1]));
 
         let tree = Expr::parse_tree("(?P<data-value>a)").unwrap();
-        assert_eq!(tree.named_groups.get("data-value"), Some(&1));
+        assert_eq!(tree.named_groups.get("data-value"), Some(&vec![1]));
+    }
+
+    #[test]
+    fn multiple_groups_with_same_name() {
+        let tree = Expr::parse_tree("(?<a>x)(?<b>y)(?<a>z)").unwrap();
+        assert_eq!(tree.named_groups.get("a"), Some(&vec![1, 3]));
+        assert_eq!(tree.named_groups.get("b"), Some(&vec![2]));
+        assert_eq!(tree.total_groups, 3);
+
+        // backrefs and subroutine calls by name resolve to the last group with that name
+        let tree = Expr::parse_tree("(?<a>x)(?<a>y)\\k<a>").unwrap();
+        assert_eq!(
+            tree.expr,
+            Expr::Concat(vec![
+                make_group(make_literal("x")),
+                make_group(make_literal("y")),
+                Expr::Backref {
+                    group: 2,
+                    casei: false
+                },
+            ])
+        );
+        assert!(tree.backrefs.contains(2));
+        assert!(!tree.backrefs.contains(1));
+
+        let tree = Expr::parse_tree("(?<a>x)(?<a>y)\\g<a>").unwrap();
+        assert_eq!(
+            tree.expr,
+            Expr::Concat(vec![
+                make_group(make_literal("x")),
+                make_group(make_literal("y")),
+                Expr::SubroutineCall(2),
+            ])
+        );
     }
 
     #[test]

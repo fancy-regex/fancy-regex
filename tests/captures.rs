@@ -27,6 +27,18 @@ fn capture_names_with_zero_repeated_named_group() {
 }
 
 #[test]
+fn capture_names_with_duplicate_group_names() {
+    let regex = common::regex("(?<a>x)(?<b>y)(?<a>z)");
+    let names: Vec<_> = regex.capture_names().collect();
+    assert_eq!(names, vec![None, Some("a"), Some("b"), Some("a")]);
+    assert_eq!(regex.captures_len(), 4);
+
+    let captures = regex.captures("xyz").unwrap().unwrap();
+    assert_eq!(captures.name("a").map(|m| m.as_str()), Some("z"));
+    assert_eq!(captures.name("b").map(|m| m.as_str()), Some("y"));
+}
+
+#[test]
 fn capture_names_with_zero_repetition() {
     // A named capture group inside a {0} quantifier is never matched, but
     // it still counts as a capture group for numbering purposes. The

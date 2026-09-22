@@ -278,11 +278,13 @@ fn escape_delegate(s: &str) -> String {
 /// Build a reverse lookup map from group index to name from the named_groups map.
 /// This converts from (name → index) to (index → name) format.
 fn build_group_names_lookup(
-    named_groups: &std::collections::HashMap<String, usize>,
+    named_groups: &std::collections::HashMap<String, Vec<usize>>,
 ) -> std::collections::HashMap<usize, String> {
     let mut group_names = std::collections::HashMap::new();
-    for (name, &index) in named_groups {
-        group_names.insert(index, name.clone());
+    for (name, indexes) in named_groups {
+        for &index in indexes {
+            group_names.insert(index, name.clone());
+        }
     }
     group_names
 }
