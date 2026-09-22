@@ -317,8 +317,11 @@ fn required_byte_set_from_expr(expr: &Expr) -> ByteSet {
     match expr {
         Expr::Literal { val, casei } => {
             for byte in val.bytes() {
-                // Without, we can't build a byte set because eg `é` can show up as `É` and
-                // this function is to detect the required bytes, not "one of those"
+                // When `casei == true`, we can't require a byte: `é` can show up as `É` and
+                // this function is to detect the required bytes, not "one of those".
+                // Non-alphabetic bytes are fine and we can insert those regardless.\
+                // We could fold casing and add the shared `0xC3` byte from `é`/`É`
+                // but I'm not sure it's worth it.
                 if !casei || (byte.is_ascii() && !byte.is_ascii_alphabetic()) {
                     byte_set.insert(byte);
                 }
@@ -339,11 +342,14 @@ fn required_byte_set_from_expr(expr: &Expr) -> ByteSet {
             }
         }
         Expr::Conditional {
+            condition,
             true_branch,
             false_branch,
-            ..
         } => {
+            // If we reach the true branch, this means the condition matched so its bytes
+            // should be included in the byteset as well
             byte_set = required_byte_set_from_expr(true_branch);
+            byte_set.union(&required_byte_set_from_expr(condition));
             let other = required_byte_set_from_expr(false_branch);
             byte_set.intersection(&other);
         }
@@ -351,7 +357,24 @@ fn required_byte_set_from_expr(expr: &Expr) -> ByteSet {
         Expr::AtomicGroup(child)
         | Expr::LookAround(child, LookAround::LookAhead | LookAround::LookBehind)
         | Expr::Repeat { child, lo: 1.., .. } => return required_byte_set_from_expr(child),
-        _ => {}
+        Expr::LiteralBytes { .. }
+        | Expr::Empty
+        | Expr::Assertion(_)
+        | Expr::DefineGroup { .. }
+        | Expr::KeepOut
+        | Expr::ContinueFromPreviousMatchEnd
+        | Expr::BackrefExistsCondition { .. }
+        | Expr::BacktrackingControlVerb(_)
+        | Expr::Any { .. }
+        | Expr::GeneralNewline { .. }
+        | Expr::Delegate { .. }
+        | Expr::Repeat { .. }
+        | Expr::LookAround(..)
+        | Expr::Absent(_)
+        | Expr::Backref { .. }
+        | Expr::BackrefWithRelativeRecursionLevel { .. }
+        | Expr::SubroutineCall(_)
+        | Expr::AstNode(..) => {}
     }
 
     byte_set
@@ -511,6 +534,8 @@ mod tests {
             ("(x)?(?(1)b!|c!)", "!"),
             ("(x)(?(1)ab|ac)", "ax"),
             ("(x)(?(1)ab)", "x"),
+            ("(?(a)b|ac)", "a"),
+            ("(?(a)b|zc)", ""),
         ];
 
         for (pattern, bytes) in inputs {
