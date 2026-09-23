@@ -1046,6 +1046,22 @@ impl RegexOptionsBuilder {
     pub fn start_bytes(&self, pattern: &str) -> Result<Option<ByteSet>> {
         crate::byte_set::start_bytes(pattern, &self.options)
     }
+
+    /// Returns the [ByteSet] for the required bytes of the given pattern.
+    /// For example, a pattern `a?b` will unconditionally require `b` to be found in the
+    /// haystack. This means that for a haystack like `aaa` the pattern will _never_ match and
+    /// we can know that without even compiling the regex.
+    /// An empty set means there's nothing actionable.
+    ///
+    /// ```
+    /// # use fancy_regex::RegexOptionsBuilder;
+    /// let builder = RegexOptionsBuilder::new();
+    /// let set = builder.required_bytes(r"a?b").unwrap();
+    /// assert_eq!(set.iter().collect::<Vec<_>>(), vec![b'b']);
+    /// ```
+    pub fn required_bytes(&self, pattern: &str) -> Result<ByteSet> {
+        crate::byte_set::required_bytes(pattern, &self.options)
+    }
 }
 
 impl RegexBuilder {
