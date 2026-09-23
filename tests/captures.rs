@@ -16,6 +16,94 @@ fn capture_names() {
 }
 
 #[test]
+fn capture_names_with_zero_repeated_named_group() {
+    let regex = common::regex("(?<n>a){0}");
+    let names: Vec<_> = regex.capture_names().collect();
+    assert_eq!(names, vec![None, Some("n")]);
+
+    let regex = common::regex("(?<n>a){0,0}");
+    let names: Vec<_> = regex.capture_names().collect();
+    assert_eq!(names, vec![None, Some("n")]);
+}
+
+#[test]
+fn capture_names_with_zero_repetition() {
+    // A named capture group inside a {0} quantifier is never matched, but
+    // it still counts as a capture group for numbering purposes. The
+    // capture_names API must report the correct count and index-to-name
+    // mapping.
+    let regex = common::regex(r"(?<foo>x){0}(?<bar>y)");
+    let capture_names = regex.capture_names().collect::<Vec<_>>();
+    assert_eq!(capture_names, vec![None, Some("foo"), Some("bar")]);
+    assert_eq!(regex.captures_len(), 3);
+
+    // Multiple zero-repetition groups followed by normal groups
+    let regex = common::regex(r"(?<a>x){0}(?<b>y){0}(?<c>z)");
+    let capture_names = regex.capture_names().collect::<Vec<_>>();
+    assert_eq!(capture_names, vec![None, Some("a"), Some("b"), Some("c")]);
+    assert_eq!(regex.captures_len(), 4);
+
+    // {0,0} form should behave the same as {0}
+    let regex = common::regex(r"(?<foo>x){0,0}(?<bar>y)");
+    let capture_names = regex.capture_names().collect::<Vec<_>>();
+    assert_eq!(capture_names, vec![None, Some("foo"), Some("bar")]);
+
+    // non-named groups mixed with named groups
+    let regex = common::regex(r"(a)(?<foo>x){0}(b)(?<bar>y)(c)");
+    let capture_names = regex.capture_names().collect::<Vec<_>>();
+    assert_eq!(
+        capture_names,
+        vec![None, None, Some("foo"), None, Some("bar"), None]
+    );
+
+    // Alternations, nested groups etc.
+    let regex = common::regex(r"(?<a>x|y){0}(?<b>z){0}(?<c>z(?<d>foo){0})|(?<e>bar)");
+    let capture_names = regex.capture_names().collect::<Vec<_>>();
+    assert_eq!(
+        capture_names,
+        vec![None, Some("a"), Some("b"), Some("c"), Some("d"), Some("e")]
+    );
+    assert_eq!(regex.captures_len(), 6);
+
+    // Backrefs, subroutine calls etc.
+    let regex = common::regex(r"(?<a>x|y){0}(?<b>z\g<a>){0}(?<c>z(?<d>foo){0})|(?<e>bar)\n<e>");
+    let capture_names = regex.capture_names().collect::<Vec<_>>();
+    assert_eq!(
+        capture_names,
+        vec![None, Some("a"), Some("b"), Some("c"), Some("d"), Some("e")]
+    );
+    assert_eq!(regex.captures_len(), 6);
+
+    // trailing positive lookahead
+    let regex = common::regex(
+        r"(example)(?<a>x|y){0}(?=(?<b>z)(foo)(?<bar>hello)(?:not-a-capture-group))(test)",
+    );
+    let capture_names = regex.capture_names().collect::<Vec<_>>();
+    assert_eq!(
+        capture_names,
+        vec![None, None, Some("a"), Some("b"), None, Some("bar"), None]
+    );
+    assert_eq!(regex.captures_len(), 7);
+
+    // define groups
+    let regex = common::regex(r"(?(DEFINE)(a)(?<b>b))\g<b>(?<c>c)(d)");
+    let capture_names = regex.capture_names().collect::<Vec<_>>();
+    assert_eq!(capture_names, vec![None, None, Some("b"), Some("c"), None]);
+    assert_eq!(regex.captures_len(), 5);
+}
+
+#[test]
+fn captures_zero_repetition_group_count() {
+    // Verify that captures_len correctly counts groups inside {0} quantifiers
+    // in both str and bytes modes (the common::assert_captures helper checks both)
+    let captures = common::assert_captures(r"(?<a>x){0}(?<b>y)(?<c>z)", "xyz").unwrap();
+    assert_eq!(captures.len(), 4);
+    assert_eq!(captures.name("a").map(|m| m.as_str()), None);
+    assert_eq!(captures.name("b").map(|m| m.as_str()), Some("y"));
+    assert_eq!(captures.name("c").map(|m| m.as_str()), Some("z"));
+}
+
+#[test]
 fn captures_fancy() {
     let captures = common::assert_captures(r"\s*(\w+)(?=\.)", "foo bar.").unwrap();
     assert_eq!(captures.len(), 2);
@@ -146,6 +234,16 @@ fn captures_both_inside_and_outside_variable_lookbehind() {
     assert_match(captures.get(2), "bbb", 3, 6);
     assert_match(captures.get(3), "ccc", 6, 9);
     assert_match(captures.get(4), "ddd", 9, 12);
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn captures_inside_variable_lookbehind_alternation() {
+    let captures = captures(r"(?<=(a)|(ab))x", "abx");
+    assert_eq!(captures.len(), 3);
+    assert_match(captures.get(0), "x", 2, 3);
+    assert!(captures.get(1).is_none());
+    assert_match(captures.get(2), "ab", 0, 2);
 }
 
 #[test]
@@ -965,6 +1063,7 @@ fn capture_names_with_unrestricted_group_names() {
     let names: Vec<_> = regex.capture_names().collect();
     assert_eq!(names[0], None); // group 0 is unnamed
                                 // The order of named groups is: foo-bar=1, baz-qux=2
-    assert!(names.contains(&Some("foo-bar")));
-    assert!(names.contains(&Some("baz-qux")));
+    assert_eq!(names[1], Some("foo-bar"));
+    assert_eq!(names[2], Some("baz-qux"));
+    assert_eq!(names.len(), 3);
 }

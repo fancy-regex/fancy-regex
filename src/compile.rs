@@ -134,7 +134,37 @@ struct Compiler<'a> {
     delegate_memo: Map<(String, bool), RaRegex>,
 }
 
+#[cfg(feature = "variable-lookbehinds")]
+const LOOKBEHIND_ALT_DELEGATE_MIN_BRANCHES: usize = 4;
+
+#[cfg(feature = "variable-lookbehinds")]
+fn lookbehind_alt_as_delegate(inner: &Info<'_>) -> bool {
+    // Captures inside the alternation are extracted by a forward search that is
+    // anchored only at the reverse match's start, so delegate only expressions
+    // without captures. Small literal alternatives are cheaper as VM probes.
+    !inner.hard
+        && inner.start_group() == inner.end_group()
+        && (inner.children.len() >= LOOKBEHIND_ALT_DELEGATE_MIN_BRANCHES
+            || inner
+                .children
+                .iter()
+                .any(|branch| branch.is_literal_get_casei().is_none()))
+}
+
 impl<'a> Compiler<'a> {
+    #[inline]
+    fn emit_literal_bytes(&mut self, bytes: &[u8]) {
+        if matches!(self.options.bytes_mode, BytesMode::Unicode) {
+            let s: String = bytes
+                .iter()
+                .map(|&b| char::from_u32(b as u32).unwrap())
+                .collect();
+            self.b.add(Insn::Lit(s));
+        } else {
+            self.b.add(Insn::LitBytes(bytes.to_vec()));
+        }
+    }
+
     fn visit(&mut self, info: &Info<'_>, hard: bool) -> Result<()> {
         if !hard && !info.hard {
             // easy case, delegate entire subexpr
@@ -148,6 +178,9 @@ impl<'a> Compiler<'a> {
                 } else {
                     self.compile_delegate(info)?;
                 }
+            }
+            Expr::LiteralBytes { ref bytes, .. } => {
+                self.emit_literal_bytes(bytes);
             }
             Expr::Any { newline: true, .. } => {
                 self.b.add(Insn::Any);
@@ -625,6 +658,12 @@ impl<'a> Compiler<'a> {
                     ..
                 } = inner
                 {
+                    // One reverse-DFA delegate over the whole alternation is much cheaper per
+                    // attempt than trying every branch as its own const-size lookbehind
+                    #[cfg(feature = "variable-lookbehinds")]
+                    if lookbehind_alt_as_delegate(inner) {
+                        return self.compile_positive_lookaround(inner, la);
+                    }
                     // Make const size by transforming `(?<=a|bb)` to `(?<=a)|(?<=bb)`
                     let alternatives = &inner.children;
                     self.compile_alt(alternatives.len(), |compiler, i| {
@@ -642,6 +681,10 @@ impl<'a> Compiler<'a> {
                     ..
                 } = inner
                 {
+                    #[cfg(feature = "variable-lookbehinds")]
+                    if lookbehind_alt_as_delegate(inner) {
+                        return self.compile_negative_lookaround(inner, la);
+                    }
                     // Make const size by transforming `(?<!a|bb)` to `(?<!a)(?<!bb)`
                     let alternatives = &inner.children;
                     for alternative in alternatives {
@@ -785,10 +828,29 @@ impl<'a> Compiler<'a> {
         // Use reverse matching for variable-sized lookbehinds without fancy features
         use regex_automata::hybrid::dfa;
         use regex_automata::nfa::thompson;
+        use regex_automata::util::syntax::Config as SyntaxConfig;
+
+        let mut dfa_config = dfa::Config::new().unicode_word_boundary(true);
+        if let Some(limit) = self.options.delegate_dfa_size_limit {
+            dfa_config = dfa_config.cache_capacity(limit);
+        }
+        let mut thompson_config = thompson::Config::new().reverse(true);
+        if let Some(limit) = self.options.delegate_size_limit {
+            thompson_config = thompson_config.nfa_size_limit(Some(limit));
+        }
+        // This builder parses `pattern` itself instead of going through
+        // `options_to_rabuilder`, so the caller's Unicode and bytes-mode settings
+        // have to be applied to its syntax config too. Without them the reverse
+        // DFA would use regex-automata's defaults while the forward
+        // capture-extraction engine below uses the configured ones.
+        let syntax = SyntaxConfig::new()
+            .utf8(matches!(self.options.bytes_mode, BytesMode::Unicode))
+            .unicode(self.options.unicode);
         // Build a reverse DFA for the pattern
         let dfa = match dfa::DFA::builder()
-            .configure(dfa::Config::new().unicode_word_boundary(true))
-            .thompson(thompson::Config::new().reverse(true))
+            .configure(dfa_config)
+            .thompson(thompson_config)
+            .syntax(syntax)
             .build(pattern)
         {
             Ok(dfa) => Arc::new(dfa),
@@ -833,6 +895,12 @@ impl<'a> Compiler<'a> {
     fn compile_delegates(&mut self, infos: &[Info<'_>]) -> Result<()> {
         if infos.is_empty() {
             return Ok(());
+        }
+        if infos.len() == 1 {
+            if let Expr::LiteralBytes { ref bytes, .. } = infos[0].expr {
+                self.emit_literal_bytes(bytes);
+                return Ok(());
+            }
         }
         // A batch that is entirely literal compiles to a native literal
         // instruction instead of a delegated engine. Case-sensitive literals
@@ -1830,6 +1898,16 @@ mod tests {
     }
 
     #[test]
+    fn ascii_literal_bytes_compiled_as_distinct_instruction() {
+        let prog = compile_prog_ascii(r"\xFF");
+        assert_eq!(prog.len(), 4, "prog: {:?}", prog);
+        assert_matches!(prog[0], Save(0));
+        assert_matches!(&prog[1], LitBytes(bytes) if bytes.len() == 1 && bytes[0] == 255);
+        assert_matches!(prog[2], Save(1));
+        assert_matches!(prog[3], End);
+    }
+
+    #[test]
     fn look_around_pattern_can_be_delegated() {
         let prog = compile_prog("(?=ab*)c");
 
@@ -2499,6 +2577,40 @@ mod tests {
         assert_matches!(prog[7], End);
     }
 
+    #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn compile_many_alts_inside_lookbehind_as_variable_lookbehind() {
+        let prog = compile_prog("(?<=hello|world|foo|bar)");
+        assert_eq!(prog.len(), 4, "prog: {:?}", prog);
+        assert_matches!(prog[0], Save(0));
+        assert_matches!(&prog[1], BackwardsDelegate(ReverseBackwardsDelegate { pattern, capture_groups: None, .. }) if pattern == "(?:hello|world|foo|bar)");
+        assert_matches!(prog[2], Restore(0));
+        assert_matches!(prog[3], End);
+    }
+
+    #[test]
+    fn compile_non_const_size_alts_inside_lookbehind() {
+        let prog = compile_prog("(?<=hello|world|foo)");
+        assert_eq!(prog.len(), 17, "prog: {:?}", prog);
+        assert_matches!(prog[0], Split(1, 6));
+        assert_matches!(prog[1], Save(0));
+        assert_matches!(prog[2], GoBack(5));
+        assert_matches!(prog[3], Lit(ref l) if l == "hello");
+        assert_matches!(prog[4], Restore(0));
+        assert_matches!(prog[5], Jmp(16));
+        assert_matches!(prog[6], Split(7, 12));
+        assert_matches!(prog[7], Save(1));
+        assert_matches!(prog[8], GoBack(5));
+        assert_matches!(prog[9], Lit(ref l) if l == "world");
+        assert_matches!(prog[10], Restore(1));
+        assert_matches!(prog[11], Jmp(16));
+        assert_matches!(prog[12], Save(2));
+        assert_matches!(prog[13], GoBack(3));
+        assert_matches!(prog[14], Lit(ref l) if l == "foo");
+        assert_matches!(prog[15], Restore(2));
+        assert_matches!(prog[16], End);
+    }
+
     fn compile_prog(re: &str) -> Vec<Insn> {
         compile_prog_with(
             re,
@@ -2550,6 +2662,28 @@ mod tests {
                     CompileOptions {
                         anchored: true,
                         contains_subroutines: tree.contains_subroutines,
+                        ..CompileOptions::default()
+                    },
+                )
+                .unwrap()
+                .body
+            },
+        )
+    }
+
+    fn compile_prog_ascii(re: &str) -> Vec<Insn> {
+        compile_prog_with(
+            re,
+            AnalyzeContext {
+                ..Default::default()
+            },
+            |info, tree| {
+                compile(
+                    info,
+                    CompileOptions {
+                        anchored: true,
+                        contains_subroutines: tree.contains_subroutines,
+                        bytes_mode: BytesMode::Ascii,
                         ..CompileOptions::default()
                     },
                 )

@@ -30,6 +30,7 @@ use fancy_regex::internal::{
 use fancy_regex::seek_pattern_is_useful;
 use fancy_regex::Expr;
 use fancy_regex::Regex as FancyRegex;
+use fancy_regex::RegexOptionsBuilder;
 use regex::Regex;
 
 fn parse_lifetime_re(c: &mut Criterion) {
@@ -224,6 +225,21 @@ fn variable_size_alt_lookbehind(c: &mut Criterion) {
     });
 }
 
+/// The 16-branch JSX tag-start guard from the TypeScript TextMate grammar.
+/// The pattern is open, so the lookbehind is attempted at almost every position.
+#[cfg(feature = "variable-lookbehinds")]
+const LOOKBEHIND_ALT_WIDE: &str = r"(?<!\+\+|--)(?<=[(*,:=>?\[{]|&&|\|\||\?|\*/|^await|[^$._[:alnum:]]await|^return|[^$._[:alnum:]]return|^default|[^$._[:alnum:]]default|^yield|[^$._[:alnum:]]yield|^)\s*<[a-z]+";
+
+#[cfg(feature = "variable-lookbehinds")]
+fn lookbehind_alternation(c: &mut Criterion) {
+    let wide = FancyRegex::new(LOOKBEHIND_ALT_WIDE).unwrap();
+    let wide_hay =
+        "  return <div>\n    {items.map((x) => <li key={x}>{x}</li>)}\n  </div>;\n".repeat(200);
+    c.bench_function("lookbehind_alternation_wide_16", |b| {
+        b.iter(|| wide.find_iter(&wide_hay).count())
+    });
+}
+
 #[cfg(feature = "variable-lookbehinds")]
 criterion_group!(
     name = lookbehind_benches;
@@ -231,6 +247,7 @@ criterion_group!(
     targets = const_size_lookbehind,
     variable_size_lookbehind,
     variable_size_alt_lookbehind,
+    lookbehind_alternation,
 );
 
 criterion_group!(
@@ -414,6 +431,53 @@ criterion_group!(
     no_seek_digit_backref_worst_case_no_match,
 );
 
+/// A parenthesised tuple on the left-hand side of an assignment, e.g. `(a, b) = ...`.
+const SEEK_RECURSION: &str = r"(?<tuple>\((?:[^()]|\g<tuple>)+\))\s*(?!=[=>])(?==)";
+
+/// How well the seek approximation of a recursive subroutine filters candidate positions.
+/// `nested_near_miss` is the interesting one: `(?!=[=>])` makes every line a near miss, so
+/// each candidate the pre-filter lets through costs a failed VM attempt plus another seek.
+fn seek_recursion(c: &mut Criterion) {
+    let lines = 200;
+    let haystacks = [
+        ("assignments", "(alpha, beta) = compute(x)\n", lines),
+        ("calls_only", "result = compute(alpha, beta);\n", 0),
+        (
+            "nested_near_miss",
+            "outer(inner(deep(alpha)), beta) == other(gamma);\n",
+            0,
+        ),
+        (
+            "no_parens",
+            "the quick brown fox jumps over the lazy dog ",
+            0,
+        ),
+    ];
+    let mut group = c.benchmark_group("seek_recursion");
+    for (name, line, expected) in haystacks {
+        let haystack = line.repeat(lines);
+        for (label, seek) in [("no_seek", false), ("seek", true)] {
+            let mut options = RegexOptionsBuilder::new();
+            options.seek(seek);
+            let re = options.build(SEEK_RECURSION.to_string()).unwrap();
+            group.bench_function(format!("{name}/{label}"), |b| {
+                b.iter(|| {
+                    let count = re.find_iter(&haystack).filter_map(Result::ok).count();
+                    assert_eq!(count, expected);
+                    count
+                })
+            });
+        }
+    }
+    group.finish();
+}
+
+criterion_group!(
+    name = seek_recursion_benches;
+    config = Criterion::default();
+    targets = seek_recursion,
+);
+
 /// Shared logic for the case-insensitive Unicode backref benchmarks.
 ///
 /// `(?i)(\p{Greek}+) \1` forces every backref comparison to go through the
@@ -558,6 +622,7 @@ criterion_main!(
     continue_from_end_of_prev_match_benches,
     seek_benches,
     seek_worst_case_benches,
+    seek_recursion_benches,
     api_benches,
     optimize_benches
 );
@@ -569,6 +634,7 @@ criterion_main!(
     continue_from_end_of_prev_match_benches,
     seek_benches,
     seek_worst_case_benches,
+    seek_recursion_benches,
     api_benches,
     optimize_benches
 );
