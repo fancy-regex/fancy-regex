@@ -21,6 +21,7 @@ impl ByteSet {
     }
 
     /// Whether the set contains that byte
+    #[inline]
     pub fn contains(&self, byte: u8) -> bool {
         self.0[(byte >> 6) as usize] & (1u64 << (byte & 63)) != 0
     }
@@ -37,6 +38,15 @@ impl ByteSet {
         for (a, b) in self.0.iter_mut().zip(&other.0) {
             *a &= *b;
         }
+    }
+
+    /// Returns whether the current byte set is a subset of the given one
+    #[inline]
+    pub fn is_subset(&self, other: &Self) -> bool {
+        self.0
+            .iter()
+            .zip(other.0)
+            .all(|(self_word, other_word)| self_word & !other_word == 0)
     }
 
     /// Iterates over the bytes in the set, in ascending order
@@ -606,5 +616,35 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn can_do_set_operations() {
+        fn set(bytes: &[u8]) -> ByteSet {
+            let mut set = ByteSet::default();
+            for &b in bytes {
+                set.insert(b);
+            }
+            set
+        }
+
+        let empty = ByteSet::default();
+        let small = set(&[0, 70, 140]);
+        let big = set(&[0, 70, 140, 200, 255]);
+        let other = set(&[70, 140, 210]);
+
+        assert!(empty.is_subset(&small));
+        assert!(small.is_subset(&small));
+        assert!(small.is_subset(&big));
+        assert!(!big.is_subset(&small));
+        assert!(!other.is_subset(&big));
+
+        let mut intersection = big;
+        intersection.intersection(&other);
+        assert_eq!(intersection, set(&[70, 140]));
+
+        let mut union = small;
+        union.union(&other);
+        assert_eq!(union, set(&[0, 70, 140, 210]));
     }
 }
