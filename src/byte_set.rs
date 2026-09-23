@@ -32,6 +32,13 @@ impl ByteSet {
         }
     }
 
+    /// Removes every byte not in `other`
+    pub fn intersection(&mut self, other: &Self) {
+        for (a, b) in self.0.iter_mut().zip(&other.0) {
+            *a &= *b;
+        }
+    }
+
     /// Iterates over the bytes in the set, in ascending order
     pub fn iter(&self) -> impl Iterator<Item = u8> + '_ {
         set_bits(&self.0).map(|i| i as u8)
@@ -304,14 +311,104 @@ pub(crate) fn start_bytes(pattern: &str, options: &RegexOptions) -> Result<Optio
     Ok(byte_set_from_expr(&tree.expr, options))
 }
 
+fn required_byte_set_from_expr(expr: &Expr) -> ByteSet {
+    let mut byte_set = ByteSet::default();
+
+    match expr {
+        Expr::Literal { val, casei } => {
+            for byte in val.bytes() {
+                // When `casei == true`, we can't require a byte: `é` can show up as `É` and
+                // this function is to detect the required bytes, not "one of those".
+                // Non-alphabetic bytes are fine and we can insert those regardless.\
+                // We could fold casing and add the shared `0xC3` byte from `é`/`É`
+                // but I'm not sure it's worth it.
+                if !casei || (byte.is_ascii() && !byte.is_ascii_alphabetic()) {
+                    byte_set.insert(byte);
+                }
+            }
+        }
+        Expr::LiteralBytes { .. } => {
+            // we don't know at this stage whether the compiler will be in Unicode mode or not
+            // so there is no way to know whether the bytes specified here will be treated literally
+            // vs with utf8 semantics
+        }
+        Expr::Concat(children) => {
+            for child in children {
+                byte_set.union(&required_byte_set_from_expr(child));
+            }
+        }
+        Expr::Alt(children) => {
+            if let Some((first, rest)) = children.split_first() {
+                byte_set = required_byte_set_from_expr(first);
+                for child in rest {
+                    let other = required_byte_set_from_expr(child);
+                    byte_set.intersection(&other);
+                }
+            }
+        }
+        Expr::Conditional {
+            condition,
+            true_branch,
+            false_branch,
+        } => {
+            // If we reach the true branch, this means the condition matched so its bytes
+            // should be included in the byteset as well
+            byte_set = required_byte_set_from_expr(true_branch);
+            byte_set.union(&required_byte_set_from_expr(condition));
+            let other = required_byte_set_from_expr(false_branch);
+            byte_set.intersection(&other);
+        }
+        Expr::Group(child) => return required_byte_set_from_expr(child),
+        Expr::AtomicGroup(child)
+        | Expr::LookAround(child, LookAround::LookAhead | LookAround::LookBehind)
+        | Expr::Repeat { child, lo: 1.., .. } => return required_byte_set_from_expr(child),
+        Expr::Empty
+        | Expr::Assertion(_)
+        | Expr::DefineGroup { .. }
+        | Expr::KeepOut
+        | Expr::ContinueFromPreviousMatchEnd
+        | Expr::BackrefExistsCondition { .. }
+        | Expr::BacktrackingControlVerb(_)
+        | Expr::Any { .. }
+        | Expr::GeneralNewline { .. }
+        | Expr::Delegate { .. }
+        | Expr::Repeat { .. }
+        | Expr::LookAround(..)
+        | Expr::Absent(_)
+        | Expr::Backref { .. }
+        | Expr::BackrefWithRelativeRecursionLevel { .. }
+        | Expr::SubroutineCall(_)
+        | Expr::AstNode(..) => {}
+    }
+
+    byte_set
+}
+
+/// See [`crate::RegexOptionsBuilder::required_bytes`]
+pub(crate) fn required_bytes(pattern: &str, options: &RegexOptions) -> Result<ByteSet> {
+    let mut tree = Expr::parse_tree_with_flags(pattern, options.compute_flags())?;
+    optimize(&mut tree);
+    Ok(required_byte_set_from_expr(&tree.expr))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{RegexInput, RegexOptionsBuilder};
+    use alloc::borrow::ToOwned;
     use alloc::vec;
     use alloc::vec::Vec;
 
     fn get_byte_set_from_pattern(pattern: &str, options: &RegexOptions) -> Option<ByteSet> {
         start_bytes(pattern, options).ok().flatten()
+    }
+
+    fn get_required_byte_set_from_pattern(pattern: &str) -> ByteSet {
+        let mut byte_set = ByteSet::default();
+        for b in pattern.bytes() {
+            byte_set.insert(b);
+        }
+        byte_set
     }
 
     fn first_bytes_of(pattern: &str) -> Option<Vec<u8>> {
@@ -421,5 +518,93 @@ mod tests {
             .filter(char::is_ascii)
             .collect();
         assert_eq!(ascii, vec!['K', 'S', 'k', 's']);
+    }
+
+    #[test]
+    fn can_extract_required_bytes() {
+        let inputs = vec![
+            ("a?b", "b"),
+            ("ab|ac", "a"),
+            ("a|b", ""),
+            ("(?=a)b", "ab"),
+            ("(?<=a)b", "ab"),
+            ("(?!a)b", "b"),
+            ("(?i)k!", "!"),
+            ("(?(DEFINE)(a))b", "b"),
+            ("(a){0}b", "b"),
+            ("é!", "é!"),
+            ("(?i)é!", "!"),
+            ("(?i:É)!", "!"),
+            ("(x)?(?(1)b!|c!)", "!"),
+            ("(x)(?(1)ab|ac)", "ax"),
+            ("(x)(?(1)ab)", "x"),
+            ("(?(a)b|ac)", "a"),
+            ("(?(a)b|zc)", ""),
+            ("(?(a)b|b)", "b"),
+        ];
+
+        for (pattern, bytes) in inputs {
+            assert_eq!(
+                required_bytes(pattern, &RegexOptions::default()).unwrap(),
+                get_required_byte_set_from_pattern(bytes),
+                "expected byte set for pattern {} doesn't match",
+                pattern
+            );
+        }
+    }
+
+    #[test]
+    fn required_bytes_match_match_result() {
+        let inputs = vec![
+            "a?b",
+            "ab|ac",
+            "a|b",
+            "(?=a)a",
+            "(?<=a)b",
+            "(?!a)b",
+            "(?i)k!",
+            "(?i)s",
+            "(?i:ABC)!",
+            r"a\Kb",
+            r"(a)\1",
+            "(a){0}b",
+            "(?x)a # ignored\n b",
+            "a*",
+            "^a$",
+            r"\Ga",
+            r"\Aa",
+            r"(?<x>a)(?(x)b|c)",
+            r"(x)?(?(1)b!|c!)",
+            r"(x)(?(1)ab|ac)",
+            r"(x)(?(1)ab)",
+            "(?i)é!",
+            "(?i:É)!",
+            "日!",
+            r"(?<x>a)\g<x>",
+            "é!",
+        ];
+
+        for pattern in inputs {
+            let re = RegexOptionsBuilder::default()
+                .build(pattern.to_owned())
+                .unwrap();
+
+            // We're testing that for a given haystack, the haystack contains all the bytes
+            // in the byteset
+            for text in [
+                "", "a", "b", "ab", "ac", "aa", "abc!", "ABC!", "K!", "ſ", "é!", "a\nb", "É!",
+                "日!", "x", "xb!", "xc!", "xab", "xac", "b!", "c!",
+            ] {
+                for pos in (0..=text.len()).filter(|&p| text.is_char_boundary(p)) {
+                    let input = RegexInput::new(text).from_pos(pos).anchored(true);
+                    if re.find_input(input).unwrap().is_some() {
+                        assert!(required_bytes(pattern, &RegexOptions::default())
+                            .unwrap()
+                            .iter()
+                            .all(|byte| get_required_byte_set_from_pattern(text).contains(byte)));
+                    }
+                }
+            }
+        }
     }
 }
