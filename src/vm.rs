@@ -1570,6 +1570,11 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                             .anchored(Anchored::Yes)
                             .range(0..end_pos);
                         loop {
+                            if backtrack_count + state.hard_lb_candidates.len()
+                                > options.backtrack_limit
+                            {
+                                break;
+                            }
                             match dfa.try_search_overlapping_rev(
                                 &mut cache_guard,
                                 &input,
