@@ -617,4 +617,34 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn can_do_set_operations() {
+        fn set(bytes: &[u8]) -> ByteSet {
+            let mut set = ByteSet::default();
+            for &b in bytes {
+                set.insert(b);
+            }
+            set
+        }
+
+        let empty = ByteSet::default();
+        let small = set(&[0, 70, 140]);
+        let big = set(&[0, 70, 140, 200, 255]);
+        let other = set(&[70, 140, 210]);
+
+        assert!(empty.is_subset(&small));
+        assert!(small.is_subset(&small));
+        assert!(small.is_subset(&big));
+        assert!(!big.is_subset(&small));
+        assert!(!other.is_subset(&big));
+
+        let mut intersection = big;
+        intersection.intersection(&other);
+        assert_eq!(intersection, set(&[70, 140]));
+
+        let mut union = small;
+        union.union(&other);
+        assert_eq!(union, set(&[0, 70, 140, 210]));
+    }
 }
