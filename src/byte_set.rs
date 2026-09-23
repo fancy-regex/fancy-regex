@@ -327,10 +327,10 @@ fn required_byte_set_from_expr(expr: &Expr) -> ByteSet {
                 }
             }
         }
-        Expr::LiteralBytes { bytes } => {
-            for byte in bytes {
-                byte_set.insert(*byte);
-            }
+        Expr::LiteralBytes { .. } => {
+            // we don't know at this stage whether the compiler will be in Unicode mode or not
+            // so there is no way to know whether the bytes specified here will be treated literally
+            // vs with utf8 semantics
         }
         Expr::Concat(children) => {
             for child in children {
