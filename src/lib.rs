@@ -34,7 +34,6 @@ extern crate alloc;
 
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
-use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 use alloc::vec;
@@ -2906,11 +2905,6 @@ impl Expr {
                 push_quoted(buf, val);
                 if casei {
                     buf.push(')');
-                }
-            }
-            Expr::LiteralBytes { ref bytes, .. } => {
-                for &b in bytes {
-                    buf.push_str(&format!("\\x{b:02X}"));
                 }
             }
             Expr::Assertion(Assertion::StartText) => buf.push('^'),

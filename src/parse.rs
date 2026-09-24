@@ -783,7 +783,7 @@ impl<'a> Parser<'a> {
         byte_escape: bool,
     ) -> Result<(usize, Expr)> {
         let value = u32::from_str_radix(hex_str, 16).unwrap();
-        if byte_escape && value > 0x7F {
+        if byte_escape && value > 0x7F && !self.flag(FLAG_UNICODE) {
             Ok((
                 end,
                 Expr::LiteralBytes {
@@ -2059,15 +2059,31 @@ mod tests {
         assert_eq!(p("\\\""), make_literal("\""));
         assert_eq!(p("\\ "), make_literal(" "));
         assert_eq!(p("\\x41"), make_literal("A"));
-        assert_eq!(p("\\xA0"), Expr::LiteralBytes { bytes: vec![0xA0] });
+        assert_eq!(p("\\xA0"), make_literal("\u{A0}"));
         assert_eq!(p("\\x{1F4A9}"), make_literal("\u{1F4A9}"));
-        assert_eq!(p("\\x{000000B7}"), Expr::LiteralBytes { bytes: vec![0xB7] });
+        assert_eq!(p("\\x{000000B7}"), make_literal("\u{B7}"));
         assert_eq!(p("\\u21D2"), make_literal("\u{21D2}"));
         assert_eq!(p("\\u{21D2}"), make_literal("\u{21D2}"));
         assert_eq!(p("\\u21D2x"), p("\u{21D2}x"));
         assert_eq!(p("\\U0001F60A"), make_literal("\u{1F60A}"));
         assert_eq!(p("\\U{0001F60A}"), make_literal("\u{1F60A}"));
+        assert_eq!(p("\\xFF"), make_literal("ÿ"));
+    }
+
+    #[test]
+    fn literal_escape_ascii_mode() {
+        fn p(s: &str) -> Expr {
+            Expr::parse_tree_with_flags(s, 0).unwrap().expr
+        }
+
         assert_eq!(p("\\xFF"), Expr::LiteralBytes { bytes: vec![255] });
+        assert_eq!(
+            p(r"[a-z\n\xFF]"),
+            Expr::Delegate {
+                inner: "[a-z\n\\xFF]".to_string(),
+                casei: false
+            }
+        );
     }
 
     #[test]
@@ -4507,7 +4523,7 @@ mod tests {
         assert_eq!(
             p(r"[a-z\n\xFF]"),
             Expr::Delegate {
-                inner: "[a-z\n\\xFF]".to_string(),
+                inner: "[a-z\nÿ]".to_string(),
                 casei: false
             }
         );

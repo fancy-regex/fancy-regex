@@ -494,13 +494,14 @@ pub(crate) fn build_seek_pattern_impl<'a>(
         | Expr::BacktrackingControlVerb(_)
         | Expr::BackrefExistsCondition { .. }
         | Expr::Absent(_) => {}
+        // Approximate since we don't want to have to deal with ascii vs unicode handling here
+        Expr::LiteralBytes { bytes } => buf.push_str(&format!("(?s:.{{0,{}}}?)", bytes.len())),
         // Easy leaf nodes (Literal, Any, Delegate) are always handled by the easy no-captures
         // early return above and never reach here. Listed explicitly so that adding a new
         // Expr variant produces a compile error until the seek-pattern case is handled.
-        Expr::Literal { .. }
-        | Expr::LiteralBytes { .. }
-        | Expr::Any { .. }
-        | Expr::Delegate { .. } => info.expr.to_str(buf, precedence),
+        Expr::Literal { .. } | Expr::Any { .. } | Expr::Delegate { .. } => {
+            info.expr.to_str(buf, precedence)
+        }
         // These variants cause a compile error during analysis and are therefore unreachable
         // after a successful `analyze()` call.
         Expr::AstNode(..) => {
@@ -527,13 +528,25 @@ mod tests {
     use crate::analyze::{analyze, AnalyzeContext};
     use crate::compile::populate_group_info_map;
     use crate::optimize;
+    use crate::ExprTree;
     use crate::Regex;
     use alloc::string::ToString;
 
     /// Build the seek pattern for a regex string and return it.
     fn get_seek_pattern(re: &str) -> String {
         let mut tree = Expr::parse_tree(re).unwrap();
-        let requires_capture_group_fixup = optimize(&mut tree);
+        get_seek_pattern_for_tree(&mut tree)
+    }
+
+    /// Build the seek pattern for a regex string parsed with the given flags.
+    fn get_seek_pattern_with_flags(re: &str, flags: u32) -> String {
+        let mut tree = Expr::parse_tree_with_flags(re, flags).unwrap();
+        get_seek_pattern_for_tree(&mut tree)
+    }
+
+    // Build the seek pattern for the given ExprTree
+    fn get_seek_pattern_for_tree(tree: &mut ExprTree) -> String {
+        let requires_capture_group_fixup = optimize(tree);
 
         let info = analyze(
             &tree,
@@ -733,6 +746,19 @@ mod tests {
 
     #[test]
     fn seek_pattern_literal_bytes() {
-        assert_eq!(get_seek_pattern(r"\xFF"), r"\xFF");
+        // In Unicode mode \xFF parses to a `Literal` (handled by the easy to_str path).
+        assert_eq!(get_seek_pattern(r"\xFF"), r"ÿ");
+    }
+
+    #[test]
+    fn seek_pattern_literal_bytes_ascii_mode() {
+        // In non-Unicode mode \xFF parses to `LiteralBytes`, which is hard and so
+        // reaches the seek-pattern arm that interpolates the byte length.
+        assert_eq!(get_seek_pattern_with_flags(r"\xFF", 0), r"(?s:.{0,1}?)");
+        // Two separate byte escapes are a Concat of two LiteralBytes nodes.
+        assert_eq!(
+            get_seek_pattern_with_flags(r"\xFF\xFF", 0),
+            r"(?s:.{0,1}?)(?s:.{0,1}?)"
+        );
     }
 }
