@@ -1571,10 +1571,18 @@ impl Resolver {
                     }
                 }
                 AstNode::SubroutineCall(target) => {
-                    // TODO: if multiple groups with this name, don't resolve
-                    // and instead just leave it as an AstNode for the analyzer to complain about
-                    if let Some(resolved_group) = self.resolve_target(target, None) {
-                        *expr = Expr::SubroutineCall(resolved_group);
+                    // If a by-name target matches multiple capture groups sharing
+                    // that name, don't resolve it: a subroutine call has no defined
+                    // meaning across several groups. Leave it as an AstNode so the
+                    // analyzer reports SubroutineCallTargetNotFound. Single-group
+                    // names (and by-number/relative targets) resolve as before, so
+                    // matching behaviour is unchanged.
+                    let ambiguous = matches!(target, CaptureGroupTarget::ByName(name)
+                        if self.named_groups.get(name.as_str()).map_or(false, |g| g.len() > 1));
+                    if !ambiguous {
+                        if let Some(resolved_group) = self.resolve_target(target, None) {
+                            *expr = Expr::SubroutineCall(resolved_group);
+                        }
                     }
                 }
                 AstNode::BackrefExistsCondition {
@@ -2185,7 +2193,7 @@ mod tests {
         assert_eq!(tree.named_groups.get("b"), Some(&vec![2]));
         assert_eq!(tree.total_groups, 3);
 
-        // backrefs and subroutine calls by name resolve to the last group with that name
+        // A backref by name still resolves to the last group with that name.
         let tree = Expr::parse_tree("(?<a>x)(?<a>y)\\k<a>").unwrap();
         assert_eq!(
             tree.expr,
@@ -2201,15 +2209,24 @@ mod tests {
         assert!(tree.backrefs.contains(2));
         assert!(!tree.backrefs.contains(1));
 
+        // A subroutine call by name is NOT resolved when several groups share
+        // that name: it has no defined single target, so it is left as an
+        // unresolved AstNode for the analyzer to reject.
         let tree = Expr::parse_tree("(?<a>x)(?<a>y)\\g<a>").unwrap();
-        assert_eq!(
-            tree.expr,
-            Expr::Concat(vec![
-                make_group(make_literal("x")),
-                make_group(make_literal("y")),
-                Expr::SubroutineCall(2),
-            ])
-        );
+        match &tree.expr {
+            Expr::Concat(parts) => match parts.last() {
+                Some(Expr::AstNode(
+                    crate::parse::AstNode::SubroutineCall(
+                        crate::parse::CaptureGroupTarget::ByName(name),
+                    ),
+                    _,
+                )) => {
+                    assert_eq!(name, "a");
+                }
+                other => panic!("expected unresolved SubroutineCall AstNode, got {other:?}"),
+            },
+            other => panic!("expected Concat, got {other:?}"),
+        }
     }
 
     #[test]

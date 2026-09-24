@@ -39,6 +39,24 @@ fn capture_names_with_duplicate_group_names() {
 }
 
 #[test]
+fn subroutine_call_to_duplicate_group_name_is_rejected() {
+    // A subroutine call by name has no defined meaning when several capture
+    // groups share that name, so it must not silently resolve to one of them
+    // (previously the last). The parser leaves it unresolved and the analyzer
+    // reports the target as not found.
+    let err = fancy_regex::Regex::new(r"(?<a>x)(?<a>y)\g<a>").unwrap_err();
+    match err {
+        fancy_regex::Error::CompileError(_) => {}
+        other => panic!("expected CompileError for ambiguous subroutine call, got {other:?}"),
+    }
+
+    // A subroutine call to a name with a single group still resolves and compiles.
+    assert!(fancy_regex::Regex::new(r"(?<b>x)\g<b>").is_ok());
+    // A recursive self-referential subroutine (single name) still compiles.
+    assert!(fancy_regex::Regex::new(r"(?<foo>a|\(\g<foo>\))").is_ok());
+}
+
+#[test]
 fn capture_names_with_zero_repetition() {
     // A named capture group inside a {0} quantifier is never matched, but
     // it still counts as a capture group for numbering purposes. The
