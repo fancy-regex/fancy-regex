@@ -2239,9 +2239,9 @@ mod tests {
                 )) => {
                     assert_eq!(name, "a");
                 }
-                other => panic!("{}", "expected unresolved SubroutineCall AstNode, got {other:?}"),
+                other => panic!("expected unresolved SubroutineCall AstNode, got {other:?}"),
             },
-            other => panic!("{}", "expected Concat, got {other:?}"),
+            other => panic!("expected Concat, got {other:?}"),
         }
     }
 

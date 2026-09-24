@@ -47,7 +47,7 @@ fn subroutine_call_to_duplicate_group_name_is_rejected() {
     let err = fancy_regex::Regex::new(r"(?<a>x)(?<a>y)\g<a>").unwrap_err();
     match err {
         fancy_regex::Error::CompileError(_) => {}
-        other => panic!("{}", "expected CompileError for ambiguous subroutine call, got {other:?}"),
+        other => panic!("expected CompileError for ambiguous subroutine call, got {other:?}"),
     }
 
     // A subroutine call to a name with a single group still resolves and compiles.
