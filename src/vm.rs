@@ -634,6 +634,16 @@ struct State {
     /// Reusable buffer for `backtrack_cut`'s slot dedup, kept to avoid
     /// allocating on every atomic-group exit.
     cut_scratch: Vec<usize>,
+    #[cfg(feature = "leftmost_longest")]
+    /// Reusable buffer for the leftmost-longest best-saves snapshot. Kept
+    /// across runs so that the hot backtrack path in `Insn::End` doesn't
+    /// re-allocate a `Vec` every time a longer match is found.
+    best_saves: Vec<usize>,
+    #[cfg(feature = "leftmost_longest")]
+    /// Whether `best_saves` holds a recorded best match. `best_match_len`
+    /// alone can't carry this: a legitimate empty match records length 0,
+    /// which is indistinguishable from "no match yet".
+    best_match_set: bool,
 }
 
 // Each element in the stack conceptually represents the entire state
@@ -655,6 +665,10 @@ impl State {
             max_stack,
             options,
             cut_scratch: Vec::new(),
+            #[cfg(feature = "leftmost_longest")]
+            best_saves: Vec::new(),
+            #[cfg(feature = "leftmost_longest")]
+            best_match_set: false,
         }
     }
 
@@ -667,6 +681,14 @@ impl State {
         self.nsave = 0;
         self.explicit_sp = n_saves;
         self.options = options;
+        #[cfg(feature = "leftmost_longest")]
+        {
+            // Mirror `saves` length so the reusable best-saves snapshot
+            // buffer never needs to grow on the hot backtrack path.
+            self.best_saves.clear();
+            self.best_saves.resize(n_saves, usize::MAX);
+            self.best_match_set = false;
+        }
     }
 
     // push a backtrack branch
@@ -957,9 +979,20 @@ fn store_capture_groups(
 
 #[cfg(feature = "leftmost_longest")]
 #[inline]
-fn apply_best_saves(state: &mut State, best_saves: &Option<Vec<usize>>) -> bool {
-    if let Some(saves) = best_saves {
-        state.saves.copy_from_slice(saves);
+fn apply_best_saves(
+    saves: &mut Vec<usize>,
+    best_saves: &mut Vec<usize>,
+    best_match_set: bool,
+) -> bool {
+    if best_match_set && !best_saves.is_empty() {
+        // Restore `saves` to the best snapshot. `saves` may have grown past
+        // the snapshot length via atomic-group explicit-stack pushes during
+        // subsequent match attempts (or shrunk back); `resize` handles both
+        // directions without reallocating when capacity already suffices. This
+        // is on the hot backtrack path, so the scalar resize avoids an
+        // allocation.
+        saves.resize(best_saves.len(), usize::MAX);
+        saves.copy_from_slice(best_saves);
         true
     } else {
         false
@@ -1048,8 +1081,6 @@ fn run_with<S: HaystackInput + ?Sized, T>(
     #[cfg(feature = "leftmost_longest")]
     let leftmost_longest = option_flags & OPTION_LEFTMOST_LONGEST != 0;
     #[cfg(feature = "leftmost_longest")]
-    let mut best_saves: Option<Vec<usize>> = None;
-    #[cfg(feature = "leftmost_longest")]
     let mut best_match_len = 0;
     loop {
         // break from this loop to fail, causes stack to pop
@@ -1088,9 +1119,22 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                     #[cfg(feature = "leftmost_longest")]
                     if leftmost_longest {
                         let match_len = state.get(1) - state.get(0);
-                        if best_saves.is_none() || match_len > best_match_len {
-                            best_saves = Some(state.saves.clone());
+                        if !state.best_match_set || match_len > best_match_len {
+                            // Reuse the pooled `best_saves` buffer instead of
+                            // re-allocating on every longer match. This is on
+                            // the hot backtrack path, so the scalar copy avoids
+                            // both an allocation and a `Vec::clone`'s capacity
+                            // bookkeeping. `saves` may have grown past the
+                            // snapshot length via atomic-group explicit-stack
+                            // pushes, so resize the buffer to match on demand
+                            // (rare; only when an atomic group is in scope).
+                            let best = &mut state.best_saves;
+                            best.resize(state.saves.len(), usize::MAX);
+                            for (d, s) in best.iter_mut().zip(state.saves.iter()) {
+                                *d = *s;
+                            }
                             best_match_len = match_len;
+                            state.best_match_set = true;
                         }
                         if best_match_len == prog.max_size {
                             return Ok(Some(extract(state)));
@@ -1227,7 +1271,13 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                 }
                 Insn::SplitUnanchored(x, y) => {
                     #[cfg(feature = "leftmost_longest")]
-                    if leftmost_longest && apply_best_saves(state, &best_saves) {
+                    if leftmost_longest
+                        && apply_best_saves(
+                            &mut state.saves,
+                            &mut state.best_saves,
+                            state.best_match_set,
+                        )
+                    {
                         return Ok(Some(extract(state)));
                     }
                     if ix > match_range.end {
@@ -1527,7 +1577,13 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                 }
                 Insn::Seek(Seek { ref inner, .. }) => {
                     #[cfg(feature = "leftmost_longest")]
-                    if leftmost_longest && apply_best_saves(state, &best_saves) {
+                    if leftmost_longest
+                        && apply_best_saves(
+                            &mut state.saves,
+                            &mut state.best_saves,
+                            state.best_match_set,
+                        )
+                    {
                         return Ok(Some(extract(state)));
                     }
                     // A sentinel value greater than haystack.len() is pushed onto the backtrack stack
@@ -1596,7 +1652,13 @@ fn run_with<S: HaystackInput + ?Sized, T>(
         // "break 'fail" goes here
         if state.stack.is_empty() {
             #[cfg(feature = "leftmost_longest")]
-            if leftmost_longest && apply_best_saves(state, &best_saves) {
+            if leftmost_longest
+                && apply_best_saves(
+                    &mut state.saves,
+                    &mut state.best_saves,
+                    state.best_match_set,
+                )
+            {
                 return Ok(Some(extract(state)));
             }
             return Ok(None);
@@ -1605,7 +1667,11 @@ fn run_with<S: HaystackInput + ?Sized, T>(
         #[cfg(feature = "leftmost_longest")]
         if leftmost_longest
             && best_match_len == prog.max_size
-            && apply_best_saves(state, &best_saves)
+            && apply_best_saves(
+                &mut state.saves,
+                &mut state.best_saves,
+                state.best_match_set,
+            )
         {
             return Ok(Some(extract(state)));
         }
