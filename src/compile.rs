@@ -2672,25 +2672,25 @@ mod tests {
     }
 
     fn compile_prog_ascii(re: &str) -> Vec<Insn> {
-        compile_prog_with(
-            re,
+        let tree = Expr::parse_tree_with_flags(re, 0).unwrap();
+        let info = analyze(
+            &tree,
             AnalyzeContext {
                 ..Default::default()
             },
-            |info, tree| {
-                compile(
-                    info,
-                    CompileOptions {
-                        anchored: true,
-                        contains_subroutines: tree.contains_subroutines,
-                        bytes_mode: BytesMode::Ascii,
-                        ..CompileOptions::default()
-                    },
-                )
-                .unwrap()
-                .body
+        )
+        .unwrap();
+        compile(
+            &info,
+            CompileOptions {
+                anchored: true,
+                contains_subroutines: tree.contains_subroutines,
+                bytes_mode: BytesMode::Ascii,
+                ..CompileOptions::default()
             },
         )
+        .unwrap()
+        .body
     }
 
     fn compile_prog_with<F>(re: &str, analyze_context: AnalyzeContext, compile_fn: F) -> Vec<Insn>

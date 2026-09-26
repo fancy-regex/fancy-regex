@@ -34,7 +34,6 @@ extern crate alloc;
 
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
-use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 use alloc::vec;
@@ -1802,9 +1801,11 @@ impl Regex {
     pub fn capture_names(&self) -> CaptureNames<'_> {
         let mut names = Vec::new();
         names.resize(self.captures_len(), None);
-        for (name, &i) in self.named_groups.iter() {
-            if let Some(slot) = names.get_mut(i) {
-                *slot = Some(name.as_str());
+        for (name, groups) in self.named_groups.iter() {
+            for &i in groups {
+                if let Some(slot) = names.get_mut(i) {
+                    *slot = Some(name.as_str());
+                }
             }
         }
         CaptureNames(names.into_iter())
@@ -2169,7 +2170,10 @@ impl<'t, S: input::Input + ?Sized> Captures<'t, S> {
     /// Returns the match for a named capture group.  Returns `None` the capture
     /// group did not match or if there is no group with the given name.
     pub fn name(&self, name: &str) -> Option<S::Match<'t>> {
-        self.named_groups.get(name).and_then(|i| self.get(*i))
+        self.named_groups
+            .get(name)
+            .and_then(|groups| groups.last())
+            .and_then(|i| self.get(*i))
     }
 
     /// Iterate over the captured groups in order in which they appeared in the regex. The first
@@ -2901,11 +2905,6 @@ impl Expr {
                 push_quoted(buf, val);
                 if casei {
                     buf.push(')');
-                }
-            }
-            Expr::LiteralBytes { ref bytes, .. } => {
-                for &b in bytes {
-                    buf.push_str(&format!("\\x{b:02X}"));
                 }
             }
             Expr::Assertion(Assertion::StartText) => buf.push('^'),
