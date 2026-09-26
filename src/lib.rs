@@ -21,6 +21,7 @@
 #![doc = include_str!("../docs/main.md")]
 #![doc = include_str!("../docs/features.md")]
 #![doc = include_str!("../docs/syntax.md")]
+#![doc = include_str!("../docs/oniguruma_compatibility.md")]
 #![doc = include_str!("../docs/subroutines/1_intro.md")]
 #![doc = include_str!("../docs/subroutines/2_flags.md")]
 #![doc = include_str!("../docs/subroutines/3_left_recursion.md")]

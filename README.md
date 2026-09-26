@@ -9,6 +9,8 @@ NFA-based implementations (exemplified by
 [regex](https://crates.io/crates/regex) crate).
 
 Aims to be compatible with Oniguruma syntax when the relevant flag is set.
+See [docs/oniguruma_compatibility.md](docs/oniguruma_compatibility.md) for the
+current compatibility status and known gaps.
 
 Try it online in the **[fancy-regex playground](https://fancy-regex.github.io/fancy-regex/)** - test and explore regular expressions with advanced features in your browser.
 
