@@ -95,6 +95,7 @@ pub(crate) type CachePoolFn = alloc::boxed::Box<
 use crate::error::RuntimeError;
 use crate::input::{Input as HaystackInput, RegexInput};
 use crate::Assertion;
+use crate::ByteSet;
 use crate::BytesMode;
 use crate::Error;
 use crate::Formatter;
@@ -167,14 +168,49 @@ pub enum CharClassMatcher {
     /// Unicode bytes mode, where the haystack is valid UTF-8.
     Codepoint {
         ranges: Box<[(char, char)]>,
+        /// The ASCII members of `ranges`, for an O(1) test on ASCII bytes
+        /// (the common case) instead of a binary search over the ranges.
+        ascii: ByteSet,
         name: Option<String>,
     },
     /// Match one byte against inclusive byte ranges. Used in ASCII bytes mode
     /// (and for ASCII-only `(?-u:...)` classes).
     Byte {
         ranges: Box<[(u8, u8)]>,
+        /// All members of `ranges` as a bitmap; `ranges` is kept for the
+        /// first-set analysis at compile time.
+        set: ByteSet,
         name: Option<String>,
     },
+}
+
+impl CharClassMatcher {
+    pub(crate) fn codepoint(ranges: Box<[(char, char)]>, name: Option<String>) -> Self {
+        let mut ascii = ByteSet::default();
+        for &(lo, hi) in ranges.iter() {
+            if lo as u32 >= 0x80 {
+                break;
+            }
+            for b in (lo as u32)..=(hi as u32).min(0x7f) {
+                ascii.insert(b as u8);
+            }
+        }
+        CharClassMatcher::Codepoint {
+            ranges,
+            ascii,
+            name,
+        }
+    }
+
+    pub(crate) fn byte(ranges: Box<[(u8, u8)]>, name: Option<String>) -> Self {
+        let mut set = ByteSet::default();
+        for &(lo, hi) in ranges.iter() {
+            for b in lo..=hi {
+                set.insert(b);
+            }
+        }
+        CharClassMatcher::Byte { ranges, set, name }
+    }
 }
 
 impl fmt::Debug for CharClassMatcher {
@@ -211,14 +247,21 @@ impl CharClassMatcher {
             return None;
         }
         match self {
-            CharClassMatcher::Byte { ranges, .. } => {
-                if range_contains(ranges, bytes[ix]) {
+            CharClassMatcher::Byte { set, .. } => {
+                if set.contains(bytes[ix]) {
                     Some(1)
                 } else {
                     None
                 }
             }
-            CharClassMatcher::Codepoint { ranges, .. } => {
+            CharClassMatcher::Codepoint { ranges, ascii, .. } => {
+                if bytes[ix] < 0x80 {
+                    return if ascii.contains(bytes[ix]) {
+                        Some(1)
+                    } else {
+                        None
+                    };
+                }
                 let len = codepoint_len(bytes[ix]);
                 let end = ix + len;
                 if end > bytes.len() {
@@ -234,6 +277,226 @@ impl CharClassMatcher {
                 }
             }
         }
+    }
+}
+
+/// A zero-width assertion inside a [`ClassSeqMatcher`], replicating the
+/// corresponding `regex-automata` `Look` exactly: positions are absolute in
+/// the haystack (a delegated engine checks them against the full haystack, not
+/// the search span, and never sees fancy-regex's input assertion overrides).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SeqLook {
+    /// `\A`: at absolute position 0.
+    Start,
+    /// `\z`: at the end of the haystack.
+    End,
+    /// `(?m:^)`: at position 0 or right after a `\n`.
+    StartLF,
+    /// `(?m:$)`: at the end of the haystack or right before a `\n`.
+    EndLF,
+}
+
+impl SeqLook {
+    fn matches(self, bytes: &[u8], ix: usize) -> bool {
+        match self {
+            SeqLook::Start => ix == 0,
+            SeqLook::End => ix == bytes.len(),
+            SeqLook::StartLF => ix == 0 || bytes[ix - 1] == b'\n',
+            SeqLook::EndLF => ix == bytes.len() || bytes[ix] == b'\n',
+        }
+    }
+}
+
+/// One element of a [`ClassSeqMatcher`] sequence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SeqElem {
+    /// A zero-width assertion.
+    Look(SeqLook),
+    /// An exact literal, compared byte-wise (case-insensitivity has already
+    /// been resolved into classes/alternations by Hir translation).
+    Lit(Box<[u8]>),
+    /// A single character class.
+    Class(CharClassMatcher),
+    /// A repetition of a character class. Valid as the final element of the
+    /// sequence, or earlier when the class is disjoint from the effective
+    /// first-character set of everything that can follow it (checked at build
+    /// time): a maximal-munch loop is then exactly equivalent to the engine —
+    /// giving characters back would put the next element on a character of
+    /// this class, which by disjointness can never match. Lazy repetitions are
+    /// only accepted in effectively final position, where consuming exactly
+    /// `min` reproduces an anchored engine search.
+    ClassRepeat {
+        class: CharClassMatcher,
+        min: u32,
+        max: Option<u32>,
+        greedy: bool,
+    },
+    /// Start of the capture group with this delegate-local index (1-based, in
+    /// order of appearance — exactly how a delegated engine numbers them).
+    GroupStart(u32),
+    /// End of the capture group with this delegate-local index.
+    GroupEnd(u32),
+    /// An optional sub-sequence (`X?`), the only branching construct. The
+    /// inner sequence is restricted to literals, classes and group markers,
+    /// so each branch is deterministic; trying take-then-skip (greedy) or
+    /// skip-then-take (lazy) reproduces the engine's leftmost-first semantics
+    /// exactly.
+    Optional { elems: Box<[SeqElem]>, greedy: bool },
+}
+
+/// Maximum engine-style capture slots a [`ClassSeqMatcher`] tracks (slots 0/1
+/// are unused, then two per group): up to 7 capture groups. Fragments with
+/// more groups fall back to a delegated engine.
+pub(crate) const CLASS_SEQ_MAX_SLOTS: usize = 16;
+
+/// Capture slots recorded while matching a sequence, laid out like a
+/// delegated engine's slots: group `g` at `[2g]`/`[2g + 1]`. `Copy` so branch
+/// rollback in [`ClassSeqMatcher::run`] is a plain assignment.
+pub(crate) type SeqSlots = [Option<usize>; CLASS_SEQ_MAX_SLOTS];
+
+/// A delegated fragment that is a plain sequence of literals and character
+/// classes, matched natively by the VM instead of being delegated to a
+/// `meta::Regex` engine.
+///
+/// Such fragments are extremely common as branches of alternations in
+/// lookbehinds (e.g. `[^\w]return`) and as whitespace runs (`\s*`), and
+/// building an engine per fragment dominates compile time. Matching is
+/// deterministic — each element either consumes a fixed amount or fails, and
+/// the trailing repetition consumes maximally (greedy) or minimally (lazy) —
+/// which is exactly what the anchored, atomic delegate search would return.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ClassSeqMatcher {
+    elems: Box<[SeqElem]>,
+    /// The fancy-regex group numbers the local groups map to, like
+    /// `Delegate::capture_groups`. `None` when the fragment has no groups.
+    capture_groups: Option<CaptureGroupRange>,
+    /// The delegate pattern this replaces, for debug output.
+    pattern: String,
+}
+
+impl fmt::Debug for ClassSeqMatcher {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ClassSeq {}", self.pattern)
+    }
+}
+
+impl ClassSeqMatcher {
+    pub(crate) fn new(
+        elems: Box<[SeqElem]>,
+        capture_groups: Option<CaptureGroupRange>,
+        pattern: String,
+    ) -> Self {
+        ClassSeqMatcher {
+            elems,
+            capture_groups,
+            pattern,
+        }
+    }
+
+    pub(crate) fn capture_groups(&self) -> Option<CaptureGroupRange> {
+        self.capture_groups
+    }
+
+    /// If the sequence matches at `ix`, returns the number of bytes consumed
+    /// (the same end position the delegated engine's anchored search would
+    /// report) and fills `slots` with the local group spans. Returns `None`
+    /// on no match.
+    fn match_len<S: HaystackInput + ?Sized>(
+        &self,
+        s: &S,
+        ix: usize,
+        slots: &mut SeqSlots,
+    ) -> Option<usize> {
+        self.run(&self.elems, s, ix, slots).map(|end| end - ix)
+    }
+
+    /// Matches `elems` at `pos`, returning the end position. The only choice
+    /// points are `Optional` elements (their inner sequences are
+    /// deterministic), so this is bounded backtracking: greedy tries
+    /// take-then-skip, lazy skip-then-take — leftmost-first, like the engine.
+    /// `slots` is `Copy`, so a failed branch restores it by assignment.
+    fn run<S: HaystackInput + ?Sized>(
+        &self,
+        elems: &[SeqElem],
+        s: &S,
+        mut pos: usize,
+        slots: &mut SeqSlots,
+    ) -> Option<usize> {
+        let bytes = s.as_bytes();
+        for (i, elem) in elems.iter().enumerate() {
+            match elem {
+                SeqElem::Look(look) => {
+                    if !look.matches(bytes, pos) {
+                        return None;
+                    }
+                }
+                SeqElem::GroupStart(g) => {
+                    slots[*g as usize * 2] = Some(pos);
+                }
+                SeqElem::GroupEnd(g) => {
+                    slots[*g as usize * 2 + 1] = Some(pos);
+                }
+                SeqElem::Optional {
+                    elems: inner,
+                    greedy,
+                } => {
+                    let rest = &elems[i + 1..];
+                    let snapshot = *slots;
+                    if *greedy {
+                        if let Some(p) = self.run(inner, s, pos, slots) {
+                            if let Some(end) = self.run(rest, s, p, slots) {
+                                return Some(end);
+                            }
+                        }
+                        *slots = snapshot;
+                        return self.run(rest, s, pos, slots);
+                    } else {
+                        if let Some(end) = self.run(rest, s, pos, slots) {
+                            return Some(end);
+                        }
+                        *slots = snapshot;
+                        let p = self.run(inner, s, pos, slots)?;
+                        return self.run(rest, s, p, slots);
+                    }
+                }
+                SeqElem::Lit(lit) => {
+                    let end = pos + lit.len();
+                    if end > bytes.len() || &bytes[pos..end] != &lit[..] {
+                        return None;
+                    }
+                    pos = end;
+                }
+                SeqElem::Class(class) => {
+                    pos += class.match_len(s, pos)?;
+                }
+                SeqElem::ClassRepeat {
+                    class,
+                    min,
+                    max,
+                    greedy,
+                } => {
+                    let mut count = 0u32;
+                    let limit = if *greedy {
+                        max.unwrap_or(u32::MAX)
+                    } else {
+                        *min
+                    };
+                    while count < limit {
+                        match class.match_len(s, pos) {
+                            Some(len) => {
+                                pos += len;
+                                count += 1;
+                            }
+                            None => break,
+                        }
+                    }
+                    if count < *min {
+                        return None;
+                    }
+                }
+            }
+        }
+        Some(pos)
     }
 }
 
@@ -429,6 +692,10 @@ pub enum Insn {
     /// Match a single character class (e.g. `\d`, `[a-z]`) at the current index,
     /// without delegating to a regex-automata engine.
     CharClass(CharClassMatcher),
+    /// Match a sequence of literals and character classes (e.g. `[^\w]return`,
+    /// `\s*`) at the current index, without delegating to a regex-automata
+    /// engine.
+    ClassSeq(ClassSeqMatcher),
     /// Split execution into two threads. The two fields are positions of instructions. Execution
     /// first tries the first thread. If that fails, the second position is tried.
     Split(usize, usize),
@@ -1145,6 +1412,28 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                     Some(len) => ix += len,
                     None => break 'fail,
                 },
+                Insn::ClassSeq(ref matcher) => {
+                    let mut seq_slots: SeqSlots = [None; CLASS_SEQ_MAX_SLOTS];
+                    match matcher.match_len(haystack, ix, &mut seq_slots) {
+                        Some(len) => {
+                            // Store group spans exactly like a captures
+                            // Delegate does (see store_capture_groups): local
+                            // group g + 1 maps to fancy group start + g.
+                            if let Some(range) = matcher.capture_groups() {
+                                for g in 0..(range.end() - range.start()) {
+                                    if let (Some(start), Some(end)) =
+                                        (seq_slots[(g + 1) * 2], seq_slots[(g + 1) * 2 + 1])
+                                    {
+                                        state.save((range.start() + g) * 2, start);
+                                        state.save((range.start() + g) * 2 + 1, end);
+                                    }
+                                }
+                            }
+                            ix += len;
+                        }
+                        None => break 'fail,
+                    }
+                }
                 Insn::Assertion(assertion) => {
                     if !match assertion {
                         Assertion::StartText => input

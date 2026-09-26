@@ -25,7 +25,6 @@ use alloc::format;
 use alloc::string::{String, ToString};
 #[cfg(feature = "variable-lookbehinds")]
 use alloc::sync::Arc;
-#[cfg(feature = "variable-lookbehinds")]
 use alloc::vec;
 use alloc::vec::Vec;
 use regex_automata::meta::Regex as RaRegex;
@@ -44,7 +43,10 @@ use crate::seek::build_seek_pattern;
 use crate::to_hir::{expr_to_hir, HirCtx};
 #[cfg(feature = "variable-lookbehinds")]
 use crate::vm::{CachePoolFn, ReverseBackwardsDelegate};
-use crate::vm::{CaptureGroupRange, CaseiLiteral, CharClassMatcher, Delegate, Insn, Prog, Seek};
+use crate::vm::{
+    CaptureGroupRange, CaseiLiteral, CharClassMatcher, ClassSeqMatcher, Delegate, Insn, Prog, Seek,
+    SeqElem, SeqLook, CLASS_SEQ_MAX_SLOTS,
+};
 use crate::LookAround::*;
 use crate::{
     Absent, BacktrackingControlVerb, BytesMode, CompileError, Error, Expr, LookAround, Result,
@@ -1222,14 +1224,257 @@ fn char_class_matcher_from_hir(
                 return None;
             }
             let ranges = cu.ranges().iter().map(|r| (r.start(), r.end())).collect();
-            Some(CharClassMatcher::Codepoint { ranges, name })
+            Some(CharClassMatcher::codepoint(ranges, name))
         }
         HirKind::Class(Class::Bytes(cb)) => {
             let ranges = cb.ranges().iter().map(|r| (r.start(), r.end())).collect();
-            Some(CharClassMatcher::Byte { ranges, name })
+            Some(CharClassMatcher::byte(ranges, name))
         }
         _ => None,
     }
+}
+
+/// Build a [`ClassSeqMatcher`] from delegate `Hir` fragments that form a plain
+/// sequence of literals, character classes, capture-group markers, class
+/// repetitions and optional deterministic sub-sequences (`(async)?`). Returns
+/// `None` for anything else (alternations, other repetitions, too many
+/// groups/optionals, an overlapping mid-sequence repetition, ...) so the
+/// caller falls back to building an engine.
+fn class_seq_matcher_from_hirs(
+    hirs: &[Hir],
+    options: &CompileOptions,
+    pattern: String,
+    capture_groups: Option<CaptureGroupRange>,
+) -> Option<ClassSeqMatcher> {
+    fn collect(hir: &Hir, options: &CompileOptions, out: &mut Vec<SeqElem>) -> Option<()> {
+        use regex_syntax::hir::{HirKind, Look};
+
+        match hir.kind() {
+            HirKind::Empty => Some(()),
+            HirKind::Look(look) => {
+                let look = match look {
+                    Look::Start => SeqLook::Start,
+                    Look::End => SeqLook::End,
+                    Look::StartLF => SeqLook::StartLF,
+                    Look::EndLF => SeqLook::EndLF,
+                    _ => return None,
+                };
+                out.push(SeqElem::Look(look));
+                Some(())
+            }
+            HirKind::Literal(lit) => {
+                out.push(SeqElem::Lit(lit.0.clone()));
+                Some(())
+            }
+            HirKind::Class(_) => {
+                let class = char_class_matcher_from_hir(hir, options, None)?;
+                out.push(SeqElem::Class(class));
+                Some(())
+            }
+            HirKind::Concat(subs) => {
+                for sub in subs {
+                    collect(sub, options, out)?;
+                }
+                Some(())
+            }
+            HirKind::Capture(cap) => {
+                out.push(SeqElem::GroupStart(cap.index));
+                collect(&cap.sub, options, out)?;
+                out.push(SeqElem::GroupEnd(cap.index));
+                Some(())
+            }
+            HirKind::Repetition(rep) => {
+                if let Some(class) = char_class_matcher_from_hir(&rep.sub, options, None) {
+                    out.push(SeqElem::ClassRepeat {
+                        class,
+                        min: rep.min,
+                        max: rep.max,
+                        greedy: rep.greedy,
+                    });
+                    return Some(());
+                }
+                // `X?` over a deterministic sub-sequence (typically an
+                // optional capture group like `(async)?`) becomes a bounded
+                // choice point. Anything beyond literals/classes/group
+                // markers inside would make the take-branch itself
+                // non-deterministic, so bail.
+                if rep.min == 0 && rep.max == Some(1) {
+                    let mut inner = Vec::new();
+                    collect(&rep.sub, options, &mut inner)?;
+                    if inner.iter().any(|e| {
+                        !matches!(
+                            e,
+                            SeqElem::Lit(_)
+                                | SeqElem::Class(_)
+                                | SeqElem::GroupStart(_)
+                                | SeqElem::GroupEnd(_)
+                        )
+                    }) {
+                        return None;
+                    }
+                    out.push(SeqElem::Optional {
+                        elems: inner.into_boxed_slice(),
+                        greedy: rep.greedy,
+                    });
+                    return Some(());
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    let mut elems = Vec::new();
+    for hir in hirs {
+        collect(hir, options, &mut elems)?;
+    }
+    if elems.is_empty() {
+        return None;
+    }
+
+    // A repetition before the end of the sequence is only handled natively
+    // when its class is disjoint from the effective first-character set of
+    // everything that can follow it: a maximal-munch loop is then exactly
+    // equivalent to the engine, because giving characters back would put the
+    // next element on a character of the repeated class, which by
+    // disjointness can never match. The effective first set is accumulated
+    // right to left, absorbing elements that can match empty (`min: 0`
+    // repetitions). Lazy repetitions are only handled when they are
+    // effectively trailing (possibly followed by capture markers). A later
+    // consuming or asserting element may require trying multiple repetition
+    // lengths, which this deterministic matcher deliberately does not do.
+    // A start-of-text/line assertion can only be allowed before anything has
+    // consumed: after a give-back of a preceding repetition down to zero, it
+    // could succeed at the delegate start regardless of the character there,
+    // which the first-set analysis below cannot express.
+    if elems.iter().enumerate().any(|(i, e)| {
+        i > 0
+            && matches!(
+                e,
+                SeqElem::Look(SeqLook::Start) | SeqElem::Look(SeqLook::StartLF)
+            )
+    }) {
+        return None;
+    }
+
+    // Each Optional is a binary choice point in the matcher's bounded
+    // backtracking, so cap how many we accept; and group spans must fit the
+    // matcher's fixed slot array. `capture_groups` already tells us how many
+    // delegate-local groups there are, so there is no need to walk the
+    // elements (and nested optionals) a second time.
+    let optionals = elems
+        .iter()
+        .filter(|e| matches!(e, SeqElem::Optional { .. }))
+        .count();
+    if optionals > 4 {
+        return None;
+    }
+    let capture_count = capture_groups.map_or(0, |range| range.end() - range.start());
+    if (capture_count + 1) * 2 > CLASS_SEQ_MAX_SLOTS {
+        return None;
+    }
+
+    let unicode_mode = matches!(options.bytes_mode, BytesMode::Unicode);
+    let mut eff_first: Vec<(u32, u32)> = Vec::new();
+    for i in (0..elems.len()).rev() {
+        if let SeqElem::ClassRepeat { class, greedy, .. } = &elems[i] {
+            let effectively_trailing = elems[i + 1..]
+                .iter()
+                .all(|e| matches!(e, SeqElem::GroupStart(_) | SeqElem::GroupEnd(_)));
+            if !effectively_trailing {
+                if !greedy {
+                    return None;
+                }
+                if ranges_overlap(&class_ranges_u32(class), &eff_first) {
+                    return None;
+                }
+            }
+        }
+        let this = elem_first_ranges(&elems[i], unicode_mode)?;
+        // Zero-width or possibly-zero-width elements are transparent: the
+        // element after them also contributes to the first set seen from the
+        // left.
+        if elem_nullable(&elems[i]) {
+            eff_first.extend(this);
+        } else {
+            eff_first = this;
+        }
+    }
+
+    Some(ClassSeqMatcher::new(
+        elems.into_boxed_slice(),
+        capture_groups,
+        pattern,
+    ))
+}
+
+/// Whether an element can succeed without consuming input.
+fn elem_nullable(elem: &SeqElem) -> bool {
+    matches!(
+        elem,
+        SeqElem::ClassRepeat { min: 0, .. }
+            | SeqElem::Look(_)
+            | SeqElem::GroupStart(_)
+            | SeqElem::GroupEnd(_)
+            | SeqElem::Optional { .. }
+    )
+}
+
+/// First set of a sequence: union of element first sets from the left, up to
+/// and including the first non-nullable element.
+fn seq_first_ranges(elems: &[SeqElem], unicode_mode: bool) -> Option<Vec<(u32, u32)>> {
+    let mut out = Vec::new();
+    for elem in elems {
+        out.extend(elem_first_ranges(elem, unicode_mode)?);
+        if !elem_nullable(elem) {
+            break;
+        }
+    }
+    Some(out)
+}
+
+/// The code units a class matches, as inclusive u32 ranges — chars in Unicode
+/// mode, bytes otherwise. The two spaces never mix within one sequence: in
+/// Unicode mode `Byte` matchers only arise from ASCII-only classes.
+fn class_ranges_u32(class: &CharClassMatcher) -> Vec<(u32, u32)> {
+    match class {
+        CharClassMatcher::Codepoint { ranges, .. } => {
+            ranges.iter().map(|&(a, b)| (a as u32, b as u32)).collect()
+        }
+        CharClassMatcher::Byte { ranges, .. } => {
+            ranges.iter().map(|&(a, b)| (a as u32, b as u32)).collect()
+        }
+    }
+}
+
+/// The code units an element can start with, or `None` if undeterminable. For
+/// zero-width assertions this is the set of code units that can sit at a
+/// position where the assertion holds — empty for start/end of text (a
+/// position given back by a repetition always has a preceding character and is
+/// never past the end), `\n` for `(?m:$)`.
+fn elem_first_ranges(elem: &SeqElem, unicode_mode: bool) -> Option<Vec<(u32, u32)>> {
+    match elem {
+        SeqElem::Look(SeqLook::EndLF) => Some(vec![(u32::from(b'\n'), u32::from(b'\n'))]),
+        SeqElem::Look(_) => Some(Vec::new()),
+        SeqElem::GroupStart(_) | SeqElem::GroupEnd(_) => Some(Vec::new()),
+        SeqElem::Optional { elems, .. } => seq_first_ranges(elems, unicode_mode),
+        SeqElem::Lit(bytes) => {
+            let cu = if unicode_mode {
+                core::str::from_utf8(bytes).ok()?.chars().next()? as u32
+            } else {
+                *bytes.first()? as u32
+            };
+            Some(vec![(cu, cu)])
+        }
+        SeqElem::Class(class) | SeqElem::ClassRepeat { class, .. } => Some(class_ranges_u32(class)),
+    }
+}
+
+/// Whether two sets of inclusive ranges intersect. The sets are tiny and not
+/// necessarily sorted, so a quadratic walk is fine.
+fn ranges_overlap(a: &[(u32, u32)], b: &[(u32, u32)]) -> bool {
+    a.iter()
+        .any(|&(alo, ahi)| b.iter().any(|&(blo, bhi)| alo <= bhi && blo <= ahi))
 }
 
 /// Recursively populate the group_info_map with all capture groups in the Info tree
@@ -1481,6 +1726,20 @@ impl DelegateBuilder {
                 return Ok(Insn::CharClass(matcher));
             }
         }
+        // Not a single class: try a plain literal/class sequence, which is
+        // also matched natively (see ClassSeqMatcher) and, unlike the single
+        // class above, can record capture-group spans.
+        if let Some(hirs) = &self.hirs {
+            let capture_groups = self.capture_groups.and_then(|r| r.to_option_if_non_empty());
+            if let Some(matcher) = class_seq_matcher_from_hirs(
+                hirs,
+                options,
+                strip_delegate_flags(&self.re).to_string(),
+                capture_groups,
+            ) {
+                return Ok(Insn::ClassSeq(matcher));
+            }
+        }
         Ok(Insn::Delegate(self.build_delegate(options, memo)?))
     }
 
@@ -1581,6 +1840,49 @@ mod tests {
     }
 
     #[test]
+    fn class_seq_accepts_safe_mid_sequence_repetition() {
+        let prog = compile_prog_forced_hard(r"\s*=");
+        assert_eq!(prog.len(), 2, "prog: {:?}", prog);
+        assert_class_seq_insn(&prog[0], r"\s*=");
+        assert_matches!(prog[1], End);
+    }
+
+    #[test]
+    fn class_seq_rejects_overlapping_mid_sequence_repetition() {
+        let prog = compile_prog_forced_hard(r"\s*\s");
+        assert_eq!(prog.len(), 2, "prog: {:?}", prog);
+        assert_delegate_insn(&prog[0], r"\s*\s", None);
+        assert_matches!(prog[1], End);
+    }
+
+    #[test]
+    fn class_seq_only_accepts_effectively_trailing_lazy_repetition() {
+        let prog = compile_prog_forced_hard(r"x\s*?");
+        assert_eq!(prog.len(), 3, "prog: {:?}", prog);
+        assert_matches!(prog[0], Lit(ref l) if l == "x");
+        assert_class_seq_insn(&prog[1], r"\s*?");
+        assert_matches!(prog[2], End);
+
+        let prog = compile_prog_forced_hard(r"\s*?\d*");
+        assert_eq!(prog.len(), 2, "prog: {:?}", prog);
+        assert_delegate_insn(&prog[0], r"\s*?\d*", None);
+        assert_matches!(prog[1], End);
+    }
+
+    #[test]
+    fn class_seq_accepts_captures_and_optional_sequences() {
+        let prog = compile_prog_forced_hard(r"\s*(async)?");
+        assert_eq!(prog.len(), 2, "prog: {:?}", prog);
+        assert_class_seq_capture_insn(&prog[0], r"\s*(async)?", Some(CaptureGroupRange(0, 1)));
+        assert_matches!(prog[1], End);
+
+        let prog = compile_prog_forced_hard(r"(a)?a");
+        assert_eq!(prog.len(), 2, "prog: {:?}", prog);
+        assert_class_seq_capture_insn(&prog[0], r"(a)?a", Some(CaptureGroupRange(0, 1)));
+        assert_matches!(prog[1], End);
+    }
+
+    #[test]
     fn jumps_for_alternation() {
         let prog = compile_prog_forced_hard("a|b|c");
 
@@ -1637,7 +1939,7 @@ mod tests {
         assert_matches!(prog[0], Split(1, 3));
         assert_matches!(prog[1], Lit(ref l) if l == "x");
         assert_matches!(prog[2], FailNegativeLookAround);
-        assert_delegate_insn(&prog[3], "(?:a|b)c", None);
+        assert_class_seq_insn(&prog[3], "(?:a|b)c");
         assert_delegate_insn(&prog[4], "x*", None);
         assert_matches!(prog[5], End);
     }
@@ -2141,7 +2443,7 @@ mod tests {
         assert_eq!(prog.len(), 12, "prog: {:?}", prog);
 
         assert_matches!(prog[0], SaveCaptureGroupStart(0));
-        assert_delegate_insn(&prog[1], ".(b)", Some(CaptureGroupRange(1, 2)));
+        assert_class_seq_capture_insn(&prog[1], ".(b)", Some(CaptureGroupRange(1, 2)));
         assert_matches!(prog[2], SaveCaptureGroupStart(2));
         assert_char_class_insn(&prog[3], "[^a]");
         assert_matches!(prog[4], Split(3, 5));
@@ -2149,7 +2451,7 @@ mod tests {
         assert_matches!(prog[6], Split(7, 9));
         assert_matches!(prog[7], Lit(ref l) if l == "c");
         assert_matches!(prog[8], FailNegativeLookAround);
-        assert_delegate_insn(&prog[9], r"(\w)", Some(CaptureGroupRange(3, 4)));
+        assert_class_seq_capture_insn(&prog[9], r"(\w)", Some(CaptureGroupRange(3, 4)));
         assert_matches!(prog[10], Save(1));
         assert_matches!(prog[11], End);
     }
@@ -2161,7 +2463,7 @@ mod tests {
         assert_eq!(prog.len(), 7, "prog: {:?}", prog);
 
         assert_matches!(prog[0], SaveCaptureGroupStart(0));
-        assert_delegate_insn(&prog[1], "(.)", Some(CaptureGroupRange(1, 2)));
+        assert_class_seq_capture_insn(&prog[1], "(.)", Some(CaptureGroupRange(1, 2)));
         assert_matches!(prog[2], SaveCaptureGroupStart(1));
         assert_matches!(prog[3], AnyNoNL);
         assert_matches!(prog[4], Save(3));
@@ -2179,7 +2481,7 @@ mod tests {
         assert_matches!(prog[1], SaveCaptureGroupStart(1));
         assert_matches!(prog[2], AnyNoNL);
         assert_matches!(prog[3], Save(3));
-        assert_delegate_insn(&prog[4], "(.)", Some(CaptureGroupRange(1, 2)));
+        assert_class_seq_capture_insn(&prog[4], "(.)", Some(CaptureGroupRange(1, 2)));
         assert_matches!(prog[5], Save(1));
         assert_matches!(prog[6], End);
     }
@@ -2235,7 +2537,7 @@ mod tests {
         assert_eq!(prog.len(), 3, "prog: {:?}", prog);
 
         assert_matches!(prog[0], ContinueFromPreviousMatchEnd { at_start: true });
-        assert_delegate_insn(&prog[1], r"\s\d", None);
+        assert_class_seq_insn(&prog[1], r"\s\d");
         assert_matches!(prog[2], End);
 
         let prog = compile_prog(r"^\G\s\d");
@@ -2243,7 +2545,7 @@ mod tests {
         assert_eq!(prog.len(), 4, "prog: {:?}", prog);
 
         assert_matches!(prog[1], ContinueFromPreviousMatchEnd { at_start: true });
-        assert_delegate_insn(&prog[2], r"\s\d", None);
+        assert_class_seq_insn(&prog[2], r"\s\d");
         assert_matches!(prog[3], End);
     }
 
@@ -2255,7 +2557,7 @@ mod tests {
 
         assert_char_class_insn(&prog[0], r"\w");
         assert_matches!(prog[1], ContinueFromPreviousMatchEnd { at_start: false });
-        assert_delegate_insn(&prog[2], r"\s\d", None);
+        assert_class_seq_insn(&prog[2], r"\s\d");
         assert_matches!(prog[3], End);
     }
 
@@ -2269,9 +2571,9 @@ mod tests {
         assert_matches!(prog[1], Split(2, 6));
         assert_matches!(prog[2], ContinueFromPreviousMatchEnd { at_start: false });
         assert_matches!(prog[3], EndAtomic);
-        assert_delegate_insn(&prog[4], r"\s\d", None);
+        assert_class_seq_insn(&prog[4], r"\s\d");
         assert_matches!(prog[5], Jmp(7));
-        assert_delegate_insn(&prog[6], r"$", None);
+        assert_class_seq_insn(&prog[6], r"$");
         assert_matches!(prog[7], End);
     }
 
@@ -2405,6 +2707,25 @@ mod tests {
             Insn::Delegate(delegate) => assert_delegate(delegate, re, captures),
             _ => {
                 panic!("Expected Insn::Delegate but was {:#?}", insn);
+            }
+        }
+    }
+
+    /// Assert that `insn` is a native `ClassSeq` for the delegate pattern `re`.
+    fn assert_class_seq_insn(insn: &Insn, re: &str) {
+        assert_class_seq_capture_insn(insn, re, None);
+    }
+
+    /// Assert that `insn` is a native `ClassSeq` for the delegate pattern `re`
+    /// mapping its local groups to `captures`.
+    fn assert_class_seq_capture_insn(insn: &Insn, re: &str, captures: Option<CaptureGroupRange>) {
+        match insn {
+            Insn::ClassSeq(matcher) => {
+                assert_eq!(format!("{:?}", matcher), format!("ClassSeq {}", re));
+                assert_eq!(matcher.capture_groups(), captures);
+            }
+            _ => {
+                panic!("Expected Insn::ClassSeq but was {:#?}", insn);
             }
         }
     }

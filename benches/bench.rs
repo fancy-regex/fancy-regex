@@ -21,7 +21,7 @@
 #[macro_use]
 extern crate criterion;
 
-use criterion::Criterion;
+use criterion::{black_box, Criterion};
 use std::time::Duration;
 
 use fancy_regex::internal::{
@@ -112,6 +112,43 @@ fn run_tricky(c: &mut Criterion) {
     }
     s.push_str("ac");
     c.bench_function("run_tricky", |b| b.iter(|| run_default(&p, &s, 0).unwrap()));
+}
+
+fn run_class_seq(c: &mut Criterion) {
+    fn compile_pattern(pattern: &str) -> fancy_regex::internal::Prog {
+        let tree = Expr::parse_tree(pattern).unwrap();
+        let analysis = analyze(&tree, AnalyzeContext::default()).unwrap();
+        compile(
+            &analysis,
+            CompileOptions {
+                anchored: true,
+                contains_subroutines: tree.contains_subroutines,
+                ..CompileOptions::default()
+            },
+        )
+        .unwrap()
+    }
+
+    // The successful hard lookahead makes the easy suffix a VM delegate on
+    // main and a ClassSeq on this branch, exercising the production path the
+    // optimization replaces.
+    let plain = compile_pattern(r"(?=.)[^\w]return");
+    let captures = compile_pattern(r"(?=.)\s*(async)?");
+    let mut group = c.benchmark_group("run_class_seq");
+    group.bench_function("plain", |b| {
+        b.iter(|| run_default(&plain, black_box("#return"), 0).unwrap())
+    });
+    group.bench_function("plain_miss", |b| {
+        b.iter(|| run_default(&plain, black_box("#returx"), 0).unwrap())
+    });
+    group.bench_function("captures_optional", |b| {
+        b.iter(|| run_default(&captures, black_box("  async"), 0).unwrap())
+    });
+    let rollback = compile_pattern(r"(?=.)(a)?a");
+    group.bench_function("optional_rollback", |b| {
+        b.iter(|| run_default(&rollback, black_box("a"), 0).unwrap())
+    });
+    group.finish();
 }
 
 fn run_backtrack_limit(c: &mut Criterion) {
@@ -223,6 +260,7 @@ criterion_group!(
     analyze_literal_re,
     run_backtrack,
     run_tricky,
+    run_class_seq,
 );
 criterion_group!(
     name = slow_benches;
