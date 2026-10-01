@@ -2608,6 +2608,42 @@ mod tests {
     }
 
     #[test]
+    fn word_boundary_outside_lookbehind_delegates_with_alternation() {
+        // Word boundaries are const-size and regex-automata supports them, so
+        // `\b(?:alt)\b` compiles to a single delegated engine regardless of
+        // how many alternatives it has. Previously the whole alternation was
+        // compiled branch by branch on the VM, growing linearly with branch
+        // count (e.g. MATLAB's 6741-instruction `begin` regex).
+        let prog = compile_prog(r"\b(?:abs|accumarray|acos|abcdef|ghijklmnop)\b");
+        assert_eq!(prog.len(), 2, "prog: {:?}", prog);
+        assert_delegate_insn(
+            &prog[0],
+            r"\b(?:abs|accumarray|acos|abcdef|ghijklmnop)\b",
+            None,
+        );
+        assert_matches!(prog[1], End);
+    }
+
+    #[test]
+    fn word_boundary_inside_lookbehind_stays_on_vm() {
+        // regex-automata's reverse DFA can't run a variable-length lookbehind,
+        // so the alternation *inside* a lookbehind is compiled branch by
+        // branch on the VM (GoBack + Split + per-branch literals), even though
+        // the word boundaries around it would otherwise delegate.
+        let prog = compile_prog(r"\b(?<=\b(?:foo|bar)\b)\b");
+        assert!(
+            prog.iter().any(|insn| matches!(insn, GoBack(_))),
+            "lookbehind should be compiled on the VM: {:?}",
+            prog
+        );
+        assert!(
+            prog.iter().any(|insn| matches!(insn, Lit(s) if s == "foo")),
+            "lookbehind alternation should be compiled branch by branch: {:?}",
+            prog
+        );
+    }
+
+    #[test]
     fn continue_from_prev_match_not_first_instruction_can_be_compiled() {
         let prog = compile_prog(r"\w\G\s\d");
 

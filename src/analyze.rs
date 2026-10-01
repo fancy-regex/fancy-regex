@@ -31,7 +31,9 @@ use bit_set::BitSet;
 use crate::alloc::string::ToString;
 use crate::parse::ExprTree;
 use crate::vm::CaptureGroupRange;
-use crate::{Assertion, AstNode, CaptureGroupTarget, CompileError, Error, Expr, Result};
+use crate::{
+    Assertion, AstNode, CaptureGroupTarget, CompileError, Error, Expr, LookAround, Result,
+};
 
 #[cfg(not(feature = "std"))]
 use alloc::collections::BTreeMap as Map;
@@ -164,6 +166,11 @@ struct Analyzer<'a> {
     /// newline when it anchors the match itself. When used as a sub-assertion inside a lookaround,
     /// it behaves as a plain line start. So we need to track when we are analyzing inside a lookaround.
     in_lookaround: bool,
+    /// Whether we are currently analyzing the child of a lookbehind. Word
+    /// boundaries are only hard here: regex-automata's reverse DFA can't run
+    /// a variable-length lookbehind, so the whole lookbehind is compiled on
+    /// the VM. Lookaheads have no such restriction.
+    in_lookbehind: bool,
 }
 
 impl<'a> Analyzer<'a> {
@@ -188,8 +195,16 @@ impl<'a> Analyzer<'a> {
         let mut hard = false;
         match *expr {
             Expr::Assertion(assertion) if assertion.is_always_hard() => {
+                // Word boundaries are only hard when they appear inside a
+                // lookbehind: regex-automata's reverse DFA can't run a
+                // variable-length lookbehind, so the whole lookbehind is
+                // compiled on the VM. Outside a lookbehind, a word boundary
+                // is const-size and the regex-automata engine supports it,
+                // so it can be delegated — which is what keeps patterns like
+                // `\b(?:foo|bar|baz)\b` a single delegate instead of a branch
+                // per alternative.
                 const_size = true;
-                hard = true;
+                hard = assertion.is_hard_in_lookaround(self.in_lookbehind);
             }
             Expr::Assertion(Assertion::StartLineOniguruma { .. }) if !self.in_lookaround => {
                 const_size = true;
@@ -305,12 +320,20 @@ impl<'a> Analyzer<'a> {
                 hard = child_info.hard | self.backrefs.contains(group);
                 children.push(child_info);
             }
-            Expr::LookAround(ref child, _) => {
+            Expr::LookAround(ref child, la) => {
+                let was_in_lookbehind = self.in_lookbehind;
                 let was_in_lookaround = self.in_lookaround;
+                // Word boundaries are only hard inside a lookbehind:
+                // regex-automata's reverse DFA can't run a variable-length
+                // lookbehind, so the whole lookbehind is compiled on the VM.
+                // Lookaheads have no such restriction.
+                self.in_lookbehind =
+                    matches!(la, LookAround::LookBehind | LookAround::LookBehindNeg);
                 self.in_lookaround = true;
                 // NOTE: min_pos_in_group might seem weird for lookbehinds
                 let child_info =
                     self.visit(child, min_pos_in_group, inside_zero_rep, enclosing_group)?;
+                self.in_lookbehind = was_in_lookbehind;
                 self.in_lookaround = was_in_lookaround;
                 // min_size = 0
                 const_size = true;
@@ -963,6 +986,7 @@ pub fn analyze<'a>(tree: &'a ExprTree, ctx: AnalyzeContext) -> Result<Info<'a>> 
         #[cfg(feature = "leftmost_longest")]
         leftmost_longest,
         in_lookaround: false,
+        in_lookbehind: false,
     };
 
     let mut analyzed = analyzer.visit(&tree.expr, 0, false, 0)?;

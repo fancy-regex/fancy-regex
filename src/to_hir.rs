@@ -164,8 +164,55 @@ pub(crate) fn expr_to_hir(expr: &Expr, ctx: &mut HirCtx) -> Option<Hir> {
                 Look::StartCRLF
             }
             Assertion::EndLine { crlf: true } => Look::EndCRLF,
-            // Word boundaries and \Z are hard and never reach a delegated
-            // subtree; be conservative if they somehow do.
+            // Word boundaries and half boundaries are const-size and the
+            // regex-automata engine supports them, so they can be delegated.
+            // They are only hard inside a lookbehind (see
+            // `Assertion::is_hard_in_lookaround`); if they reach here from a
+            // lookbehind, the caller is about to build a reverse DFA, which
+            // can't run them — bail out so the caller falls back to the VM.
+            Assertion::WordBoundary => {
+                if ctx.unicode {
+                    Look::WordUnicode
+                } else {
+                    Look::WordAscii
+                }
+            }
+            Assertion::NotWordBoundary => {
+                if ctx.unicode {
+                    Look::WordUnicodeNegate
+                } else {
+                    Look::WordAsciiNegate
+                }
+            }
+            Assertion::LeftWordBoundary => {
+                if ctx.unicode {
+                    Look::WordStartUnicode
+                } else {
+                    Look::WordStartAscii
+                }
+            }
+            Assertion::RightWordBoundary => {
+                if ctx.unicode {
+                    Look::WordEndUnicode
+                } else {
+                    Look::WordEndAscii
+                }
+            }
+            Assertion::LeftWordHalfBoundary => {
+                if ctx.unicode {
+                    Look::WordStartHalfUnicode
+                } else {
+                    Look::WordStartHalfAscii
+                }
+            }
+            Assertion::RightWordHalfBoundary => {
+                if ctx.unicode {
+                    Look::WordEndHalfUnicode
+                } else {
+                    Look::WordEndHalfAscii
+                }
+            }
+            // `\Z` is always hard and never reaches a delegated subtree.
             _ => return None,
         }),
         Expr::Concat(ref children) => {
