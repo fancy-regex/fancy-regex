@@ -1173,7 +1173,7 @@ fn casei_width_changing_fold() {
 #[test]
 fn casei_keyword_alternation_in_hard_pattern() {
     let haystack = "if ABSENT then";
-    let m = fancy_regex::Regex::new(r"\b(?i)(abort|absent|zzz)\b")
+    let m = fancy_regex::Regex::new(r"(?<=\b)(?i)(abort|absent|zzz)(?<=\b)")
         .unwrap()
         .find(haystack)
         .unwrap()
