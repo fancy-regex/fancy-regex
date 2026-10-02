@@ -60,3 +60,7 @@ harness = false
 [[bench]]
 name = "compile"
 harness = false
+
+[[bench]]
+name = "word_boundary_perf"
+harness = false
