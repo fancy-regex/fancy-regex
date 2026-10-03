@@ -59,13 +59,20 @@ pub(crate) const MAX_SUBROUTINE_RECURSION_DEPTH: usize = 19;
 struct VMBuilder {
     prog: Vec<Insn>,
     n_saves: usize,
+    /// Optional cap on the number of emitted VM instructions. Subroutine calls
+    /// are inlined at compile time, so a self- or mutually-recursive pattern can
+    /// expand without bound even while the recursion-depth cap is respected;
+    /// this bounds the emitted instruction vector instead. `None` disables the
+    /// check, preserving the previous behavior.
+    max_prog_size: Option<usize>,
 }
 
 impl VMBuilder {
-    fn new(max_group: usize) -> VMBuilder {
+    fn new(max_group: usize, max_prog_size: Option<usize>) -> VMBuilder {
         VMBuilder {
             prog: Vec::new(),
             n_saves: max_group * 2,
+            max_prog_size,
         }
     }
 
@@ -84,8 +91,18 @@ impl VMBuilder {
     }
 
     // would "emit" be a better name?
-    fn add(&mut self, insn: Insn) {
+    /// Push an instruction, returning an error if doing so would exceed the
+    /// configured `max_prog_size` cap.
+    fn add(&mut self, insn: Insn) -> Result<()> {
+        if let Some(limit) = self.max_prog_size {
+            if self.prog.len() >= limit {
+                return Err(Error::CompileError(Box::new(
+                    CompileError::PatternTooComplex,
+                )));
+            }
+        }
         self.prog.push(insn);
+        Ok(())
     }
 
     fn set_jmp_target(&mut self, jmp_pc: usize, target: usize) {
@@ -151,16 +168,17 @@ fn lookbehind_alt_as_delegate(inner: &Info<'_>) -> bool {
 
 impl<'a> Compiler<'a> {
     #[inline]
-    fn emit_literal_bytes(&mut self, bytes: &[u8]) {
+    fn emit_literal_bytes(&mut self, bytes: &[u8]) -> Result<()> {
         if matches!(self.options.bytes_mode, BytesMode::Unicode) {
             let s: String = bytes
                 .iter()
                 .map(|&b| char::from_u32(b as u32).unwrap())
                 .collect();
-            self.b.add(Insn::Lit(s));
+            self.b.add(Insn::Lit(s))?;
         } else {
-            self.b.add(Insn::LitBytes(bytes.to_vec()));
+            self.b.add(Insn::LitBytes(bytes.to_vec()))?;
         }
+        Ok(())
     }
 
     fn visit(&mut self, info: &Info<'_>, hard: bool) -> Result<()> {
@@ -172,28 +190,28 @@ impl<'a> Compiler<'a> {
             Expr::Empty => (),
             Expr::Literal { ref val, casei } => {
                 if !casei {
-                    self.b.add(Insn::Lit(val.clone()));
+                    self.b.add(Insn::Lit(val.clone()))?;
                 } else {
                     self.compile_delegate(info)?;
                 }
             }
             Expr::LiteralBytes { ref bytes, .. } => {
-                self.emit_literal_bytes(bytes);
+                self.emit_literal_bytes(bytes)?;
             }
             Expr::Any { newline: true, .. } => {
-                self.b.add(Insn::Any);
+                self.b.add(Insn::Any)?;
             }
             Expr::Any {
                 newline: false,
                 crlf: true,
             } => {
-                self.b.add(Insn::AnyNoCRLF);
+                self.b.add(Insn::AnyNoCRLF)?;
             }
             Expr::Any {
                 newline: false,
                 crlf: false,
             } => {
-                self.b.add(Insn::AnyNoNL);
+                self.b.add(Insn::AnyNoNL)?;
             }
             Expr::GeneralNewline { unicode } => {
                 self.compile_general_newline(unicode)?;
@@ -207,9 +225,9 @@ impl<'a> Compiler<'a> {
             }
             Expr::Group(_) => {
                 let group = info.start_group();
-                self.b.add(Insn::SaveCaptureGroupStart(group));
+                self.b.add(Insn::SaveCaptureGroupStart(group))?;
                 self.visit(&info.children[0], hard)?;
-                self.b.add(Insn::Save(group * 2 + 1));
+                self.b.add(Insn::Save(group * 2 + 1))?;
             }
             Expr::Repeat { lo, hi, greedy, .. } => {
                 self.compile_repeat(info, lo, hi, greedy, hard)?;
@@ -223,13 +241,13 @@ impl<'a> Compiler<'a> {
                     casei,
                     // use the pre-computed effective unicode flag (unicode && !Ascii bytes mode)
                     unicode: self.options.unicode,
-                });
+                })?;
             }
             Expr::BackrefExistsCondition {
                 group,
                 relative_recursion_level: None,
             } => {
-                self.b.add(Insn::BackrefExistsCondition(group));
+                self.b.add(Insn::BackrefExistsCondition(group))?;
             }
             Expr::BackrefExistsCondition {
                 relative_recursion_level: Some(_),
@@ -242,7 +260,7 @@ impl<'a> Compiler<'a> {
                 )));
             }
             Expr::BacktrackingControlVerb(BacktrackingControlVerb::Fail) => {
-                self.b.add(Insn::Fail);
+                self.b.add(Insn::Fail)?;
             }
             Expr::BacktrackingControlVerb(_) => {
                 return Err(Error::CompileError(Box::new(
@@ -254,26 +272,26 @@ impl<'a> Compiler<'a> {
             Expr::AtomicGroup(_) => {
                 // TODO optimization: atomic insns are not needed if the
                 // child doesn't do any backtracking.
-                self.b.add(Insn::BeginAtomic);
+                self.b.add(Insn::BeginAtomic)?;
                 self.visit(&info.children[0], false)?;
-                self.b.add(Insn::EndAtomic);
+                self.b.add(Insn::EndAtomic)?;
             }
             Expr::Delegate { .. } => {
                 // TODO: might want to have more specialized impls
                 self.compile_delegate(info)?;
             }
             Expr::Assertion(assertion) => {
-                self.b.add(Insn::Assertion(assertion));
+                self.b.add(Insn::Assertion(assertion))?;
             }
             Expr::KeepOut => {
-                self.b.add(Insn::Save(0));
+                self.b.add(Insn::Save(0))?;
             }
             Expr::ContinueFromPreviousMatchEnd => {
                 self.b.add(Insn::ContinueFromPreviousMatchEnd {
                     at_start: info.start_group() <= 1
                         && info.min_pos_in_group == 0
                         && !self.inside_alternation,
-                });
+                })?;
             }
             Expr::Conditional { .. } => {
                 self.compile_conditional(
@@ -292,7 +310,7 @@ impl<'a> Compiler<'a> {
                 if recursion_count >= MAX_SUBROUTINE_RECURSION_DEPTH {
                     // Hit recursion limit - don't expand further, effectively making this match fail
                     // This matches Oniguruma's behavior of limiting recursion depth
-                    self.b.add(Insn::Fail);
+                    self.b.add(Insn::Fail)?;
                     return Ok(());
                 }
 
@@ -322,9 +340,9 @@ impl<'a> Compiler<'a> {
                                 )),
                             )));
                         }
-                        self.b.add(Insn::SaveCaptureGroupStart(target_group));
+                        self.b.add(Insn::SaveCaptureGroupStart(target_group))?;
                         self.visit(&target_info.children[0], hard)?;
-                        self.b.add(Insn::Save(target_group * 2 + 1));
+                        self.b.add(Insn::Save(target_group * 2 + 1))?;
                     }
 
                     // Pop the recursion stack
@@ -364,7 +382,7 @@ impl<'a> Compiler<'a> {
                         .build_delegate(&self.options, &mut self.delegate_memo)?;
 
                     // Add the Absent instruction
-                    self.b.add(Insn::AbsentRepeater(delegate));
+                    self.b.add(Insn::AbsentRepeater(delegate))?;
                 }
             }
             Expr::BackrefWithRelativeRecursionLevel { .. } => unreachable!(),
@@ -404,7 +422,7 @@ impl<'a> Compiler<'a> {
             let has_next = i != count - 1;
             let pc = self.b.pc();
             if has_next {
-                self.b.add(Insn::Split(pc + 1, usize::MAX));
+                self.b.add(Insn::Split(pc + 1, usize::MAX))?;
             }
             if last_pc != usize::MAX {
                 self.b.set_split_target(last_pc, pc, true);
@@ -419,7 +437,7 @@ impl<'a> Compiler<'a> {
                 // instruction.
                 let pc = self.b.pc();
                 jmps.push(pc);
-                self.b.add(Insn::Jmp(0));
+                self.b.add(Insn::Jmp(0))?;
             }
         }
         let next_pc = self.b.pc();
@@ -445,26 +463,26 @@ impl<'a> Compiler<'a> {
         // relating to the split instruction's second position if the conditional succeeds
         // This is to ensure that if the condition succeeds, but the "true" branch from the
         // conditional fails, that it wouldn't jump to the "false" branch.
-        self.b.add(Insn::BeginAtomic);
+        self.b.add(Insn::BeginAtomic)?;
 
         let was_inside_alternation = self.inside_alternation;
         self.inside_alternation = true;
 
         let split_pc = self.b.pc();
         // add the split instruction - we will update it's second pc later
-        self.b.add(Insn::Split(split_pc + 1, usize::MAX));
+        self.b.add(Insn::Split(split_pc + 1, usize::MAX))?;
 
         // add the conditional expression
         condition(self)?;
 
         // mark it as successful to remove the state we added as a split earlier
-        self.b.add(Insn::EndAtomic);
+        self.b.add(Insn::EndAtomic)?;
 
         // add the truth branch
         truth(self)?;
         // add an instruction to jump over the false branch - we will update the jump target later
         let jump_over_false_pc = self.b.pc();
-        self.b.add(Insn::Jmp(0));
+        self.b.add(Insn::Jmp(0))?;
 
         // add the false branch, update the split target
         self.b.set_split_target(split_pc, self.b.pc(), true);
@@ -488,14 +506,14 @@ impl<'a> Compiler<'a> {
     fn compile_hard_absent_repeater(&mut self, inner: &Info<'_>) -> Result<()> {
         let repeat = self.b.newsave();
         let check = self.b.newsave();
-        self.b.add(Insn::Save0(repeat));
+        self.b.add(Insn::Save0(repeat))?;
         let loop_pc = self.b.pc();
         self.b.add(Insn::RepeatEpsilonGr {
             lo: 0,
             next: usize::MAX,
             repeat,
             check,
-        });
+        })?;
 
         // Compile the body as: (?((?!inner))\O|)
         // Condition: negative lookahead - succeeds when inner does NOT match
@@ -504,13 +522,13 @@ impl<'a> Compiler<'a> {
         self.compile_conditional(
             |compiler| compiler.compile_negative_lookaround(inner, LookAheadNeg),
             |compiler| {
-                compiler.b.add(Insn::Any);
+                compiler.b.add(Insn::Any)?;
                 Ok(())
             },
             |_| Ok(()),
         )?;
 
-        self.b.add(Insn::Jmp(loop_pc));
+        self.b.add(Insn::Jmp(loop_pc))?;
         let next_pc = self.b.pc();
         self.b.set_repeat_target(loop_pc, next_pc);
         Ok(())
@@ -569,7 +587,7 @@ impl<'a> Compiler<'a> {
         if lo == 0 && hi == 1 {
             // e?
             let pc = self.b.pc();
-            self.b.add(Insn::Split(pc + 1, pc + 1));
+            self.b.add(Insn::Split(pc + 1, pc + 1))?;
             // TODO: do we want to do an epsilon check here? If we do
             // it here and in Alt, we might be able to make a good
             // bound on stack depth
@@ -583,7 +601,7 @@ impl<'a> Compiler<'a> {
             // Use RepeatEpsilon instructions to prevent empty repeat
             let repeat = self.b.newsave();
             let check = self.b.newsave();
-            self.b.add(Insn::Save0(repeat));
+            self.b.add(Insn::Save0(repeat))?;
             let pc = self.b.pc();
             if greedy {
                 self.b.add(Insn::RepeatEpsilonGr {
@@ -591,25 +609,25 @@ impl<'a> Compiler<'a> {
                     next: usize::MAX,
                     repeat,
                     check,
-                });
+                })?;
             } else {
                 self.b.add(Insn::RepeatEpsilonNg {
                     lo,
                     next: usize::MAX,
                     repeat,
                     check,
-                });
+                })?;
             }
             self.visit(child, hard)?;
-            self.b.add(Insn::Jmp(pc));
+            self.b.add(Insn::Jmp(pc))?;
             let next_pc = self.b.pc();
             self.b.set_repeat_target(pc, next_pc);
         } else if lo == 0 && hi == usize::MAX {
             // e*
             let pc = self.b.pc();
-            self.b.add(Insn::Split(pc + 1, pc + 1));
+            self.b.add(Insn::Split(pc + 1, pc + 1))?;
             self.visit(child, hard)?;
-            self.b.add(Insn::Jmp(pc));
+            self.b.add(Insn::Jmp(pc))?;
             let next_pc = self.b.pc();
             self.b.set_split_target(pc, next_pc, greedy);
         } else if lo == 1 && hi == usize::MAX {
@@ -618,10 +636,10 @@ impl<'a> Compiler<'a> {
             self.visit(child, hard)?;
             let next = self.b.pc() + 1;
             let (x, y) = if greedy { (pc, next) } else { (next, pc) };
-            self.b.add(Insn::Split(x, y));
+            self.b.add(Insn::Split(x, y))?;
         } else {
             let repeat = self.b.newsave();
-            self.b.add(Insn::Save0(repeat));
+            self.b.add(Insn::Save0(repeat))?;
             let pc = self.b.pc();
             if greedy {
                 self.b.add(Insn::RepeatGr {
@@ -629,17 +647,17 @@ impl<'a> Compiler<'a> {
                     hi,
                     next: usize::MAX,
                     repeat,
-                });
+                })?;
             } else {
                 self.b.add(Insn::RepeatNg {
                     lo,
                     hi,
                     next: usize::MAX,
                     repeat,
-                });
+                })?;
             }
             self.visit(child, hard)?;
-            self.b.add(Insn::Jmp(pc));
+            self.b.add(Insn::Jmp(pc))?;
             let next_pc = self.b.pc();
             self.b.set_repeat_target(pc, next_pc);
         }
@@ -700,17 +718,17 @@ impl<'a> Compiler<'a> {
 
     fn compile_positive_lookaround(&mut self, inner: &Info<'_>, la: LookAround) -> Result<()> {
         let save = self.b.newsave();
-        self.b.add(Insn::Save(save));
+        self.b.add(Insn::Save(save))?;
         self.compile_lookaround_inner(inner, la)?;
-        self.b.add(Insn::Restore(save));
+        self.b.add(Insn::Restore(save))?;
         Ok(())
     }
 
     fn compile_negative_lookaround(&mut self, inner: &Info<'_>, la: LookAround) -> Result<()> {
         let pc = self.b.pc();
-        self.b.add(Insn::Split(pc + 1, usize::MAX));
+        self.b.add(Insn::Split(pc + 1, usize::MAX))?;
         self.compile_lookaround_inner(inner, la)?;
-        self.b.add(Insn::FailNegativeLookAround);
+        self.b.add(Insn::FailNegativeLookAround)?;
         let next_pc = self.b.pc();
         self.b.set_split_target(pc, next_pc, true);
         Ok(())
@@ -719,7 +737,7 @@ impl<'a> Compiler<'a> {
     fn compile_lookaround_inner(&mut self, inner: &Info<'_>, la: LookAround) -> Result<()> {
         if la == LookBehind || la == LookBehindNeg {
             if inner.const_size {
-                self.b.add(Insn::GoBack(inner.min_size));
+                self.b.add(Insn::GoBack(inner.min_size))?;
                 self.visit(inner, false)
             } else if !inner.hard {
                 #[cfg(feature = "variable-lookbehinds")]
@@ -758,13 +776,13 @@ impl<'a> Compiler<'a> {
 
                                     go_back += child.min_size;
                                     if go_back > 0 {
-                                        self.b.add(Insn::GoBack(go_back));
+                                        self.b.add(Insn::GoBack(go_back))?;
                                     }
                                     self.visit(child, false)?;
                                     go_back = child.min_size;
                                 } else {
                                     if go_back > 0 {
-                                        self.b.add(Insn::GoBack(go_back));
+                                        self.b.add(Insn::GoBack(go_back))?;
                                         go_back = 0;
                                     }
                                     delegate_nodes.push(child);
@@ -886,7 +904,7 @@ impl<'a> Compiler<'a> {
                 pattern: pattern.to_string(),
                 capture_group_extraction_inner: forward_regex,
                 capture_groups: capture_groups.to_option_if_non_empty(),
-            }));
+            }))?;
         Ok(())
     }
 
@@ -896,7 +914,7 @@ impl<'a> Compiler<'a> {
         }
         if infos.len() == 1 {
             if let Expr::LiteralBytes { ref bytes, .. } = infos[0].expr {
-                self.emit_literal_bytes(bytes);
+                self.emit_literal_bytes(bytes)?;
                 return Ok(());
             }
         }
@@ -916,7 +934,7 @@ impl<'a> Compiler<'a> {
                 for info in infos {
                     info.push_literal(&mut val);
                 }
-                self.b.add(Insn::Lit(val));
+                self.b.add(Insn::Lit(val))?;
                 return Ok(());
             }
             let mut chars = Vec::new();
@@ -924,7 +942,7 @@ impl<'a> Compiler<'a> {
                 info.push_literal_chars(&mut chars);
             }
             if let Some(lit) = self.try_casei_literal(&chars) {
-                self.b.add(Insn::LitCasei(lit));
+                self.b.add(Insn::LitCasei(lit))?;
                 return Ok(());
             }
         }
@@ -937,7 +955,7 @@ impl<'a> Compiler<'a> {
         // only DefineGroups), as it would just match the empty string.
         if !delegate_builder.is_empty() {
             self.b
-                .add(delegate_builder.build(&self.options, &mut self.delegate_memo)?);
+                .add(delegate_builder.build(&self.options, &mut self.delegate_memo)?)?;
         }
         Ok(())
     }
@@ -984,18 +1002,18 @@ impl<'a> Compiler<'a> {
         // The entire \R is atomic - once it matches, we don't backtrack
         // This prevents \r\n from backtracking to \r
 
-        self.b.add(Insn::BeginAtomic);
+        self.b.add(Insn::BeginAtomic)?;
 
         // Split: try \r\n first, then single chars
         let split_pc = self.b.pc();
-        self.b.add(Insn::Split(split_pc + 1, usize::MAX)); // Will fix second target later
+        self.b.add(Insn::Split(split_pc + 1, usize::MAX))?; // Will fix second target later
 
         // First alternative: \r\n
-        self.b.add(Insn::Lit("\r\n".to_string()));
+        self.b.add(Insn::Lit("\r\n".to_string()))?;
 
         // Jump over other alternatives
         let jmp_pc = self.b.pc();
-        self.b.add(Insn::Jmp(usize::MAX)); // Will fix target later
+        self.b.add(Insn::Jmp(usize::MAX))?; // Will fix target later
 
         // Second alternative: single newline characters
         let single_newline_char_pc = self.b.pc();
@@ -1018,19 +1036,19 @@ impl<'a> Compiler<'a> {
         // has no capture groups fancy-regex reads. Match it natively when possible
         // (skipping engine construction), falling back to a delegate otherwise.
         if let Some(matcher) = try_char_class_matcher(pattern, &self.options) {
-            self.b.add(Insn::CharClass(matcher));
+            self.b.add(Insn::CharClass(matcher))?;
         } else {
             let compiled = compile_inner(pattern, &self.options, DelegateUsage::anchored(false))?;
             self.b.add(Insn::Delegate(Delegate {
                 inner: compiled,
                 pattern: pattern.to_string(),
                 capture_groups: None,
-            }));
+            }))?;
         }
 
         // Fix the jump target
         let end_atomic_pc = self.b.pc();
-        self.b.add(Insn::EndAtomic);
+        self.b.add(Insn::EndAtomic)?;
 
         self.b.set_jmp_target(jmp_pc, end_atomic_pc);
 
@@ -1277,6 +1295,12 @@ pub struct CompileOptions {
     pub delegate_size_limit: Option<usize>,
     /// Optional size limit in bytes for the DFA of each delegated sub-expression.
     pub delegate_dfa_size_limit: Option<usize>,
+    /// Optional cap on the number of VM instructions emitted while compiling.
+    /// Subroutine calls are inlined at compile time, so a self- or
+    /// mutually-recursive pattern can expand without bound even while the
+    /// recursion-depth cap is respected; this bounds the emitted instruction
+    /// vector instead. `None` disables the check.
+    pub max_prog_size: Option<usize>,
 }
 
 impl core::fmt::Debug for CompileOptions {
@@ -1302,6 +1326,7 @@ impl core::fmt::Debug for CompileOptions {
             .field("unicode", &self.unicode)
             .field("delegate_size_limit", &self.delegate_size_limit)
             .field("delegate_dfa_size_limit", &self.delegate_dfa_size_limit)
+            .field("max_prog_size", &self.max_prog_size)
             .finish()
     }
 }
@@ -1317,6 +1342,7 @@ impl Default for CompileOptions {
             unicode: true,
             delegate_size_limit: None,
             delegate_dfa_size_limit: None,
+            max_prog_size: None,
         }
     }
 }
@@ -1329,7 +1355,7 @@ pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
     populate_group_info_map(&mut group_info_map, info);
 
     let mut c = Compiler {
-        b: VMBuilder::new(info.end_group()),
+        b: VMBuilder::new(info.end_group(), options.max_prog_size),
         options,
         inside_alternation: false,
         group_info_map,
@@ -1353,7 +1379,7 @@ pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
                     c.b.add(Insn::Seek(Seek {
                         inner,
                         pattern: seek_pattern.clone(),
-                    }));
+                    }))?;
                     used_seek = true;
                 }
             }
@@ -1366,24 +1392,24 @@ pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
             // so that we bump the haystack index by one when failing to match at the current position
             let current_pc = c.b.pc();
             // we are adding 3 instructions, so the current program counter plus 3 gives us the first real instruction
-            c.b.add(Insn::SplitUnanchored(current_pc + 3, current_pc + 1));
-            c.b.add(Insn::Any);
-            c.b.add(Insn::Jmp(current_pc));
+            c.b.add(Insn::SplitUnanchored(current_pc + 3, current_pc + 1))?;
+            c.b.add(Insn::Any)?;
+            c.b.add(Insn::Jmp(current_pc))?;
         }
     }
     if info.start_group() == 1 {
         // add implicit capture group 0 begin
-        c.b.add(Insn::Save(0));
+        c.b.add(Insn::Save(0))?;
     }
     c.visit(info, false)?;
     if info.start_group() == 1 {
         // add implicit capture group 0 end
-        c.b.add(Insn::Save(1));
+        c.b.add(Insn::Save(1))?;
     }
     if c.options.disallow_empty_match_at_eof_after_newline {
-        c.b.add(Insn::RejectEmptyMatchAtEOFFollowingNewline);
+        c.b.add(Insn::RejectEmptyMatchAtEOFFollowingNewline)?;
     }
-    c.b.add(Insn::End);
+    c.b.add(Insn::End)?;
     Ok(c.b.build(bytes_mode, seek_pattern, info.max_size))
 }
 
@@ -2182,6 +2208,76 @@ mod tests {
         assert_delegate_insn(&prog[4], "(.)", Some(CaptureGroupRange(1, 2)));
         assert_matches!(prog[5], Save(1));
         assert_matches!(prog[6], End);
+    }
+
+    /// Compile a pattern with an explicit `max_prog_size` cap. Returns the
+    /// resulting program, or the compile error if the cap was exceeded.
+    fn compile_prog_with_cap(re: &str, cap: usize) -> Result<Vec<Insn>> {
+        let tree = Expr::parse_tree(re).unwrap();
+        let info = analyze(
+            &tree,
+            AnalyzeContext {
+                explicit_capture_group_0: false,
+                ..Default::default()
+            },
+        )?;
+        compile(
+            &info,
+            CompileOptions {
+                anchored: true,
+                contains_subroutines: tree.contains_subroutines,
+                max_prog_size: Some(cap),
+                ..CompileOptions::default()
+            },
+        )
+        .map(|p| p.body)
+    }
+
+    #[test]
+    fn max_prog_size_caps_recursive_subroutine_expansion() {
+        // `(a|b\g<1>\g<1>)` is not provably non-terminating (the `a` branch
+        // terminates), so analysis passes and the recursive expansion is
+        // materialized at compile time. A tiny cap rejects it with a typed
+        // error instead of letting it grow without bound.
+        let err = compile_prog_with_cap(r"(a|b\g<1>\g<1>)", 4).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::CompileError(ref e) if matches!(e.as_ref(), CompileError::PatternTooComplex)
+            ),
+            "expected PatternTooComplex, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn max_prog_size_disabled_by_default_allows_recursive_pattern() {
+        // With no cap (the default), the recursive pattern compiles as before.
+        let prog = compile_prog(r"(a|b\g<0>\g<0>)");
+        assert!(prog.iter().any(|insn| matches!(insn, Insn::End)));
+    }
+
+    #[test]
+    fn max_prog_size_allows_smaller_programs() {
+        let prog = compile_prog_with_cap(r"abc", 5).unwrap();
+        assert_eq!(prog.len(), 4, "prog: {:?}", prog);
+        assert_matches!(prog[0], Save(0));
+        assert_matches!(prog[1], Insn::Lit(ref l) if l == "abc");
+        assert_matches!(prog[2], Save(1));
+        assert_matches!(prog[3], Insn::End);
+    }
+
+    #[test]
+    fn max_prog_size_disallows_larger_programs() {
+        let err = compile_prog_with_cap(r"abc", 3).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::CompileError(ref e) if matches!(e.as_ref(), CompileError::PatternTooComplex)
+            ),
+            "expected PatternTooComplex, got: {:?}",
+            err
+        );
     }
 
     #[test]

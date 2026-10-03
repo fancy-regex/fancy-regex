@@ -532,6 +532,12 @@ struct RegexOptions {
     syntaxc: SyntaxConfig,
     delegate_size_limit: Option<usize>,
     delegate_dfa_size_limit: Option<usize>,
+    /// Optional cap on the number of VM instructions emitted while compiling.
+    /// Subroutine calls are inlined at compile time, so a self- or
+    /// mutually-recursive pattern can expand without bound even while the
+    /// recursion-depth cap is respected; this bounds the emitted instruction
+    /// vector instead. `None` disables the check.
+    max_prog_size: Option<usize>,
     oniguruma_mode: bool,
     ignore_numbered_groups_when_named_groups_exist: bool,
     hard_regex_runtime_options: HardRegexRuntimeOptions,
@@ -560,6 +566,7 @@ impl fmt::Debug for RegexOptions {
             .field("syntaxc", &self.syntaxc)
             .field("delegate_size_limit", &self.delegate_size_limit)
             .field("delegate_dfa_size_limit", &self.delegate_dfa_size_limit)
+            .field("max_prog_size", &self.max_prog_size)
             .field("oniguruma_mode", &self.oniguruma_mode)
             .field(
                 "ignore_numbered_groups_when_named_groups_exist",
@@ -583,6 +590,7 @@ impl Default for RegexOptions {
             syntaxc: SyntaxConfig::new().unicode(true),
             delegate_size_limit: None,
             delegate_dfa_size_limit: None,
+            max_prog_size: None,
             oniguruma_mode: false,
             ignore_numbered_groups_when_named_groups_exist: false,
             hard_regex_runtime_options: HardRegexRuntimeOptions::default(),
@@ -801,6 +809,18 @@ impl RegexOptionsBuilder {
     /// delegate_dfa_size_limit`.
     pub fn delegate_dfa_size_limit(&mut self, limit: usize) -> &mut Self {
         self.options.delegate_dfa_size_limit = Some(limit);
+        self
+    }
+
+    /// Set the maximum number of VM instructions the compiled program may
+    /// contain. Subroutine calls are inlined at compile time, so a self- or
+    /// mutually-recursive pattern can expand without bound even while the
+    /// recursion-depth cap is respected; this bounds the emitted instruction
+    /// vector instead. If exceeded, compilation returns
+    /// `CompileError::PatternTooComplex`. `None` (the default) disables the
+    /// check, preserving the previous behavior.
+    pub fn max_prog_size(&mut self, limit: usize) -> &mut Self {
+        self.options.max_prog_size = Some(limit);
         self
     }
 
@@ -1141,6 +1161,12 @@ impl RegexBuilder {
         self
     }
 
+    /// See [`RegexOptionsBuilder::max_prog_size`]
+    pub fn max_prog_size(&mut self, limit: usize) -> &mut Self {
+        self.options.max_prog_size(limit);
+        self
+    }
+
     /// See [`RegexOptionsBuilder::oniguruma_mode`]
     pub fn oniguruma_mode(&mut self, yes: bool) -> &mut Self {
         self.options.oniguruma_mode(yes);
@@ -1339,6 +1365,7 @@ impl Regex {
                     && !matches!(options.bytes_mode, BytesMode::Ascii),
                 delegate_size_limit: options.delegate_size_limit,
                 delegate_dfa_size_limit: options.delegate_dfa_size_limit,
+                max_prog_size: options.max_prog_size,
             },
         )?;
         Ok(Regex {

@@ -86,6 +86,11 @@ pub enum CompileError {
     LeftRecursiveSubroutineCall(String),
     /// Unbounded recursive subroutine call detected
     NeverEndingRecursion,
+    /// The compiled program exceeded the configured maximum size. Subroutine
+    /// calls are inlined at compile time, so a self- or mutually-recursive
+    /// pattern can expand without bound even when the recursion-depth cap is
+    /// respected; this bounds the emitted VM instruction vector instead.
+    PatternTooComplex,
     /// Unexpected general error
     UnexpectedGeneralError(String),
     /// The pattern combined with the active options can never produce a match. For example,
@@ -168,6 +173,14 @@ impl fmt::Display for CompileError {
             }
             CompileError::NeverEndingRecursion => {
                 write!(f, "Never-ending recursive subroutine call detected")
+            }
+            CompileError::PatternTooComplex => {
+                write!(
+                    f,
+                    "Pattern is too complex: it exceeded the configured maximum number of VM \
+                     instructions. Try increasing the `max_prog_size` limit or simplifying the \
+                     pattern."
+                )
             }
             CompileError::UnexpectedGeneralError(s) => {
                 write!(f, "Unexpected general compilation error: {}", s)
