@@ -15,7 +15,7 @@ pass the tests and are formatted as expected.
 
 When adding support for new syntax (i.e. for better compatibility with
 oniguruma syntax), remember to update the "Syntax" section of the
-documentation - `docs/syntax.md`.
+documentation - `docs/syntax.md` and the Oniguruma compatiblity documentation.
 
 When adding new feature flags, remember to update `docs/features.md` so
 that users can discover and understand the feature more easily.

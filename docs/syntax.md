@@ -2,6 +2,8 @@
 
 The regex syntax is based on the [regex] crate's and on Oniguruma, with some additional supported syntax.
 Where the two conflict, there is a flag to prefer Oniguruma parsing rules. (By default `regex` crate compatible parsing is used.)
+For current Oniguruma feature parity details and known gaps, see the
+"Oniguruma compatibility" section in the crate documentation.
 
 Escapes:
 
