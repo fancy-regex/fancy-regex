@@ -1168,6 +1168,18 @@ pub(crate) fn options_to_rabuilder(options: &CompileOptions, usage: DelegateUsag
         // search_half/search; skip compiling explicit capture-group slots.
         config = config.which_captures(WhichCaptures::Implicit);
     }
+    // Disable regex-automata's "UTF-8 empty" optimization when the input is not
+    // guaranteed to be valid UTF-8 (i.e. in `Ascii` or `UnicodeBytes` bytes
+    // modes). That optimization skips zero-width matches whose offset falls
+    // inside a UTF-8 codepoint, on the premise that the haystack is valid UTF-8
+    // and such a match could never be part of a real match. With arbitrary
+    // bytes that premise is false: `^` / `(?m:^)` legitimately match at the
+    // start of a haystack whose first byte is a non-ASCII byte (e.g. `\x80`,
+    // also a UTF-8 continuation/lead byte), so the offset is not a codepoint
+    // boundary and the optimization wrongly rejects the match.
+    if !matches!(options.bytes_mode, BytesMode::Unicode) {
+        config = config.utf8_empty(false);
+    }
 
     let mut builder = RaBuilder::new();
     builder.configure(config);
