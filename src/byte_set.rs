@@ -197,6 +197,12 @@ fn regex_syntax_start(expr: &Hir, casei: bool) -> Start {
             let mut set = ByteSet::default();
             match class {
                 Class::Unicode(cls) => {
+                    // Fold first: a non-ASCII char can fold to one with another lead byte,
+                    // e.g. `ÿ` (0xC3) and `Ÿ` (0xC5)
+                    let mut cls = cls.clone();
+                    if casei && cls.try_case_fold_simple().is_err() {
+                        return Start::Bail;
+                    }
                     let mut ascii = ClassUnicode::empty();
                     for r in cls.ranges() {
                         if r.start().is_ascii() {
@@ -207,21 +213,9 @@ fn regex_syntax_start(expr: &Hir, casei: bool) -> Start {
                             for b in start..=first_utf8_byte(r.end()) {
                                 set.insert(b);
                             }
-                            // Only 2 unicode chars fold to an ASCII letter, so we hardcode them
-                            // There is a test to ensure that's true
-                            if casei && (r.start()..=r.end()).contains(&'\u{212A}') {
-                                set.insert(b'K');
-                                set.insert(b'k');
-                            }
-                            if casei && (r.start()..=r.end()).contains(&'\u{017F}') {
-                                set.insert(b'S');
-                                set.insert(b's');
-                            }
                         }
                     }
-                    if !insert_class(&mut set, ascii, casei) {
-                        return Start::Bail;
-                    }
+                    insert_class(&mut set, ascii, false);
                 }
                 Class::Bytes(cls) => {
                     for r in cls.ranges() {
@@ -477,6 +471,10 @@ mod tests {
             // Same folds through a class
             (r"(?i)[k]", Some(vec![b'K', b'k', 0xE2])),
             (r"(?i)[s-t]x", Some(vec![b'S', b'T', b's', b't', 0xC5])),
+            // Non-ASCII ranges fold to chars with other lead bytes, e.g. `ÿ` to `Ÿ` (0xC5)
+            // and `å` to `Å` (U+212B ANGSTROM SIGN, 0xE2)
+            (r"(?i)[à-ÿ]", Some(vec![0xC3, 0xC5, 0xE2])),
+            (r"(?i)[α-ω]", Some(vec![0xC2, 0xCD, 0xCE, 0xCF, 0xE1, 0xE2])),
             // Non-letters don't fold
             (r"(?i)[0-9_]", Some(b"0123456789_".to_vec())),
         ];
@@ -516,7 +514,6 @@ mod tests {
         assert!(b3.contains(&b'0') && b3.contains(&b' ') && b3.contains(&0xC3));
     }
 
-    // `regex_syntax_start` relies on having only 2 unicode chars folding to ascii
     #[test]
     fn non_ascii_only_folds_to_k_and_s() {
         let mut class = ClassUnicode::new([ClassUnicodeRange::new('\u{80}', '\u{10FFFF}')]);
