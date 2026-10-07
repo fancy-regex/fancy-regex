@@ -1088,6 +1088,32 @@ fn native_char_class_matches_multibyte_unicode() {
 }
 
 #[test]
+fn native_class_seq_matches_literals_classes_repeats_and_anchors() {
+    // A successful hard lookahead forces each easy suffix through the VM. The
+    // suffix shapes below are all handled by ClassSeq rather than Delegate.
+    common::assert_is_match(r"(?=.)[^\w]return", "#return");
+    common::assert_no_match(r"(?=.)[^\w]return", "areturn");
+
+    common::assert_is_match(r"(?=.)\s*=", "  =");
+    common::assert_no_match(r"(?=.)\s*=", "  x");
+
+    common::assert_is_match(r"(?=.)^abc$", "abc");
+    common::assert_no_match(r"(?=.)^abc$", "xabc");
+    common::assert_is_match(r"(?m)(?=.)^[a-z]+$", "0\nabc\n1");
+
+    let unicode = fancy_regex::Regex::new(r"(?=.)\p{Greek}+x").unwrap();
+    assert!(unicode.is_match("αβx").unwrap());
+    assert!(!unicode.is_match("αβy").unwrap());
+
+    let m = fancy_regex::Regex::new(r"(?=.)x\s*?")
+        .unwrap()
+        .find("x   ")
+        .unwrap()
+        .unwrap();
+    assert_eq!(m.as_str(), "x");
+}
+
+#[test]
 fn ambiguous_concat_repeat_optimization_not_more_permissive() {
     // \w*\.?\w+ requires at least one word character (from \w+).
     // After optimization to (?:\w*\.{1})?\w+, it must not match an empty string.
