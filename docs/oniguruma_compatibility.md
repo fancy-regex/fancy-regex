@@ -74,7 +74,10 @@ fancy-regex is a hybrid engine that aims for *approximate* Oniguruma compatibili
 ### When to choose which
 
 - **Use Ferroni** when dropping C Oniguruma and keeping byte-for-byte behavior matters most - syntax highlighting of TextMate grammars, or any pattern that hits the gaps listed above. It is also faster than C Oniguruma.
-- **Stay with fancy-regex** when your patterns fit the `regex` crate's syntax, when you want the hybrid NFA/backtracking performance guarantees, or you prefer an engine with modern design. It also supports raw-bytes input that Ferroni does not: `BytesMode::Ascii` matches arbitrary bytes with ASCII-only classes, and `BytesMode::UnicodeBytes` accepts non-UTF-8 input while keeping Unicode-aware classes - useful for binary data or filenames. Or if you need GNU's leftmost-longest match semantics.
+- **Stay with fancy-regex** when your patterns fit the `regex` crate's syntax, when you want the hybrid NFA/backtracking performance guarantees, or you prefer an engine with modern design. It also supports a few things that Ferroni does not:
+  - raw-bytes input: `BytesMode::Ascii` matches arbitrary bytes with ASCII-only classes, and `BytesMode::UnicodeBytes` accepts non-UTF-8 input while keeping Unicode-aware classes - useful for binary data or filenames.
+  - GNU's leftmost-longest match semantics can be opted in to.
+  - position assertions like `^`/`$` and `\G` can be overridden to match or not match in places they normally would match.
 
 Ferroni is independent of the original Oniguruma author (the C project ended in April 2025) and is not affiliated with it. It is a maintained, feature-complete release as of v2.0.
 
