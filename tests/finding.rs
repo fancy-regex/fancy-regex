@@ -209,10 +209,10 @@ fn hard_variable_lookbehind_tries_all_candidates() {
 
 #[cfg(feature = "variable-lookbehinds")]
 #[test]
-fn hard_variable_lookbehind_short_circuit_finds_early_match() {
-    // Many candidates exist (a+ in a long string) but backtrack_limit
-    // bounds candidate collection. The match must still be found because
-    // it is among the early candidates that fit within the limit.
+fn hard_variable_lookbehind_finds_match_with_many_candidates() {
+    // With many candidate start positions (a+ in a long string), the engine
+    // must still find the correct rightmost match rather than stopping early
+    // or returning a wrong result.
     let haystack = "a".repeat(100) + "x";
     assert_eq!(
         find(r"(?<=(?!^)(a+)\1)x", &haystack),
