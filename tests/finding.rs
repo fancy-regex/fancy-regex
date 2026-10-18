@@ -227,7 +227,7 @@ fn hard_variable_lookbehind_short_circuit_hits_limit() {
     // and the backtrack limit is still hit.
     let haystack = "a".repeat(100) + "x";
     let r = RegexBuilder::new(r"(?<=(?!^)(a+)\1)x")
-        .backtrack_limit(0)
+        .backtrack_limit(20)
         .build()
         .unwrap();
     let result = r.find(&haystack);
