@@ -450,21 +450,19 @@ pub(crate) fn build_seek_pattern_impl<'a>(
             } else {
                 format!("(?:{}{})", cond_pat, true_pat)
             };
-            match (cond_true.is_empty(), false_pat.is_empty()) {
-                (true, true) => {}
-                (true, false) => buf.push_str(&false_pat),
-                (false, true) => buf.push_str(&cond_true),
-                (false, false) => {
-                    if precedence > 0 {
-                        buf.push_str("(?:");
-                    }
-                    buf.push_str(&cond_true);
-                    buf.push('|');
-                    buf.push_str(&false_pat);
-                    if precedence > 0 {
-                        buf.push(')');
-                    }
-                }
+            if cond_true.is_empty() && false_pat.is_empty() {
+                return;
+            }
+            // An empty branch still matches the empty string. Keep it in the union
+            // so the seek pattern does not require the other branch to match.
+            if precedence > 0 {
+                buf.push_str("(?:");
+            }
+            buf.push_str(&cond_true);
+            buf.push('|');
+            buf.push_str(&false_pat);
+            if precedence > 0 {
+                buf.push(')');
             }
         }
         // Absent repeater `(?~expr)` matches any content not containing `expr`.
@@ -562,6 +560,21 @@ mod tests {
         let mut buf = String::new();
         build_seek_pattern(&info, &group_info_map, 0, &mut buf, 0);
         buf
+    }
+
+    #[test]
+    fn seek_pattern_conditionals_preserve_empty_alternatives() {
+        for (pattern, haystack) in [
+            (r"(a)?b(?(1)c)", "b"),
+            (r"(a)?b(?(1)c|)", "b"),
+            (r"(a)?b(?(1)|c)", "ab"),
+        ] {
+            let seek_pattern = get_seek_pattern(pattern);
+            assert!(
+                regex::Regex::new(&seek_pattern).unwrap().is_match(haystack),
+                "{pattern:?} produced {seek_pattern:?}, excluding {haystack:?}"
+            );
+        }
     }
 
     #[test]
