@@ -199,10 +199,17 @@ fn regex_syntax_start(expr: &Hir, casei: bool) -> Start {
                 Class::Unicode(cls) => {
                     // Fold first: a non-ASCII char can fold to one with another lead byte,
                     // e.g. `ÿ` (0xC3) and `Ÿ` (0xC5)
-                    let mut cls = cls.clone();
-                    if casei && cls.try_case_fold_simple().is_err() {
-                        return Start::Bail;
-                    }
+                    let folded;
+                    let cls = if casei {
+                        let mut cls = cls.clone();
+                        if cls.try_case_fold_simple().is_err() {
+                            return Start::Bail;
+                        }
+                        folded = cls;
+                        &folded
+                    } else {
+                        cls
+                    };
                     let mut ascii = ClassUnicode::empty();
                     for r in cls.ranges() {
                         if r.start().is_ascii() {
