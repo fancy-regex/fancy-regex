@@ -1466,3 +1466,29 @@ fn seek_pattern_starting_with_byte_escape() {
     let m = re.find(b"abc\xff\xff").unwrap().unwrap();
     assert_eq!((m.start(), m.end()), (3, 5));
 }
+
+#[test]
+fn seek_whole_pattern_recursion_preserves_match() {
+    assert_eq!(
+        common::assert_seek_same(r"a(?:\g<0>)?b", "aabb"),
+        Some((0, 4))
+    );
+}
+
+#[test]
+fn seek_conditional_empty_branches_preserve_matches() {
+    for (pattern, haystack, expected) in [
+        (r"(a)?b(?(1)c)", "b abc", vec![(0, 1), (2, 5)]),
+        (r"(a)?b(?(1)c|)", "b abc", vec![(0, 1), (2, 5)]),
+        (r"(a)?b(?(1)|c)", "ab bc", vec![(0, 2), (3, 5)]),
+    ] {
+        for seek in [false, true] {
+            let re = RegexBuilder::new(pattern).seek(seek).build().unwrap();
+            let matches: Vec<_> = re
+                .find_iter(haystack)
+                .map(|m| m.map(|m| (m.start(), m.end())).unwrap())
+                .collect();
+            assert_eq!(matches, expected, "{pattern:?}, seek={seek}");
+        }
+    }
+}
