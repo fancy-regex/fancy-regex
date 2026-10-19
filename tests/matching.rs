@@ -163,7 +163,18 @@ fn case_insensitive_unicode_escape() {
     assert_no_match(r"(?i)\u{0116}", "e");
     assert_no_match(r"(?i)\u{0116}", "E");
     assert_no_match(r"(?i)\u{0117}", "E");
-    assert_no_match(r"(?i)\u{0117}", "E");
+    assert_no_match(r"(?i)\u{0117}", "e");
+
+    // \xFF (ÿ, U+00FF) is a high byte produced by a \xHH escape, so the
+    // parser emits it as `LiteralBytes` rather than `Literal`. Under (?i) it
+    // must still fold to its case variant Ÿ (U+0178) — this is the regression
+    // test for the fix that re-introduced the `casei` flag on `LiteralBytes`.
+    assert_match(r"(?i)\xFF", "ÿ");
+    assert_match(r"(?i)\xFF", "Ÿ");
+    // A non-case-folded letter must not match
+    assert_no_match(r"(?i)\xFF", "a");
+    // Anchored: two codepoints must not collapse into one match
+    assert_no_match(r"^(?i)\xFF$", "ÿÿ");
 }
 
 #[test]

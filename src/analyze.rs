@@ -237,6 +237,7 @@ impl<'a> Analyzer<'a> {
                 min_size = bytes.len();
                 const_size = true;
                 max_size = min_size;
+                hard = true;
             }
             Expr::Concat(ref v) => {
                 const_size = true;
@@ -655,7 +656,7 @@ impl<'a> Analyzer<'a> {
     }
 
     /// Check for left-recursive subroutine calls using depth-first search
-    fn check_left_recursion(&self, named_groups: &Map<String, usize>) -> Result<()> {
+    fn check_left_recursion(&self, named_groups: &Map<String, Vec<usize>>) -> Result<()> {
         // Compute which groups are reachable from the root (group 0)
         let reachable_groups = self.compute_reachable_groups();
 
@@ -673,8 +674,10 @@ impl<'a> Analyzer<'a> {
                 // Build reverse mapping from group number to group name (if any)
                 // so we can give friendly error messages
                 let mut group_names: Map<usize, String> = Map::new();
-                for (name, &group_num) in named_groups.iter() {
-                    group_names.insert(group_num, name.clone());
+                for (name, groups) in named_groups.iter() {
+                    for &group_num in groups {
+                        group_names.insert(group_num, name.clone());
+                    }
                 }
 
                 let group_desc = if let Some(name) = group_names.get(&start_group) {
@@ -1475,8 +1478,8 @@ mod tests {
     }
 
     #[test]
-    fn is_literal_casei_byte() {
-        let tree = Expr::parse_tree(r"(?i)\xFF").unwrap();
+    fn is_literal_casei_byte_ascii_mode() {
+        let tree = Expr::parse_tree_with_flags(r"(?i)\xFF", 0).unwrap();
         let info = analyze(&tree, AnalyzeContext::default()).unwrap();
         assert_eq!(info.is_literal_get_casei(), None);
         assert_eq!(
@@ -1485,6 +1488,13 @@ mod tests {
                 bytes: [255].to_vec()
             }
         );
+    }
+
+    #[test]
+    fn is_literal_casei_high_byte_unicode_mode() {
+        let tree = Expr::parse_tree(r"(?i)\xFF").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert_eq!(info.is_literal_get_casei(), Some(true));
     }
 
     #[test]

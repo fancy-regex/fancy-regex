@@ -53,6 +53,17 @@ fn bytes_non_utf8_input_literal_bytes() {
     assert!(re.is_match(b"\xFF\xFF").unwrap());
     assert!(!re.is_match(b"\xFF\xAC").unwrap());
     assert!(!re.is_match(b"\xAC\xFF").unwrap());
+
+    // case insensitive backref doesn't match Ÿ in ascii mode
+    let re = RegexBuilder::new(r"(?i)(\xFF)\1")
+        .bytes_mode(BytesMode::Ascii)
+        .build()
+        .unwrap();
+
+    assert!(re.is_match(b"\xFF\xFF").unwrap());
+    assert!(!re.is_match(b"\xFF\xAC").unwrap());
+    assert!(!re.is_match(b"\xAC\xFF").unwrap());
+    assert!(!re.is_match(b"\xC5\xB8").unwrap());
 }
 
 #[test]
@@ -481,16 +492,25 @@ fn bytes_hex_escape_ascii_matches_raw_byte() {
     assert_match_bytes(r"\xFF", b"\xFF");
     assert_no_match_bytes(r"\xFF", b"\xC3\xBF");
     assert_match_bytes(r"\x{FF}", b"\xFF");
+    assert_no_match_bytes(r"(?i)\xFF", b"\xC5\xB8");
 }
 
 #[test]
-fn bytes_hex_escape_unicode_bytes_matches_raw_byte() {
+fn bytes_hex_escape_unicode_bytes_is_unicode_aware() {
     let re = RegexBuilder::new(r"\xFF")
         .bytes_mode(BytesMode::UnicodeBytes)
         .build()
         .unwrap();
-    assert!(re.is_match(b"\xFF").unwrap());
-    assert!(!re.is_match(b"\xC3\xBF").unwrap());
+    assert!(!re.is_match(b"\xFF").unwrap());
+    assert!(re.is_match(b"\xC3\xBF").unwrap());
+
+    // hard expression because it contains a backref
+    let re = RegexBuilder::new(r"(\xFF)\1")
+        .bytes_mode(BytesMode::UnicodeBytes)
+        .build()
+        .unwrap();
+    assert!(re.is_match("\u{00FF}\u{00FF}").unwrap());
+    assert!(!re.is_match(b"\xFF\xFF").unwrap());
 }
 
 #[test]
@@ -503,4 +523,75 @@ fn bytes_hex_escape_unicode_matches_utf8() {
     let re = RegexBuilder::new(r"(\xFF)\1").build().unwrap();
     assert!(re.is_match("\u{00FF}\u{00FF}").unwrap());
     assert!(!re.is_match(b"\xFF\xFF").unwrap());
+}
+
+/// Regression test for start/end text anchors matching against haystacks
+/// whose first (or only) byte is a non-ASCII byte.
+///
+/// In `BytesMode::Ascii` the input may be arbitrary bytes, so `^`/`$` and
+/// the multi-line variants must match at the very start/end of the haystack
+/// even when that position is not a UTF-8 codepoint boundary (e.g. the first
+/// byte is `\x80`, a UTF-8 continuation/lead byte). The delegated engines
+/// otherwise skip such zero-width matches by default.
+#[test]
+fn bytes_start_end_text_anchor_with_high_bytes() {
+    // BytesMode::Ascii: input is arbitrary bytes, so \xHH is the raw byte.
+    assert_match_bytes_mode(r"^", b"\x80", BytesMode::Ascii);
+    assert_match_bytes_mode(r"^\x80", b"\x80", BytesMode::Ascii);
+    assert_match_bytes_mode(r"^\xC0", b"\xC0", BytesMode::Ascii);
+    assert_match_bytes_mode(r"^\xB7", b"\xB7", BytesMode::Ascii);
+    // ^ must NOT match after the first byte
+    assert_no_match_bytes_mode(r"^\x80", b"a\x80", BytesMode::Ascii);
+    assert_no_match_bytes_mode(r"^a", b"\x80a", BytesMode::Ascii);
+    // ^ followed by a literal that spans the high byte
+    assert_match_bytes_mode(r"^\x80a", b"\x80a", BytesMode::Ascii);
+    // $ matches at the end of a single high byte
+    assert_match_bytes_mode(r"$", b"\x80", BytesMode::Ascii);
+    assert_match_bytes_mode(r"\x80$", b"\x80", BytesMode::Ascii);
+    assert_no_match_bytes_mode(r"\x80$", b"\x80a", BytesMode::Ascii);
+    // multi-line anchors
+    assert_match_bytes_mode(r"(?m:^)\x80", b"\x80", BytesMode::Ascii);
+    assert_match_bytes_mode(r"(?m:^)\x80", b"\n\x80", BytesMode::Ascii);
+    assert_match_bytes_mode(r"\x80(?m:$)", b"\x80", BytesMode::Ascii);
+
+    // BytesMode::UnicodeBytes: \xHH is the Unicode codepoint (U+0080 = UTF-8
+    // C2 80), so the raw byte \x80 is not matched by \x80. But the bare
+    // anchors must still match at the start/end of an arbitrary-bytes
+    // haystack, including one that begins with a non-ASCII byte.
+    assert_match_bytes_mode(r"^", b"\x80", BytesMode::UnicodeBytes);
+    assert_match_bytes_mode(r"$", b"\x80", BytesMode::UnicodeBytes);
+    assert_match_bytes_mode(r"^\u{0080}", "\u{0080}".as_bytes(), BytesMode::UnicodeBytes);
+    assert_match_bytes_mode(r"(?m:^)", b"\x80", BytesMode::UnicodeBytes);
+    assert_match_bytes_mode(r"(?m:$)", b"\x80", BytesMode::UnicodeBytes);
+}
+
+#[cfg_attr(feature = "track_caller", track_caller)]
+fn assert_match_bytes_mode(re: &str, text: &[u8], mode: BytesMode) {
+    let result = match_bytes_mode(re, text, mode);
+    assert!(
+        result,
+        "Expected regex '{}' to match bytes {:?} in {:?}",
+        re, text, mode
+    );
+}
+
+#[cfg_attr(feature = "track_caller", track_caller)]
+fn assert_no_match_bytes_mode(re: &str, text: &[u8], mode: BytesMode) {
+    let result = match_bytes_mode(re, text, mode);
+    assert!(
+        !result,
+        "Expected regex '{}' to NOT match bytes {:?} in {:?}",
+        re, text, mode
+    );
+}
+
+fn match_bytes_mode(re: &str, text: &[u8], mode: BytesMode) -> bool {
+    let regex = RegexBuilder::new(re).bytes_mode(mode).build().unwrap();
+    let result = regex.is_match(text);
+    assert!(
+        result.is_ok(),
+        "Expected match to succeed, but was {:?}",
+        result
+    );
+    result.unwrap()
 }

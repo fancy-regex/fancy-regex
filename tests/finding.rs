@@ -1446,6 +1446,68 @@ fn seek_find_iter_matches_identical_to_default() {
     assert_eq!(default_matches, seek_matches);
 }
 
+/// Seeking to a pattern whose first atom is a `\xFF` byte escape must work in
+/// both Unicode and Ascii bytes mode. In Unicode mode the escape parses to an
+/// easy `Literal` (handled by the `to_str` path); in Ascii mode it parses to a
+/// hard `LiteralBytes` node that goes through the seek-pattern arm which
+/// interpolates the byte length into the emitted `(?s:.{0,N}?)` placeholder.
+#[test]
+fn seek_pattern_starting_with_byte_escape() {
+    // Unicode mode: \xFF is the "ÿ" character, easy to delegate.
+    let no_seek = RegexBuilder::new(r"(\xFF)\1")
+        .seek(false)
+        .build()
+        .unwrap()
+        .find("abcÿÿ")
+        .unwrap()
+        .unwrap();
+    let seek = RegexBuilder::new(r"(\xFF)\1")
+        .seek(true)
+        .build()
+        .unwrap()
+        .find("abcÿÿ")
+        .unwrap()
+        .unwrap();
+    assert_eq!((no_seek.start(), no_seek.end()), (seek.start(), seek.end()));
+    // "abcÿÿ": ÿ is U+00FF (2 UTF-8 bytes each), so the match spans bytes 3..7.
+    assert_eq!((no_seek.start(), no_seek.end()), (3, 7));
+
+    // Ascii mode: \xFF is a hard `LiteralBytes` node.
+    let re = RegexBuilder::new(r"(\xFF)\1")
+        .bytes_mode(BytesMode::Ascii)
+        .seek(true)
+        .build()
+        .unwrap();
+    let m = re.find(b"abc\xff\xff").unwrap().unwrap();
+    assert_eq!((m.start(), m.end()), (3, 5));
+}
+
+#[test]
+fn seek_whole_pattern_recursion_preserves_match() {
+    assert_eq!(
+        common::assert_seek_same(r"a(?:\g<0>)?b", "aabb"),
+        Some((0, 4))
+    );
+}
+
+#[test]
+fn seek_conditional_empty_branches_preserve_matches() {
+    for (pattern, haystack, expected) in [
+        (r"(a)?b(?(1)c)", "b abc", vec![(0, 1), (2, 5)]),
+        (r"(a)?b(?(1)c|)", "b abc", vec![(0, 1), (2, 5)]),
+        (r"(a)?b(?(1)|c)", "ab bc", vec![(0, 2), (3, 5)]),
+    ] {
+        for seek in [false, true] {
+            let re = RegexBuilder::new(pattern).seek(seek).build().unwrap();
+            let matches: Vec<_> = re
+                .find_iter(haystack)
+                .map(|m| m.map(|m| (m.start(), m.end())).unwrap())
+                .collect();
+            assert_eq!(matches, expected, "{pattern:?}, seek={seek}");
+        }
+    }
+}
+
 #[test]
 #[cfg(feature = "variable-lookbehinds")]
 fn hard_variable_lookbehind() {
