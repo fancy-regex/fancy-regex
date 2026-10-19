@@ -207,6 +207,42 @@ fn hard_variable_lookbehind_tries_all_candidates() {
     assert_eq!(find(r"(?<=(?!^)(a+)\1)x", "aaaax"), Some((4, 5)));
 }
 
+#[cfg(feature = "variable-lookbehinds")]
+#[test]
+fn hard_variable_lookbehind_short_circuit_finds_early_match() {
+    // Many candidates exist (a+ in a long string) but backtrack_limit
+    // bounds candidate collection. The match must still be found because
+    // it is among the early candidates that fit within the limit.
+    let haystack = "a".repeat(100) + "x";
+    assert_eq!(
+        find(r"(?<=(?!^)(a+)\1)x", &haystack),
+        Some((haystack.len() - 1, haystack.len()))
+    );
+}
+
+#[cfg(feature = "variable-lookbehinds")]
+#[test]
+fn hard_variable_lookbehind_short_circuit_hits_limit() {
+    // With a very low backtrack limit, candidate collection is bounded
+    // and the backtrack limit is still hit.
+    let haystack = "a".repeat(100) + "x";
+    let r = RegexBuilder::new(r"(?<=(?!^)(a+)\1)x")
+        .backtrack_limit(0)
+        .build()
+        .unwrap();
+    let result = r.find(&haystack);
+    assert!(
+        matches!(
+            result,
+            Err(fancy_regex::Error::RuntimeError(
+                fancy_regex::RuntimeError::BacktrackLimitExceeded
+            ))
+        ),
+        "expected BacktrackLimitExceeded, got {:?}",
+        result
+    );
+}
+
 #[test]
 fn lookahead_looks_left() {
     assert_eq!(find(r"a(?=\b)", "ab"), None);
