@@ -850,9 +850,9 @@ impl<'a> Compiler<'a> {
         _la: LookAround,
     ) -> Result<()> {
         let end_save = self.b.newsave();
-        self.b.add(Insn::Save(end_save));
+        self.b.add(Insn::Save(end_save))?;
         let candidate_save = self.b.newsave();
-        self.b.add(Insn::Save(candidate_save));
+        self.b.add(Insn::Save(candidate_save))?;
 
         let mut seek_pattern = String::new();
         build_seek_pattern(inner, &self.group_info_map, 0, &mut seek_pattern, 0);
@@ -892,16 +892,16 @@ impl<'a> Compiler<'a> {
                 pattern: seek_pattern,
                 end_pos_slot: end_save,
                 candidate_pos_slot: candidate_save,
-            }));
+            }))?;
 
         self.visit(inner, false)?;
         self.b.add(Insn::ReverseLookbehindPosCheck {
             slot: end_save,
             candidate_pos_slot: candidate_save,
             hard_lb_pc,
-        });
-        self.b.add(Insn::Restore(end_save));
-        self.b.add(Insn::Restore(candidate_save));
+        })?;
+        self.b.add(Insn::Restore(end_save))?;
+        self.b.add(Insn::Restore(candidate_save))?;
         Ok(())
     }
 
