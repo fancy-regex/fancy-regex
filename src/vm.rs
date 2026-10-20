@@ -1900,6 +1900,26 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn state_reset_clears_hard_lb_candidates() {
+        // `reset` is called between matches on the shared scratch state, so
+        // leftover candidate data from a previous hard lookbehind must not
+        // leak into the next search.
+        let mut state = State::new(2, MAX_STACK, 0);
+        state.hard_lb_candidates.push(7);
+        state.hard_lb_candidates.push(8);
+        state.hard_lb_candidate_idx = 1;
+
+        state.reset(2, 0);
+
+        assert!(state.hard_lb_candidates.is_empty());
+        assert_eq!(state.hard_lb_candidate_idx, 0);
+        // saves are reset to the new length, as in the other reset paths.
+        assert_eq!(state.get(0), usize::MAX);
+        assert_eq!(state.get(1), usize::MAX);
+    }
+
+    #[test]
     fn state_save_override() {
         let mut state = State::new(1, MAX_STACK, 0);
         state.save(0, 10);

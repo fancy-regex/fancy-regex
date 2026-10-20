@@ -1639,6 +1639,7 @@ mod tests {
     use crate::analyze::{analyze, AnalyzeContext};
     use crate::parse::ExprTree;
     use crate::vm::Insn::*;
+    use crate::RegexBuilder;
 
     use matches::assert_matches;
 
@@ -2078,6 +2079,55 @@ mod tests {
                 prog
             );
         }
+    }
+
+    #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn variable_hard_lookbehind_debug_output() {
+        // Exercises the Debug impls of `HardVariableLookbehind` and
+        // `ReverseLookbehindPosCheck`, which format the seek pattern and the
+        // save slots but deliberately omit the DFA and cache pool.
+        let prog = compile_prog_no_explicit_group0(r"(a+)(?<=\1)b");
+        assert!(
+            prog.iter().any(|i| matches!(
+                i,
+                Insn::HardVariableLookbehind(crate::vm::HardVariableLookbehind {
+                    pattern,
+                    end_pos_slot: 5,
+                    candidate_pos_slot: 6,
+                    ..
+                }) if pattern == "a+"
+            )),
+            "HardVariableLookbehind not found or wrong fields: {:?}",
+            prog
+        );
+        assert!(
+            prog.iter().any(|i| matches!(
+                i,
+                Insn::ReverseLookbehindPosCheck {
+                    slot: 5,
+                    candidate_pos_slot: 6,
+                    hard_lb_pc: 11,
+                }
+            )),
+            "ReverseLookbehindPosCheck not found or wrong fields: {:?}",
+            prog
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn variable_hard_lookbehind_regex_clone() {
+        // `Regex::clone` shares the compiled `Arc<Prog>` rather than cloning
+        // the program, so the clone must still match the same inputs.  This
+        // is the only Clone path exercised at runtime for patterns that emit
+        // a `HardVariableLookbehind` instruction.
+        let r = RegexBuilder::new(r"(a+)(?<=\1)b").build().expect("compile");
+        let r2 = r.clone();
+        let m1 = r.find("aaab").expect("find").unwrap();
+        let m2 = r2.find("aaab").expect("find2").unwrap();
+        assert_eq!(m1.as_str(), m2.as_str());
+        assert_eq!(m1.as_str(), "aaab");
     }
 
     #[test]
