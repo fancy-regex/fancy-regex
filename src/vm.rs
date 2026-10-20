@@ -362,7 +362,7 @@ impl core::fmt::Debug for Seek {
 pub struct ReverseBackwardsDelegate {
     /// The regex pattern as a string which will be matched in reverse, in a backwards direction
     pub pattern: String,
-    /// The delegate regex to match backwards (wrapped in Arc for efficient cloning)
+    /// The delegate regex to match backwards (wrapped in Arc for sharing)
     pub(crate) dfa: Arc<regex_automata::hybrid::dfa::DFA>,
     /// Cache pool for DFA searches
     pub(crate) cache_pool: Pool<regex_automata::hybrid::dfa::Cache, CachePoolFn>,
@@ -370,21 +370,6 @@ pub struct ReverseBackwardsDelegate {
     pub(crate) capture_group_extraction_inner: Option<Regex>,
     /// The range of capture groups. None if there are no capture groups.
     pub capture_groups: Option<CaptureGroupRange>,
-}
-
-#[cfg(feature = "variable-lookbehinds")]
-impl Clone for ReverseBackwardsDelegate {
-    fn clone(&self) -> Self {
-        let dfa_for_closure = Arc::clone(&self.dfa);
-        let create: CachePoolFn = alloc::boxed::Box::new(move || dfa_for_closure.create_cache());
-        Self {
-            pattern: self.pattern.clone(),
-            cache_pool: Pool::new(create),
-            dfa: Arc::clone(&self.dfa),
-            capture_group_extraction_inner: self.capture_group_extraction_inner.clone(),
-            capture_groups: self.capture_groups,
-        }
-    }
 }
 
 #[cfg(feature = "variable-lookbehinds")]
@@ -420,21 +405,6 @@ pub struct HardVariableLookbehind {
     pub end_pos_slot: usize,
     /// Slot where the candidate start position is saved before running inner instructions.
     pub candidate_pos_slot: usize,
-}
-
-#[cfg(feature = "variable-lookbehinds")]
-impl Clone for HardVariableLookbehind {
-    fn clone(&self) -> Self {
-        let dfa_for_closure = Arc::clone(&self.dfa);
-        let create: CachePoolFn = alloc::boxed::Box::new(move || dfa_for_closure.create_cache());
-        Self {
-            pattern: self.pattern.clone(),
-            cache_pool: Pool::new(create),
-            dfa: Arc::clone(&self.dfa),
-            end_pos_slot: self.end_pos_slot,
-            candidate_pos_slot: self.candidate_pos_slot,
-        }
-    }
 }
 
 #[cfg(feature = "variable-lookbehinds")]
