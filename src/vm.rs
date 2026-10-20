@@ -362,7 +362,7 @@ impl core::fmt::Debug for Seek {
 pub struct ReverseBackwardsDelegate {
     /// The regex pattern as a string which will be matched in reverse, in a backwards direction
     pub pattern: String,
-    /// The delegate regex to match backwards (wrapped in Arc for efficient cloning)
+    /// The delegate regex to match backwards (wrapped in Arc for sharing)
     pub(crate) dfa: Arc<regex_automata::hybrid::dfa::DFA>,
     /// Cache pool for DFA searches
     pub(crate) cache_pool: Pool<regex_automata::hybrid::dfa::Cache, CachePoolFn>,
@@ -370,21 +370,6 @@ pub struct ReverseBackwardsDelegate {
     pub(crate) capture_group_extraction_inner: Option<Regex>,
     /// The range of capture groups. None if there are no capture groups.
     pub capture_groups: Option<CaptureGroupRange>,
-}
-
-#[cfg(feature = "variable-lookbehinds")]
-impl Clone for ReverseBackwardsDelegate {
-    fn clone(&self) -> Self {
-        let dfa_for_closure = Arc::clone(&self.dfa);
-        let create: CachePoolFn = alloc::boxed::Box::new(move || dfa_for_closure.create_cache());
-        Self {
-            pattern: self.pattern.clone(),
-            cache_pool: Pool::new(create),
-            dfa: Arc::clone(&self.dfa),
-            capture_group_extraction_inner: self.capture_group_extraction_inner.clone(),
-            capture_groups: self.capture_groups,
-        }
-    }
 }
 
 #[cfg(feature = "variable-lookbehinds")]
@@ -402,6 +387,41 @@ impl core::fmt::Debug for ReverseBackwardsDelegate {
         f.debug_struct("ReverseBackwardsDelegate")
             .field("pattern", pattern)
             .field("capture_groups", capture_groups)
+            .finish()
+    }
+}
+
+#[cfg(feature = "variable-lookbehinds")]
+/// Hard variable-length lookbehind: use a reverse DFA to find candidate start
+/// positions, then verify each with the backtracking VM.
+pub struct HardVariableLookbehind {
+    /// Seek pattern used to build the reverse DFA (for debug display).
+    pub pattern: String,
+    /// Reverse DFA for finding candidate start positions.
+    pub(crate) dfa: Arc<regex_automata::hybrid::dfa::DFA>,
+    /// Cache pool for DFA searches.
+    pub(crate) cache_pool: Pool<regex_automata::hybrid::dfa::Cache, CachePoolFn>,
+    /// Slot containing the lookbehind end position (saved by the outer Save).
+    pub end_pos_slot: usize,
+    /// Slot where the candidate start position is saved before running inner instructions.
+    pub candidate_pos_slot: usize,
+}
+
+#[cfg(feature = "variable-lookbehinds")]
+impl core::fmt::Debug for HardVariableLookbehind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        let Self {
+            pattern,
+            dfa: _,
+            cache_pool: _,
+            end_pos_slot,
+            candidate_pos_slot,
+        } = self;
+
+        f.debug_struct("HardVariableLookbehind")
+            .field("pattern", pattern)
+            .field("end_pos_slot", end_pos_slot)
+            .field("candidate_pos_slot", candidate_pos_slot)
             .finish()
     }
 }
@@ -494,6 +514,19 @@ pub enum Insn {
     FailNegativeLookAround,
     /// Set IX back by the specified number of characters
     GoBack(usize),
+    /// Verify the inner body of a hard variable lookbehind matched the
+    /// expected span: if IX equals the saved end position, continue to the
+    /// next instruction. Otherwise truncate any inner backtrack states and
+    /// jump back to the `HardVariableLookbehind` instruction to try the next
+    /// candidate.
+    ReverseLookbehindPosCheck {
+        /// Slot containing the expected end position.
+        slot: usize,
+        /// Slot containing the candidate start position saved by `HardVariableLookbehind`.
+        candidate_pos_slot: usize,
+        /// PC of the enclosing `HardVariableLookbehind` instruction.
+        hard_lb_pc: usize,
+    },
     /// Back reference to a group number to check
     Backref {
         /// The save slot representing the start of the capture group
@@ -522,6 +555,10 @@ pub enum Insn {
     #[cfg(feature = "variable-lookbehinds")]
     /// Reverse lookbehind using regex-automata for variable-sized patterns
     BackwardsDelegate(ReverseBackwardsDelegate),
+    #[cfg(feature = "variable-lookbehinds")]
+    /// Hard variable-length lookbehind: reverse DFA finds candidate start positions,
+    /// then the VM verifies each candidate.
+    HardVariableLookbehind(HardVariableLookbehind),
     /// Absent repeater operator - matches if delegate does not match from current position
     AbsentRepeater(Delegate),
     /// Seek pre-filter: advance `ix` to the next position where the pattern could plausibly match,
@@ -644,6 +681,13 @@ struct State {
     /// alone can't carry this: a legitimate empty match records length 0,
     /// which is indistinguishable from "no match yet".
     best_match_set: bool,
+    #[cfg(feature = "variable-lookbehinds")]
+    /// Candidate start positions collected by `HardVariableLookbehind` for the
+    /// current lookbehind assertion. Empty when not inside a hard lookbehind.
+    hard_lb_candidates: Vec<usize>,
+    #[cfg(feature = "variable-lookbehinds")]
+    /// Index of the next candidate to try from `hard_lb_candidates`.
+    hard_lb_candidate_idx: usize,
 }
 
 // Each element in the stack conceptually represents the entire state
@@ -669,6 +713,10 @@ impl State {
             best_saves: Vec::new(),
             #[cfg(feature = "leftmost_longest")]
             best_match_set: false,
+            #[cfg(feature = "variable-lookbehinds")]
+            hard_lb_candidates: Vec::new(),
+            #[cfg(feature = "variable-lookbehinds")]
+            hard_lb_candidate_idx: 0,
         }
     }
 
@@ -688,6 +736,11 @@ impl State {
             self.best_saves.clear();
             self.best_saves.resize(n_saves, usize::MAX);
             self.best_match_set = false;
+        }
+        #[cfg(feature = "variable-lookbehinds")]
+        {
+            self.hard_lb_candidates.clear();
+            self.hard_lb_candidate_idx = 0;
         }
     }
 
@@ -1392,6 +1445,31 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                         ix = prev_ix(haystack, ix, prog.bytes_mode);
                     }
                 }
+                Insn::ReverseLookbehindPosCheck {
+                    slot,
+                    candidate_pos_slot: _,
+                    hard_lb_pc: _,
+                } => {
+                    if ix == state.get(slot) {
+                        // Inner instructions matched exactly up to the lookbehind end —
+                        // success.  We deliberately do *not* clear the candidate list
+                        // here: the candidate index has already advanced past the current
+                        // candidate, so if the surrounding pattern later fails and
+                        // backtracking pops our checkpoint, the next candidate will be
+                        // tried instead of re-collecting and re-trying the same one —
+                        // which would loop forever.
+                        pc += 1;
+                        continue;
+                    } else {
+                        // Inner instructions consumed the wrong span (ix !=
+                        // end_pos).  Let normal backtracking explore alternatives
+                        // within the inner expression.  When all inner states are
+                        // exhausted, the checkpoint branch pushed by
+                        // HardVariableLookbehind will be popped, redirecting
+                        // to the next candidate with nsave properly restored.
+                        break 'fail;
+                    }
+                }
                 Insn::FailNegativeLookAround => {
                     // Reaching this instruction means that the body of the
                     // look-around matched. Because it's a *negative* look-around,
@@ -1490,6 +1568,68 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                             }
                         }
                         _ => break 'fail,
+                    }
+                }
+                #[cfg(feature = "variable-lookbehinds")]
+                Insn::HardVariableLookbehind(HardVariableLookbehind {
+                    ref dfa,
+                    ref cache_pool,
+                    ref end_pos_slot,
+                    pattern: _,
+                    ref candidate_pos_slot,
+                }) => {
+                    // First time entering this lookbehind: collect all candidate
+                    // start positions where the seek pattern matches ending at
+                    // the lookbehind end position.
+                    if state.hard_lb_candidates.is_empty() {
+                        let end_pos = state.get(*end_pos_slot);
+                        let mut cache_guard = cache_pool.get();
+                        let mut overlap_state =
+                            regex_automata::hybrid::dfa::OverlappingState::start();
+                        let input = Input::new(haystack.as_bytes())
+                            .anchored(Anchored::Yes)
+                            .range(0..end_pos);
+                        loop {
+                            if backtrack_count + state.hard_lb_candidates.len()
+                                > options.backtrack_limit
+                            {
+                                break;
+                            }
+                            match dfa.try_search_overlapping_rev(
+                                &mut cache_guard,
+                                &input,
+                                &mut overlap_state,
+                            ) {
+                                Ok(()) => match overlap_state.get_match() {
+                                    Some(m) => state.hard_lb_candidates.push(m.offset()),
+                                    None => break,
+                                },
+                                Err(_) => break,
+                            }
+                        }
+                    }
+
+                    if state.hard_lb_candidate_idx < state.hard_lb_candidates.len() {
+                        let candidate = state.hard_lb_candidates[state.hard_lb_candidate_idx];
+                        state.hard_lb_candidate_idx += 1;
+                        state.save(*candidate_pos_slot, candidate);
+                        ix = candidate;
+                        // Push a checkpoint branch: when all inner backtrack
+                        // states are exhausted (via normal `break 'fail`
+                        // backtracking), this branch is popped and re-enters
+                        // HardVariableLookbehind to try the next candidate.
+                        // The stored `nsave` ensures save-delta from the inner
+                        // expression is properly restored.  This handles nested
+                        // lookbehinds naturally — each level has its own
+                        // checkpoint on the stack.
+                        state.push(pc, candidate)?;
+                        pc += 1;
+                        continue;
+                    } else {
+                        // Exhausted all candidates — clean up and fail.
+                        state.hard_lb_candidates.clear();
+                        state.hard_lb_candidate_idx = 0;
+                        break 'fail;
                     }
                 }
                 Insn::BeginAtomic => {
@@ -1727,6 +1867,26 @@ mod tests {
         state.push(2, 2).unwrap();
         assert_eq!(state.pop(), (2, 2));
         assert!(state.stack.is_empty());
+    }
+
+    #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn state_reset_clears_hard_lb_candidates() {
+        // `reset` is called between matches on the shared scratch state, so
+        // leftover candidate data from a previous hard lookbehind must not
+        // leak into the next search.
+        let mut state = State::new(2, MAX_STACK, 0);
+        state.hard_lb_candidates.push(7);
+        state.hard_lb_candidates.push(8);
+        state.hard_lb_candidate_idx = 1;
+
+        state.reset(2, 0);
+
+        assert!(state.hard_lb_candidates.is_empty());
+        assert_eq!(state.hard_lb_candidate_idx, 0);
+        // saves are reset to the new length, as in the other reset paths.
+        assert_eq!(state.get(0), usize::MAX);
+        assert_eq!(state.get(1), usize::MAX);
     }
 
     #[test]

@@ -43,7 +43,7 @@ use crate::analyze::Info;
 use crate::seek::build_seek_pattern;
 use crate::to_hir::{expr_to_hir, HirCtx};
 #[cfg(feature = "variable-lookbehinds")]
-use crate::vm::{CachePoolFn, ReverseBackwardsDelegate};
+use crate::vm::{CachePoolFn, HardVariableLookbehind, ReverseBackwardsDelegate};
 use crate::vm::{CaptureGroupRange, CaseiLiteral, CharClassMatcher, Delegate, Insn, Prog, Seek};
 use crate::LookAround::*;
 use crate::{
@@ -798,19 +798,28 @@ impl<'a> Compiler<'a> {
                             )))
                         }
                     } else {
-                        Err(Error::CompileError(Box::new(
-                            CompileError::FeatureNotYetSupported(
-                                "Variable length lookbehinds with fancy features".to_string(),
-                            ),
-                        )))
+                        #[cfg(feature = "variable-lookbehinds")]
+                        {
+                            self.compile_hard_variable_lookbehind(inner, la)
+                        }
+                        #[cfg(not(feature = "variable-lookbehinds"))]
+                        {
+                            Err(Error::CompileError(Box::new(
+                                CompileError::VariableLookBehindRequiresFeature,
+                            )))
+                        }
                     }
                 } else {
-                    // variable sized lookbehinds with fancy features are currently unsupported
-                    Err(Error::CompileError(Box::new(
-                        CompileError::FeatureNotYetSupported(
-                            "Variable length lookbehinds with fancy features".to_string(),
-                        ),
-                    )))
+                    #[cfg(feature = "variable-lookbehinds")]
+                    {
+                        self.compile_hard_variable_lookbehind(inner, la)
+                    }
+                    #[cfg(not(feature = "variable-lookbehinds"))]
+                    {
+                        Err(Error::CompileError(Box::new(
+                            CompileError::VariableLookBehindRequiresFeature,
+                        )))
+                    }
                 }
             }
         } else {
@@ -832,6 +841,68 @@ impl<'a> Compiler<'a> {
             }
             self.compile_variable_lookbehind(delegate_builder)
         }
+    }
+
+    #[cfg(feature = "variable-lookbehinds")]
+    fn compile_hard_variable_lookbehind(
+        &mut self,
+        inner: &Info<'_>,
+        _la: LookAround,
+    ) -> Result<()> {
+        let end_save = self.b.newsave();
+        self.b.add(Insn::Save(end_save))?;
+        let candidate_save = self.b.newsave();
+        self.b.add(Insn::Save(candidate_save))?;
+
+        let mut seek_pattern = String::new();
+        build_seek_pattern(inner, &self.group_info_map, 0, &mut seek_pattern, 0);
+
+        use regex_automata::hybrid::dfa;
+        use regex_automata::nfa::thompson;
+        use regex_automata::MatchKind;
+        let dfa = match dfa::DFA::builder()
+            .configure(
+                dfa::Config::new()
+                    .match_kind(MatchKind::All)
+                    .unicode_word_boundary(true),
+            )
+            .thompson(thompson::Config::new().reverse(true))
+            .build(&seek_pattern)
+        {
+            Ok(dfa) => Arc::new(dfa),
+            Err(e) => {
+                return Err(Error::CompileError(Box::new(CompileError::DfaBuildError(
+                    seek_pattern,
+                    e.to_string(),
+                ))));
+            }
+        };
+
+        let create: CachePoolFn = alloc::boxed::Box::new({
+            let dfa = Arc::clone(&dfa);
+            move || dfa.create_cache()
+        });
+        let cache_pool = Pool::new(create);
+
+        let hard_lb_pc = self.b.pc();
+        self.b
+            .add(Insn::HardVariableLookbehind(HardVariableLookbehind {
+                dfa,
+                cache_pool,
+                pattern: seek_pattern,
+                end_pos_slot: end_save,
+                candidate_pos_slot: candidate_save,
+            }))?;
+
+        self.visit(inner, false)?;
+        self.b.add(Insn::ReverseLookbehindPosCheck {
+            slot: end_save,
+            candidate_pos_slot: candidate_save,
+            hard_lb_pc,
+        })?;
+        self.b.add(Insn::Restore(end_save))?;
+        self.b.add(Insn::Restore(candidate_save))?;
+        Ok(())
     }
 
     #[cfg(feature = "variable-lookbehinds")]
@@ -1568,6 +1639,7 @@ mod tests {
     use crate::analyze::{analyze, AnalyzeContext};
     use crate::parse::ExprTree;
     use crate::vm::Insn::*;
+    use crate::RegexBuilder;
 
     use matches::assert_matches;
 
@@ -1987,22 +2059,75 @@ mod tests {
 
     #[test]
     #[cfg(feature = "variable-lookbehinds")]
-    fn variable_lookbehind_with_required_feature_backref_captures() {
-        // currently hard variable lookbehinds are unsupported.
-        // the backref to a capture group inside the variable lookbehind makes the capture group hard
-        let tree = Expr::parse_tree(r"(?<=a(b+))\1").unwrap();
-        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
-        assert_compile_error(
-            compile(
-                &info,
-                CompileOptions {
-                    anchored: true,
-                    contains_subroutines: tree.contains_subroutines,
-                    ..CompileOptions::default()
-                },
-            ),
-            |e| matches!(e, CompileError::FeatureNotYetSupported(_)),
+    fn variable_hard_lookbehind_patterns_compile() {
+        let patterns = vec![
+            r"(a+)(?<=\1)b",
+            r"(a+)\1(?<=\1)b",
+            r"(a+)(b)(?<=\1)c",
+            r"(a+)(?<=\1\1)b",
+            r"(?<=(\G|^\s*\*?)\s*)(?i:(todo\b:?)|(fixme\b:?)|(note\b:?))",
+            r"(?<=([!\&*-/:-=?^|~]|\b(?i:and|contain|in|is|or|not))[\t ]*)\n",
+            r"(?<=a(b+))\1",
+        ];
+        for p in patterns {
+            let prog = compile_prog_no_explicit_group0(p);
+            assert!(
+                prog.iter()
+                    .any(|i| matches!(i, crate::vm::Insn::HardVariableLookbehind(_))),
+                "HardVariableLookbehind not found in {}: {:?}",
+                p,
+                prog
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn variable_hard_lookbehind_debug_output() {
+        // Exercises the Debug impls of `HardVariableLookbehind` and
+        // `ReverseLookbehindPosCheck`, which format the seek pattern and the
+        // save slots but deliberately omit the DFA and cache pool.
+        let prog = compile_prog_no_explicit_group0(r"(a+)(?<=\1)b");
+        assert!(
+            prog.iter().any(|i| matches!(
+                i,
+                Insn::HardVariableLookbehind(crate::vm::HardVariableLookbehind {
+                    pattern,
+                    end_pos_slot: 5,
+                    candidate_pos_slot: 6,
+                    ..
+                }) if pattern == "a+"
+            )),
+            "HardVariableLookbehind not found or wrong fields: {:?}",
+            prog
         );
+        assert!(
+            prog.iter().any(|i| matches!(
+                i,
+                Insn::ReverseLookbehindPosCheck {
+                    slot: 5,
+                    candidate_pos_slot: 6,
+                    hard_lb_pc: 11,
+                }
+            )),
+            "ReverseLookbehindPosCheck not found or wrong fields: {:?}",
+            prog
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn variable_hard_lookbehind_regex_clone() {
+        // `Regex::clone` shares the compiled `Arc<Prog>` rather than cloning
+        // the program, so the clone must still match the same inputs.  This
+        // is the only Clone path exercised at runtime for patterns that emit
+        // a `HardVariableLookbehind` instruction.
+        let r = RegexBuilder::new(r"(a+)(?<=\1)b").build().expect("compile");
+        let r2 = r.clone();
+        let m1 = r.find("aaab").expect("find").unwrap();
+        let m2 = r2.find("aaab").expect("find2").unwrap();
+        assert_eq!(m1.as_str(), m2.as_str());
+        assert_eq!(m1.as_str(), "aaab");
     }
 
     #[test]
@@ -2417,6 +2542,7 @@ mod tests {
         assert_matches!(prog[16], End);
     }
 
+    #[track_caller]
     fn compile_prog(re: &str) -> Vec<Insn> {
         compile_prog_with(
             re,
@@ -2439,6 +2565,7 @@ mod tests {
         )
     }
 
+    #[track_caller]
     fn compile_prog_no_explicit_group0(re: &str) -> Vec<Insn> {
         compile_prog_with(re, AnalyzeContext::default(), |info, tree| {
             compile(
@@ -2454,6 +2581,7 @@ mod tests {
         })
     }
 
+    #[track_caller]
     fn compile_prog_forced_hard(re: &str) -> Vec<Insn> {
         compile_prog_with(
             re,
@@ -2477,6 +2605,7 @@ mod tests {
         )
     }
 
+    #[track_caller]
     fn compile_prog_ascii(re: &str) -> Vec<Insn> {
         let tree = Expr::parse_tree_with_flags(re, 0).unwrap();
         let info = analyze(
@@ -2499,6 +2628,7 @@ mod tests {
         .body
     }
 
+    #[track_caller]
     fn compile_prog_with<F>(re: &str, analyze_context: AnalyzeContext, compile_fn: F) -> Vec<Insn>
     where
         F: FnOnce(&mut Info<'_>, &ExprTree) -> Vec<Insn>,

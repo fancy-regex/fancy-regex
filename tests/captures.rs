@@ -252,6 +252,21 @@ fn captures_inside_variable_lookbehind_alternation() {
 }
 
 #[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn captures_inside_variable_lookbehind_many_candidates() {
+    // With many candidate start positions (a+ in a long string), the engine
+    // must still find the correct rightmost match rather than stopping early
+    // or returning a wrong result. Capture group 1 should hold a single `a`
+    // at the rightmost candidate start, confirming the right candidate was
+    // picked rather than a longer run.
+    let haystack = "a".repeat(100) + "x";
+    let captures = captures(r"(?<=(?!^)(a+)\1)x", &haystack);
+    assert_eq!(captures.len(), 2);
+    assert_match(captures.get(0), "x", haystack.len() - 1, haystack.len());
+    assert_match(captures.get(1), "a", haystack.len() - 3, haystack.len() - 2);
+}
+
+#[test]
 fn captures_with_keepout_inside_at_end() {
     let captures = captures(r"\s*(\w+\K)(?=\.)", "foo bar.");
     assert_eq!(captures.len(), 2);

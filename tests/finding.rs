@@ -193,6 +193,57 @@ fn lookbehind_containing_const_size_backref() {
 }
 
 #[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn hard_variable_lookbehind_tries_all_candidates() {
+    // when the rightmost seek-pattern candidate fails to verify as a lookbehind match,
+    // the engine must try the next candidate to the left while still anchored at the
+    // original lookbehind position — not re-anchor at a shorter range.
+    //
+    // Pattern `(?<=(a+)\1)x` at position 4 of "aaaax":
+    // - seek pattern `a+` matches ending at 4 at offsets 0,1,2,3
+    // - body `(a+)\1` needs >= 2 a's, so only offsets 0 and 2 are matches
+    //   so if the test passes, it means it successfully skipped over offset 3
+    assert_eq!(find(r"(?<=(a+)\1)x", "aaaax"), Some((4, 5)));
+    assert_eq!(find(r"(?<=(?!^)(a+)\1)x", "aaaax"), Some((4, 5)));
+}
+
+#[cfg(feature = "variable-lookbehinds")]
+#[test]
+fn hard_variable_lookbehind_finds_match_with_many_candidates() {
+    // With many candidate start positions (a+ in a long string), the engine
+    // must still find the correct rightmost match rather than stopping early
+    // or returning a wrong result.
+    let haystack = "a".repeat(100) + "x";
+    assert_eq!(
+        find(r"(?<=(?!^)(a+)\1)x", &haystack),
+        Some((haystack.len() - 1, haystack.len()))
+    );
+}
+
+#[cfg(feature = "variable-lookbehinds")]
+#[test]
+fn hard_variable_lookbehind_short_circuit_hits_limit() {
+    // With a very low backtrack limit, candidate collection is bounded
+    // and the backtrack limit is still hit.
+    let haystack = "a".repeat(100) + "x";
+    let r = RegexBuilder::new(r"(?<=(?!^)(a+)\1)x")
+        .backtrack_limit(20)
+        .build()
+        .unwrap();
+    let result = r.find(&haystack);
+    assert!(
+        matches!(
+            result,
+            Err(fancy_regex::Error::RuntimeError(
+                fancy_regex::RuntimeError::BacktrackLimitExceeded
+            ))
+        ),
+        "expected BacktrackLimitExceeded, got {:?}",
+        result
+    );
+}
+
+#[test]
 fn lookahead_looks_left() {
     assert_eq!(find(r"a(?=\b)", "ab"), None);
     assert_eq!(find(r"a(?=\b)", "a."), Some((0, 1)));
@@ -1489,6 +1540,41 @@ fn seek_conditional_empty_branches_preserve_matches() {
                 .map(|m| m.map(|m| (m.start(), m.end())).unwrap())
                 .collect();
             assert_eq!(matches, expected, "{pattern:?}, seek={seek}");
+        }
+    }
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn hard_variable_lookbehind() {
+    let p = r"(?<=(\G|(?m:^)\s*\*?)\s*)x";
+    let re = common::regex(p);
+    let m = re.find("* x").unwrap().unwrap();
+    assert_eq!(m.start(), 2);
+    assert_eq!(m.end(), 3);
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn hard_variable_lookbehind_match_at_bol_optional_whitespace_and_asterisk() {
+    let re = common::regex(r"(?<=(\G|^\s*\*?)\s*)(?i:(todo\b:?)|(fixme\b:?)|(note\b:?))");
+    let tests = vec![
+        ("TODO: fix this", Some((0, 5))),
+        ("# TODO: fix this", None),
+        ("* note", Some((2, 6))),
+    ];
+
+    for (text, expected) in tests {
+        match expected {
+            Some((start, end)) => {
+                let m = re.find(text).unwrap().unwrap();
+                assert_eq!(m.start(), start, "{}", text);
+                assert_eq!(m.end(), end, "{}", text);
+                assert_eq!(m.as_str(), &text[start..end], "{}", text);
+            }
+            None => {
+                assert!(re.find(text).unwrap().is_none(), "{}", text);
+            }
         }
     }
 }

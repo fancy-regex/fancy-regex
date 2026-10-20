@@ -8,14 +8,13 @@ with the exception that 0.x versions can break between minor versions.
 
 ## [Unreleased]
 ### Added
-- Add `RegexOptionsBuilder::build_delegate_prefilter` to disable building the prefilter
-- Add `RegexOptionsBuilder::start_bytes` that returns the first bytes that can match a pattern so you can build your own prefilter
-- Add `RegexOptionsBuilder::required_bytes` that returns the required bytes for a pattern to match
-- Add `RegexOptionsBuilder::max_prog_size` / `RegexBuilder::max_prog_size` to cap the number of VM instructions emitted while compiling. Subroutine calls are inlined at compile time, so a self- or mutually-recursive pattern can expand without bound even while the recursion-depth cap is respected; this bounds the emitted instruction vector instead. Exceeding the cap returns `CompileError::PatternTooComplex`. Disabled by default.
-
+- Add `RegexOptionsBuilder::build_delegate_prefilter` to disable building the prefilter (#282)
+- Add `RegexOptionsBuilder::start_bytes` that returns the first bytes that can match a pattern so you can build your own prefilter (#282)
+- Add `RegexOptionsBuilder::required_bytes` that returns the required bytes for a pattern to match (#287)
+- Add `RegexOptionsBuilder::max_prog_size` / `RegexBuilder::max_prog_size` to cap the number of VM instructions emitted while compiling. Subroutine calls are inlined at compile time, so a self- or mutually-recursive pattern can expand without bound even while the recursion-depth cap is respected; this bounds the emitted instruction vector instead. Exceeding the cap returns `CompileError::PatternTooComplex`. Disabled by default. (#298)
+- Implement support for variable length hard lookbehinds, by seeking backwards to candidate match start positions and then matching forward as usual (#286)
 ### Changed
-- The parser now tracks every capture group declared with the same name; `Regex::capture_names` reports the name for each of them, and named backrefs resolve to the last group with that name (#177)
-- If a lookbehind consists of an Alt containing only easy expressions and at least 4 branches (and no capture groups), compile it as a variable lookbehind (if the feature is enabled) instead of trying every branch as its own const-size lookbehind. One reverse-DFA delegate over the whole alternation is much cheaper per attempt, and grants a perf boost.
+- If a lookbehind consists of an Alt containing only easy expressions and at least 4 branches (and no capture groups), compile it as a variable lookbehind (if the feature is enabled) instead of trying every branch as its own const-size lookbehind. One reverse-DFA delegate over the whole alternation is much cheaper per attempt, and grants a perf boost. (#285)
 ### Fixed
 
 ## [0.19.2] - 2026-09-13
