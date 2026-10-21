@@ -1210,9 +1210,7 @@ pub(crate) fn compile_inner_from_hir(
     Ok(re)
 }
 
-pub(crate) fn options_to_rabuilder(options: &CompileOptions, usage: DelegateUsage) -> RaBuilder {
-    use regex_automata::util::syntax::Config as SyntaxConfig;
-
+pub(crate) fn options_to_raconfig(options: &CompileOptions, usage: DelegateUsage) -> RaConfig {
     let mut config = RaConfig::new();
     if let Some(limit) = options.delegate_size_limit {
         config = config.nfa_size_limit(Some(limit));
@@ -1251,7 +1249,13 @@ pub(crate) fn options_to_rabuilder(options: &CompileOptions, usage: DelegateUsag
     if !matches!(options.bytes_mode, BytesMode::Unicode) {
         config = config.utf8_empty(false);
     }
+    config
+}
 
+pub(crate) fn options_to_rabuilder(options: &CompileOptions, usage: DelegateUsage) -> RaBuilder {
+    use regex_automata::util::syntax::Config as SyntaxConfig;
+
+    let config = options_to_raconfig(options, usage);
     let mut builder = RaBuilder::new();
     builder.configure(config);
     // NOTE: our Expr to_str function handles creating the correct pattern string for regex-automata
