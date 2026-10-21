@@ -499,6 +499,10 @@ impl<'a> Compiler<'a> {
 
         // add the false branch, update the split target
         self.b.set_split_target(split_pc, self.b.pc(), true);
+        // The condition failed. Backtracking to the split does not undo `BeginAtomic`,
+        // so end the atomic group here too, or an enclosing atomic group would later
+        // read this group's entry on the explicit stack. There are no branches to cut.
+        self.b.add(Insn::EndAtomic)?;
         false_branch(self)?;
 
         // update the jump target for jumping over the false branch
@@ -1856,16 +1860,17 @@ mod tests {
     fn conditional_expression_can_be_compiled() {
         let prog = compile_prog(r"(?(ab)c|d)");
 
-        assert_eq!(prog.len(), 8, "prog: {:?}", prog);
+        assert_eq!(prog.len(), 9, "prog: {:?}", prog);
 
         assert_matches!(prog[0], BeginAtomic);
         assert_matches!(prog[1], Split(2, 6));
         assert_matches!(prog[2], Lit(ref l) if l == "ab");
         assert_matches!(prog[3], EndAtomic);
         assert_matches!(prog[4], Lit(ref l) if l == "c");
-        assert_matches!(prog[5], Jmp(7));
-        assert_matches!(prog[6], Lit(ref l) if l == "d");
-        assert_matches!(prog[7], End);
+        assert_matches!(prog[5], Jmp(8));
+        assert_matches!(prog[6], EndAtomic);
+        assert_matches!(prog[7], Lit(ref l) if l == "d");
+        assert_matches!(prog[8], End);
     }
 
     #[test]
@@ -2296,7 +2301,7 @@ mod tests {
         // Use explicit_capture_group_0=false so that (\w) = group 1 and \1 refers to it
         let prog = compile_prog_no_explicit_group0(r"(\w)(?~\1)");
 
-        assert_eq!(prog.len(), 20, "prog: {:?}", prog);
+        assert_eq!(prog.len(), 21, "prog: {:?}", prog);
 
         assert_matches!(prog[0], SplitUnanchored(3, 1));
         assert_matches!(prog[1], Any);
@@ -2310,7 +2315,7 @@ mod tests {
             prog[8],
             RepeatEpsilonGr {
                 lo: 0,
-                next: 18,
+                next: 19,
                 repeat: 4,
                 check: 5
             }
@@ -2329,10 +2334,11 @@ mod tests {
         assert_matches!(prog[13], FailNegativeLookAround);
         assert_matches!(prog[14], EndAtomic);
         assert_matches!(prog[15], Any);
-        assert_matches!(prog[16], Jmp(17));
-        assert_matches!(prog[17], Jmp(8));
-        assert_matches!(prog[18], Save(1));
-        assert_matches!(prog[19], End);
+        assert_matches!(prog[16], Jmp(18));
+        assert_matches!(prog[17], EndAtomic);
+        assert_matches!(prog[18], Jmp(8));
+        assert_matches!(prog[19], Save(1));
+        assert_matches!(prog[20], End);
     }
 
     #[test]
@@ -2847,16 +2853,17 @@ mod tests {
     fn continue_from_prev_match_inside_conditional_can_be_compiled() {
         let prog = compile_prog(r"(?(\G)\s\d|$)");
 
-        assert_eq!(prog.len(), 8, "prog: {:?}", prog);
+        assert_eq!(prog.len(), 9, "prog: {:?}", prog);
 
         assert_matches!(prog[0], BeginAtomic);
         assert_matches!(prog[1], Split(2, 6));
         assert_matches!(prog[2], ContinueFromPreviousMatchEnd { at_start: false });
         assert_matches!(prog[3], EndAtomic);
         assert_delegate_insn(&prog[4], r"\s\d", None);
-        assert_matches!(prog[5], Jmp(7));
-        assert_delegate_insn(&prog[6], r"$", None);
-        assert_matches!(prog[7], End);
+        assert_matches!(prog[5], Jmp(8));
+        assert_matches!(prog[6], EndAtomic);
+        assert_delegate_insn(&prog[7], r"$", None);
+        assert_matches!(prog[8], End);
     }
 
     #[test]
