@@ -1209,7 +1209,16 @@ impl<'a> Parser<'a> {
             let (next, condition) = self.parse_re(ix, depth)?;
             (self.check_for_close_paren(next)?, condition)
         };
-        let (end, child) = self.parse_re(next, depth)?;
+        // Only a `|` at this level ends the true branch. Parsing the whole body with
+        // `parse_re` would also split an alternation inside a group, because
+        // `(?(1)(?:a|b))` and `(?(1)a|b)` give the same `Expr::Alt`.
+        let (end, if_true) = self.parse_branch(next, depth)?;
+        let end = self.optional_whitespace(end)?;
+        let (end, if_false) = if self.re[end..].starts_with('|') {
+            self.parse_re(end + 1, depth)?
+        } else {
+            (end, Expr::Empty)
+        };
         if end == next {
             // The condition had no branches, so it is a backref-exists-only condition
             // (e.g. `(?(1))`). The delimited paths already produce AstNode::BackrefExistsCondition
@@ -1228,22 +1237,6 @@ impl<'a> Parser<'a> {
                     )
                 ));
             }
-        }
-        let if_true: Expr;
-        let mut if_false: Expr = Expr::Empty;
-        if let Expr::Alt(mut alternatives) = child {
-            // the truth branch will be the first alternative
-            if_true = alternatives.remove(0);
-            // if there is only one alternative left, take it out the Expr::Alt
-            if alternatives.len() == 1 {
-                if_false = alternatives.pop().expect("expected 2 alternatives");
-            } else {
-                // otherwise the remaining branches become the false branch
-                if_false = Expr::Alt(alternatives);
-            }
-        } else {
-            // there is only one branch - the truth branch. i.e. "if" without "else"
-            if_true = child;
         }
         let inner_condition = condition;
 
@@ -3493,6 +3486,30 @@ mod tests {
                         Expr::Concat(vec![make_literal("x"), make_literal("y"),]),
                         make_literal("z"),
                     ])),
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn conditional_true_branch_can_be_a_group_with_alternatives() {
+        // The `|` inside the group belongs to the true branch; there is no false branch.
+        assert_eq!(
+            p("(h)?(?(1)(?:i|x))"),
+            Expr::Concat(vec![
+                Expr::Repeat {
+                    child: Box::new(make_group(make_literal("h"))),
+                    lo: 0,
+                    hi: 1,
+                    greedy: true
+                },
+                Expr::Conditional {
+                    condition: Box::new(Expr::BackrefExistsCondition {
+                        group: 1,
+                        relative_recursion_level: None
+                    }),
+                    true_branch: Box::new(Expr::Alt(vec![make_literal("i"), make_literal("x")])),
+                    false_branch: Box::new(Expr::Empty),
                 },
             ])
         );
