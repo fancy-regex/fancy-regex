@@ -705,3 +705,22 @@ fn tiny_delegate_dfa_size_limit_with_hard_variable_lookbehind() {
     let m = regex.find("aaaax").unwrap().unwrap();
     assert_eq!((m.start(), m.end()), (4, 5));
 }
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn tiny_delegate_dfa_size_limit_without_skipping_cache_capacity_check() {
+    // Opting out of rounding up makes the size limit strict, so a limit below
+    // the minimum required capacity is a compile error.
+    let result = RegexBuilder::new(r"(?<=a+b)c")
+        .delegate_dfa_size_limit(1)
+        .delegate_dfa_skip_cache_capacity_check(false)
+        .build();
+    assert!(
+        matches!(
+            result,
+            Err(Error::CompileError(ref e)) if matches!(**e, CompileError::DfaBuildError(..))
+        ),
+        "Expected DfaBuildError, got {:?}",
+        result,
+    );
+}

@@ -13,6 +13,7 @@ with the exception that 0.x versions can break between minor versions.
 - Add `RegexOptionsBuilder::required_bytes` that returns the required bytes for a pattern to match (#287)
 - Add `RegexOptionsBuilder::max_prog_size` / `RegexBuilder::max_prog_size` to cap the number of VM instructions emitted while compiling. Subroutine calls are inlined at compile time, so a self- or mutually-recursive pattern can expand without bound even while the recursion-depth cap is respected; this bounds the emitted instruction vector instead. Exceeding the cap returns `CompileError::PatternTooComplex`. Disabled by default. (#298)
 - Implement support for variable length hard lookbehinds, by seeking backwards to candidate match start positions and then matching forward as usual. The reverse DFA honours `delegate_size_limit` and `delegate_dfa_size_limit`. (#286, #309)
+- Add `RegexOptionsBuilder::delegate_dfa_skip_cache_capacity_check` / `RegexBuilder::delegate_dfa_skip_cache_capacity_check`, enabled by default. Setting it to `false` makes the reverse DFA of a variable-length lookbehind strictly honour `delegate_dfa_size_limit`, so a too-small limit becomes a compile error. (#309)
 ### Changed
 - If a lookbehind consists of an Alt containing only easy expressions and at least 4 branches (and no capture groups), compile it as a variable lookbehind (if the feature is enabled) instead of trying every branch as its own const-size lookbehind. One reverse-DFA delegate over the whole alternation is much cheaper per attempt, and grants a perf boost. (#285)
 ### Fixed

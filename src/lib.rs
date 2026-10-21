@@ -532,6 +532,7 @@ struct RegexOptions {
     syntaxc: SyntaxConfig,
     delegate_size_limit: Option<usize>,
     delegate_dfa_size_limit: Option<usize>,
+    delegate_dfa_skip_cache_capacity_check: bool,
     /// Optional cap on the number of VM instructions emitted while compiling.
     /// Subroutine calls are inlined at compile time, so a self- or
     /// mutually-recursive pattern can expand without bound even while the
@@ -566,6 +567,10 @@ impl fmt::Debug for RegexOptions {
             .field("syntaxc", &self.syntaxc)
             .field("delegate_size_limit", &self.delegate_size_limit)
             .field("delegate_dfa_size_limit", &self.delegate_dfa_size_limit)
+            .field(
+                "delegate_dfa_skip_cache_capacity_check",
+                &self.delegate_dfa_skip_cache_capacity_check,
+            )
             .field("max_prog_size", &self.max_prog_size)
             .field("oniguruma_mode", &self.oniguruma_mode)
             .field(
@@ -590,6 +595,7 @@ impl Default for RegexOptions {
             syntaxc: SyntaxConfig::new().unicode(true),
             delegate_size_limit: None,
             delegate_dfa_size_limit: None,
+            delegate_dfa_skip_cache_capacity_check: true,
             max_prog_size: None,
             oniguruma_mode: false,
             ignore_numbered_groups_when_named_groups_exist: false,
@@ -815,6 +821,20 @@ impl RegexOptionsBuilder {
     /// compile error.
     pub fn delegate_dfa_size_limit(&mut self, limit: usize) -> &mut Self {
         self.options.delegate_dfa_size_limit = Some(limit);
+        self
+    }
+
+    /// Configure whether the reverse lazy DFA built for a variable-length lookbehind may exceed
+    /// the limit set by [`delegate_dfa_size_limit`](Self::delegate_dfa_size_limit) (or the
+    /// default) when it needs a larger minimum cache capacity.
+    ///
+    /// When `true` (the default), the cache capacity is rounded up to the minimum that the DFA
+    /// requires. When `false`, the limit is strictly honoured and a pattern whose DFA needs more
+    /// capacity fails to compile with [`CompileError::DfaBuildError`]. Like
+    /// [`RegexSetOptions::overlapping_dfa_skip_cache_capacity_check`], this only affects DFAs
+    /// that fancy-regex builds itself; ordinary delegated sub-regexes are unaffected.
+    pub fn delegate_dfa_skip_cache_capacity_check(&mut self, yes: bool) -> &mut Self {
+        self.options.delegate_dfa_skip_cache_capacity_check = yes;
         self
     }
 
@@ -1167,6 +1187,12 @@ impl RegexBuilder {
         self
     }
 
+    /// See [`RegexOptionsBuilder::delegate_dfa_skip_cache_capacity_check`]
+    pub fn delegate_dfa_skip_cache_capacity_check(&mut self, yes: bool) -> &mut Self {
+        self.options.delegate_dfa_skip_cache_capacity_check(yes);
+        self
+    }
+
     /// See [`RegexOptionsBuilder::max_prog_size`]
     pub fn max_prog_size(&mut self, limit: usize) -> &mut Self {
         self.options.max_prog_size(limit);
@@ -1323,6 +1349,8 @@ impl Regex {
                     && !matches!(options.bytes_mode, BytesMode::Ascii),
                 delegate_size_limit: options.delegate_size_limit,
                 delegate_dfa_size_limit: options.delegate_dfa_size_limit,
+                delegate_dfa_skip_cache_capacity_check: options
+                    .delegate_dfa_skip_cache_capacity_check,
                 // The remaining fields (anchored, contains_subroutines, seek_filter,
                 // disallow_empty_match_at_eof_after_newline) are irrelevant for a plain
                 // delegate compile in the easy path and their defaults are correct.
@@ -1371,6 +1399,8 @@ impl Regex {
                     && !matches!(options.bytes_mode, BytesMode::Ascii),
                 delegate_size_limit: options.delegate_size_limit,
                 delegate_dfa_size_limit: options.delegate_dfa_size_limit,
+                delegate_dfa_skip_cache_capacity_check: options
+                    .delegate_dfa_skip_cache_capacity_check,
                 max_prog_size: options.max_prog_size,
             },
         )?;
