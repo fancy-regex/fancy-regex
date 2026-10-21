@@ -16,6 +16,7 @@ with the exception that 0.x versions can break between minor versions.
 ### Changed
 - If a lookbehind consists of an Alt containing only easy expressions and at least 4 branches (and no capture groups), compile it as a variable lookbehind (if the feature is enabled) instead of trying every branch as its own const-size lookbehind. One reverse-DFA delegate over the whole alternation is much cheaper per attempt, and grants a perf boost. (#285)
 ### Fixed
+- `delegate_dfa_size_limit` now sets the lazy DFA cache capacity (`hybrid_cache_capacity`) as documented, instead of the fully compiled DFA size limit. It had been forwarded to the wrong regex-automata option since the switch from the `regex` crate. (#307)
 
 ## [0.19.2] - 2026-09-13
 ### Added

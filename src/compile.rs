@@ -1216,7 +1216,7 @@ pub(crate) fn options_to_raconfig(options: &CompileOptions, usage: DelegateUsage
         config = config.nfa_size_limit(Some(limit));
     }
     if let Some(limit) = options.delegate_dfa_size_limit {
-        config = config.dfa_size_limit(Some(limit));
+        config = config.hybrid_cache_capacity(limit);
     }
     if !usage.prefilter {
         // Anchored searches never consult a prefilter, so don't spend build time
@@ -1646,6 +1646,31 @@ mod tests {
     use crate::RegexBuilder;
 
     use matches::assert_matches;
+
+    #[test]
+    fn delegate_dfa_size_limit_sets_hybrid_cache_capacity() {
+        let options = CompileOptions {
+            delegate_dfa_size_limit: Some(123_456),
+            ..Default::default()
+        };
+        let config = options_to_raconfig(&options, DelegateUsage::unanchored());
+        assert_eq!(config.get_hybrid_cache_capacity(), 123_456);
+        // the fully compiled DFA size limit must be left alone
+        assert_eq!(
+            config.get_dfa_size_limit(),
+            RaConfig::new().get_dfa_size_limit()
+        );
+    }
+
+    #[test]
+    fn delegate_size_limit_sets_nfa_size_limit() {
+        let options = CompileOptions {
+            delegate_size_limit: Some(54_321),
+            ..Default::default()
+        };
+        let config = options_to_raconfig(&options, DelegateUsage::unanchored());
+        assert_eq!(config.get_nfa_size_limit(), Some(54_321));
+    }
 
     #[cfg_attr(feature = "track_caller", track_caller)]
     fn assert_compile_error<T, F>(result: crate::Result<T>, check: F)
