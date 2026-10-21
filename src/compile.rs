@@ -860,13 +860,21 @@ impl<'a> Compiler<'a> {
         use regex_automata::hybrid::dfa;
         use regex_automata::nfa::thompson;
         use regex_automata::MatchKind;
+        // See `compile_variable_lookbehind` for why the capacity check is skipped by default.
+        let mut dfa_config = dfa::Config::new()
+            .match_kind(MatchKind::All)
+            .unicode_word_boundary(true)
+            .skip_cache_capacity_check(self.options.delegate_dfa_skip_cache_capacity_check);
+        if let Some(limit) = self.options.delegate_dfa_size_limit {
+            dfa_config = dfa_config.cache_capacity(limit);
+        }
+        let mut thompson_config = thompson::Config::new().reverse(true);
+        if let Some(limit) = self.options.delegate_size_limit {
+            thompson_config = thompson_config.nfa_size_limit(Some(limit));
+        }
         let dfa = match dfa::DFA::builder()
-            .configure(
-                dfa::Config::new()
-                    .match_kind(MatchKind::All)
-                    .unicode_word_boundary(true),
-            )
-            .thompson(thompson::Config::new().reverse(true))
+            .configure(dfa_config)
+            .thompson(thompson_config)
             .build(&seek_pattern)
         {
             Ok(dfa) => Arc::new(dfa),
@@ -917,7 +925,14 @@ impl<'a> Compiler<'a> {
         use regex_automata::nfa::thompson;
         use regex_automata::util::syntax::Config as SyntaxConfig;
 
-        let mut dfa_config = dfa::Config::new().unicode_word_boundary(true);
+        // A directly built lazy DFA cannot fall back to another engine the way
+        // `meta::Regex` does, so a too-small cache capacity must not be an error.
+        // Users cannot know the minimum in advance (it depends on the NFA size),
+        // so by default round it up instead. `delegate_dfa_skip_cache_capacity_check(false)`
+        // keeps the limit strict and turns a too-small capacity into a compile error.
+        let mut dfa_config = dfa::Config::new()
+            .unicode_word_boundary(true)
+            .skip_cache_capacity_check(self.options.delegate_dfa_skip_cache_capacity_check);
         if let Some(limit) = self.options.delegate_dfa_size_limit {
             dfa_config = dfa_config.cache_capacity(limit);
         }
@@ -1382,6 +1397,9 @@ pub struct CompileOptions {
     pub delegate_size_limit: Option<usize>,
     /// Optional size limit in bytes for the DFA of each delegated sub-expression.
     pub delegate_dfa_size_limit: Option<usize>,
+    /// Whether the reverse lazy DFAs of variable-length lookbehinds skip the minimum cache
+    /// capacity check, rounding the capacity up instead of failing to build.
+    pub delegate_dfa_skip_cache_capacity_check: bool,
     /// Optional cap on the number of VM instructions emitted while compiling.
     /// Subroutine calls are inlined at compile time, so a self- or
     /// mutually-recursive pattern can expand without bound even while the
@@ -1413,6 +1431,10 @@ impl core::fmt::Debug for CompileOptions {
             .field("unicode", &self.unicode)
             .field("delegate_size_limit", &self.delegate_size_limit)
             .field("delegate_dfa_size_limit", &self.delegate_dfa_size_limit)
+            .field(
+                "delegate_dfa_skip_cache_capacity_check",
+                &self.delegate_dfa_skip_cache_capacity_check,
+            )
             .field("max_prog_size", &self.max_prog_size)
             .finish()
     }
@@ -1429,6 +1451,7 @@ impl Default for CompileOptions {
             unicode: true,
             delegate_size_limit: None,
             delegate_dfa_size_limit: None,
+            delegate_dfa_skip_cache_capacity_check: true,
             max_prog_size: None,
         }
     }
@@ -2108,6 +2131,71 @@ mod tests {
                 prog
             );
         }
+    }
+
+    #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn variable_hard_lookbehind_applies_dfa_size_limit() {
+        let prog = compile_prog_with(r"(?<=(a+)\1)x", AnalyzeContext::default(), |info, tree| {
+            compile(
+                info,
+                CompileOptions {
+                    anchored: false,
+                    contains_subroutines: tree.contains_subroutines,
+                    delegate_dfa_size_limit: Some(1),
+                    ..CompileOptions::default()
+                },
+            )
+            .unwrap()
+            .body
+        });
+        let lookbehind = prog
+            .iter()
+            .find_map(|i| match i {
+                Insn::HardVariableLookbehind(lb) => Some(lb),
+                _ => None,
+            })
+            .expect("HardVariableLookbehind not found");
+        let config = lookbehind.dfa.get_config();
+        assert!(config.get_skip_cache_capacity_check());
+        // Checks that the configured value was forwarded; there is no API to
+        // read the effective capacity after regex-automata rounds it up.
+        assert_eq!(config.get_cache_capacity(), 1);
+    }
+
+    #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn variable_hard_lookbehind_can_disable_skip_cache_capacity_check() {
+        let tree = Expr::parse_tree(r"(?<=(a+)\1)x").unwrap();
+        let mut info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        let result = compile(
+            &mut info,
+            CompileOptions {
+                anchored: false,
+                contains_subroutines: tree.contains_subroutines,
+                delegate_dfa_size_limit: Some(1),
+                delegate_dfa_skip_cache_capacity_check: false,
+                ..CompileOptions::default()
+            },
+        );
+        assert_compile_error(result, |e| matches!(e, CompileError::DfaBuildError(..)));
+    }
+
+    #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn variable_hard_lookbehind_applies_nfa_size_limit() {
+        let tree = Expr::parse_tree(r"(?<=(a+)\1)x").unwrap();
+        let mut info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        let result = compile(
+            &mut info,
+            CompileOptions {
+                anchored: false,
+                contains_subroutines: tree.contains_subroutines,
+                delegate_size_limit: Some(1),
+                ..CompileOptions::default()
+            },
+        );
+        assert_compile_error(result, |e| matches!(e, CompileError::DfaBuildError(..)));
     }
 
     #[test]

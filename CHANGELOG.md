@@ -12,10 +12,12 @@ with the exception that 0.x versions can break between minor versions.
 - Add `RegexOptionsBuilder::start_bytes` that returns the first bytes that can match a pattern so you can build your own prefilter (#282)
 - Add `RegexOptionsBuilder::required_bytes` that returns the required bytes for a pattern to match (#287)
 - Add `RegexOptionsBuilder::max_prog_size` / `RegexBuilder::max_prog_size` to cap the number of VM instructions emitted while compiling. Subroutine calls are inlined at compile time, so a self- or mutually-recursive pattern can expand without bound even while the recursion-depth cap is respected; this bounds the emitted instruction vector instead. Exceeding the cap returns `CompileError::PatternTooComplex`. Disabled by default. (#298)
-- Implement support for variable length hard lookbehinds, by seeking backwards to candidate match start positions and then matching forward as usual (#286)
+- Implement support for variable length hard lookbehinds, by seeking backwards to candidate match start positions and then matching forward as usual. The reverse DFA honours `delegate_size_limit` and `delegate_dfa_size_limit`. (#286, #309)
+- Add `RegexOptionsBuilder::delegate_dfa_skip_cache_capacity_check` / `RegexBuilder::delegate_dfa_skip_cache_capacity_check`, enabled by default. Setting it to `false` makes the reverse DFA of a variable-length lookbehind strictly honour `delegate_dfa_size_limit`, so a too-small limit becomes a compile error. (#309)
 ### Changed
 - If a lookbehind consists of an Alt containing only easy expressions and at least 4 branches (and no capture groups), compile it as a variable lookbehind (if the feature is enabled) instead of trying every branch as its own const-size lookbehind. One reverse-DFA delegate over the whole alternation is much cheaper per attempt, and grants a perf boost. (#285)
 ### Fixed
+- The reverse lazy DFA built for a variable-length lookbehind failed to compile when it needed a larger cache capacity than the configured `delegate_dfa_size_limit` (or the default of 2 MiB); for example `(?<=\p{L}{99,100})x` failed to compile with default settings. The capacity is now rounded up to the minimum required. Ordinary delegates were not affected because the meta engine falls back to another engine when the lazy DFA cannot be built. (#309)
 - `delegate_dfa_size_limit` now sets the lazy DFA cache capacity (`hybrid_cache_capacity`) as documented, instead of the fully compiled DFA size limit. It had been forwarded to the wrong regex-automata option since the switch from the `regex` crate. (#307)
 
 ## [0.19.2] - 2026-09-13
