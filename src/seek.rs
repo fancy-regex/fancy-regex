@@ -183,16 +183,21 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                 Assertion::EndTextIgnoreTrailingNewlines { crlf: true } => {
                     buf.push_str(r"[\r\n]*$")
                 }
-                Assertion::WordBoundary | Assertion::NotWordBoundary | Assertion::LeftWordBoundary | Assertion::RightWordBoundary | Assertion::LeftWordHalfBoundary | Assertion::RightWordHalfBoundary => info.expr.to_str(buf, precedence),
+                Assertion::WordBoundary
+                | Assertion::NotWordBoundary
+                | Assertion::LeftWordBoundary
+                | Assertion::RightWordBoundary
+                | Assertion::LeftWordHalfBoundary
+                | Assertion::RightWordHalfBoundary => info.expr.to_str(buf, precedence),
                 // Easy positional anchors — handled by early return / early drop above.
                 // They can only reach here when drop_positional_anchors=false and the subtree
                 // is easy (handled by to_str) but the Group/Concat parent fell through to match.
                 // Emit them faithfully.
-                Assertion::StartText |
-                Assertion::EndText |
-                Assertion::StartLine { .. }
-                | Assertion::StartLineOniguruma { .. } |
-                Assertion::EndLine { .. } => info.expr.to_str(buf, precedence),
+                Assertion::StartText
+                | Assertion::EndText
+                | Assertion::StartLine { .. }
+                | Assertion::StartLineOniguruma { .. }
+                | Assertion::EndLine { .. } => info.expr.to_str(buf, precedence),
             }
         }
         Expr::Concat(_) => {

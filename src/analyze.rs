@@ -164,8 +164,8 @@ struct Analyzer<'a> {
     leftmost_longest: bool,
     /// Oniguruma's `^` rejects the empty match at the absolute end of the haystack after a trailing
     /// newline when it anchors the match itself. When used as a sub-assertion inside a lookaround,
-    /// it behaves as a plain line start. So we need to track when we are analyzing inside a lookaround.
-    in_lookaround: bool,
+    /// it behaves as a plain line start.
+    in_lookahead: bool,
     /// Whether we are currently analyzing the child of a lookbehind. Word
     /// boundaries are only hard here: regex-automata's reverse DFA can't run
     /// a variable-length lookbehind, so the whole lookbehind is compiled on
@@ -174,6 +174,13 @@ struct Analyzer<'a> {
 }
 
 impl<'a> Analyzer<'a> {
+    /// Whether we are currently analyzing inside any lookaround (lookahead or
+    /// lookbehind). Derived from the two flags so callers can ask the
+    /// question without caring which kind of lookaround we're in.
+    fn in_lookaround(&self) -> bool {
+        self.in_lookahead || self.in_lookbehind
+    }
+
     // enclosing_group: The group that currently contains the expression being analyzed.
     // This is used to track which group "owns" any subroutine calls found,
     // and to determine if we're at the root level (group 0).
@@ -197,16 +204,16 @@ impl<'a> Analyzer<'a> {
             Expr::Assertion(assertion) if assertion.is_always_hard() => {
                 // Word boundaries are only hard when they appear inside a
                 // lookbehind: regex-automata's reverse DFA can't run a
-                // variable-length lookbehind, so the whole lookbehind is
-                // compiled on the VM. Outside a lookbehind, a word boundary
-                // is const-size and the regex-automata engine supports it,
-                // so it can be delegated — which is what keeps patterns like
+                // variable-length lookbehind on unicode haystacks, so the
+                // whole lookbehind is compiled on the VM.
+                // A word boundary is const-size and can be delegated when
+                // outside a lookbehind, which is what keeps patterns like
                 // `\b(?:foo|bar|baz)\b` a single delegate instead of a branch
                 // per alternative.
                 const_size = true;
-                hard = assertion.is_hard_in_lookaround(self.in_lookbehind);
+                hard = assertion.is_hard_in_lookbehind(self.in_lookbehind);
             }
-            Expr::Assertion(Assertion::StartLineOniguruma { .. }) if !self.in_lookaround => {
+            Expr::Assertion(Assertion::StartLineOniguruma { .. }) if !self.in_lookaround() => {
                 const_size = true;
                 hard = true;
             }
@@ -222,7 +229,7 @@ impl<'a> Analyzer<'a> {
                 const_size = true;
                 hard = true; // NOTE: \Z is already considered hard and covered in the branch above
             }
-            Expr::Assertion(Assertion::EndText) if self.find_not_empty && !self.in_lookaround => {
+            Expr::Assertion(Assertion::EndText) if self.find_not_empty && !self.in_lookaround() => {
                 const_size = true;
                 hard = true;
             }
@@ -322,19 +329,19 @@ impl<'a> Analyzer<'a> {
             }
             Expr::LookAround(ref child, la) => {
                 let was_in_lookbehind = self.in_lookbehind;
-                let was_in_lookaround = self.in_lookaround;
+                let was_in_lookahead = self.in_lookahead;
                 // Word boundaries are only hard inside a lookbehind:
                 // regex-automata's reverse DFA can't run a variable-length
                 // lookbehind, so the whole lookbehind is compiled on the VM.
                 // Lookaheads have no such restriction.
                 self.in_lookbehind =
                     matches!(la, LookAround::LookBehind | LookAround::LookBehindNeg);
-                self.in_lookaround = true;
+                self.in_lookahead = !self.in_lookbehind;
                 // NOTE: min_pos_in_group might seem weird for lookbehinds
                 let child_info =
                     self.visit(child, min_pos_in_group, inside_zero_rep, enclosing_group)?;
                 self.in_lookbehind = was_in_lookbehind;
-                self.in_lookaround = was_in_lookaround;
+                self.in_lookahead = was_in_lookahead;
                 // min_size = 0
                 const_size = true;
                 hard = true;
@@ -985,7 +992,7 @@ pub fn analyze<'a>(tree: &'a ExprTree, ctx: AnalyzeContext) -> Result<Info<'a>> 
         allow_input_assertion_overrides,
         #[cfg(feature = "leftmost_longest")]
         leftmost_longest,
-        in_lookaround: false,
+        in_lookahead: false,
         in_lookbehind: false,
     };
 

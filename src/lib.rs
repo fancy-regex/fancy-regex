@@ -2776,12 +2776,12 @@ impl Assertion {
     /// half-boundary variants (`\<half`, `\>half`) and `\Z` are always hard:
     /// regex-automata has no half-boundary look, and `\Z` needs custom
     /// trailing-newline handling.
-    pub(crate) fn is_hard_in_lookaround(&self, in_lookaround: bool) -> bool {
+    pub(crate) fn is_hard_in_lookbehind(&self, in_lookbehind: bool) -> bool {
         use Assertion::*;
         match self {
             LeftWordHalfBoundary | RightWordHalfBoundary => true,
             EndTextIgnoreTrailingNewlines { .. } => true,
-            LeftWordBoundary | RightWordBoundary | WordBoundary | NotWordBoundary => in_lookaround,
+            LeftWordBoundary | RightWordBoundary | WordBoundary | NotWordBoundary => in_lookbehind,
             _ => true,
         }
     }
