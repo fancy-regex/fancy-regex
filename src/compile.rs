@@ -917,7 +917,13 @@ impl<'a> Compiler<'a> {
         use regex_automata::nfa::thompson;
         use regex_automata::util::syntax::Config as SyntaxConfig;
 
-        let mut dfa_config = dfa::Config::new().unicode_word_boundary(true);
+        // A directly built lazy DFA cannot fall back to another engine the way
+        // `meta::Regex` does, so a too-small cache capacity must not be an error.
+        // Users cannot know the minimum in advance (it depends on the NFA size),
+        // so round it up instead.
+        let mut dfa_config = dfa::Config::new()
+            .unicode_word_boundary(true)
+            .skip_cache_capacity_check(true);
         if let Some(limit) = self.options.delegate_dfa_size_limit {
             dfa_config = dfa_config.cache_capacity(limit);
         }

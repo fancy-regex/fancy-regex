@@ -674,3 +674,34 @@ fn continue_from_previous_match_end_override_is_suppression_only() {
         .collect();
     assert_eq!(cleared_override_spans, default_spans);
 }
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn tiny_delegate_dfa_size_limit_with_variable_lookbehind() {
+    // A limit below regex-automata's minimum lazy DFA capacity is rounded up
+    // instead of failing the compilation (#308).
+    let regex = build_regex(RegexBuilder::new(r"(?<=a+b)c").delegate_dfa_size_limit(1));
+    assert!(regex.is_match("aabc").unwrap());
+    assert!(!regex.is_match("aac").unwrap());
+}
+
+#[test]
+#[cfg(all(feature = "variable-lookbehinds", feature = "unicode"))]
+fn default_delegate_dfa_size_limit_with_large_variable_lookbehind() {
+    // Even the default 2 MiB limit is too small: the reverse DFA of this
+    // lookbehind requires about 3.3 MiB, so without rounding up the capacity
+    // the compilation fails (#308).
+    let regex = build_regex(&RegexBuilder::new(r"(?<=\p{L}{99,100})x"));
+    assert!(regex.is_match(&format!("{}x", "a".repeat(100))).unwrap());
+    assert!(!regex.is_match(&format!("{}x", "a".repeat(50))).unwrap());
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn tiny_delegate_dfa_size_limit_with_hard_variable_lookbehind() {
+    // The reverse DFA of a hard variable-length lookbehind must also tolerate a
+    // limit that is too small, rather than failing to compile (#308).
+    let regex = build_regex(RegexBuilder::new(r"(?<=(a+)\1)x").delegate_dfa_size_limit(1));
+    let m = regex.find("aaaax").unwrap().unwrap();
+    assert_eq!((m.start(), m.end()), (4, 5));
+}

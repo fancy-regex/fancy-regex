@@ -807,6 +807,12 @@ impl RegexOptionsBuilder {
     /// regex features there may be multiple delegated sub-regexes fed to the `regex` crate. As
     /// such the actual limit is closer to `<number of delegated regexes> *
     /// delegate_dfa_size_limit`.
+    ///
+    /// Patterns with a variable-length lookbehind additionally build a dedicated reverse lazy
+    /// DFA. If the limit is below the minimum cache capacity that DFA needs (which depends on the
+    /// NFA size of the lookbehind body and can reach several MiB to tens of MiB for large
+    /// repetitions of Unicode classes), it is rounded up to that minimum instead of causing a
+    /// compile error.
     pub fn delegate_dfa_size_limit(&mut self, limit: usize) -> &mut Self {
         self.options.delegate_dfa_size_limit = Some(limit);
         self

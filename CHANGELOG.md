@@ -16,6 +16,7 @@ with the exception that 0.x versions can break between minor versions.
 ### Changed
 - If a lookbehind consists of an Alt containing only easy expressions and at least 4 branches (and no capture groups), compile it as a variable lookbehind (if the feature is enabled) instead of trying every branch as its own const-size lookbehind. One reverse-DFA delegate over the whole alternation is much cheaper per attempt, and grants a perf boost. (#285)
 ### Fixed
+- The reverse lazy DFA built for a variable-length lookbehind failed to compile when it needed a larger cache capacity than the configured `delegate_dfa_size_limit` (or the default of 2 MiB); for example `(?<=\p{L}{99,100})x` failed to compile with default settings. The capacity is now rounded up to the minimum required. Ordinary delegates were not affected because the meta engine falls back to another engine when the lazy DFA cannot be built. (#309)
 
 ## [0.19.2] - 2026-09-13
 ### Added
