@@ -859,6 +859,7 @@ impl<'a> Compiler<'a> {
 
         use regex_automata::hybrid::dfa;
         use regex_automata::nfa::thompson;
+        use regex_automata::util::syntax::Config as SyntaxConfig;
         use regex_automata::MatchKind;
         // See `compile_variable_lookbehind` for why the capacity check is skipped by default.
         let mut dfa_config = dfa::Config::new()
@@ -872,9 +873,18 @@ impl<'a> Compiler<'a> {
         if let Some(limit) = self.options.delegate_size_limit {
             thompson_config = thompson_config.nfa_size_limit(Some(limit));
         }
+        // This builder parses `seek_pattern` itself instead of going through
+        // `options_to_rabuilder`, so the caller's Unicode and bytes-mode settings
+        // have to be applied to its syntax config too. Without them the reverse
+        // DFA would use regex-automata's defaults while the forward
+        // capture-extraction engine below uses the configured ones.
+        let syntax = SyntaxConfig::new()
+            .utf8(matches!(self.options.bytes_mode, BytesMode::Unicode))
+            .unicode(self.options.unicode);
         let dfa = match dfa::DFA::builder()
             .configure(dfa_config)
             .thompson(thompson_config)
+            .syntax(syntax)
             .build(&seek_pattern)
         {
             Ok(dfa) => Arc::new(dfa),
