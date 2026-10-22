@@ -1578,3 +1578,61 @@ fn hard_variable_lookbehind_match_at_bol_optional_whitespace_and_asterisk() {
         }
     }
 }
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn hard_variable_lookbehind_respects_unicode_and_bytes_mode() {
+    // A hard variable-length lookbehind routes its reverse DFA through
+    // `compile_hard_variable_lookbehind`, which must honour the caller's Unicode
+    // and bytes-mode settings rather than regex-automata's defaults, just like
+    // the other delegated engines.
+    //
+    // The backreference makes the lookbehind hard; the seek pattern contains
+    // `\w+`, which is unicode/ascii-sensitive.  Without the syntax config the
+    // reverse DFA would use regex-automata's defaults while the forward
+    // capture-extraction engine below uses the configured ones.
+    let pattern = r"(?<=(\w+)\1)x";
+    let ascii = RegexBuilder::new(pattern)
+        .bytes_mode(BytesMode::Ascii)
+        .build()
+        .unwrap();
+    // ASCII \w cannot match the two bytes of 'é', so the lookbehind fails.
+    assert_eq!(
+        ascii
+            .find("\u{e9}\u{e9}x")
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
+        None
+    );
+    let unicode = RegexBuilder::new(pattern).build().unwrap();
+    assert_eq!(
+        unicode
+            .find("\u{e9}\u{e9}x")
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
+        Some((4, 5))
+    );
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn hard_variable_lookbehind_negated_class_ascii() {
+    // \W is a negated class: Unicode \W is a *subset* of ASCII \W (because
+    // Unicode \w includes non-ASCII letters).  In ASCII bytes mode the reverse
+    // DFA must use ASCII \W, otherwise it can miss candidate start positions
+    // that the verification step would otherwise accept.
+    let pattern = r"(?<=(\W+)\1)x";
+    // 'é' is a non-ASCII word char: ASCII \W matches its bytes, Unicode \W does
+    // not.  With a backreference the lookbehind is hard.
+    let ascii = RegexBuilder::new(pattern)
+        .bytes_mode(BytesMode::Ascii)
+        .build()
+        .unwrap();
+    assert_eq!(
+        ascii
+            .find("\u{e9}\u{e9}x")
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
+        Some((4, 5))
+    );
+}
