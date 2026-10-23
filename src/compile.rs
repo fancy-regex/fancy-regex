@@ -1676,7 +1676,7 @@ mod tests {
     use crate::analyze::{analyze, AnalyzeContext};
     use crate::parse::ExprTree;
     use crate::vm::Insn::*;
-    use crate::RegexBuilder;
+    use crate::{BytesMode, Regex, RegexBuilder};
 
     use matches::assert_matches;
 
@@ -2653,6 +2653,172 @@ mod tests {
         assert_matches!(prog[1], ContinueFromPreviousMatchEnd { at_start: false });
         assert_delegate_insn(&prog[2], r"\s\d", None);
         assert_matches!(prog[3], End);
+    }
+
+    #[test]
+    fn word_boundary_delegates_as_single_engine_with_backref() {
+        // A backref makes the pattern hard, but the word boundaries are still
+        // const-size and easy. The trailing `\b` is folded into a delegated
+        // engine; the leading `\b` is hard context (the backref follows it),
+        // so it is emitted as a native VM assertion.
+        let prog = compile_prog_no_explicit_group0(r"(\w)\b\1\b");
+        assert_eq!(prog.len(), 12, "prog: {:?}", prog);
+        assert_matches!(prog[0], SplitUnanchored(3, 1));
+        assert_matches!(prog[3], Save(0));
+        assert_matches!(prog[4], SaveCaptureGroupStart(1));
+        assert_matches!(prog[5], CharClass(_));
+        assert_matches!(prog[6], Save(3));
+        assert_matches!(prog[7], Insn::Assertion(crate::Assertion::WordBoundary));
+        assert_matches!(
+            prog[8],
+            Backref {
+                slot: 2,
+                casei: false,
+                unicode: true
+            }
+        );
+        assert_delegate_insn(&prog[9], r"\b", None);
+        assert_matches!(prog[10], Save(1));
+        assert_matches!(prog[11], End);
+    }
+
+    #[test]
+    fn word_boundary_delegates_inside_hard_concat_with_hard_middle() {
+        // The hard context flows right-to-left, so the trailing `\b` is part
+        // of the delegated suffix. The leading `\b` is easy context (it is
+        // the leftmost element) and is also delegated; the hard backref in
+        // the middle is compiled on the VM.
+        let prog = compile_prog_no_explicit_group0(r"\b(\w)\1\b");
+        assert_eq!(prog.len(), 12, "prog: {:?}", prog);
+        assert_matches!(prog[0], SplitUnanchored(3, 1));
+        assert_matches!(prog[1], Any);
+        assert_matches!(prog[2], Jmp(0));
+        assert_matches!(prog[3], Save(0));
+        assert_delegate_insn(&prog[4], r"\b", None);
+        assert_matches!(prog[5], SaveCaptureGroupStart(1));
+        assert_matches!(prog[6], CharClass(_));
+        assert_matches!(prog[7], Save(3));
+        assert_matches!(
+            prog[8],
+            Backref {
+                slot: 2,
+                casei: false,
+                unicode: true
+            }
+        );
+        assert_delegate_insn(&prog[9], r"\b", None);
+        assert_matches!(prog[10], Save(1));
+        assert_matches!(prog[11], End);
+    }
+
+    #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn word_boundary_inside_lookbehind_compiled_on_vm_with_backref() {
+        // A backref makes the lookbehind hard; the word boundary inside it
+        // stays hard too, so the whole lookbehind is compiled on the VM with
+        // the HardVariableLookbehind reverse-DFA seek path.
+        let prog = compile_prog_no_explicit_group0(r"(?<=(a+)\1)b");
+        assert!(
+            prog.iter()
+                .any(|i| matches!(i, Insn::HardVariableLookbehind(_))),
+            "expected HardVariableLookbehind: {:?}",
+            prog
+        );
+        assert!(
+            prog.iter()
+                .any(|i| matches!(i, Insn::ReverseLookbehindPosCheck { .. })),
+            "lookbehind should use ReverseLookbehindPosCheck: {:?}",
+            prog
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn word_boundary_inside_easy_variable_lookbehind_stays_delegated() {
+        // Without a backref, a variable-length lookbehind delegates to a
+        // reverse DFA. Word boundaries inside it are still hard, but the
+        // reverse DFA honours `unicode_word_boundary`, so the lookbehind
+        // compiles as a single BackwardsDelegate carrying the `\b` assertions.
+        let prog = compile_prog(r"(?<=\b\w+\b)x");
+        assert_eq!(prog.len(), 7, "prog: {:?}", prog);
+        assert_matches!(prog[0], Save(0));
+        assert_matches!(prog[1], Insn::Assertion(crate::Assertion::WordBoundary));
+        assert_matches!(
+            &prog[2],
+            BackwardsDelegate(ReverseBackwardsDelegate { pattern, .. }) if pattern == "\\w+"
+        );
+        assert_matches!(prog[3], Insn::Assertion(crate::Assertion::WordBoundary));
+        assert_matches!(prog[4], Restore(0));
+        assert_matches!(prog[5], Lit(ref l) if l == "x");
+        assert_matches!(prog[6], End);
+    }
+
+    #[test]
+    fn word_boundary_in_negated_lookahead_delegates() {
+        // A negative lookahead makes the pattern hard, but the word boundary
+        // inside it is easy and is folded into the delegated negative
+        // lookahead rather than compiled as a separate VM assertion. The
+        // trailing `bar` is a single literal, so it stays a native Lit.
+        let prog = compile_prog(r"\b(?!\bfoo\b)bar");
+        assert_eq!(prog.len(), 6, "prog: {:?}", prog);
+        assert_delegate_insn(&prog[0], r"\b", None);
+        assert_matches!(prog[1], Split(2, 4));
+        assert_delegate_insn(&prog[2], r"\bfoo\b", None);
+        assert_matches!(prog[3], FailNegativeLookAround);
+        assert_matches!(prog[4], Lit(ref l) if l == "bar");
+        assert_matches!(prog[5], End);
+    }
+
+    #[test]
+    fn word_boundary_unicode_and_ascii_modes_match() {
+        // `\b` delegates in both Unicode and ASCII bytes mode, and both must
+        // agree on where word boundaries fall. The ASCII variant is the
+        // regex-automata `WordAscii` look; the Unicode variant is `WordUnicode`.
+        for (re, text, expect) in [
+            (r"\bat\b", "at", true),
+            (r"\bat\b", "cat", false),
+            (r"\bat\b", "at ", true),
+            (r"\bat\b", " at", true),
+            (r"\bat\b", "x at y", true),
+            (r"\bat\b", " bat ", false),
+            (r"\b\d+\b", "42", true),
+            (r"\b\d+\b", "x42y", false),
+            (r"\b\d+\b", "x 42 y", true),
+        ] {
+            let str_re = regex::Regex::new(re).unwrap();
+            assert_eq!(str_re.is_match(text), expect, "str {re} on {text:?}");
+            let ascii_re = RegexBuilder::new(re)
+                .bytes_mode(BytesMode::Ascii)
+                .build()
+                .unwrap();
+            assert_eq!(
+                ascii_re.is_match(text.as_bytes()).unwrap(),
+                expect,
+                "ascii {re} on {text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn word_boundary_at_start_and_end_of_haystack() {
+        // Word boundaries at the very start and end of the haystack must match
+        // when the adjacent character is a word char and fail otherwise.
+        let re = Regex::new(r"\bat\b").unwrap();
+        assert!(re.is_match("at").unwrap());
+        assert!(re.is_match("at ").unwrap());
+        assert!(re.is_match(" at").unwrap());
+        assert!(re.find("x at y").unwrap().is_some());
+        assert!(!re.find("cat").unwrap().is_some());
+    }
+
+    #[test]
+    fn word_boundary_not_boundary_delegates() {
+        // `\B` is the negated word boundary; it is also const-size and easy
+        // outside a lookbehind, so it delegates.
+        let prog = compile_prog(r"\Bfoo\B");
+        assert_eq!(prog.len(), 2, "prog: {:?}", prog);
+        assert_delegate_insn(&prog[0], r"\Bfoo\B", None);
+        assert_matches!(prog[1], End);
     }
 
     #[test]

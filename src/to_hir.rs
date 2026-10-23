@@ -406,6 +406,11 @@ mod tests {
         // Hard patterns must be skipped by the harness (info.hard).
         r"\bword\b",
         r"(a)\1",
+        // Word boundaries are easy outside a lookbehind, so they exercise the
+        // `expr_to_hir` word-boundary arms in all three byte modes.
+        r"\b(?:at)\b",
+        r"\B(?:foo)\B",
+        r"\b(?:foo|bar)\b",
     ];
 
     /// The translator must produce exactly the Hir the parser produces for
