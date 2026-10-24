@@ -8,6 +8,11 @@ with the exception that 0.x versions can break between minor versions.
 
 ## [Unreleased]
 ### Added
+### Changed
+### Fixed
+
+## [0.20.0] - 2026-10-24
+### Added
 - Add `RegexOptionsBuilder::build_delegate_prefilter` to disable building the prefilter (#282)
 - Add `RegexOptionsBuilder::start_bytes` that returns the first bytes that can match a pattern so you can build your own prefilter (#282)
 - Add `RegexOptionsBuilder::required_bytes` that returns the required bytes for a pattern to match (#287)
@@ -324,8 +329,9 @@ If you previously stored i.e. `Captures`, you would need to change the type to `
 ### Added
 - Initial release
 
-[Unreleased]: https://github.com/fancy-regex/fancy-regex/compare/0.19.2...HEAD
-[0.19.1]: https://github.com/fancy-regex/fancy-regex/compare/0.19.1...0.19.2
+[Unreleased]: https://github.com/fancy-regex/fancy-regex/compare/0.20.0...HEAD
+[0.20.0]: https://github.com/fancy-regex/fancy-regex/compare/0.19.2...0.20.0
+[0.19.2]: https://github.com/fancy-regex/fancy-regex/compare/0.19.1...0.19.2
 [0.19.1]: https://github.com/fancy-regex/fancy-regex/compare/0.19.0...0.19.1
 [0.19.0]: https://github.com/fancy-regex/fancy-regex/compare/0.18.0...0.19.0
 [0.18.0]: https://github.com/fancy-regex/fancy-regex/compare/0.17.0...0.18.0
