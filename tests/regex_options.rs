@@ -735,3 +735,33 @@ fn seek_filter_half_word_boundary_finds_match() {
     let regex = build_regex(RegexBuilder::new(r"\b{end-half}").seek_filter(|_| true));
     assert_eq!(regex.find("foo!").unwrap().unwrap().end(), 3);
 }
+
+#[test]
+fn word_boundary_follows_unicode_mode_in_the_vm() {
+    // Word boundaries are hard only inside a lookbehind, so that is the path that
+    // exercises the VM's own word-boundary assertions rather than a delegated
+    // sub-engine. Those assertions must agree with the mode: in non-Unicode mode
+    // `\b` uses ASCII rules, so `é` is not a word character and `\bx` matches at the
+    // end of "éx", including when the `\b` lives inside a lookbehind. In Unicode mode
+    // `é` is a word character, so the same position is not a boundary.
+    for (re, text, ascii_expect, unicode_expect) in [
+        (r"\bx", "éx", true, false),
+        (r"(?<=\b)x", "éx", true, false),
+        (r"\bx", "x", true, true),
+        (r"(?<=\b)x", "x", true, true),
+    ] {
+        let ascii = build_regex(RegexBuilder::new(re).unicode_mode(false));
+        assert_eq!(
+            ascii.is_match(text).unwrap(),
+            ascii_expect,
+            "ascii {re} on {text:?}"
+        );
+
+        let unicode = build_regex(&RegexBuilder::new(re));
+        assert_eq!(
+            unicode.is_match(text).unwrap(),
+            unicode_expect,
+            "unicode {re} on {text:?}"
+        );
+    }
+}

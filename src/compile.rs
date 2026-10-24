@@ -76,8 +76,21 @@ impl VMBuilder {
         }
     }
 
-    fn build(self, bytes_mode: BytesMode, seek_pattern: String, max_size: usize) -> Prog {
-        Prog::new(self.prog, self.n_saves, bytes_mode, seek_pattern, max_size)
+    fn build(
+        self,
+        bytes_mode: BytesMode,
+        unicode: bool,
+        seek_pattern: String,
+        max_size: usize,
+    ) -> Prog {
+        Prog::new(
+            self.prog,
+            self.n_saves,
+            bytes_mode,
+            unicode,
+            seek_pattern,
+            max_size,
+        )
     }
 
     fn newsave(&mut self) -> usize {
@@ -1530,7 +1543,7 @@ pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
         c.b.add(Insn::RejectEmptyMatchAtEOFFollowingNewline)?;
     }
     c.b.add(Insn::End)?;
-    Ok(c.b.build(bytes_mode, seek_pattern, info.max_size))
+    Ok(c.b.build(bytes_mode, c.options.unicode, seek_pattern, info.max_size))
 }
 
 struct DelegateBuilder {

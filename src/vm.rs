@@ -603,6 +603,9 @@ pub struct Prog {
     n_saves: usize,
     /// How the VM advances positions: byte-level (Ascii) vs codepoint-level (Unicode/UnicodeBytes).
     bytes_mode: BytesMode,
+    /// Whether Unicode word rules are in effect for word-boundary assertions.
+    /// Must match the `unicode` flag used by the delegated sub-engines.
+    unicode: bool,
     /// A pattern compatible with a DFA which can be used to seek to candidate positions where the real/full pattern might match
     pub(crate) seek_pattern: String,
     scratch_pool: Pool<Scratch, fn() -> Scratch>,
@@ -616,6 +619,7 @@ impl Prog {
         body: Vec<Insn>,
         n_saves: usize,
         bytes_mode: BytesMode,
+        unicode: bool,
         seek_pattern: String,
         max_size: usize,
     ) -> Prog {
@@ -623,6 +627,7 @@ impl Prog {
             body,
             n_saves,
             bytes_mode,
+            unicode,
             seek_pattern,
             scratch_pool: Pool::new(new_scratch),
             max_size,
@@ -1295,24 +1300,60 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                         Assertion::EndLine { crlf: true } => {
                             look_matcher.is_end_crlf(haystack.as_bytes(), ix)
                         }
-                        Assertion::LeftWordBoundary => look_matcher
-                            .is_word_start_unicode(haystack.as_bytes(), ix)
-                            .unwrap(),
-                        Assertion::RightWordBoundary => look_matcher
-                            .is_word_end_unicode(haystack.as_bytes(), ix)
-                            .unwrap(),
-                        Assertion::LeftWordHalfBoundary => look_matcher
-                            .is_word_start_half_unicode(haystack.as_bytes(), ix)
-                            .unwrap(),
-                        Assertion::RightWordHalfBoundary => look_matcher
-                            .is_word_end_half_unicode(haystack.as_bytes(), ix)
-                            .unwrap(),
-                        Assertion::WordBoundary => look_matcher
-                            .is_word_unicode(haystack.as_bytes(), ix)
-                            .unwrap(),
-                        Assertion::NotWordBoundary => look_matcher
-                            .is_word_unicode_negate(haystack.as_bytes(), ix)
-                            .unwrap(),
+                        Assertion::LeftWordBoundary => {
+                            if prog.unicode {
+                                look_matcher
+                                    .is_word_start_unicode(haystack.as_bytes(), ix)
+                                    .unwrap()
+                            } else {
+                                look_matcher.is_word_start_ascii(haystack.as_bytes(), ix)
+                            }
+                        }
+                        Assertion::RightWordBoundary => {
+                            if prog.unicode {
+                                look_matcher
+                                    .is_word_end_unicode(haystack.as_bytes(), ix)
+                                    .unwrap()
+                            } else {
+                                look_matcher.is_word_end_ascii(haystack.as_bytes(), ix)
+                            }
+                        }
+                        Assertion::LeftWordHalfBoundary => {
+                            if prog.unicode {
+                                look_matcher
+                                    .is_word_start_half_unicode(haystack.as_bytes(), ix)
+                                    .unwrap()
+                            } else {
+                                look_matcher.is_word_start_half_ascii(haystack.as_bytes(), ix)
+                            }
+                        }
+                        Assertion::RightWordHalfBoundary => {
+                            if prog.unicode {
+                                look_matcher
+                                    .is_word_end_half_unicode(haystack.as_bytes(), ix)
+                                    .unwrap()
+                            } else {
+                                look_matcher.is_word_end_half_ascii(haystack.as_bytes(), ix)
+                            }
+                        }
+                        Assertion::WordBoundary => {
+                            if prog.unicode {
+                                look_matcher
+                                    .is_word_unicode(haystack.as_bytes(), ix)
+                                    .unwrap()
+                            } else {
+                                look_matcher.is_word_ascii(haystack.as_bytes(), ix)
+                            }
+                        }
+                        Assertion::NotWordBoundary => {
+                            if prog.unicode {
+                                look_matcher
+                                    .is_word_unicode_negate(haystack.as_bytes(), ix)
+                                    .unwrap()
+                            } else {
+                                look_matcher.is_word_ascii_negate(haystack.as_bytes(), ix)
+                            }
+                        }
                     } {
                         break 'fail;
                     }
