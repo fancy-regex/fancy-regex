@@ -235,6 +235,19 @@ fn hard_variable_lookbehind_tries_all_candidates() {
     assert_eq!(find(r"(?<=(?!^)(a+)\1)x", "aaaax"), Some((4, 5)));
 }
 
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn hard_variable_lookbehind_collects_candidates_on_each_entry() {
+    // The candidates collected for one hard lookbehind must not be reused when
+    // a lookbehind is entered again at another position, or when another one
+    // is entered: a negative lookbehind that matched at 0 left its candidate
+    // list behind for the attempt at 1, and two lookbehinds in a row kept
+    // trying each other's candidates until the backtrack limit was hit.
+    assert_eq!(find(r"(b*)(?<!\1)c", "abc"), None);
+    assert_eq!(find(r"(a*)b(?<=\1b)(c*)d(?<=\2d)", "abcd"), Some((0, 4)));
+    assert_eq!(find(r"(a*)b(?<=\1b)(c*)d(?<=\2d)", "aabccd"), Some((0, 6)));
+}
+
 #[cfg(feature = "variable-lookbehinds")]
 #[test]
 fn hard_variable_lookbehind_finds_match_with_many_candidates() {

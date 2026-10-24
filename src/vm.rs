@@ -403,7 +403,8 @@ pub struct HardVariableLookbehind {
     pub(crate) cache_pool: Pool<regex_automata::hybrid::dfa::Cache, CachePoolFn>,
     /// Slot containing the lookbehind end position (saved by the outer Save).
     pub end_pos_slot: usize,
-    /// Slot where the candidate start position is saved before running inner instructions.
+    /// Slot holding the lookbehind end position on entry, and `end + 1 + i` once candidate `i`
+    /// has been tried, so that the checkpoint branch continues with the next candidate.
     pub candidate_pos_slot: usize,
 }
 
@@ -522,7 +523,7 @@ pub enum Insn {
     ReverseLookbehindPosCheck {
         /// Slot containing the expected end position.
         slot: usize,
-        /// Slot containing the candidate start position saved by `HardVariableLookbehind`.
+        /// Candidate slot of the enclosing `HardVariableLookbehind` (see its `candidate_pos_slot`).
         candidate_pos_slot: usize,
         /// PC of the enclosing `HardVariableLookbehind` instruction.
         hard_lb_pc: usize,
@@ -687,12 +688,12 @@ struct State {
     /// which is indistinguishable from "no match yet".
     best_match_set: bool,
     #[cfg(feature = "variable-lookbehinds")]
-    /// Candidate start positions collected by `HardVariableLookbehind` for the
-    /// current lookbehind assertion. Empty when not inside a hard lookbehind.
+    /// Candidate start positions collected by a `HardVariableLookbehind`.
     hard_lb_candidates: Vec<usize>,
     #[cfg(feature = "variable-lookbehinds")]
-    /// Index of the next candidate to try from `hard_lb_candidates`.
-    hard_lb_candidate_idx: usize,
+    /// The pc of the `HardVariableLookbehind` and the end position that
+    /// `hard_lb_candidates` were collected for.
+    hard_lb_candidates_for: Option<(usize, usize)>,
 }
 
 // Each element in the stack conceptually represents the entire state
@@ -721,7 +722,7 @@ impl State {
             #[cfg(feature = "variable-lookbehinds")]
             hard_lb_candidates: Vec::new(),
             #[cfg(feature = "variable-lookbehinds")]
-            hard_lb_candidate_idx: 0,
+            hard_lb_candidates_for: None,
         }
     }
 
@@ -745,7 +746,7 @@ impl State {
         #[cfg(feature = "variable-lookbehinds")]
         {
             self.hard_lb_candidates.clear();
-            self.hard_lb_candidate_idx = 0;
+            self.hard_lb_candidates_for = None;
         }
     }
 
@@ -1619,11 +1620,15 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                     pattern: _,
                     ref candidate_pos_slot,
                 }) => {
-                    // First time entering this lookbehind: collect all candidate
-                    // start positions where the seek pattern matches ending at
-                    // the lookbehind end position.
-                    if state.hard_lb_candidates.is_empty() {
-                        let end_pos = state.get(*end_pos_slot);
+                    // Collect all candidate start positions where the seek pattern
+                    // matches ending at the lookbehind end position. The list is kept
+                    // for re-entries through the checkpoint branch, but another hard
+                    // lookbehind (or this one at another position) may have replaced it
+                    // in the meantime.
+                    let end_pos = state.get(*end_pos_slot);
+                    if state.hard_lb_candidates_for != Some((pc, end_pos)) {
+                        state.hard_lb_candidates.clear();
+                        state.hard_lb_candidates_for = Some((pc, end_pos));
                         let mut cache_guard = cache_pool.get();
                         let mut overlap_state =
                             regex_automata::hybrid::dfa::OverlappingState::start();
@@ -1650,10 +1655,11 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                         }
                     }
 
-                    if state.hard_lb_candidate_idx < state.hard_lb_candidates.len() {
-                        let candidate = state.hard_lb_candidates[state.hard_lb_candidate_idx];
-                        state.hard_lb_candidate_idx += 1;
-                        state.save(*candidate_pos_slot, candidate);
+                    // The candidate slot is `end_pos` on entry (saved just before this
+                    // instruction) and `end_pos + 1 + i` once candidate `i` was tried.
+                    let next = state.get(*candidate_pos_slot) - end_pos;
+                    if let Some(&candidate) = state.hard_lb_candidates.get(next) {
+                        state.save(*candidate_pos_slot, end_pos + 1 + next);
                         ix = candidate;
                         // Push a checkpoint branch: when all inner backtrack
                         // states are exhausted (via normal `break 'fail`
@@ -1667,9 +1673,7 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                         pc += 1;
                         continue;
                     } else {
-                        // Exhausted all candidates — clean up and fail.
-                        state.hard_lb_candidates.clear();
-                        state.hard_lb_candidate_idx = 0;
+                        // Exhausted all candidates.
                         break 'fail;
                     }
                 }
@@ -1919,12 +1923,12 @@ mod tests {
         let mut state = State::new(2, MAX_STACK, 0);
         state.hard_lb_candidates.push(7);
         state.hard_lb_candidates.push(8);
-        state.hard_lb_candidate_idx = 1;
+        state.hard_lb_candidates_for = Some((3, 9));
 
         state.reset(2, 0);
 
         assert!(state.hard_lb_candidates.is_empty());
-        assert_eq!(state.hard_lb_candidate_idx, 0);
+        assert_eq!(state.hard_lb_candidates_for, None);
         // saves are reset to the new length, as in the other reset paths.
         assert_eq!(state.get(0), usize::MAX);
         assert_eq!(state.get(1), usize::MAX);
