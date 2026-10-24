@@ -541,6 +541,22 @@ fn crlf_flag_oniguruma_any_char() {
     test_pattern(r"\O");
 }
 
+#[test]
+fn repeat_minimum_holds_when_loop_runs_again() {
+    // The lookahead runs once per position. Its loop must still match at least twice
+    // at the second position, regardless of where the first run left off.
+    assert_no_match(r"(?:(?=(?:a|(?=b)){2,})a){2}", "aa");
+    assert_no_match(r"(?:(?=(?:a|(?=b)){2,}?)a){2}", "aa");
+    assert_match(r"(?:(?=(?:a|(?=b)){2,})a){2}", "aab");
+    assert_match(r"(?:(?=(?:a|(?=b)){2,}?)a){2}", "aab");
+
+    let m = common::regex(r"(?:(?=(?:a|(?=b)){2,})a)+")
+        .find("aa")
+        .unwrap()
+        .unwrap();
+    assert_eq!(m.range(), 0..1);
+}
+
 #[cfg_attr(feature = "track_caller", track_caller)]
 fn assert_match(re: &str, text: &str) {
     let result = match_text(re, text);
