@@ -10,6 +10,7 @@ with the exception that 0.x versions can break between minor versions.
 ### Added
 ### Changed
 ### Fixed
+- Positive lookaheads are now atomic, as in Oniguruma and PCRE: once a lookahead has matched, a later failure no longer backtracks into it to try another way of matching it. For example `(?=x|(x))\1x` no longer matches `xx`.
 
 ## [0.20.0] - 2026-10-24
 ### Added
