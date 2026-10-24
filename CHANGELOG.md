@@ -14,6 +14,7 @@ with the exception that 0.x versions can break between minor versions.
 - Add `RegexOptionsBuilder::max_prog_size` / `RegexBuilder::max_prog_size` to cap the number of VM instructions emitted while compiling. Subroutine calls are inlined at compile time, so a self- or mutually-recursive pattern can expand without bound even while the recursion-depth cap is respected; this bounds the emitted instruction vector instead. Exceeding the cap returns `CompileError::PatternTooComplex`. Disabled by default. (#298)
 - Implement support for variable length hard lookbehinds, by seeking backwards to candidate match start positions and then matching forward as usual. The reverse DFA honours `delegate_size_limit` and `delegate_dfa_size_limit`. (#286, #309)
 - Add `RegexOptionsBuilder::delegate_dfa_skip_cache_capacity_check` / `RegexBuilder::delegate_dfa_skip_cache_capacity_check`, enabled by default. Setting it to `false` makes the reverse DFA of a variable-length lookbehind strictly honour `delegate_dfa_size_limit`, so a too-small limit becomes a compile error. (#309)
+- Add `ByteSet::is_subset` to test whether one byte set is a subset of another. (#289)
 ### Changed
 - If a lookbehind consists of an Alt containing only easy expressions and at least 4 branches (and no capture groups), compile it as a variable lookbehind (if the feature is enabled) instead of trying every branch as its own const-size lookbehind. One reverse-DFA delegate over the whole alternation is much cheaper per attempt, and grants a perf boost. (#285)
 - Word boundaries (`\b`, `\B`, `\<`, `\>`) are no longer marked hard outside a lookbehind. regex-automata supports them, so a pattern like `\b(?:foo|bar|baz)\b` now compiles to a single delegated engine instead of one branch per alternative — previously it grew linearly with the number of alternatives. They remain hard inside a lookbehind, since regex-automata's reverse DFA can't run a variable-length lookbehind on unicode haystacks. The half-boundary variants (`\<half`, `\>half`) and `\Z` are still always hard.
@@ -21,6 +22,11 @@ with the exception that 0.x versions can break between minor versions.
 ### Fixed
 - The reverse lazy DFA built for a variable-length lookbehind failed to compile when it needed a larger cache capacity than the configured `delegate_dfa_size_limit` (or the default of 2 MiB); for example `(?<=\p{L}{99,100})x` failed to compile with default settings. The capacity is now rounded up to the minimum required. Ordinary delegates were not affected because the meta engine falls back to another engine when the lazy DFA cannot be built. (#309)
 - `delegate_dfa_size_limit` now sets the lazy DFA cache capacity (`hybrid_cache_capacity`) as documented, instead of the fully compiled DFA size limit. It had been forwarded to the wrong regex-automata option since the switch from the `regex` crate. (#307)
+- Fix bug with literal bytes being used in unicode mode unexpectedly: in Unicode mode, `\xHH` escapes above `0x7F` now match the Unicode codepoint (as UTF-8 bytes) instead of the raw byte, so e.g. `\xFF` matches `ÿ` rather than the byte `0xFF`. In bytes modes the raw byte is matched as before. (#292)
+- Fix case-insensitive prefilter computation for non-ASCII class ranges that fold to characters with different lead bytes (e.g. `(?i)[à-ÿ]`), which previously could miss candidate start positions. (#296)
+- Fix `^` / `$` and their multi-line variants matching at the start/end of arbitrary-byte haystacks in `Ascii` and `UnicodeBytes` bytes modes, where the match position was not a UTF-8 codepoint boundary. (#300)
+- Fix seek optimization dropping matches when conditionals had empty branches, e.g. `(a)?b(?(1)c)` no longer fails to match `b`. (#304)
+- Fix hard variable-length lookbehind reverse DFA ignoring the caller's Unicode and bytes-mode settings, giving wrong results in non-Unicode bytes modes (e.g. `(?<=(\w+)\1)x` on `ééx`). (#310)
 
 ## [0.19.2] - 2026-09-13
 ### Added
