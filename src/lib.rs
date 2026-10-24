@@ -2746,6 +2746,9 @@ pub enum Assertion {
 }
 
 impl Assertion {
+    /// Whether this assertion is const-size and must be considered for
+    /// delegation. Word boundaries and `\Z` are const-size; everything else
+    /// (start/end of line/text) is handled by other analysis branches.
     pub(crate) fn is_always_hard(&self) -> bool {
         use Assertion::*;
         matches!(
@@ -2760,6 +2763,27 @@ impl Assertion {
                 // `\Z` needs custom trailing-newline handling.
                 | EndTextIgnoreTrailingNewlines { .. }
         )
+    }
+
+    /// Whether this assertion forces the containing expression onto the VM.
+    ///
+    /// Word boundaries (`\b`, `\B`, `\<`, `\>`) are only hard inside a
+    /// lookbehind: regex-automata's reverse DFA can't run a variable-length
+    /// lookbehind, so the whole lookbehind is compiled on the VM. Outside a
+    /// lookbehind the engine supports word boundaries, so they can be
+    /// delegated — which is what keeps patterns like `\b(?:foo|bar|baz)\b`
+    /// a single delegate instead of one branch per alternative. The
+    /// half-boundary variants (`\<half`, `\>half`) and `\Z` are always hard:
+    /// regex-automata has no half-boundary look, and `\Z` needs custom
+    /// trailing-newline handling.
+    pub(crate) fn is_hard_in_lookbehind(&self, in_lookbehind: bool) -> bool {
+        use Assertion::*;
+        match self {
+            LeftWordHalfBoundary | RightWordHalfBoundary => true,
+            EndTextIgnoreTrailingNewlines { .. } => true,
+            LeftWordBoundary | RightWordBoundary | WordBoundary | NotWordBoundary => in_lookbehind,
+            _ => true,
+        }
     }
 }
 
@@ -2983,6 +3007,12 @@ impl Expr {
                 Assertion::StartLine { crlf: true } | Assertion::StartLineOniguruma { crlf: true },
             ) => buf.push_str("(?Rm:^)"),
             Expr::Assertion(Assertion::EndLine { crlf: true }) => buf.push_str("(?Rm:$)"),
+            Expr::Assertion(Assertion::WordBoundary) => buf.push_str("\\b"),
+            Expr::Assertion(Assertion::NotWordBoundary) => buf.push_str("\\B"),
+            Expr::Assertion(Assertion::LeftWordBoundary) => buf.push_str("\\<"),
+            Expr::Assertion(Assertion::RightWordBoundary) => buf.push_str("\\>"),
+            Expr::Assertion(Assertion::LeftWordHalfBoundary) => buf.push_str("\\b{start-half}"),
+            Expr::Assertion(Assertion::RightWordHalfBoundary) => buf.push_str("\\b{end-half}"),
             Expr::Concat(ref children) => {
                 if precedence > 1 {
                     buf.push_str("(?:");

@@ -188,6 +188,34 @@ fn lookbehind_positive_variable_sized_functionality_unicode() {
 }
 
 #[test]
+fn unicode_word_boundary_in_lookbehind() {
+    assert_eq!(find_str_only(r"(?<=\b\w{6}\b)", "ežeras"), Some((7, 7)));
+    assert_eq!(
+        find_str_only(r"(?<=\b)\w{6}(?<=\b)", "ežeras"),
+        Some((0, 7))
+    );
+    assert_eq!(find_str_only(r"(?<=\b\w{6}\b)", "ežeras"), Some((7, 7)));
+    assert_eq!(
+        find_str_only(r"(?<=\b(\w{6})\b)\s+\1\b", "ežeras ežeras"),
+        Some((7, 15))
+    );
+    assert_eq!(
+        find_str_only(r"(?<=\b(\w{6})\b)\s+\1\b", "ąčęėįš šįėęčą"),
+        None
+    );
+}
+
+#[test]
+fn unicode_word_boundary_in_hard_pattern() {
+    assert_eq!(
+        find_str_only(r"\b(\w+)\b\s+\1\b", "ežeras ežeras"),
+        Some((0, 15))
+    );
+    assert_eq!(find_str_only(r"\b(\w+)\b\s+\1\b", "ežeras ežeras123"), None);
+    assert_eq!(find_str_only(r"\b(\w+)\b\s+\1\b", "ąčęėįš šįėęčą"), None);
+}
+
+#[test]
 fn lookbehind_containing_const_size_backref() {
     assert_eq!(find(r"(..)(?<=\1\1)", "yyxxxx"), Some((4, 6)));
 }
