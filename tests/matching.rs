@@ -1186,3 +1186,12 @@ fn leftmost_longest_default_behavior_unchanged() {
     let re = RegexBuilder::new(r"(a|ab)c").build().unwrap();
     assert_eq!(re.find("xabc").unwrap().unwrap().as_str(), "abc");
 }
+
+#[test]
+fn lookahead_is_atomic() {
+    // Once the lookahead has matched with its first alternative, the failing
+    // backreference must not make it try the second one.
+    assert_no_match(r"(?=x|(x))\1x", "xx");
+    assert_no_match(r"(?=a|(?:(a)))\1a", "aa");
+    assert_match(r"(?=(x)|x)\1x", "xx");
+}

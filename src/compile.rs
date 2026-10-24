@@ -732,7 +732,16 @@ impl<'a> Compiler<'a> {
     fn compile_positive_lookaround(&mut self, inner: &Info<'_>, la: LookAround) -> Result<()> {
         let save = self.b.newsave();
         self.b.add(Insn::Save(save))?;
+        // A lookahead is atomic: once it has matched, a later failure must not backtrack
+        // into it. Only the VM backtracks, so a delegated (easy) lookahead needs no cut.
+        let atomic = la == LookAhead && inner.hard;
+        if atomic {
+            self.b.add(Insn::BeginAtomic)?;
+        }
         self.compile_lookaround_inner(inner, la)?;
+        if atomic {
+            self.b.add(Insn::EndAtomic)?;
+        }
         self.b.add(Insn::Restore(save))?;
         Ok(())
     }
