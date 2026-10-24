@@ -11,6 +11,7 @@ with the exception that 0.x versions can break between minor versions.
 ### Changed
 ### Fixed
 - Positive lookaheads are now atomic, as in Oniguruma and PCRE: once a lookahead has matched, a later failure no longer backtracks into it to try another way of matching it. For example `(?=x|(x))\1x` no longer matches `xx`.
+- A hard variable-length lookbehind no longer reuses the candidate start positions left behind by a previous lookbehind that matched (or by a negative lookbehind whose body matched), which gave wrong results such as `(b*)(?<!\1)c` matching `abc`, or hit the backtrack limit when a pattern had two such lookbehinds, like `(a*)b(?<=\1b)(c*)d(?<=\2d)`.
 
 ## [0.20.0] - 2026-10-24
 ### Added
