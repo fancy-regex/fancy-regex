@@ -104,8 +104,7 @@ pub(crate) fn emit_min_size_placeholder(buf: &mut String, min_size: usize, prece
 /// - `Group`: keep the contents, discard the capture group wrapper.
 /// - `Conditional`: emit the union of the true and false branches.
 /// - `GeneralNewline`: replaced with an explicit alternation.
-/// - `Assertion`: anchors and word-boundary assertions are emitted; half-boundaries are
-///   dropped (over-approximation — `\b` would be too restrictive).
+/// - `Assertion`: anchors and word-boundary assertions, half boundaries included, are emitted.
 pub(crate) fn build_seek_pattern<'a>(
     info: &Info<'a>,
     group_info_map: &Map<usize, &'a Info<'a>>,
@@ -173,7 +172,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
     match info.expr {
         Expr::Empty | Expr::DefineGroup { .. } => {}
         Expr::Assertion(assertion) => {
-            // Emit all assertion types, approximating half-word-boundaries with \b.
+            // Emit word boundaries, including half boundaries, as `to_str` writes them.
             // Note: easy positional assertions (StartText, EndText, StartLine, EndLine) are
             // handled by the to_str early return above (drop_positional_anchors=false) or by
             // the early drop at the top of this function (drop_positional_anchors=true).
@@ -631,6 +630,10 @@ mod tests {
         assert_eq!(get_seek_pattern(r"a|b"), "a|b");
         assert_eq!(get_seek_pattern(r"a+b*c?"), "a+b*c?");
         assert_eq!(get_seek_pattern(r"\ba+b*c?\b"), r"\ba+b*c?\b");
+        assert_eq!(
+            get_seek_pattern(r"\b{start-half}foo\b{end-half}"),
+            r"\b{start-half}foo\b{end-half}"
+        );
     }
 
     #[test]

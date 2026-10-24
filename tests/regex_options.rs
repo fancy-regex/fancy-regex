@@ -724,3 +724,14 @@ fn tiny_delegate_dfa_size_limit_without_skipping_cache_capacity_check() {
         result,
     );
 }
+
+#[test]
+fn seek_filter_half_word_boundary_finds_match() {
+    // Half word boundaries must be serialised as \b{start-half} / \b{end-half} so the
+    // derived seek pattern parses correctly and still filters to plausible positions.
+    let regex = build_regex(RegexBuilder::new(r"\b{start-half}foo").seek_filter(|_| true));
+    assert_eq!(regex.find("a foo").unwrap().unwrap().start(), 2);
+
+    let regex = build_regex(RegexBuilder::new(r"\b{end-half}").seek_filter(|_| true));
+    assert_eq!(regex.find("foo!").unwrap().unwrap().end(), 3);
+}

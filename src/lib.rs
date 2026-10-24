@@ -3011,8 +3011,8 @@ impl Expr {
             Expr::Assertion(Assertion::NotWordBoundary) => buf.push_str("\\B"),
             Expr::Assertion(Assertion::LeftWordBoundary) => buf.push_str("\\<"),
             Expr::Assertion(Assertion::RightWordBoundary) => buf.push_str("\\>"),
-            Expr::Assertion(Assertion::LeftWordHalfBoundary) => buf.push_str("\\<half"),
-            Expr::Assertion(Assertion::RightWordHalfBoundary) => buf.push_str("\\>half"),
+            Expr::Assertion(Assertion::LeftWordHalfBoundary) => buf.push_str("\\b{start-half}"),
+            Expr::Assertion(Assertion::RightWordHalfBoundary) => buf.push_str("\\b{end-half}"),
             Expr::Concat(ref children) => {
                 if precedence > 1 {
                     buf.push_str("(?:");
