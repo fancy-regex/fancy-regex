@@ -11,6 +11,7 @@ with the exception that 0.x versions can break between minor versions.
 ### Changed
 ### Fixed
 - Positive lookaheads are now atomic, as in Oniguruma and PCRE: once a lookahead has matched, a later failure no longer backtracks into it to try another way of matching it. For example `(?=x|(x))\1x` no longer matches `xx`.
+- A repetition with a minimum count whose body can match an empty string (e.g. `(?:a|(?=b)){2,}`) could stop before reaching the minimum when it ran again at a position its previous run had reached, for example inside a repeated lookahead: `(?:(?=(?:a|(?=b)){2,})a){2}` matched `aa`.
 
 ## [0.20.0] - 2026-10-24
 ### Added
