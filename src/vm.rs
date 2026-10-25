@@ -1448,14 +1448,15 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                     check,
                 } => {
                     let repcount = state.get(repeat);
+                    // `check` holds where the previous iteration of this run started
                     if repcount > 0 && state.get(check) == ix {
                         // zero-length match on repeat, then move to next instruction
                         pc = next;
                         continue;
                     }
                     state.save(repeat, repcount + 1);
+                    state.save(check, ix);
                     if repcount >= lo {
-                        state.save(check, ix);
                         state.push(next, ix)?;
                     }
                 }
@@ -1466,14 +1467,15 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                     check,
                 } => {
                     let repcount = state.get(repeat);
+                    // `check` holds where the previous iteration of this run started
                     if repcount > 0 && state.get(check) == ix {
                         // zero-length match on repeat, then move to next instruction
                         pc = next;
                         continue;
                     }
                     state.save(repeat, repcount + 1);
+                    state.save(check, ix);
                     if repcount >= lo {
-                        state.save(check, ix);
                         state.push(pc + 1, ix)?;
                         pc = next;
                         continue;
