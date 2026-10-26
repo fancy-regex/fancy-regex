@@ -323,6 +323,17 @@ fn conditional_with_lookaround_condition() {
 }
 
 #[test]
+fn conditional_with_group_of_alternatives_as_true_branch() {
+    // The `|` inside the group belongs to the true branch, so there is no false branch.
+    assert_match(r"^(x)?(?(1)(?:a|b))$", "");
+    assert_no_match(r"^(x)?(?(1)(?:a|b))$", "b");
+    assert_match(r"^(x)?(?(1)(?:a|b))$", "xb");
+    assert_no_match(r"^(x)?(?(1)(?:a|b))$", "x");
+    assert_match(r"^(?((?=\d))(?:\d|!))$", "");
+    assert_no_match(r"^(?((?=\d))(?:\d|!))$", "!");
+}
+
+#[test]
 fn backrefs() {
     common::assert_is_match(r"(abc)\1", "abcabc");
     common::assert_is_match(r"(abc|def)\1", "abcabc");

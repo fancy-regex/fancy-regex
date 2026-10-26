@@ -14,6 +14,7 @@ with the exception that 0.x versions can break between minor versions.
 - A hard variable-length lookbehind no longer reuses the candidate start positions left behind by a previous lookbehind that matched (or by a negative lookbehind whose body matched), which gave wrong results such as `(b*)(?<!\1)c` matching `abc`, or hit the backtrack limit when a pattern had two such lookbehinds, like `(a*)b(?<=\1b)(c*)d(?<=\2d)`.
 - A repetition with a minimum count whose body can match an empty string (e.g. `(?:a|(?=b)){2,}`) could stop before reaching the minimum when it ran again at a position its previous run had reached, for example inside a repeated lookahead: `(?:(?=(?:a|(?=b)){2,})a){2}` matched `aa`.
 - A conditional whose condition fails no longer leaves its entry on the VM's explicit stack. Before, an enclosing atomic group or possessive repeat read that entry at its end and kept its backtrack branches: `(z)?(?>a*(?(1)x))a` matched "aaa".
+- A conditional whose true branch is a group of alternatives, such as `(?(1)(?:a|b))`, was parsed as `(?(1)a|b)`, so `b` became the false branch.
 
 ## [0.20.0] - 2026-10-24
 ### Added
