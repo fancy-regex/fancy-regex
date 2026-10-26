@@ -188,6 +188,18 @@ fn atomic_group() {
 }
 
 #[test]
+fn failed_condition_keeps_enclosing_group_atomic() {
+    // A condition that fails inside an atomic group or a possessive repeat must
+    // not let a later failure backtrack into that group.
+    common::assert_no_match(r"(z)?(?>a*(?(1)x))a", "aaa");
+    common::assert_no_match(r"(z)?(?>a*(?(1)x|))a", "aaa");
+    common::assert_no_match(r"(z)?(?>(?(1)x|a)*)a", "aaa");
+    common::assert_no_match(r"(z)?(?:a(?(1)x))*+a", "aaa");
+    common::assert_no_match(r"(z)?(?:a(?(1)x))++a", "aaa");
+    common::assert_is_match(r"(z)?(?:a(?(1)x))*a", "aaa");
+}
+
+#[test]
 fn is_match_input_respects_range_without_slicing() {
     let re = RegexBuilder::new(r"\bat\b").build().unwrap();
     assert!(!re
