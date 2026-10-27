@@ -55,6 +55,8 @@ mod analyze;
 mod byte_set;
 mod bytes;
 mod compile;
+#[cfg(feature = "std")]
+mod engine_cache;
 mod error;
 mod expand;
 mod input;
@@ -81,6 +83,8 @@ use bit_set::BitSet;
 
 pub use crate::byte_set::ByteSet;
 pub use crate::bytes::MatchBytes;
+#[cfg(feature = "std")]
+pub use crate::engine_cache::EngineCache;
 pub use crate::error::{CompileError, Error, ParseError, Result, RuntimeError};
 pub use crate::expand::Expander;
 pub use crate::input::{Input, RegexInput};
@@ -551,6 +555,8 @@ struct RegexOptions {
     delegate_prefilter: bool,
     #[cfg(feature = "leftmost_longest")]
     leftmost_longest: bool,
+    #[cfg(feature = "std")]
+    engine_cache: Option<EngineCache>,
 }
 
 impl fmt::Debug for RegexOptions {
@@ -585,6 +591,8 @@ impl fmt::Debug for RegexOptions {
             .field("delegate_prefilter", &self.delegate_prefilter);
         #[cfg(feature = "leftmost_longest")]
         debug.field("leftmost_longest", &self.leftmost_longest);
+        #[cfg(feature = "std")]
+        debug.field("engine_cache", &self.engine_cache);
         debug.finish()
     }
 }
@@ -605,6 +613,8 @@ impl Default for RegexOptions {
             delegate_prefilter: true,
             #[cfg(feature = "leftmost_longest")]
             leftmost_longest: false,
+            #[cfg(feature = "std")]
+            engine_cache: None,
         }
     }
 }
@@ -1073,6 +1083,17 @@ impl RegexOptionsBuilder {
         self
     }
 
+    /// Share compiled regex-automata engines with every other regex built with the same
+    /// [`EngineCache`]. Useful when compiling many patterns that repeat whole patterns or
+    /// fragments, like the grammars of a syntax highlighter. See [`EngineCache`] for details.
+    ///
+    /// Requires the `std` feature.
+    #[cfg(feature = "std")]
+    pub fn engine_cache(&mut self, cache: &EngineCache) -> &mut Self {
+        self.options.engine_cache = Some(cache.clone());
+        self
+    }
+
     /// Computes the bytes a match of `pattern` can start with, without compiling it.
     /// The possible return values are:
     ///
@@ -1197,6 +1218,13 @@ impl RegexBuilder {
     /// See [`RegexOptionsBuilder::max_prog_size`]
     pub fn max_prog_size(&mut self, limit: usize) -> &mut Self {
         self.options.max_prog_size(limit);
+        self
+    }
+
+    /// See [`RegexOptionsBuilder::engine_cache`]
+    #[cfg(feature = "std")]
+    pub fn engine_cache(&mut self, cache: &EngineCache) -> &mut Self {
+        self.options.engine_cache(cache);
         self
     }
 
@@ -1352,6 +1380,8 @@ impl Regex {
                 delegate_dfa_size_limit: options.delegate_dfa_size_limit,
                 delegate_dfa_skip_cache_capacity_check: options
                     .delegate_dfa_skip_cache_capacity_check,
+                #[cfg(feature = "std")]
+                engine_cache: options.engine_cache.clone(),
                 // The remaining fields (anchored, contains_subroutines, seek_filter,
                 // disallow_empty_match_at_eof_after_newline) are irrelevant for a plain
                 // delegate compile in the easy path and their defaults are correct.
@@ -1372,10 +1402,12 @@ impl Regex {
             let utf8 = matches!(compile_options.bytes_mode, BytesMode::Unicode);
             let mut hir_ctx = to_hir::HirCtx::new(compile_options.unicode, utf8);
             hir_ctx.enable_preserve_zero_rep_captures();
-            let inner = match to_hir::expr_to_hir(&tree.expr, &mut hir_ctx) {
-                Some(hir) => compile::compile_inner_from_hir(&hir, &compile_options, usage)?,
-                None => compile::compile_inner(&re_cooked, &compile_options, usage)?,
-            };
+            let hir = to_hir::expr_to_hir(&tree.expr, &mut hir_ctx);
+            let inner =
+                compile::build_engine(&re_cooked, &compile_options, usage, true, || match hir {
+                    Some(hir) => compile::compile_inner_from_hir(&hir, &compile_options, usage),
+                    None => compile::compile_inner(&re_cooked, &compile_options, usage),
+                })?;
             return Ok(Regex {
                 inner: RegexImpl::Wrap {
                     inner,
@@ -1403,6 +1435,8 @@ impl Regex {
                 delegate_dfa_skip_cache_capacity_check: options
                     .delegate_dfa_skip_cache_capacity_check,
                 max_prog_size: options.max_prog_size,
+                #[cfg(feature = "std")]
+                engine_cache: options.engine_cache.clone(),
             },
         )?;
         Ok(Regex {
