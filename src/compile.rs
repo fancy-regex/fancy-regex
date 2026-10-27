@@ -40,6 +40,8 @@ use alloc::collections::BTreeMap as Map;
 use std::collections::HashMap as Map;
 
 use crate::analyze::Info;
+#[cfg(feature = "std")]
+use crate::engine_cache::EngineCache;
 use crate::seek::build_seek_pattern;
 use crate::to_hir::{expr_to_hir, HirCtx};
 #[cfg(feature = "variable-lookbehinds")]
@@ -1186,7 +1188,7 @@ impl<'a> Compiler<'a> {
 /// scans — are pure build-time and memory overhead for them. Likewise, a delegate
 /// whose explicit capture groups fancy-regex never reads doesn't need them
 /// compiled into the NFA.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct DelegateUsage {
     /// True if the engine should spend build time constructing a prefilter.
     /// Only useful for engines that are actually searched unanchored.
@@ -1259,6 +1261,25 @@ pub(crate) fn compile_inner_from_hir(
         .map_err(|e| Error::CompileError(Box::new(e)))?;
 
     Ok(re)
+}
+
+/// Build an engine with `build`, or reuse an identical one from the options'
+/// [`EngineCache`], if there is one. `top_level` is true for the engine of an easy
+/// pattern, false for a VM delegate.
+// Without `std` there is no engine cache, so only `build` is used.
+#[cfg_attr(not(feature = "std"), allow(unused_variables))]
+pub(crate) fn build_engine(
+    pattern: &str,
+    options: &CompileOptions,
+    usage: DelegateUsage,
+    top_level: bool,
+    build: impl FnOnce() -> Result<RaRegex>,
+) -> Result<RaRegex> {
+    #[cfg(feature = "std")]
+    if let Some(cache) = &options.engine_cache {
+        return cache.get_or_build(pattern, options, usage, top_level, build);
+    }
+    build()
 }
 
 pub(crate) fn options_to_raconfig(options: &CompileOptions, usage: DelegateUsage) -> RaConfig {
@@ -1442,6 +1463,10 @@ pub struct CompileOptions {
     /// recursion-depth cap is respected; this bounds the emitted instruction
     /// vector instead. `None` disables the check.
     pub max_prog_size: Option<usize>,
+    /// Cache of engines shared with other regexes. Settings that affect how an engine
+    /// is built (see `options_to_raconfig`) must be part of its key.
+    #[cfg(feature = "std")]
+    pub engine_cache: Option<EngineCache>,
 }
 
 impl core::fmt::Debug for CompileOptions {
@@ -1455,7 +1480,8 @@ impl core::fmt::Debug for CompileOptions {
             }
             Some(_) => "Some(<custom>)",
         };
-        f.debug_struct("CompileOptions")
+        let mut debug = f.debug_struct("CompileOptions");
+        debug
             .field("anchored", &self.anchored)
             .field("contains_subroutines", &self.contains_subroutines)
             .field("seek_filter", &seek_filter_desc)
@@ -1471,8 +1497,10 @@ impl core::fmt::Debug for CompileOptions {
                 "delegate_dfa_skip_cache_capacity_check",
                 &self.delegate_dfa_skip_cache_capacity_check,
             )
-            .field("max_prog_size", &self.max_prog_size)
-            .finish()
+            .field("max_prog_size", &self.max_prog_size);
+        #[cfg(feature = "std")]
+        debug.field("engine_cache", &self.engine_cache);
+        debug.finish()
     }
 }
 
@@ -1489,6 +1517,8 @@ impl Default for CompileOptions {
             delegate_dfa_size_limit: None,
             delegate_dfa_skip_cache_capacity_check: true,
             max_prog_size: None,
+            #[cfg(feature = "std")]
+            engine_cache: None,
         }
     }
 }
@@ -1679,10 +1709,11 @@ impl DelegateBuilder {
         let compiled = match memo.get(&memo_key) {
             Some(engine) => engine.clone(),
             None => {
-                let engine = match self.hirs.take() {
-                    Some(hirs) => compile_inner_from_hir(&Hir::concat(hirs), options, usage)?,
-                    None => compile_inner(&self.re, options, usage)?,
-                };
+                let engine =
+                    build_engine(&self.re, options, usage, false, || match self.hirs.take() {
+                        Some(hirs) => compile_inner_from_hir(&Hir::concat(hirs), options, usage),
+                        None => compile_inner(&self.re, options, usage),
+                    })?;
                 memo.insert(memo_key, engine.clone());
                 engine
             }

@@ -8,6 +8,7 @@ with the exception that 0.x versions can break between minor versions.
 
 ## [Unreleased]
 ### Added
+- Add `EngineCache` and `RegexOptionsBuilder::engine_cache` / `RegexBuilder::engine_cache` to share compiled regex-automata engines between all regexes built with the same cache, instead of building a copy for each identical pattern or delegated fragment. This saves memory and compile time for applications that compile many patterns, like syntax highlighters. Requires the `std` feature.
 ### Changed
 ### Fixed
 - Positive lookaheads are now atomic, as in Oniguruma and PCRE: once a lookahead has matched, a later failure no longer backtracks into it to try another way of matching it. For example `(?=x|(x))\1x` no longer matches `xx`.
