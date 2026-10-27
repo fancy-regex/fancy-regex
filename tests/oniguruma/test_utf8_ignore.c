@@ -19,9 +19,6 @@
   // Compile failed: CompileError(InvalidBackref(17))
   x2("\\17", "\017", 0, 1);
 
-  // No match found
-  x2("(?x)  G (o O(?-x)oO) g L", "GoOoOgLe", 0, 7);
-
   // Compile failed: ParseError(1, InvalidClass)
   x2("[\\044-\\047]", "\046", 0, 1);
 
