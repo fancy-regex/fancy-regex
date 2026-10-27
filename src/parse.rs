@@ -992,6 +992,8 @@ impl<'a> Parser<'a> {
             return Err(Error::ParseError(ix, ParseError::RecursionExceeded));
         }
         let open_paren_ix = ix; // position of the opening `(`
+                                // Flags set inside the group, e.g. `(a(?i)b)`, only apply until the group is closed
+        let oldflags = self.flags;
         let ix = self.optional_whitespace(ix + 1)?;
         let mut group_name = None;
         let (la, skip) = if self.re[ix..].starts_with("?=") {
@@ -1029,11 +1031,15 @@ impl<'a> Parser<'a> {
             // Backref using Python syntax: (?P=name)
             return self.parse_delimited_backref(ix + 3, "", ")", false);
         } else if self.re[ix..].starts_with("?~") {
-            return self.parse_absent(ix + 1, depth);
+            let result = self.parse_absent(ix + 1, depth);
+            self.flags = oldflags;
+            return result;
         } else if self.re[ix..].starts_with("?>") {
             (None, 2)
         } else if self.re[ix..].starts_with("?(") {
-            return self.parse_conditional(ix + 2, depth);
+            let result = self.parse_conditional(ix + 2, depth);
+            self.flags = oldflags;
+            return result;
         } else if self.re[ix..].starts_with("?P>") {
             return self.parse_unrestricted_subroutine_call(ix + 3, "", ")");
         } else if self.re[ix..].starts_with("*") {
@@ -1046,6 +1052,7 @@ impl<'a> Parser<'a> {
         let ix = ix + skip;
         let (ix, child) = self.parse_re(ix, depth)?;
         let ix = self.check_for_close_paren(ix)?;
+        self.flags = oldflags;
         let result = match (la, skip) {
             (Some(la), _) => Expr::LookAround(Box::new(child), la),
             (None, 2) => Expr::AtomicGroup(Box::new(child)),
@@ -2805,6 +2812,74 @@ mod tests {
                     newline: true,
                     crlf: false
                 },
+                Expr::Any {
+                    newline: false,
+                    crlf: false
+                },
+            ])
+        );
+        assert_eq!(
+            p("((?s).)."),
+            Expr::Concat(vec![
+                make_group(Expr::Any {
+                    newline: true,
+                    crlf: false
+                }),
+                Expr::Any {
+                    newline: false,
+                    crlf: false
+                },
+            ])
+        );
+        assert_eq!(
+            p("(?<name>(?s).)."),
+            Expr::Concat(vec![
+                make_group(Expr::Any {
+                    newline: true,
+                    crlf: false
+                }),
+                Expr::Any {
+                    newline: false,
+                    crlf: false
+                },
+            ])
+        );
+        assert_eq!(
+            p("(?>(?s).)."),
+            Expr::Concat(vec![
+                Expr::AtomicGroup(Box::new(Expr::Any {
+                    newline: true,
+                    crlf: false
+                })),
+                Expr::Any {
+                    newline: false,
+                    crlf: false
+                },
+            ])
+        );
+        assert_eq!(
+            p("(?=(?s).)."),
+            Expr::Concat(vec![
+                Expr::LookAround(
+                    Box::new(Expr::Any {
+                        newline: true,
+                        crlf: false
+                    }),
+                    LookAhead
+                ),
+                Expr::Any {
+                    newline: false,
+                    crlf: false
+                },
+            ])
+        );
+        assert_eq!(
+            p("(?~(?s).)."),
+            Expr::Concat(vec![
+                Expr::Absent(Absent::Repeater(Box::new(Expr::Any {
+                    newline: true,
+                    crlf: false
+                }))),
                 Expr::Any {
                     newline: false,
                     crlf: false

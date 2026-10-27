@@ -188,6 +188,18 @@ fn atomic_group() {
 }
 
 #[test]
+fn inline_flags_are_scoped_to_group() {
+    assert_match(r"^(a(?i)b)c$", "aBc");
+    assert_no_match(r"^(a(?i)b)c$", "aBC");
+    assert_no_match(r"^(?<n>a(?i)b)c$", "aBC");
+    assert_no_match(r"^(?>a(?i)b)c$", "aBC");
+    assert_no_match(r"^(?=a(?i)b)abc$", "aBC");
+    assert_no_match(r"^(a)?(?(1)(?i)b|c)d$", "aBD");
+    assert_match(r"(?x)^ (a(?-x) b) c $", "a bc");
+    assert_no_match(r"(?x)^ (a(?-x) b) c $", "a b c");
+}
+
+#[test]
 fn failed_condition_keeps_enclosing_group_atomic() {
     // A condition that fails inside an atomic group or a possessive repeat must
     // not let a later failure backtrack into that group.
