@@ -2946,16 +2946,27 @@ impl Expr {
     /// Returns `true` if any descendant of this expression (not including itself)
     /// satisfies the given predicate.
     ///
-    /// This performs an iterative depth-first search using [`children_iter`](Self::children_iter).
+    /// This performs a recursive depth-first search using [`children_iter`](Self::children_iter).
     pub fn has_descendant(&self, predicate: impl Fn(&Expr) -> bool) -> bool {
-        let mut stack: Vec<&Expr> = self.children_iter().collect();
-        while let Some(expr) = stack.pop() {
+        fn go(expr: &Expr, predicate: &dyn Fn(&Expr) -> bool) -> bool {
+            expr.children_iter()
+                .any(|child| predicate(child) || go(child, predicate))
+        }
+        go(self, &predicate)
+    }
+
+    /// Returns `true` if this expression or any of its descendants satisfies the
+    /// given predicate.
+    ///
+    /// This performs a recursive depth-first search using [`children_iter`](Self::children_iter).
+    pub fn has_descendant_or_self(&self, predicate: impl Fn(&Expr) -> bool) -> bool {
+        fn go(expr: &Expr, predicate: &dyn Fn(&Expr) -> bool) -> bool {
             if predicate(expr) {
                 return true;
             }
-            stack.extend(expr.children_iter());
+            expr.children_iter().any(|child| go(child, predicate))
         }
-        false
+        go(self, &predicate)
     }
 
     /// Returns an iterator over the immediate children of this expression.
