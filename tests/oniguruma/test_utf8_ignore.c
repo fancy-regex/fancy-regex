@@ -4,18 +4,6 @@
 // x3 tests have an additional argument which is the group number to check.
 
 
-  // Compile failed: ParseError(0, InvalidEscape("\\c"))
-  x2("\\ca", "\001", 0, 1);
-
-  // Compile failed: ParseError(0, InvalidEscape("\\C"))
-  x2("\\C-b", "\002", 0, 1);
-
-  // Compile failed: ParseError(0, InvalidEscape("\\c"))
-  x2("\\c\\\\", "\034", 0, 1);
-
-  // Compile failed: ParseError(2, InvalidEscape("\\c"))
-  x2("q[\\c\\\\]", "q\034", 0, 2);
-
   // Compile failed: CompileError(InvalidBackref(17))
   x2("\\17", "\017", 0, 1);
 

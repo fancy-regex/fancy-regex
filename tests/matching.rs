@@ -200,6 +200,18 @@ fn inline_flags_are_scoped_to_group() {
 }
 
 #[test]
+fn control_escapes() {
+    assert_match(r"^\ca\cZ\c?$", "\x01\x1a\x7f");
+    assert_match(r"^\C-b$", "\x02");
+    assert_match(r"^\c\\$", "\x1c");
+    assert_match(r"^q[\c\\]$", "q\x1c");
+    assert_no_match(r"^\ca$", "a");
+    // in a pattern which uses the backtracking VM
+    assert_match(r"^(\cA)\1\C-[$", "\x01\x01\x1b");
+    assert_match(r"^\cJ(?=\cM)", "\n\r");
+}
+
+#[test]
 fn failed_condition_keeps_enclosing_group_atomic() {
     // A condition that fails inside an atomic group or a possessive repeat must
     // not let a later failure backtrack into that group.
