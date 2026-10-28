@@ -8,14 +8,15 @@ with the exception that 0.x versions can break between minor versions.
 
 ## [Unreleased]
 ### Added
+- A new `Expr::has_descendant_or_self` method to easily traverse the Expr descendants to find an Expr matching a predicate. (#319)
 ### Changed
 ### Fixed
-- Positive lookaheads are now atomic, as in Oniguruma and PCRE: once a lookahead has matched, a later failure no longer backtracks into it to try another way of matching it. For example `(?=x|(x))\1x` no longer matches `xx`.
-- A hard variable-length lookbehind no longer reuses the candidate start positions left behind by a previous lookbehind that matched (or by a negative lookbehind whose body matched), which gave wrong results such as `(b*)(?<!\1)c` matching `abc`, or hit the backtrack limit when a pattern had two such lookbehinds, like `(a*)b(?<=\1b)(c*)d(?<=\2d)`.
-- A repetition with a minimum count whose body can match an empty string (e.g. `(?:a|(?=b)){2,}`) could stop before reaching the minimum when it ran again at a position its previous run had reached, for example inside a repeated lookahead: `(?:(?=(?:a|(?=b)){2,})a){2}` matched `aa`.
-- A conditional whose condition fails no longer leaves its entry on the VM's explicit stack. Before, an enclosing atomic group or possessive repeat read that entry at its end and kept its backtrack branches: `(z)?(?>a*(?(1)x))a` matched "aaa".
-- A conditional whose true branch is a group of alternatives, such as `(?(1)(?:a|b))`, was parsed as `(?(1)a|b)`, so `b` became the false branch.
-- Inline flags set inside a capturing, named, atomic, lookaround, conditional or absent group, like `(a(?i)b)c`, now end with the group. Before, they leaked to the rest of the pattern, so `(a(?i)b)c` matched `aBC` and `(?x)G(o(?-x)o) g` did not ignore the spaces after the group. Only `(?:...)` and `(?flags:...)` restored them.
+- Positive lookaheads are now atomic, as in Oniguruma and PCRE: once a lookahead has matched, a later failure no longer backtracks into it to try another way of matching it. For example `(?=x|(x))\1x` no longer matches `xx`. (#313)
+- A hard variable-length lookbehind no longer reuses the candidate start positions left behind by a previous lookbehind that matched (or by a negative lookbehind whose body matched), which gave wrong results such as `(b*)(?<!\1)c` matching `abc`, or hit the backtrack limit when a pattern had two such lookbehinds, like `(a*)b(?<=\1b)(c*)d(?<=\2d)`. (#314)
+- A repetition with a minimum count whose body can match an empty string (e.g. `(?:a|(?=b)){2,}`) could stop before reaching the minimum when it ran again at a position its previous run had reached, for example inside a repeated lookahead: `(?:(?=(?:a|(?=b)){2,})a){2}` matched `aa`. (#312)
+- A conditional whose condition fails no longer leaves its entry on the VM's explicit stack. Before, an enclosing atomic group or possessive repeat read that entry at its end and kept its backtrack branches: `(z)?(?>a*(?(1)x))a` matched "aaa". (#316)
+- A conditional whose true branch is a group of alternatives, such as `(?(1)(?:a|b))`, was parsed as `(?(1)a|b)`, so `b` became the false branch. (#315)
+- Inline flags set inside a capturing, named, atomic, lookaround, conditional or absent group, like `(a(?i)b)c`, now end with the group. Before, they leaked to the rest of the pattern, so `(a(?i)b)c` matched `aBC` and `(?x)G(o(?-x)o) g` did not ignore the spaces after the group. Only `(?:...)` and `(?flags:...)` restored them. (#317)
 
 ## [0.20.0] - 2026-10-24
 ### Added
@@ -28,7 +29,7 @@ with the exception that 0.x versions can break between minor versions.
 - Add `ByteSet::is_subset` to test whether one byte set is a subset of another. (#289)
 ### Changed
 - If a lookbehind consists of an Alt containing only easy expressions and at least 4 branches (and no capture groups), compile it as a variable lookbehind (if the feature is enabled) instead of trying every branch as its own const-size lookbehind. One reverse-DFA delegate over the whole alternation is much cheaper per attempt, and grants a perf boost. (#285)
-- Word boundaries (`\b`, `\B`, `\<`, `\>`) are no longer marked hard outside a lookbehind. regex-automata supports them, so a pattern like `\b(?:foo|bar|baz)\b` now compiles to a single delegated engine instead of one branch per alternative — previously it grew linearly with the number of alternatives. They remain hard inside a lookbehind, since regex-automata's reverse DFA can't run a variable-length lookbehind on unicode haystacks. The half-boundary variants (`\<half`, `\>half`) and `\Z` are still always hard.
+- Word boundaries (`\b`, `\B`, `\<`, `\>`) are no longer marked hard outside a lookbehind. regex-automata supports them, so a pattern like `\b(?:foo|bar|baz)\b` now compiles to a single delegated engine instead of one branch per alternative — previously it grew linearly with the number of alternatives. They remain hard inside a lookbehind, since regex-automata's reverse DFA can't run a variable-length lookbehind on unicode haystacks. The half-boundary variants and `\Z` are still always hard. (#311)
 - The parser now tracks every capture group declared with the same name; `Regex::capture_names` reports the name for each of them, and named backrefs resolve to the last group with that name (#177)
 ### Fixed
 - The reverse lazy DFA built for a variable-length lookbehind failed to compile when it needed a larger cache capacity than the configured `delegate_dfa_size_limit` (or the default of 2 MiB); for example `(?<=\p{L}{99,100})x` failed to compile with default settings. The capacity is now rounded up to the minimum required. Ordinary delegates were not affected because the meta engine falls back to another engine when the lazy DFA cannot be built. (#309)
