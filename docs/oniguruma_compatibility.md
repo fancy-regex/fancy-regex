@@ -26,7 +26,8 @@ In Oniguruma mode (`RegexBuilder::oniguruma_mode(true)`), fancy-regex supports m
 - Atomic groups (`(?>...)`)
 - Conditionals (`(?(cond)then|else)`)
 - Absent repeater (`(?~absent)`)
-- Common escapes and anchors (`\A`, `\Z`, `\z`, `\G`, `\K`, `\R`, `\N`, `\O`, `\cX`, `\C-X`)
+- Common escapes and anchors (`\A`, `\Z`, `\z`, `\G`, `\K`, `\R`, `\N`, `\O`)
+- Control character escapes (`\cX`, `\C-X`), which are only parsed in Oniguruma mode
 
 ## Known gaps vs Oniguruma
 
