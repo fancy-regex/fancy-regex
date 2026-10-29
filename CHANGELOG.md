@@ -8,6 +8,7 @@ with the exception that 0.x versions can break between minor versions.
 
 ## [Unreleased]
 ### Added
+- Support control character escapes `\cX` and `\C-X` in Oniguruma mode, e.g. `\ca` matches `\x01` and `\c\\` matches `\x1C`, both inside and outside of character classes. Without Oniguruma mode they are still invalid escapes.
 ### Changed
 ### Fixed
 - Positive lookaheads are now atomic, as in Oniguruma and PCRE: once a lookahead has matched, a later failure no longer backtracks into it to try another way of matching it. For example `(?=x|(x))\1x` no longer matches `xx`.
