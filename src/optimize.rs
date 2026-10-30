@@ -546,11 +546,9 @@ fn optimize_keepout(tree: &mut ExprTree) -> bool {
 
     // Safety check: any capture group in the prefix would be numbered before our new
     // wrapper group, so it would become group 1 instead of our wrapper.
-    // Note: `has_descendant` checks only strict descendants, not the node itself,
-    // so we need the explicit `matches!(child, Expr::Group(_))` check alongside it.
-    let prefix_has_capture_groups = children[..keepout_pos].iter().any(|child| {
-        matches!(child, Expr::Group(_)) || child.has_descendant(|e| matches!(e, Expr::Group(_)))
-    });
+    let prefix_has_capture_groups = children[..keepout_pos]
+        .iter()
+        .any(|child| child.has_descendant_or_self(|e| matches!(e, Expr::Group(_))));
     if prefix_has_capture_groups {
         return false;
     }

@@ -379,7 +379,7 @@ impl<'a> Compiler<'a> {
                 if child_info.hard {
                     // Nested absent operators are not yet supported
                     let is_absent = |e: &Expr| matches!(e, Expr::Absent(_));
-                    if is_absent(child_info.expr) || child_info.expr.has_descendant(is_absent) {
+                    if child_info.expr.has_descendant_or_self(is_absent) {
                         return Err(Error::CompileError(Box::new(
                             CompileError::FeatureNotYetSupported(
                                 "Nested absent operators".to_string(),
