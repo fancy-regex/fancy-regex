@@ -987,6 +987,12 @@ impl RegexOptionsBuilder {
     /// the input when it is preceded by a trailing newline.
     /// Inside lookarounds, `^` behaves as a plain line start without the end-of-input rejection.
     ///
+    /// # Control character escapes
+    ///
+    /// `\cX` and `\C-X` are normally rejected as invalid escapes. In Oniguruma mode they match
+    /// the control character for *X*, e.g. `\ca` and `\C-a` match `\x01` and `\c?` matches
+    /// `\x7F`.
+    ///
     /// ## Example
     ///
     /// ```

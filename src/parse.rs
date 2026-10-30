@@ -699,6 +699,10 @@ impl<'a> Parser<'a> {
             } else {
                 self.parse_delimited_subroutine_call(end, "<", ">", true)?
             }
+        } else if b == b'c' && self.flag(FLAG_ONIGURUMA_MODE) {
+            self.parse_control_char(ix, end)?
+        } else if b == b'C' && bytes.get(end) == Some(&b'-') && self.flag(FLAG_ONIGURUMA_MODE) {
+            self.parse_control_char(ix, end + 1)?
         } else {
             // printable ASCII (including space, see issue #29)
             (
@@ -732,6 +736,25 @@ impl<'a> Parser<'a> {
                 }),
             )
         })
+    }
+
+    // ix points to \ character, end points after `\c` or `\C-`
+    fn parse_control_char(&self, ix: usize, end: usize) -> Result<(usize, Expr)> {
+        let bytes = self.re.as_bytes();
+        let (end, b) = match bytes.get(end) {
+            Some(&b'\\') if bytes.get(end + 1) == Some(&b'\\') => (end + 2, b'\\'),
+            Some(&b) if b.is_ascii() && b != b'\\' => (end + 1, b),
+            _ => {
+                return Err(Error::ParseError(
+                    ix,
+                    ParseError::InvalidEscape(self.re[ix..end].to_string()),
+                ))
+            }
+        };
+        // As in Oniguruma, `\c?` is DEL, otherwise bits 5 and 6 are cleared,
+        // so `\ca` and `\cA` are both 0x01
+        let c = if b == b'?' { 0x7f } else { b & 0x9f };
+        Ok((end, make_literal(&char::from(c).to_string())))
     }
 
     // ix points after '\x', eg to 'A0' or '{12345}', or after `\u` or `\U`
@@ -2105,12 +2128,67 @@ mod tests {
     }
 
     #[test]
+    fn control_escape_oniguruma_mode() {
+        let p = |s| parse_oniguruma(s).unwrap();
+        assert_eq!(p("\\ca"), make_literal("\x01"));
+        assert_eq!(p("\\cA"), make_literal("\x01"));
+        assert_eq!(p("\\cz"), make_literal("\x1a"));
+        assert_eq!(p("\\c@"), make_literal("\x00"));
+        assert_eq!(p("\\c["), make_literal("\x1b"));
+        assert_eq!(p("\\c?"), make_literal("\x7f"));
+        assert_eq!(p("\\c\\\\"), make_literal("\x1c"));
+        assert_eq!(p("\\C-b"), make_literal("\x02"));
+        assert_eq!(p("\\C-\\\\"), make_literal("\x1c"));
+        assert_eq!(
+            p("\\cab"),
+            Expr::Concat(vec![make_literal("\x01"), make_literal("b")])
+        );
+        assert_eq!(
+            p("[\\ca\\C-b]"),
+            Expr::Delegate {
+                inner: "[\x01\x02]".to_string(),
+                casei: false,
+            }
+        );
+        assert_eq!(
+            p("[\\c\\\\]"),
+            Expr::Delegate {
+                inner: "[\x1c]".to_string(),
+                casei: false,
+            }
+        );
+    }
+
+    #[test]
+    fn invalid_control_escape_oniguruma_mode() {
+        let cases = [
+            ("\\c", "\\c"),
+            ("\\c\\", "\\c"),
+            ("\\c\\n", "\\c"),
+            ("\\cé", "\\c"),
+            ("\\C", "\\C"),
+            ("\\Cb", "\\C"),
+            ("\\C-", "\\C-"),
+        ];
+        for (pattern, escape) in cases {
+            assert_error_oniguruma(
+                pattern,
+                &format!("Parsing error at position 0: Invalid escape: {}", escape),
+            );
+        }
+    }
+
+    #[test]
     fn invalid_escape() {
         assert_error(
             "\\",
             "Parsing error at position 0: Backslash without following character",
         );
         assert_error("\\q", "Parsing error at position 0: Invalid escape: \\q");
+        // control escapes are only supported in Oniguruma mode
+        assert_error("\\ca", "Parsing error at position 0: Invalid escape: \\c");
+        assert_error("\\C-b", "Parsing error at position 0: Invalid escape: \\C");
+        assert_error("[\\ca]", "Parsing error at position 1: Invalid escape: \\c");
         assert_error("\\u", "Parsing error at position 2: Invalid hex escape");
         assert_error("\\U", "Parsing error at position 2: Invalid hex escape");
         assert_error("\\x", "Parsing error at position 2: Invalid hex escape");

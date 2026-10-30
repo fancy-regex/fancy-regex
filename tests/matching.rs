@@ -1,4 +1,4 @@
-use fancy_regex::{BytesMode, Error, RegexBuilder, RegexInput, RuntimeError};
+use fancy_regex::{BytesMode, Error, ParseError, RegexBuilder, RegexInput, RuntimeError};
 
 mod common;
 
@@ -197,6 +197,42 @@ fn inline_flags_are_scoped_to_group() {
     assert_no_match(r"^(a)?(?(1)(?i)b|c)d$", "aBD");
     assert_match(r"(?x)^ (a(?-x) b) c $", "a bc");
     assert_no_match(r"(?x)^ (a(?-x) b) c $", "a b c");
+}
+
+#[test]
+fn control_escapes_in_oniguruma_mode() {
+    fn oniguruma_is_match(pattern: &str, text: &str) -> bool {
+        let re = RegexBuilder::new(pattern)
+            .oniguruma_mode(true)
+            .build()
+            .unwrap();
+        re.is_match(text).unwrap()
+    }
+
+    assert!(oniguruma_is_match(r"^\ca\cZ\c?$", "\x01\x1a\x7f"));
+    assert!(oniguruma_is_match(r"^\C-b$", "\x02"));
+    assert!(oniguruma_is_match(r"^\c\\$", "\x1c"));
+    assert!(oniguruma_is_match(r"^q[\c\\]$", "q\x1c"));
+    assert!(!oniguruma_is_match(r"^\ca$", "a"));
+    // in a pattern which uses the backtracking VM
+    assert!(oniguruma_is_match(r"^(\cA)\1\C-[$", "\x01\x01\x1b"));
+    assert!(oniguruma_is_match(r"^\cJ(?=\cM)", "\n\r"));
+}
+
+#[test]
+fn control_escapes_are_invalid_outside_oniguruma_mode() {
+    for pattern in [r"\ca", r"\C-b", r"[\ca]"] {
+        let result = RegexBuilder::new(pattern).build();
+        assert!(
+            matches!(
+                result,
+                Err(Error::ParseError(_, ParseError::InvalidEscape(_)))
+            ),
+            "Expected '{}' to be an invalid escape, but was: {:?}",
+            pattern,
+            result
+        );
+    }
 }
 
 #[test]
