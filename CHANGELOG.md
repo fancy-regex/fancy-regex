@@ -18,6 +18,7 @@ with the exception that 0.x versions can break between minor versions.
 - A conditional whose condition fails no longer leaves its entry on the VM's explicit stack. Before, an enclosing atomic group or possessive repeat read that entry at its end and kept its backtrack branches: `(z)?(?>a*(?(1)x))a` matched "aaa". (#316)
 - A conditional whose true branch is a group of alternatives, such as `(?(1)(?:a|b))`, was parsed as `(?(1)a|b)`, so `b` became the false branch. (#315)
 - Inline flags set inside a capturing, named, atomic, lookaround, conditional or absent group, like `(a(?i)b)c`, now end with the group. Before, they leaked to the rest of the pattern, so `(a(?i)b)c` matched `aBC` and `(?x)G(o(?-x)o) g` did not ignore the spaces after the group. Only `(?:...)` and `(?flags:...)` restored them. (#317)
+- In Oniguruma mode, `{,}` is now literal text, as in Oniguruma, instead of being parsed as `{0,}`. For example `(?:ab){,}` matches `ab{,}`. `{,n}` is still `{0,n}`, and without Oniguruma mode `{,}` is unchanged.
 
 ## [0.20.0] - 2026-10-24
 ### Added
