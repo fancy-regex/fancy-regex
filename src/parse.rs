@@ -297,7 +297,8 @@ impl<'a> Parser<'a> {
             return Err(Error::ParseError(ix, ParseError::InvalidRepeat));
         }
         let mut end = ix;
-        let lo = if bytes[ix] == b',' {
+        let lo_omitted = bytes[ix] == b',';
+        let lo = if lo_omitted {
             0
         } else if let Some((next, lo)) = parse_usize(self.re, ix) {
             end = next;
@@ -317,6 +318,9 @@ impl<'a> Parser<'a> {
                 if let Some((next, hi)) = parse_usize(self.re, end) {
                     end = next;
                     hi
+                } else if lo_omitted && self.flag(FLAG_ONIGURUMA_MODE) {
+                    // Oniguruma needs at least one of the limits, so `{,}` is literal text
+                    return Err(Error::ParseError(end, ParseError::InvalidRepeat));
                 } else {
                     usize::MAX
                 }
@@ -3404,6 +3408,55 @@ mod tests {
                     greedy: true,
                 }),
                 lo: 1,
+                hi: usize::MAX,
+                greedy: true,
+            }
+        );
+    }
+
+    #[test]
+    fn empty_interval_oniguruma_mode() {
+        // Oniguruma doesn't accept `{,}` as an interval, so it is literal text
+        let literal_braces = Expr::Concat(vec![
+            make_literal("a"),
+            make_literal("{"),
+            make_literal(","),
+            make_literal("}"),
+        ]);
+        assert_eq!(parse_oniguruma("a{,}").unwrap(), literal_braces);
+        assert_eq!(parse_oniguruma("(?x)a{ , }").unwrap(), literal_braces);
+        assert_eq!(
+            parse_oniguruma("a{2}{,}").unwrap(),
+            Expr::Concat(vec![
+                Expr::Repeat {
+                    child: Box::new(make_literal("a")),
+                    lo: 2,
+                    hi: 2,
+                    greedy: true,
+                },
+                make_literal("{"),
+                make_literal(","),
+                make_literal("}"),
+            ])
+        );
+
+        // `{,n}` is still `{0,n}`
+        assert_eq!(
+            parse_oniguruma("a{,2}").unwrap(),
+            Expr::Repeat {
+                child: Box::new(make_literal("a")),
+                lo: 0,
+                hi: 2,
+                greedy: true,
+            }
+        );
+
+        // Outside Oniguruma mode `{,}` is the same as `{0,}`
+        assert_eq!(
+            p("a{,}"),
+            Expr::Repeat {
+                child: Box::new(make_literal("a")),
+                lo: 0,
                 hi: usize::MAX,
                 greedy: true,
             }

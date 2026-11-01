@@ -1243,6 +1243,24 @@ fn oniguruma_plus_after_quantifier() {
 }
 
 #[test]
+fn oniguruma_empty_interval_is_literal() {
+    let find = |re: &str, oniguruma_mode: bool, text: &str| {
+        let re = RegexBuilder::new(re)
+            .oniguruma_mode(oniguruma_mode)
+            .build()
+            .unwrap();
+        re.find(text).unwrap().map(|m| (m.start(), m.end()))
+    };
+
+    assert_eq!(find("(?:ab){,}", true, "ab{,}"), Some((0, 5)));
+    assert_eq!(find(r"(a)\1{,}", true, "aa{,}"), Some((0, 5)));
+    assert_eq!(find("a{,2}", true, "aaa"), Some((0, 2)));
+
+    // Without Oniguruma mode `{,}` repeats like `*`
+    assert_eq!(find("(?:ab){,}", false, "abab{,}"), Some((0, 4)));
+}
+
+#[test]
 fn find_from_pos_startline_rejected_after_trailing_newline_at_eof() {
     let re = RegexBuilder::new("^")
         .oniguruma_mode(true)

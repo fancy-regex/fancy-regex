@@ -980,6 +980,12 @@ impl RegexOptionsBuilder {
     /// possessive). In Oniguruma mode, `+` after a user-specified `{...}` repeat is treated
     /// as another repeat modifier — `x{2}+` is equivalent to `(?:x{2})+`.
     ///
+    /// # Empty interval
+    ///
+    /// `fancy-regex` normally treats `x{,}` as `x{0,}`. Oniguruma requires at least one of
+    /// the limits, so in Oniguruma mode `{,}` matches the literal text `{,}`. `x{,3}` is
+    /// `x{0,3}` in both modes.
+    ///
     /// # Start of line (`^`) in multiline mode
     ///
     /// In multiline mode (`(?m)`), `^` normally matches at the start of the input and after
