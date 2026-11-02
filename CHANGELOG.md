@@ -8,15 +8,40 @@ with the exception that 0.x versions can break between minor versions.
 
 ## [Unreleased]
 ### Added
-- Add `RegexOptionsBuilder::build_delegate_prefilter` to disable building the prefilter
-- Add `RegexOptionsBuilder::start_bytes` that returns the first bytes that can match a pattern so you can build your own prefilter
-- Add `RegexOptionsBuilder::required_bytes` that returns the required bytes for a pattern to match
-- Add `RegexOptionsBuilder::max_prog_size` / `RegexBuilder::max_prog_size` to cap the number of VM instructions emitted while compiling. Subroutine calls are inlined at compile time, so a self- or mutually-recursive pattern can expand without bound even while the recursion-depth cap is respected; this bounds the emitted instruction vector instead. Exceeding the cap returns `CompileError::PatternTooComplex`. Disabled by default.
-
+- A new `Expr::has_descendant_or_self` method to easily traverse the Expr descendants to find an Expr matching a predicate. (#319)
+- Support control character escapes `\cX` and `\C-X` in Oniguruma mode, e.g. `\ca` matches `\x01` and `\c\\` matches `\x1C`, both inside and outside of character classes. Without Oniguruma mode they are still invalid escapes. (#320)
 ### Changed
-- The parser now tracks every capture group declared with the same name; `Regex::capture_names` reports the name for each of them, and named backrefs resolve to the last group with that name (#177)
-- If a lookbehind consists of an Alt containing only easy expressions and at least 4 branches (and no capture groups), compile it as a variable lookbehind (if the feature is enabled) instead of trying every branch as its own const-size lookbehind. One reverse-DFA delegate over the whole alternation is much cheaper per attempt, and grants a perf boost.
 ### Fixed
+- Positive lookaheads are now atomic, as in Oniguruma and PCRE: once a lookahead has matched, a later failure no longer backtracks into it to try another way of matching it. For example `(?=x|(x))\1x` no longer matches `xx`. (#313)
+- A hard variable-length lookbehind no longer reuses the candidate start positions left behind by a previous lookbehind that matched (or by a negative lookbehind whose body matched), which gave wrong results such as `(b*)(?<!\1)c` matching `abc`, or hit the backtrack limit when a pattern had two such lookbehinds, like `(a*)b(?<=\1b)(c*)d(?<=\2d)`. (#314)
+- A repetition with a minimum count whose body can match an empty string (e.g. `(?:a|(?=b)){2,}`) could stop before reaching the minimum when it ran again at a position its previous run had reached, for example inside a repeated lookahead: `(?:(?=(?:a|(?=b)){2,})a){2}` matched `aa`. (#312)
+- A conditional whose condition fails no longer leaves its entry on the VM's explicit stack. Before, an enclosing atomic group or possessive repeat read that entry at its end and kept its backtrack branches: `(z)?(?>a*(?(1)x))a` matched "aaa". (#316)
+- A conditional whose true branch is a group of alternatives, such as `(?(1)(?:a|b))`, was parsed as `(?(1)a|b)`, so `b` became the false branch. (#315)
+- Inline flags set inside a capturing, named, atomic, lookaround, conditional or absent group, like `(a(?i)b)c`, now end with the group. Before, they leaked to the rest of the pattern, so `(a(?i)b)c` matched `aBC` and `(?x)G(o(?-x)o) g` did not ignore the spaces after the group. Only `(?:...)` and `(?flags:...)` restored them. (#317)
+- In Oniguruma mode, `{,}` is now literal text, as in Oniguruma, instead of being parsed as `{0,}`. For example `(?:ab){,}` matches `ab{,}`. `{,n}` is still `{0,n}`, and without Oniguruma mode `{,}` is unchanged. (#321)
+- In Oniguruma mode, a `?` after an interval with swapped limits, like `a{3,2}?`, is now another quantifier, as in Oniguruma, so it makes the possessive `a{2,3}` optional. Before, it made the repeat lazy, so `a{3,2}?` matched `aa` in `aaa` and didn't match an empty string. A `?`, `*` or `+` after a repeated empty group, like in `(?:)**` or `(?:){3,2}?`, is now dropped along with it instead of failing to parse. (#322)
+
+## [0.20.0] - 2026-10-24
+### Added
+- Add `RegexOptionsBuilder::build_delegate_prefilter` to disable building the prefilter (#282)
+- Add `RegexOptionsBuilder::start_bytes` that returns the first bytes that can match a pattern so you can build your own prefilter (#282)
+- Add `RegexOptionsBuilder::required_bytes` that returns the required bytes for a pattern to match (#287)
+- Add `RegexOptionsBuilder::max_prog_size` / `RegexBuilder::max_prog_size` to cap the number of VM instructions emitted while compiling. Subroutine calls are inlined at compile time, so a self- or mutually-recursive pattern can expand without bound even while the recursion-depth cap is respected; this bounds the emitted instruction vector instead. Exceeding the cap returns `CompileError::PatternTooComplex`. Disabled by default. (#298)
+- Implement support for variable length hard lookbehinds, by seeking backwards to candidate match start positions and then matching forward as usual. The reverse DFA honours `delegate_size_limit` and `delegate_dfa_size_limit`. (#286, #309)
+- Add `RegexOptionsBuilder::delegate_dfa_skip_cache_capacity_check` / `RegexBuilder::delegate_dfa_skip_cache_capacity_check`, enabled by default. Setting it to `false` makes the reverse DFA of a variable-length lookbehind strictly honour `delegate_dfa_size_limit`, so a too-small limit becomes a compile error. (#309)
+- Add `ByteSet::is_subset` to test whether one byte set is a subset of another. (#289)
+### Changed
+- If a lookbehind consists of an Alt containing only easy expressions and at least 4 branches (and no capture groups), compile it as a variable lookbehind (if the feature is enabled) instead of trying every branch as its own const-size lookbehind. One reverse-DFA delegate over the whole alternation is much cheaper per attempt, and grants a perf boost. (#285)
+- Word boundaries (`\b`, `\B`, `\<`, `\>`) are no longer marked hard outside a lookbehind. regex-automata supports them, so a pattern like `\b(?:foo|bar|baz)\b` now compiles to a single delegated engine instead of one branch per alternative — previously it grew linearly with the number of alternatives. They remain hard inside a lookbehind, since regex-automata's reverse DFA can't run a variable-length lookbehind on unicode haystacks. The half-boundary variants and `\Z` are still always hard. (#311)
+- The parser now tracks every capture group declared with the same name; `Regex::capture_names` reports the name for each of them, and named backrefs resolve to the last group with that name (#177)
+### Fixed
+- The reverse lazy DFA built for a variable-length lookbehind failed to compile when it needed a larger cache capacity than the configured `delegate_dfa_size_limit` (or the default of 2 MiB); for example `(?<=\p{L}{99,100})x` failed to compile with default settings. The capacity is now rounded up to the minimum required. Ordinary delegates were not affected because the meta engine falls back to another engine when the lazy DFA cannot be built. (#309)
+- `delegate_dfa_size_limit` now sets the lazy DFA cache capacity (`hybrid_cache_capacity`) as documented, instead of the fully compiled DFA size limit. It had been forwarded to the wrong regex-automata option since the switch from the `regex` crate. (#307)
+- Fix bug with literal bytes being used in unicode mode unexpectedly: in Unicode mode, `\xHH` escapes above `0x7F` now match the Unicode codepoint (as UTF-8 bytes) instead of the raw byte, so e.g. `\xFF` matches `ÿ` rather than the byte `0xFF`. In bytes modes the raw byte is matched as before. (#292)
+- Fix case-insensitive prefilter computation for non-ASCII class ranges that fold to characters with different lead bytes (e.g. `(?i)[à-ÿ]`), which previously could miss candidate start positions. (#296)
+- Fix `^` / `$` and their multi-line variants matching at the start/end of arbitrary-byte haystacks in `Ascii` and `UnicodeBytes` bytes modes, where the match position was not a UTF-8 codepoint boundary. (#300)
+- Fix seek optimization dropping matches when conditionals had empty branches, e.g. `(a)?b(?(1)c)` no longer fails to match `b`. (#304)
+- Fix hard variable-length lookbehind reverse DFA ignoring the caller's Unicode and bytes-mode settings, giving wrong results in non-Unicode bytes modes (e.g. `(?<=(\w+)\1)x` on `ééx`). (#310)
 
 ## [0.19.2] - 2026-09-13
 ### Added
@@ -314,8 +339,9 @@ If you previously stored i.e. `Captures`, you would need to change the type to `
 ### Added
 - Initial release
 
-[Unreleased]: https://github.com/fancy-regex/fancy-regex/compare/0.19.2...HEAD
-[0.19.1]: https://github.com/fancy-regex/fancy-regex/compare/0.19.1...0.19.2
+[Unreleased]: https://github.com/fancy-regex/fancy-regex/compare/0.20.0...HEAD
+[0.20.0]: https://github.com/fancy-regex/fancy-regex/compare/0.19.2...0.20.0
+[0.19.2]: https://github.com/fancy-regex/fancy-regex/compare/0.19.1...0.19.2
 [0.19.1]: https://github.com/fancy-regex/fancy-regex/compare/0.19.0...0.19.1
 [0.19.0]: https://github.com/fancy-regex/fancy-regex/compare/0.18.0...0.19.0
 [0.18.0]: https://github.com/fancy-regex/fancy-regex/compare/0.17.0...0.18.0

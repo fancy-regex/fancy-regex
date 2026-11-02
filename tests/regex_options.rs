@@ -674,3 +674,94 @@ fn continue_from_previous_match_end_override_is_suppression_only() {
         .collect();
     assert_eq!(cleared_override_spans, default_spans);
 }
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn tiny_delegate_dfa_size_limit_with_variable_lookbehind() {
+    // A limit below regex-automata's minimum lazy DFA capacity is rounded up
+    // instead of failing the compilation (#308).
+    let regex = build_regex(RegexBuilder::new(r"(?<=a+b)c").delegate_dfa_size_limit(1));
+    assert!(regex.is_match("aabc").unwrap());
+    assert!(!regex.is_match("aac").unwrap());
+}
+
+#[test]
+#[cfg(all(feature = "variable-lookbehinds", feature = "unicode"))]
+fn default_delegate_dfa_size_limit_with_large_variable_lookbehind() {
+    // Even the default 2 MiB limit is too small: the reverse DFA of this
+    // lookbehind requires about 3.3 MiB, so without rounding up the capacity
+    // the compilation fails (#308).
+    let regex = build_regex(&RegexBuilder::new(r"(?<=\p{L}{99,100})x"));
+    assert!(regex.is_match(&format!("{}x", "a".repeat(100))).unwrap());
+    assert!(!regex.is_match(&format!("{}x", "a".repeat(50))).unwrap());
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn tiny_delegate_dfa_size_limit_with_hard_variable_lookbehind() {
+    // The reverse DFA of a hard variable-length lookbehind must also tolerate a
+    // limit that is too small, rather than failing to compile (#308).
+    let regex = build_regex(RegexBuilder::new(r"(?<=(a+)\1)x").delegate_dfa_size_limit(1));
+    let m = regex.find("aaaax").unwrap().unwrap();
+    assert_eq!((m.start(), m.end()), (4, 5));
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn tiny_delegate_dfa_size_limit_without_skipping_cache_capacity_check() {
+    // Opting out of rounding up makes the size limit strict, so a limit below
+    // the minimum required capacity is a compile error.
+    let result = RegexBuilder::new(r"(?<=a+b)c")
+        .delegate_dfa_size_limit(1)
+        .delegate_dfa_skip_cache_capacity_check(false)
+        .build();
+    assert!(
+        matches!(
+            result,
+            Err(Error::CompileError(ref e)) if matches!(**e, CompileError::DfaBuildError(..))
+        ),
+        "Expected DfaBuildError, got {:?}",
+        result,
+    );
+}
+
+#[test]
+fn seek_filter_half_word_boundary_finds_match() {
+    // Half word boundaries must be serialised as \b{start-half} / \b{end-half} so the
+    // derived seek pattern parses correctly and still filters to plausible positions.
+    let regex = build_regex(RegexBuilder::new(r"\b{start-half}foo").seek_filter(|_| true));
+    assert_eq!(regex.find("a foo").unwrap().unwrap().start(), 2);
+
+    let regex = build_regex(RegexBuilder::new(r"\b{end-half}").seek_filter(|_| true));
+    assert_eq!(regex.find("foo!").unwrap().unwrap().end(), 3);
+}
+
+#[test]
+fn word_boundary_follows_unicode_mode_in_the_vm() {
+    // Word boundaries are hard only inside a lookbehind, so that is the path that
+    // exercises the VM's own word-boundary assertions rather than a delegated
+    // sub-engine. Those assertions must agree with the mode: in non-Unicode mode
+    // `\b` uses ASCII rules, so `é` is not a word character and `\bx` matches at the
+    // end of "éx", including when the `\b` lives inside a lookbehind. In Unicode mode
+    // `é` is a word character, so the same position is not a boundary.
+    for (re, text, ascii_expect, unicode_expect) in [
+        (r"\bx", "éx", true, false),
+        (r"(?<=\b)x", "éx", true, false),
+        (r"\bx", "x", true, true),
+        (r"(?<=\b)x", "x", true, true),
+    ] {
+        let ascii = build_regex(RegexBuilder::new(re).unicode_mode(false));
+        assert_eq!(
+            ascii.is_match(text).unwrap(),
+            ascii_expect,
+            "ascii {re} on {text:?}"
+        );
+
+        let unicode = build_regex(&RegexBuilder::new(re));
+        assert_eq!(
+            unicode.is_match(text).unwrap(),
+            unicode_expect,
+            "unicode {re} on {text:?}"
+        );
+    }
+}

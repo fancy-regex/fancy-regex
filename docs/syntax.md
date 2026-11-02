@@ -13,6 +13,8 @@ Escapes:
 : not hex digit (`[^0-9A-Fa-f]`) \
 `\e`
 : escape control character (`\x1B`) \
+`\cX` or `\C-X`
+: control character for *X*, e.g. `\ca` or `\C-a` is `\x01` and `\c?` is `\x7F`. Use `\c\\` for `\x1C`. Only in Oniguruma mode \
 `\K`
 : keep text matched so far out of the overall match ([docs](https://www.regular-expressions.info/keep.html))\
 `\G`

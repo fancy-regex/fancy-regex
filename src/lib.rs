@@ -532,6 +532,7 @@ struct RegexOptions {
     syntaxc: SyntaxConfig,
     delegate_size_limit: Option<usize>,
     delegate_dfa_size_limit: Option<usize>,
+    delegate_dfa_skip_cache_capacity_check: bool,
     /// Optional cap on the number of VM instructions emitted while compiling.
     /// Subroutine calls are inlined at compile time, so a self- or
     /// mutually-recursive pattern can expand without bound even while the
@@ -566,6 +567,10 @@ impl fmt::Debug for RegexOptions {
             .field("syntaxc", &self.syntaxc)
             .field("delegate_size_limit", &self.delegate_size_limit)
             .field("delegate_dfa_size_limit", &self.delegate_dfa_size_limit)
+            .field(
+                "delegate_dfa_skip_cache_capacity_check",
+                &self.delegate_dfa_skip_cache_capacity_check,
+            )
             .field("max_prog_size", &self.max_prog_size)
             .field("oniguruma_mode", &self.oniguruma_mode)
             .field(
@@ -590,6 +595,7 @@ impl Default for RegexOptions {
             syntaxc: SyntaxConfig::new().unicode(true),
             delegate_size_limit: None,
             delegate_dfa_size_limit: None,
+            delegate_dfa_skip_cache_capacity_check: true,
             max_prog_size: None,
             oniguruma_mode: false,
             ignore_numbered_groups_when_named_groups_exist: false,
@@ -801,14 +807,35 @@ impl RegexOptionsBuilder {
         self
     }
 
-    /// Set the approximate size of the cache used by the DFA.
+    /// Set the approximate capacity, in bytes, of the cache used by the lazy DFA of delegated
+    /// regexes.
     ///
-    /// This option is forwarded from the wrapped `regex` crate. Note that depending on the used
-    /// regex features there may be multiple delegated sub-regexes fed to the `regex` crate. As
-    /// such the actual limit is closer to `<number of delegated regexes> *
-    /// delegate_dfa_size_limit`.
+    /// This corresponds to `hybrid_cache_capacity` in regex-automata, and has the same meaning as
+    /// `RegexBuilder::dfa_size_limit` in the `regex` crate. Note that depending on the used
+    /// regex features there may be multiple delegated sub-regexes. As such the actual limit is
+    /// closer to `<number of delegated regexes> * delegate_dfa_size_limit`.
+    ///
+    /// Patterns with a variable-length lookbehind additionally build a dedicated reverse lazy
+    /// DFA. If the limit is below the minimum cache capacity that DFA needs (which depends on the
+    /// NFA size of the lookbehind body and can reach several MiB to tens of MiB for large
+    /// repetitions of Unicode classes), it is rounded up to that minimum instead of causing a
+    /// compile error.
     pub fn delegate_dfa_size_limit(&mut self, limit: usize) -> &mut Self {
         self.options.delegate_dfa_size_limit = Some(limit);
+        self
+    }
+
+    /// Configure whether the reverse lazy DFA built for a variable-length lookbehind may exceed
+    /// the limit set by [`delegate_dfa_size_limit`](Self::delegate_dfa_size_limit) (or the
+    /// default) when it needs a larger minimum cache capacity.
+    ///
+    /// When `true` (the default), the cache capacity is rounded up to the minimum that the DFA
+    /// requires. When `false`, the limit is strictly honoured and a pattern whose DFA needs more
+    /// capacity fails to compile with [`CompileError::DfaBuildError`]. Like
+    /// [`RegexSetOptions::overlapping_dfa_skip_cache_capacity_check`], this only affects DFAs
+    /// that fancy-regex builds itself; ordinary delegated sub-regexes are unaffected.
+    pub fn delegate_dfa_skip_cache_capacity_check(&mut self, yes: bool) -> &mut Self {
+        self.options.delegate_dfa_skip_cache_capacity_check = yes;
         self
     }
 
@@ -938,10 +965,11 @@ impl RegexOptionsBuilder {
     ///
     /// # Swapped order quantifiers
     ///
-    /// `fancy-regex` would normally treat `x{0,3}` as a syntax error because the minimum is
+    /// `fancy-regex` would normally treat `x{3,0}` as a syntax error because the minimum is
     /// greater than the maximum. In Oniguruma mode, the limits are swapped (behaving as
-    /// `x{3,0}`) and the resulting repeat is treated as atomic (possessive), matching
-    /// Oniguruma's behavior.
+    /// `x{0,3}`) and the resulting repeat is treated as atomic (possessive), matching
+    /// Oniguruma's behavior. A `?` after it is another quantifier rather than a lazy
+    /// modifier, so `x{3,0}?` is equivalent to `(?:x{3,0})?`.
     ///
     /// # Adjacent quantifiers
     ///
@@ -953,12 +981,24 @@ impl RegexOptionsBuilder {
     /// possessive). In Oniguruma mode, `+` after a user-specified `{...}` repeat is treated
     /// as another repeat modifier — `x{2}+` is equivalent to `(?:x{2})+`.
     ///
+    /// # Empty interval
+    ///
+    /// `fancy-regex` normally treats `x{,}` as `x{0,}`. Oniguruma requires at least one of
+    /// the limits, so in Oniguruma mode `{,}` matches the literal text `{,}`. `x{,3}` is
+    /// `x{0,3}` in both modes.
+    ///
     /// # Start of line (`^`) in multiline mode
     ///
     /// In multiline mode (`(?m)`), `^` normally matches at the start of the input and after
     /// any newline. In Oniguruma mode, it additionally rejects a match at the absolute end of
     /// the input when it is preceded by a trailing newline.
     /// Inside lookarounds, `^` behaves as a plain line start without the end-of-input rejection.
+    ///
+    /// # Control character escapes
+    ///
+    /// `\cX` and `\C-X` are normally rejected as invalid escapes. In Oniguruma mode they match
+    /// the control character for *X*, e.g. `\ca` and `\C-a` match `\x01` and `\c?` matches
+    /// `\x7F`.
     ///
     /// ## Example
     ///
@@ -1161,6 +1201,12 @@ impl RegexBuilder {
         self
     }
 
+    /// See [`RegexOptionsBuilder::delegate_dfa_skip_cache_capacity_check`]
+    pub fn delegate_dfa_skip_cache_capacity_check(&mut self, yes: bool) -> &mut Self {
+        self.options.delegate_dfa_skip_cache_capacity_check(yes);
+        self
+    }
+
     /// See [`RegexOptionsBuilder::max_prog_size`]
     pub fn max_prog_size(&mut self, limit: usize) -> &mut Self {
         self.options.max_prog_size(limit);
@@ -1317,6 +1363,8 @@ impl Regex {
                     && !matches!(options.bytes_mode, BytesMode::Ascii),
                 delegate_size_limit: options.delegate_size_limit,
                 delegate_dfa_size_limit: options.delegate_dfa_size_limit,
+                delegate_dfa_skip_cache_capacity_check: options
+                    .delegate_dfa_skip_cache_capacity_check,
                 // The remaining fields (anchored, contains_subroutines, seek_filter,
                 // disallow_empty_match_at_eof_after_newline) are irrelevant for a plain
                 // delegate compile in the easy path and their defaults are correct.
@@ -1365,6 +1413,8 @@ impl Regex {
                     && !matches!(options.bytes_mode, BytesMode::Ascii),
                 delegate_size_limit: options.delegate_size_limit,
                 delegate_dfa_size_limit: options.delegate_dfa_size_limit,
+                delegate_dfa_skip_cache_capacity_check: options
+                    .delegate_dfa_skip_cache_capacity_check,
                 max_prog_size: options.max_prog_size,
             },
         )?;
@@ -2709,6 +2759,9 @@ pub enum Assertion {
 }
 
 impl Assertion {
+    /// Whether this assertion is const-size and must be considered for
+    /// delegation. Word boundaries and `\Z` are const-size; everything else
+    /// (start/end of line/text) is handled by other analysis branches.
     pub(crate) fn is_always_hard(&self) -> bool {
         use Assertion::*;
         matches!(
@@ -2723,6 +2776,27 @@ impl Assertion {
                 // `\Z` needs custom trailing-newline handling.
                 | EndTextIgnoreTrailingNewlines { .. }
         )
+    }
+
+    /// Whether this assertion forces the containing expression onto the VM.
+    ///
+    /// Word boundaries (`\b`, `\B`, `\<`, `\>`) are only hard inside a
+    /// lookbehind: regex-automata's reverse DFA can't run a variable-length
+    /// lookbehind, so the whole lookbehind is compiled on the VM. Outside a
+    /// lookbehind the engine supports word boundaries, so they can be
+    /// delegated — which is what keeps patterns like `\b(?:foo|bar|baz)\b`
+    /// a single delegate instead of one branch per alternative. The
+    /// half-boundary variants (`\<half`, `\>half`) and `\Z` are always hard:
+    /// regex-automata has no half-boundary look, and `\Z` needs custom
+    /// trailing-newline handling.
+    pub(crate) fn is_hard_in_lookbehind(&self, in_lookbehind: bool) -> bool {
+        use Assertion::*;
+        match self {
+            LeftWordHalfBoundary | RightWordHalfBoundary => true,
+            EndTextIgnoreTrailingNewlines { .. } => true,
+            LeftWordBoundary | RightWordBoundary | WordBoundary | NotWordBoundary => in_lookbehind,
+            _ => true,
+        }
     }
 }
 
@@ -2885,16 +2959,27 @@ impl Expr {
     /// Returns `true` if any descendant of this expression (not including itself)
     /// satisfies the given predicate.
     ///
-    /// This performs an iterative depth-first search using [`children_iter`](Self::children_iter).
+    /// This performs a recursive depth-first search using [`children_iter`](Self::children_iter).
     pub fn has_descendant(&self, predicate: impl Fn(&Expr) -> bool) -> bool {
-        let mut stack: Vec<&Expr> = self.children_iter().collect();
-        while let Some(expr) = stack.pop() {
+        fn go(expr: &Expr, predicate: &dyn Fn(&Expr) -> bool) -> bool {
+            expr.children_iter()
+                .any(|child| predicate(child) || go(child, predicate))
+        }
+        go(self, &predicate)
+    }
+
+    /// Returns `true` if this expression or any of its descendants satisfies the
+    /// given predicate.
+    ///
+    /// This performs a recursive depth-first search using [`children_iter`](Self::children_iter).
+    pub fn has_descendant_or_self(&self, predicate: impl Fn(&Expr) -> bool) -> bool {
+        fn go(expr: &Expr, predicate: &dyn Fn(&Expr) -> bool) -> bool {
             if predicate(expr) {
                 return true;
             }
-            stack.extend(expr.children_iter());
+            expr.children_iter().any(|child| go(child, predicate))
         }
-        false
+        go(self, &predicate)
     }
 
     /// Returns an iterator over the immediate children of this expression.
@@ -2946,6 +3031,12 @@ impl Expr {
                 Assertion::StartLine { crlf: true } | Assertion::StartLineOniguruma { crlf: true },
             ) => buf.push_str("(?Rm:^)"),
             Expr::Assertion(Assertion::EndLine { crlf: true }) => buf.push_str("(?Rm:$)"),
+            Expr::Assertion(Assertion::WordBoundary) => buf.push_str("\\b"),
+            Expr::Assertion(Assertion::NotWordBoundary) => buf.push_str("\\B"),
+            Expr::Assertion(Assertion::LeftWordBoundary) => buf.push_str("\\<"),
+            Expr::Assertion(Assertion::RightWordBoundary) => buf.push_str("\\>"),
+            Expr::Assertion(Assertion::LeftWordHalfBoundary) => buf.push_str("\\b{start-half}"),
+            Expr::Assertion(Assertion::RightWordHalfBoundary) => buf.push_str("\\b{end-half}"),
             Expr::Concat(ref children) => {
                 if precedence > 1 {
                     buf.push_str("(?:");

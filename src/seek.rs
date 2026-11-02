@@ -104,8 +104,7 @@ pub(crate) fn emit_min_size_placeholder(buf: &mut String, min_size: usize, prece
 /// - `Group`: keep the contents, discard the capture group wrapper.
 /// - `Conditional`: emit the union of the true and false branches.
 /// - `GeneralNewline`: replaced with an explicit alternation.
-/// - `Assertion`: anchors and word-boundary assertions are emitted; half-boundaries are
-///   dropped (over-approximation — `\b` would be too restrictive).
+/// - `Assertion`: anchors and word-boundary assertions, half boundaries included, are emitted.
 pub(crate) fn build_seek_pattern<'a>(
     info: &Info<'a>,
     group_info_map: &Map<usize, &'a Info<'a>>,
@@ -173,7 +172,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
     match info.expr {
         Expr::Empty | Expr::DefineGroup { .. } => {}
         Expr::Assertion(assertion) => {
-            // Emit all assertion types, approximating half-word-boundaries with \b.
+            // Emit word boundaries, including half boundaries, as `to_str` writes them.
             // Note: easy positional assertions (StartText, EndText, StartLine, EndLine) are
             // handled by the to_str early return above (drop_positional_anchors=false) or by
             // the early drop at the top of this function (drop_positional_anchors=true).
@@ -183,26 +182,21 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                 Assertion::EndTextIgnoreTrailingNewlines { crlf: true } => {
                     buf.push_str(r"[\r\n]*$")
                 }
-                Assertion::WordBoundary => buf.push_str(r"\b"),
-                Assertion::NotWordBoundary => buf.push_str(r"\B"),
-                // Full word boundaries: \< and \> — overapproximate with \b.
-                Assertion::LeftWordBoundary | Assertion::RightWordBoundary => buf.push_str(r"\b"),
-                // Half-boundaries (\b{start-half}, \b{end-half}) can match in positions where
-                // \b does not (e.g. before punctuation), so \b would be an under-approximation.
-                // Drop them (emit nothing) which is a safe over-approximation.
-                Assertion::LeftWordHalfBoundary | Assertion::RightWordHalfBoundary => {}
+                Assertion::WordBoundary
+                | Assertion::NotWordBoundary
+                | Assertion::LeftWordBoundary
+                | Assertion::RightWordBoundary
+                | Assertion::LeftWordHalfBoundary
+                | Assertion::RightWordHalfBoundary => info.expr.to_str(buf, precedence),
                 // Easy positional anchors — handled by early return / early drop above.
                 // They can only reach here when drop_positional_anchors=false and the subtree
                 // is easy (handled by to_str) but the Group/Concat parent fell through to match.
                 // Emit them faithfully.
-                Assertion::StartText => buf.push('^'),
-                Assertion::EndText => buf.push('$'),
-                Assertion::StartLine { crlf: false }
-                | Assertion::StartLineOniguruma { crlf: false } => buf.push_str("(?m:^)"),
-                Assertion::StartLine { crlf: true }
-                | Assertion::StartLineOniguruma { crlf: true } => buf.push_str("(?Rm:^)"),
-                Assertion::EndLine { crlf: false } => buf.push_str("(?m:$)"),
-                Assertion::EndLine { crlf: true } => buf.push_str("(?Rm:$)"),
+                Assertion::StartText
+                | Assertion::EndText
+                | Assertion::StartLine { .. }
+                | Assertion::StartLineOniguruma { .. }
+                | Assertion::EndLine { .. } => info.expr.to_str(buf, precedence),
             }
         }
         Expr::Concat(_) => {
@@ -450,21 +444,19 @@ pub(crate) fn build_seek_pattern_impl<'a>(
             } else {
                 format!("(?:{}{})", cond_pat, true_pat)
             };
-            match (cond_true.is_empty(), false_pat.is_empty()) {
-                (true, true) => {}
-                (true, false) => buf.push_str(&false_pat),
-                (false, true) => buf.push_str(&cond_true),
-                (false, false) => {
-                    if precedence > 0 {
-                        buf.push_str("(?:");
-                    }
-                    buf.push_str(&cond_true);
-                    buf.push('|');
-                    buf.push_str(&false_pat);
-                    if precedence > 0 {
-                        buf.push(')');
-                    }
-                }
+            if cond_true.is_empty() && false_pat.is_empty() {
+                return;
+            }
+            // An empty branch still matches the empty string. Keep it in the union
+            // so the seek pattern does not require the other branch to match.
+            if precedence > 0 {
+                buf.push_str("(?:");
+            }
+            buf.push_str(&cond_true);
+            buf.push('|');
+            buf.push_str(&false_pat);
+            if precedence > 0 {
+                buf.push(')');
             }
         }
         // Absent repeater `(?~expr)` matches any content not containing `expr`.
@@ -565,6 +557,21 @@ mod tests {
     }
 
     #[test]
+    fn seek_pattern_conditionals_preserve_empty_alternatives() {
+        for (pattern, haystack) in [
+            (r"(a)?b(?(1)c)", "b"),
+            (r"(a)?b(?(1)c|)", "b"),
+            (r"(a)?b(?(1)|c)", "ab"),
+        ] {
+            let seek_pattern = get_seek_pattern(pattern);
+            assert!(
+                regex::Regex::new(&seek_pattern).unwrap().is_match(haystack),
+                "{pattern:?} produced {seek_pattern:?}, excluding {haystack:?}"
+            );
+        }
+    }
+
+    #[test]
     fn seek_pattern_backref_no_anchor() {
         // Simple backref with no positional anchors: group body is inlined verbatim.
         // The `(?:...)` wrapping comes from Concat precedence handling when stripping groups.
@@ -622,6 +629,11 @@ mod tests {
         assert_eq!(get_seek_pattern(r"abc"), "abc");
         assert_eq!(get_seek_pattern(r"a|b"), "a|b");
         assert_eq!(get_seek_pattern(r"a+b*c?"), "a+b*c?");
+        assert_eq!(get_seek_pattern(r"\ba+b*c?\b"), r"\ba+b*c?\b");
+        assert_eq!(
+            get_seek_pattern(r"\b{start-half}foo\b{end-half}"),
+            r"\b{start-half}foo\b{end-half}"
+        );
     }
 
     #[test]

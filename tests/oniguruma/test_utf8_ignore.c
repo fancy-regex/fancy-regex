@@ -4,23 +4,8 @@
 // x3 tests have an additional argument which is the group number to check.
 
 
-  // Compile failed: ParseError(0, InvalidEscape("\\c"))
-  x2("\\ca", "\001", 0, 1);
-
-  // Compile failed: ParseError(0, InvalidEscape("\\C"))
-  x2("\\C-b", "\002", 0, 1);
-
-  // Compile failed: ParseError(0, InvalidEscape("\\c"))
-  x2("\\c\\\\", "\034", 0, 1);
-
-  // Compile failed: ParseError(2, InvalidEscape("\\c"))
-  x2("q[\\c\\\\]", "q\034", 0, 2);
-
   // Compile failed: CompileError(InvalidBackref(17))
   x2("\\17", "\017", 0, 1);
-
-  // No match found
-  x2("(?x)  G (o O(?-x)oO) g L", "GoOoOgLe", 0, 7);
 
   // Compile failed: ParseError(1, InvalidClass)
   x2("[\\044-\\047]", "\046", 0, 1);
@@ -63,9 +48,6 @@
 
   // Match found at start 1 and end 2 (expected 0 and 2)
   x2("a(?i)b|c", "aC", 0, 2);
-
-  // Match found at start 0 and end 2 (expected 0 and 5)
-  x2("(?:ab){,}", "ab{,}", 0, 5);
 
   // No match found
   x3("((?m:a.c))", "a\nc", 0, 3, 1);
@@ -206,9 +188,6 @@
 
   // No match found
   x2("(?m:.め)", "ま\nめ", 3, 7);
-
-  // Match found at start 0 and end 6 (expected 0 and 9)
-  x2("(?:鬼車){,}", "鬼車{,}", 0, 9);
 
   // No match found
   x3("((?m:あ.う))", "あ\nう", 0, 7, 1);
@@ -411,24 +390,6 @@
 
   // Compile failed: ParseError(3, TargetNotRepeatable)
   x2("(?(?{....})123|456)", "123", 0, 3);
-
-  // Compile failed: CompileError(LeftRecursiveSubroutineCall("group 0"))
-  x2("\\g'0'++{,0}",   "abcdefgh", 0, 0);
-
-  // Compile failed: CompileError(LeftRecursiveSubroutineCall("group 0"))
-  x2("\\g'0'++{,0}?",  "abcdefgh", 0, 0);
-
-  // Compile failed: CompileError(LeftRecursiveSubroutineCall("group 0"))
-  x2("\\g'0'++{,0}b",  "abcdefgh", 1, 2);
-
-  // Compile failed: CompileError(LeftRecursiveSubroutineCall("group 0"))
-  x2("\\g'0'++{,0}?def", "abcdefgh", 3, 6);
-
-  // No match found
-  x2("a{3,2}?", "", 0, 0);
-
-  // No match found
-  x2("a{2,3}+a", "aaa", 0, 3);
 
   // Compile failed: CompileError(InnerError(BuildError { kind: Syntax { pid: PatternID(0), err: Translate(Error { kind: UnicodePropertyNotFound, pattern: "\\p{in_enclosed_cjk_letters_and_months}", span: Span(Position(o: 0, l: 1, c: 1), Position(o: 38, l: 1, c: 39)) }) } }))
   x2("\\p{In_Enclosed_CJK_Letters_and_Months}", "\xe3\x8b\xbf", 0, 3);

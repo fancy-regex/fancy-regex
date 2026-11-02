@@ -172,3 +172,73 @@ fn leftmost_longest_iter_does_not_skip_with_seek() {
         .collect();
     assert_eq!(seek_spans, vec![(0, 2), (2, 3), (3, 4), (5, 7)]);
 }
+
+#[test]
+fn leftmost_longest_seek_early_return_on_saved_best() {
+    // The `Insn::Seek` path restores the best match when a subsequent attempt
+    // fails.  This exercises the early return that copies `best_saves` back
+    // into `saves` and returns the saved match.
+    let text = "abab";
+    let spans: Vec<(usize, usize)> = RegexBuilder::new(r"a|ab")
+        .leftmost_longest(true)
+        .seek(true)
+        .build()
+        .unwrap()
+        .find_iter(text)
+        .map(|m| {
+            let m = m.unwrap();
+            (m.start(), m.end())
+        })
+        .collect();
+    assert_eq!(spans, vec![(0, 2), (2, 4)]);
+}
+
+#[test]
+fn leftmost_longest_bounded_quantifier_early_return() {
+    // A bounded quantifier (`a{1,3}`) has a finite `max_size`, so when the
+    // longest match reaches that bound the VM short-circuits with an early
+    // return instead of continuing to backtrack.
+    assert_match_longest(r"a{1,3}", "aaaa", "aaa");
+    assert_match_longest(r"(a{1,3})b", "aaab", "aaab");
+}
+
+#[test]
+fn leftmost_longest_unbounded_quantifier_no_early_return() {
+    // Unbounded quantifiers (`a*`, `a+`) have `max_size == usize::MAX`, so
+    // the `best_match_len == prog.max_size` short-circuit never fires and
+    // the VM must exhaust the backtrack stack normally.
+    assert_match_longest(r"a*", "aaa", "aaa");
+    assert_match_longest(r"a+", "aaa", "aaa");
+    assert_match_longest(r"aaaaa|a*", "aaaaaa", "aaaaaa");
+}
+
+#[test]
+fn leftmost_longest_captures_preserve_best_saves() {
+    // When a longer match is found after a shorter ones, the saved capture
+    // groups must reflect the longest match, not the first one found.
+    let re = RegexBuilder::new(r"(a|ab)")
+        .leftmost_longest(true)
+        .build()
+        .unwrap();
+    let caps = re.captures("ab").expect("captures").expect("match");
+    assert_eq!(caps.get(1).unwrap().as_str(), "ab");
+}
+
+#[test]
+fn leftmost_longest_find_not_empty_skips_zero_width() {
+    // `find_not_empty` skips zero-width matches, which interacts with the
+    // leftmost-longest best-match bookkeeping on the backtrack path.
+    let re = RegexBuilder::new(r"a*")
+        .leftmost_longest(true)
+        .find_not_empty(true)
+        .build()
+        .unwrap();
+    let spans: Vec<(usize, usize)> = re
+        .find_iter("baa")
+        .map(|m| {
+            let m = m.unwrap();
+            (m.start(), m.end())
+        })
+        .collect();
+    assert_eq!(spans, vec![(1, 3)]);
+}

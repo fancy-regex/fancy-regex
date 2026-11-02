@@ -1,4 +1,4 @@
-use fancy_regex::{BytesMode, Error, RegexBuilder, RegexInput, RuntimeError};
+use fancy_regex::{BytesMode, Error, ParseError, RegexBuilder, RegexInput, RuntimeError};
 
 mod common;
 
@@ -188,6 +188,66 @@ fn atomic_group() {
 }
 
 #[test]
+fn inline_flags_are_scoped_to_group() {
+    assert_match(r"^(a(?i)b)c$", "aBc");
+    assert_no_match(r"^(a(?i)b)c$", "aBC");
+    assert_no_match(r"^(?<n>a(?i)b)c$", "aBC");
+    assert_no_match(r"^(?>a(?i)b)c$", "aBC");
+    assert_no_match(r"^(?=a(?i)b)abc$", "aBC");
+    assert_no_match(r"^(a)?(?(1)(?i)b|c)d$", "aBD");
+    assert_match(r"(?x)^ (a(?-x) b) c $", "a bc");
+    assert_no_match(r"(?x)^ (a(?-x) b) c $", "a b c");
+}
+
+#[test]
+fn control_escapes_in_oniguruma_mode() {
+    fn oniguruma_is_match(pattern: &str, text: &str) -> bool {
+        let re = RegexBuilder::new(pattern)
+            .oniguruma_mode(true)
+            .build()
+            .unwrap();
+        re.is_match(text).unwrap()
+    }
+
+    assert!(oniguruma_is_match(r"^\ca\cZ\c?$", "\x01\x1a\x7f"));
+    assert!(oniguruma_is_match(r"^\C-b$", "\x02"));
+    assert!(oniguruma_is_match(r"^\c\\$", "\x1c"));
+    assert!(oniguruma_is_match(r"^q[\c\\]$", "q\x1c"));
+    assert!(!oniguruma_is_match(r"^\ca$", "a"));
+    // in a pattern which uses the backtracking VM
+    assert!(oniguruma_is_match(r"^(\cA)\1\C-[$", "\x01\x01\x1b"));
+    assert!(oniguruma_is_match(r"^\cJ(?=\cM)", "\n\r"));
+}
+
+#[test]
+fn control_escapes_are_invalid_outside_oniguruma_mode() {
+    for pattern in [r"\ca", r"\C-b", r"[\ca]"] {
+        let result = RegexBuilder::new(pattern).build();
+        assert!(
+            matches!(
+                result,
+                Err(Error::ParseError(_, ParseError::InvalidEscape(_)))
+            ),
+            "Expected '{}' to be an invalid escape, but was: {:?}",
+            pattern,
+            result
+        );
+    }
+}
+
+#[test]
+fn failed_condition_keeps_enclosing_group_atomic() {
+    // A condition that fails inside an atomic group or a possessive repeat must
+    // not let a later failure backtrack into that group.
+    common::assert_no_match(r"(z)?(?>a*(?(1)x))a", "aaa");
+    common::assert_no_match(r"(z)?(?>a*(?(1)x|))a", "aaa");
+    common::assert_no_match(r"(z)?(?>(?(1)x|a)*)a", "aaa");
+    common::assert_no_match(r"(z)?(?:a(?(1)x))*+a", "aaa");
+    common::assert_no_match(r"(z)?(?:a(?(1)x))++a", "aaa");
+    common::assert_is_match(r"(z)?(?:a(?(1)x))*a", "aaa");
+}
+
+#[test]
 fn is_match_input_respects_range_without_slicing() {
     let re = RegexBuilder::new(r"\bat\b").build().unwrap();
     assert!(!re
@@ -308,6 +368,17 @@ fn conditional_with_lookaround_condition() {
     assert_match(r"^(?((?=\d))abc)$", "");
     assert_match(r"^(?((?=\w))abc)$", "abc");
     assert_no_match(r"^(?((?=\d))\wabc|\d!)$", "5!");
+}
+
+#[test]
+fn conditional_with_group_of_alternatives_as_true_branch() {
+    // The `|` inside the group belongs to the true branch, so there is no false branch.
+    assert_match(r"^(x)?(?(1)(?:a|b))$", "");
+    assert_no_match(r"^(x)?(?(1)(?:a|b))$", "b");
+    assert_match(r"^(x)?(?(1)(?:a|b))$", "xb");
+    assert_no_match(r"^(x)?(?(1)(?:a|b))$", "x");
+    assert_match(r"^(?((?=\d))(?:\d|!))$", "");
+    assert_no_match(r"^(?((?=\d))(?:\d|!))$", "!");
 }
 
 #[test]
@@ -539,6 +610,22 @@ fn crlf_flag_oniguruma_any_char() {
 
     test_pattern(r"(?R)\O");
     test_pattern(r"\O");
+}
+
+#[test]
+fn repeat_minimum_holds_when_loop_runs_again() {
+    // The lookahead runs once per position. Its loop must still match at least twice
+    // at the second position, regardless of where the first run left off.
+    assert_no_match(r"(?:(?=(?:a|(?=b)){2,})a){2}", "aa");
+    assert_no_match(r"(?:(?=(?:a|(?=b)){2,}?)a){2}", "aa");
+    assert_match(r"(?:(?=(?:a|(?=b)){2,})a){2}", "aab");
+    assert_match(r"(?:(?=(?:a|(?=b)){2,}?)a){2}", "aab");
+
+    let m = common::regex(r"(?:(?=(?:a|(?=b)){2,})a)+")
+        .find("aa")
+        .unwrap()
+        .unwrap();
+    assert_eq!(m.range(), 0..1);
 }
 
 #[cfg_attr(feature = "track_caller", track_caller)]
@@ -1199,7 +1286,7 @@ fn casei_width_changing_fold() {
 #[test]
 fn casei_keyword_alternation_in_hard_pattern() {
     let haystack = "if ABSENT then";
-    let m = fancy_regex::Regex::new(r"\b(?i)(abort|absent|zzz)\b")
+    let m = fancy_regex::Regex::new(r"(?<=\b)(?i)(abort|absent|zzz)(?<=\b)")
         .unwrap()
         .find(haystack)
         .unwrap()
@@ -1211,4 +1298,13 @@ fn casei_keyword_alternation_in_hard_pattern() {
 fn leftmost_longest_default_behavior_unchanged() {
     let re = RegexBuilder::new(r"(a|ab)c").build().unwrap();
     assert_eq!(re.find("xabc").unwrap().unwrap().as_str(), "abc");
+}
+
+#[test]
+fn lookahead_is_atomic() {
+    // Once the lookahead has matched with its first alternative, the failing
+    // backreference must not make it try the second one.
+    assert_no_match(r"(?=x|(x))\1x", "xx");
+    assert_no_match(r"(?=a|(?:(a)))\1a", "aa");
+    assert_match(r"(?=(x)|x)\1x", "xx");
 }

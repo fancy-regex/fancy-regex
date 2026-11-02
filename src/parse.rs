@@ -203,15 +203,18 @@ impl<'a> Parser<'a> {
                 }
             }
             ix = self.optional_whitespace(ix + 1)?;
+            // In Oniguruma, an interval with its limits swapped (like `{3,2}`) is
+            // possessive, and a `?` after it is another quantifier, not a lazy modifier
+            let swapped = self.flag(FLAG_ONIGURUMA_MODE) && hi < lo;
             let mut greedy = true;
-            if ix < self.re.len() && self.re.as_bytes()[ix] == b'?' {
+            if !swapped && ix < self.re.len() && self.re.as_bytes()[ix] == b'?' {
                 greedy = false;
                 ix += 1;
             }
             greedy ^= self.flag(FLAG_SWAP_GREED);
             let mut atomic_group = false;
             if self.flag(FLAG_ONIGURUMA_MODE) {
-                if hi < lo {
+                if swapped {
                     (lo, hi) = (hi, lo);
                     atomic_group = true;
                 } else if !user_specified && ix < self.re.len() && self.re.as_bytes()[ix] == b'+' {
@@ -259,7 +262,9 @@ impl<'a> Parser<'a> {
             let mut adjacent = 0;
             loop {
                 let before = ix;
-                let (next_ix, next_repeat) = self.parse_quantifier(ix, before, repeat)?;
+                // Pass the start of the piece, so that a quantifier after a dropped
+                // `(?:)` repeat is dropped too instead of having nothing to target
+                let (next_ix, next_repeat) = self.parse_quantifier(ix, start, repeat)?;
                 ix = next_ix;
                 repeat = next_repeat;
                 if ix == before {
@@ -297,7 +302,8 @@ impl<'a> Parser<'a> {
             return Err(Error::ParseError(ix, ParseError::InvalidRepeat));
         }
         let mut end = ix;
-        let lo = if bytes[ix] == b',' {
+        let lo_omitted = bytes[ix] == b',';
+        let lo = if lo_omitted {
             0
         } else if let Some((next, lo)) = parse_usize(self.re, ix) {
             end = next;
@@ -317,6 +323,9 @@ impl<'a> Parser<'a> {
                 if let Some((next, hi)) = parse_usize(self.re, end) {
                     end = next;
                     hi
+                } else if lo_omitted && self.flag(FLAG_ONIGURUMA_MODE) {
+                    // Oniguruma needs at least one of the limits, so `{,}` is literal text
+                    return Err(Error::ParseError(end, ParseError::InvalidRepeat));
                 } else {
                     usize::MAX
                 }
@@ -699,6 +708,10 @@ impl<'a> Parser<'a> {
             } else {
                 self.parse_delimited_subroutine_call(end, "<", ">", true)?
             }
+        } else if b == b'c' && self.flag(FLAG_ONIGURUMA_MODE) {
+            self.parse_control_char(ix, end)?
+        } else if b == b'C' && bytes.get(end) == Some(&b'-') && self.flag(FLAG_ONIGURUMA_MODE) {
+            self.parse_control_char(ix, end + 1)?
         } else {
             // printable ASCII (including space, see issue #29)
             (
@@ -732,6 +745,25 @@ impl<'a> Parser<'a> {
                 }),
             )
         })
+    }
+
+    // ix points to \ character, end points after `\c` or `\C-`
+    fn parse_control_char(&self, ix: usize, end: usize) -> Result<(usize, Expr)> {
+        let bytes = self.re.as_bytes();
+        let (end, b) = match bytes.get(end) {
+            Some(&b'\\') if bytes.get(end + 1) == Some(&b'\\') => (end + 2, b'\\'),
+            Some(&b) if b.is_ascii() && b != b'\\' => (end + 1, b),
+            _ => {
+                return Err(Error::ParseError(
+                    ix,
+                    ParseError::InvalidEscape(self.re[ix..end].to_string()),
+                ))
+            }
+        };
+        // As in Oniguruma, `\c?` is DEL, otherwise bits 5 and 6 are cleared,
+        // so `\ca` and `\cA` are both 0x01
+        let c = if b == b'?' { 0x7f } else { b & 0x9f };
+        Ok((end, make_literal(&char::from(c).to_string())))
     }
 
     // ix points after '\x', eg to 'A0' or '{12345}', or after `\u` or `\U`
@@ -992,6 +1024,8 @@ impl<'a> Parser<'a> {
             return Err(Error::ParseError(ix, ParseError::RecursionExceeded));
         }
         let open_paren_ix = ix; // position of the opening `(`
+                                // Flags set inside the group, e.g. `(a(?i)b)`, only apply until the group is closed
+        let oldflags = self.flags;
         let ix = self.optional_whitespace(ix + 1)?;
         let mut group_name = None;
         let (la, skip) = if self.re[ix..].starts_with("?=") {
@@ -1029,11 +1063,15 @@ impl<'a> Parser<'a> {
             // Backref using Python syntax: (?P=name)
             return self.parse_delimited_backref(ix + 3, "", ")", false);
         } else if self.re[ix..].starts_with("?~") {
-            return self.parse_absent(ix + 1, depth);
+            let result = self.parse_absent(ix + 1, depth);
+            self.flags = oldflags;
+            return result;
         } else if self.re[ix..].starts_with("?>") {
             (None, 2)
         } else if self.re[ix..].starts_with("?(") {
-            return self.parse_conditional(ix + 2, depth);
+            let result = self.parse_conditional(ix + 2, depth);
+            self.flags = oldflags;
+            return result;
         } else if self.re[ix..].starts_with("?P>") {
             return self.parse_unrestricted_subroutine_call(ix + 3, "", ")");
         } else if self.re[ix..].starts_with("*") {
@@ -1046,6 +1084,7 @@ impl<'a> Parser<'a> {
         let ix = ix + skip;
         let (ix, child) = self.parse_re(ix, depth)?;
         let ix = self.check_for_close_paren(ix)?;
+        self.flags = oldflags;
         let result = match (la, skip) {
             (Some(la), _) => Expr::LookAround(Box::new(child), la),
             (None, 2) => Expr::AtomicGroup(Box::new(child)),
@@ -1209,7 +1248,16 @@ impl<'a> Parser<'a> {
             let (next, condition) = self.parse_re(ix, depth)?;
             (self.check_for_close_paren(next)?, condition)
         };
-        let (end, child) = self.parse_re(next, depth)?;
+        // Only a `|` at this level ends the true branch. Parsing the whole body with
+        // `parse_re` would also split an alternation inside a group, because
+        // `(?(1)(?:a|b))` and `(?(1)a|b)` give the same `Expr::Alt`.
+        let (end, if_true) = self.parse_branch(next, depth)?;
+        let end = self.optional_whitespace(end)?;
+        let (end, if_false) = if self.re[end..].starts_with('|') {
+            self.parse_re(end + 1, depth)?
+        } else {
+            (end, Expr::Empty)
+        };
         if end == next {
             // The condition had no branches, so it is a backref-exists-only condition
             // (e.g. `(?(1))`). The delimited paths already produce AstNode::BackrefExistsCondition
@@ -1228,22 +1276,6 @@ impl<'a> Parser<'a> {
                     )
                 ));
             }
-        }
-        let if_true: Expr;
-        let mut if_false: Expr = Expr::Empty;
-        if let Expr::Alt(mut alternatives) = child {
-            // the truth branch will be the first alternative
-            if_true = alternatives.remove(0);
-            // if there is only one alternative left, take it out the Expr::Alt
-            if alternatives.len() == 1 {
-                if_false = alternatives.pop().expect("expected 2 alternatives");
-            } else {
-                // otherwise the remaining branches become the false branch
-                if_false = Expr::Alt(alternatives);
-            }
-        } else {
-            // there is only one branch - the truth branch. i.e. "if" without "else"
-            if_true = child;
         }
         let inner_condition = condition;
 
@@ -2105,12 +2137,67 @@ mod tests {
     }
 
     #[test]
+    fn control_escape_oniguruma_mode() {
+        let p = |s| parse_oniguruma(s).unwrap();
+        assert_eq!(p("\\ca"), make_literal("\x01"));
+        assert_eq!(p("\\cA"), make_literal("\x01"));
+        assert_eq!(p("\\cz"), make_literal("\x1a"));
+        assert_eq!(p("\\c@"), make_literal("\x00"));
+        assert_eq!(p("\\c["), make_literal("\x1b"));
+        assert_eq!(p("\\c?"), make_literal("\x7f"));
+        assert_eq!(p("\\c\\\\"), make_literal("\x1c"));
+        assert_eq!(p("\\C-b"), make_literal("\x02"));
+        assert_eq!(p("\\C-\\\\"), make_literal("\x1c"));
+        assert_eq!(
+            p("\\cab"),
+            Expr::Concat(vec![make_literal("\x01"), make_literal("b")])
+        );
+        assert_eq!(
+            p("[\\ca\\C-b]"),
+            Expr::Delegate {
+                inner: "[\x01\x02]".to_string(),
+                casei: false,
+            }
+        );
+        assert_eq!(
+            p("[\\c\\\\]"),
+            Expr::Delegate {
+                inner: "[\x1c]".to_string(),
+                casei: false,
+            }
+        );
+    }
+
+    #[test]
+    fn invalid_control_escape_oniguruma_mode() {
+        let cases = [
+            ("\\c", "\\c"),
+            ("\\c\\", "\\c"),
+            ("\\c\\n", "\\c"),
+            ("\\cé", "\\c"),
+            ("\\C", "\\C"),
+            ("\\Cb", "\\C"),
+            ("\\C-", "\\C-"),
+        ];
+        for (pattern, escape) in cases {
+            assert_error_oniguruma(
+                pattern,
+                &format!("Parsing error at position 0: Invalid escape: {}", escape),
+            );
+        }
+    }
+
+    #[test]
     fn invalid_escape() {
         assert_error(
             "\\",
             "Parsing error at position 0: Backslash without following character",
         );
         assert_error("\\q", "Parsing error at position 0: Invalid escape: \\q");
+        // control escapes are only supported in Oniguruma mode
+        assert_error("\\ca", "Parsing error at position 0: Invalid escape: \\c");
+        assert_error("\\C-b", "Parsing error at position 0: Invalid escape: \\C");
+        assert_error("[\\ca]", "Parsing error at position 1: Invalid escape: \\c");
         assert_error("\\u", "Parsing error at position 2: Invalid hex escape");
         assert_error("\\U", "Parsing error at position 2: Invalid hex escape");
         assert_error("\\x", "Parsing error at position 2: Invalid hex escape");
@@ -2818,6 +2905,74 @@ mod tests {
                 },
             ])
         );
+        assert_eq!(
+            p("((?s).)."),
+            Expr::Concat(vec![
+                make_group(Expr::Any {
+                    newline: true,
+                    crlf: false
+                }),
+                Expr::Any {
+                    newline: false,
+                    crlf: false
+                },
+            ])
+        );
+        assert_eq!(
+            p("(?<name>(?s).)."),
+            Expr::Concat(vec![
+                make_group(Expr::Any {
+                    newline: true,
+                    crlf: false
+                }),
+                Expr::Any {
+                    newline: false,
+                    crlf: false
+                },
+            ])
+        );
+        assert_eq!(
+            p("(?>(?s).)."),
+            Expr::Concat(vec![
+                Expr::AtomicGroup(Box::new(Expr::Any {
+                    newline: true,
+                    crlf: false
+                })),
+                Expr::Any {
+                    newline: false,
+                    crlf: false
+                },
+            ])
+        );
+        assert_eq!(
+            p("(?=(?s).)."),
+            Expr::Concat(vec![
+                Expr::LookAround(
+                    Box::new(Expr::Any {
+                        newline: true,
+                        crlf: false
+                    }),
+                    LookAhead
+                ),
+                Expr::Any {
+                    newline: false,
+                    crlf: false
+                },
+            ])
+        );
+        assert_eq!(
+            p("(?~(?s).)."),
+            Expr::Concat(vec![
+                Expr::Absent(Absent::Repeater(Box::new(Expr::Any {
+                    newline: true,
+                    crlf: false
+                }))),
+                Expr::Any {
+                    newline: false,
+                    crlf: false
+                },
+            ])
+        );
     }
 
     #[test]
@@ -3247,6 +3402,43 @@ mod tests {
     }
 
     #[test]
+    fn question_mark_after_swapped_quantifier_oniguruma_mode() {
+        // A swapped interval is possessive, so a `?` after it is another
+        // quantifier instead of making it lazy
+        let possessive = Expr::AtomicGroup(Box::new(Expr::Repeat {
+            child: Box::new(make_literal("a")),
+            lo: 2,
+            hi: 3,
+            greedy: true,
+        }));
+        let optional = |greedy| Expr::Repeat {
+            child: Box::new(possessive.clone()),
+            lo: 0,
+            hi: 1,
+            greedy,
+        };
+        assert_eq!(parse_oniguruma("a{3,2}?").unwrap(), optional(true));
+        assert_eq!(parse_oniguruma("(?x)a{3,2} ?").unwrap(), optional(true));
+        assert_eq!(parse_oniguruma("a{3,2}??").unwrap(), optional(false));
+
+        // The quantifiers after a dropped `(?:)` repeat are dropped too
+        assert_eq!(parse_oniguruma("(?:){3,2}?").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?:){3,2}+").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?:)**").unwrap(), Expr::Empty);
+
+        // An interval in order can still be lazy
+        assert_eq!(
+            parse_oniguruma("a{2,3}?").unwrap(),
+            Expr::Repeat {
+                child: Box::new(make_literal("a")),
+                lo: 2,
+                hi: 3,
+                greedy: false,
+            }
+        );
+    }
+
+    #[test]
     fn plus_after_user_specified_quantifier_oniguruma_mode() {
         assert_eq!(
             parse_oniguruma("x{2}+").unwrap(),
@@ -3258,6 +3450,55 @@ mod tests {
                     greedy: true,
                 }),
                 lo: 1,
+                hi: usize::MAX,
+                greedy: true,
+            }
+        );
+    }
+
+    #[test]
+    fn empty_interval_oniguruma_mode() {
+        // Oniguruma doesn't accept `{,}` as an interval, so it is literal text
+        let literal_braces = Expr::Concat(vec![
+            make_literal("a"),
+            make_literal("{"),
+            make_literal(","),
+            make_literal("}"),
+        ]);
+        assert_eq!(parse_oniguruma("a{,}").unwrap(), literal_braces);
+        assert_eq!(parse_oniguruma("(?x)a{ , }").unwrap(), literal_braces);
+        assert_eq!(
+            parse_oniguruma("a{2}{,}").unwrap(),
+            Expr::Concat(vec![
+                Expr::Repeat {
+                    child: Box::new(make_literal("a")),
+                    lo: 2,
+                    hi: 2,
+                    greedy: true,
+                },
+                make_literal("{"),
+                make_literal(","),
+                make_literal("}"),
+            ])
+        );
+
+        // `{,n}` is still `{0,n}`
+        assert_eq!(
+            parse_oniguruma("a{,2}").unwrap(),
+            Expr::Repeat {
+                child: Box::new(make_literal("a")),
+                lo: 0,
+                hi: 2,
+                greedy: true,
+            }
+        );
+
+        // Outside Oniguruma mode `{,}` is the same as `{0,}`
+        assert_eq!(
+            p("a{,}"),
+            Expr::Repeat {
+                child: Box::new(make_literal("a")),
+                lo: 0,
                 hi: usize::MAX,
                 greedy: true,
             }
@@ -3493,6 +3734,30 @@ mod tests {
                         Expr::Concat(vec![make_literal("x"), make_literal("y"),]),
                         make_literal("z"),
                     ])),
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn conditional_true_branch_can_be_a_group_with_alternatives() {
+        // The `|` inside the group belongs to the true branch; there is no false branch.
+        assert_eq!(
+            p("(h)?(?(1)(?:i|x))"),
+            Expr::Concat(vec![
+                Expr::Repeat {
+                    child: Box::new(make_group(make_literal("h"))),
+                    lo: 0,
+                    hi: 1,
+                    greedy: true
+                },
+                Expr::Conditional {
+                    condition: Box::new(Expr::BackrefExistsCondition {
+                        group: 1,
+                        relative_recursion_level: None
+                    }),
+                    true_branch: Box::new(Expr::Alt(vec![make_literal("i"), make_literal("x")])),
+                    false_branch: Box::new(Expr::Empty),
                 },
             ])
         );

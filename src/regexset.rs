@@ -201,12 +201,13 @@ impl RegexSetOptions {
         self
     }
 
-    /// Set the approximate size of the cache used by delegated DFAs.
+    /// Set the approximate capacity, in bytes, of the cache used by the lazy DFA of delegated
+    /// regexes.
     ///
-    /// This option is forwarded from the wrapped `regex` crate. Note that depending on the used
-    /// regex features there may be multiple delegated sub-regexes fed to the `regex` crate. As
-    /// such the actual limit is closer to `<number of delegated regexes> *
-    /// delegate_dfa_size_limit`.
+    /// This corresponds to `hybrid_cache_capacity` in regex-automata, and has the same meaning as
+    /// `RegexBuilder::dfa_size_limit` in the `regex` crate. Note that depending on the used
+    /// regex features there may be multiple delegated sub-regexes. As such the actual limit is
+    /// closer to `<number of delegated regexes> * delegate_dfa_size_limit`.
     pub fn delegate_dfa_size_limit(mut self, limit: usize) -> Self {
         self.delegate_dfa_size_limit = Some(limit);
         self

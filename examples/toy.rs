@@ -304,6 +304,62 @@ digraph G {
     }
 
     #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn test_hard_variable_lookbehind_graph() {
+        // Exercises the Debug impls of `HardVariableLookbehind` and
+        // `ReverseLookbehindPosCheck`, which format the seek pattern and the
+        // save slots but deliberately omit the DFA and cache pool.
+        assert_graph(
+            r"(a+)(?<=\1)b",
+            "\
+digraph G {
+  0 [label=\"0: SplitUnanchored(3, 1)\"];
+  0 -> 3;
+  0 -> 1;
+  1 [label=\"1: Any\"];
+  1 -> 2;
+  2 [label=\"2: Jmp(0)\"];
+  2 -> 0;
+  3 [label=\"3: Save(0)\"];
+  3 -> 4;
+  4 [label=\"4: SaveCaptureGroupStart(1)\"];
+  4 -> 5;
+  5 [label=\"5: Lit(\\\"a\\\")\"];
+  5 -> 6;
+  6 [label=\"6: Split(5, 7)\"];
+  6 -> 5;
+  6 -> 7;
+  7 [label=\"7: Save(3)\"];
+  7 -> 8;
+  8 [label=\"8: Save(4)\"];
+  8 -> 9;
+  9 [label=\"9: Save(5)\"];
+  9 -> 10;
+ 10 [label=\"10: Save(6)\"];
+ 10 -> 11;
+ 11 [label=\"11: HardVariableLookbehind(HardVariableLookbehind { pattern: \\\"a+\\\", end_pos_slot: 5, candidate_pos_slot: 6 })\"];
+ 11 -> 12;
+ 12 [label=\"12: Backref { slot: 2, casei: false, unicode: true }\"];
+ 12 -> 13;
+ 13 [label=\"13: ReverseLookbehindPosCheck { slot: 5, candidate_pos_slot: 6, hard_lb_pc: 11 }\"];
+ 13 -> 14;
+ 14 [label=\"14: Restore(5)\"];
+ 14 -> 15;
+ 15 [label=\"15: Restore(6)\"];
+ 15 -> 16;
+ 16 [label=\"16: Restore(4)\"];
+ 16 -> 17;
+ 17 [label=\"17: Lit(\\\"b\\\")\"];
+ 17 -> 18;
+ 18 [label=\"18: Save(1)\"];
+ 18 -> 19;
+ 19 [label=\"19: End\"];
+}
+",
+        );
+    }
+
+    #[test]
     fn test_simple_analysis() {
         assert_analysis_succeeds("a+bc?");
     }

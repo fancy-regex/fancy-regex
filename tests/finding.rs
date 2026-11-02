@@ -188,8 +188,100 @@ fn lookbehind_positive_variable_sized_functionality_unicode() {
 }
 
 #[test]
+fn unicode_word_boundary_in_lookbehind() {
+    assert_eq!(find_str_only(r"(?<=\b\w{6}\b)", "ežeras"), Some((7, 7)));
+    assert_eq!(
+        find_str_only(r"(?<=\b)\w{6}(?<=\b)", "ežeras"),
+        Some((0, 7))
+    );
+    assert_eq!(find_str_only(r"(?<=\b\w{6}\b)", "ežeras"), Some((7, 7)));
+    assert_eq!(
+        find_str_only(r"(?<=\b(\w{6})\b)\s+\1\b", "ežeras ežeras"),
+        Some((7, 15))
+    );
+    assert_eq!(
+        find_str_only(r"(?<=\b(\w{6})\b)\s+\1\b", "ąčęėįš šįėęčą"),
+        None
+    );
+}
+
+#[test]
+fn unicode_word_boundary_in_hard_pattern() {
+    assert_eq!(
+        find_str_only(r"\b(\w+)\b\s+\1\b", "ežeras ežeras"),
+        Some((0, 15))
+    );
+    assert_eq!(find_str_only(r"\b(\w+)\b\s+\1\b", "ežeras ežeras123"), None);
+    assert_eq!(find_str_only(r"\b(\w+)\b\s+\1\b", "ąčęėįš šįėęčą"), None);
+}
+
+#[test]
 fn lookbehind_containing_const_size_backref() {
     assert_eq!(find(r"(..)(?<=\1\1)", "yyxxxx"), Some((4, 6)));
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn hard_variable_lookbehind_tries_all_candidates() {
+    // when the rightmost seek-pattern candidate fails to verify as a lookbehind match,
+    // the engine must try the next candidate to the left while still anchored at the
+    // original lookbehind position — not re-anchor at a shorter range.
+    //
+    // Pattern `(?<=(a+)\1)x` at position 4 of "aaaax":
+    // - seek pattern `a+` matches ending at 4 at offsets 0,1,2,3
+    // - body `(a+)\1` needs >= 2 a's, so only offsets 0 and 2 are matches
+    //   so if the test passes, it means it successfully skipped over offset 3
+    assert_eq!(find(r"(?<=(a+)\1)x", "aaaax"), Some((4, 5)));
+    assert_eq!(find(r"(?<=(?!^)(a+)\1)x", "aaaax"), Some((4, 5)));
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn hard_variable_lookbehind_collects_candidates_on_each_entry() {
+    // The candidates collected for one hard lookbehind must not be reused when
+    // a lookbehind is entered again at another position, or when another one
+    // is entered: a negative lookbehind that matched at 0 left its candidate
+    // list behind for the attempt at 1, and two lookbehinds in a row kept
+    // trying each other's candidates until the backtrack limit was hit.
+    assert_eq!(find(r"(b*)(?<!\1)c", "abc"), None);
+    assert_eq!(find(r"(a*)b(?<=\1b)(c*)d(?<=\2d)", "abcd"), Some((0, 4)));
+    assert_eq!(find(r"(a*)b(?<=\1b)(c*)d(?<=\2d)", "aabccd"), Some((0, 6)));
+}
+
+#[cfg(feature = "variable-lookbehinds")]
+#[test]
+fn hard_variable_lookbehind_finds_match_with_many_candidates() {
+    // With many candidate start positions (a+ in a long string), the engine
+    // must still find the correct rightmost match rather than stopping early
+    // or returning a wrong result.
+    let haystack = "a".repeat(100) + "x";
+    assert_eq!(
+        find(r"(?<=(?!^)(a+)\1)x", &haystack),
+        Some((haystack.len() - 1, haystack.len()))
+    );
+}
+
+#[cfg(feature = "variable-lookbehinds")]
+#[test]
+fn hard_variable_lookbehind_short_circuit_hits_limit() {
+    // With a very low backtrack limit, candidate collection is bounded
+    // and the backtrack limit is still hit.
+    let haystack = "a".repeat(100) + "x";
+    let r = RegexBuilder::new(r"(?<=(?!^)(a+)\1)x")
+        .backtrack_limit(20)
+        .build()
+        .unwrap();
+    let result = r.find(&haystack);
+    assert!(
+        matches!(
+            result,
+            Err(fancy_regex::Error::RuntimeError(
+                fancy_regex::RuntimeError::BacktrackLimitExceeded
+            ))
+        ),
+        "expected BacktrackLimitExceeded, got {:?}",
+        result
+    );
 }
 
 #[test]
@@ -1134,6 +1226,27 @@ fn oniguruma_swapped_quantifier_order_is_possessive() {
 }
 
 #[test]
+fn oniguruma_question_mark_after_swapped_quantifier() {
+    let find = |re: &str, text: &str| {
+        let re = RegexBuilder::new(re).oniguruma_mode(true).build().unwrap();
+        re.find(text).unwrap().map(|m| (m.start(), m.end()))
+    };
+
+    // `a{3,2}` is a possessive `a{2,3}`, and the `?` makes it optional
+    assert_eq!(find("a{3,2}?", ""), Some((0, 0)));
+    assert_eq!(find("a{3,2}?", "aaa"), Some((0, 3)));
+    assert_eq!(find("a{3,2}?b", "b"), Some((0, 1)));
+    assert_eq!(find("a{3,2}?a", "aaa"), Some((0, 1)));
+    assert_eq!(find("(?:ab){3,2}?", "ababab"), Some((0, 6)));
+    assert_eq!(find("a{3,2}??", "aa"), Some((0, 0)));
+    assert_eq!(find(r"(a)\1{3,2}?", "a"), Some((0, 1)));
+    assert_eq!(find(r"(a)\1{3,2}?", "aaaa"), Some((0, 4)));
+
+    // An interval in order is still lazy
+    assert_eq!(find("a{2,3}?", "aaa"), Some((0, 2)));
+}
+
+#[test]
 fn oniguruma_plus_after_quantifier() {
     let re = RegexBuilder::new("^x{2}+$")
         .oniguruma_mode(true)
@@ -1148,6 +1261,24 @@ fn oniguruma_plus_after_quantifier() {
         .unwrap();
     let result = re.find_from_pos("xx", 0).unwrap();
     assert!(result.is_some(), "quantifier should be repeated");
+}
+
+#[test]
+fn oniguruma_empty_interval_is_literal() {
+    let find = |re: &str, oniguruma_mode: bool, text: &str| {
+        let re = RegexBuilder::new(re)
+            .oniguruma_mode(oniguruma_mode)
+            .build()
+            .unwrap();
+        re.find(text).unwrap().map(|m| (m.start(), m.end()))
+    };
+
+    assert_eq!(find("(?:ab){,}", true, "ab{,}"), Some((0, 5)));
+    assert_eq!(find(r"(a)\1{,}", true, "aa{,}"), Some((0, 5)));
+    assert_eq!(find("a{,2}", true, "aaa"), Some((0, 2)));
+
+    // Without Oniguruma mode `{,}` repeats like `*`
+    assert_eq!(find("(?:ab){,}", false, "abab{,}"), Some((0, 4)));
 }
 
 #[test]
@@ -1465,4 +1596,123 @@ fn seek_pattern_starting_with_byte_escape() {
         .unwrap();
     let m = re.find(b"abc\xff\xff").unwrap().unwrap();
     assert_eq!((m.start(), m.end()), (3, 5));
+}
+
+#[test]
+fn seek_whole_pattern_recursion_preserves_match() {
+    assert_eq!(
+        common::assert_seek_same(r"a(?:\g<0>)?b", "aabb"),
+        Some((0, 4))
+    );
+}
+
+#[test]
+fn seek_conditional_empty_branches_preserve_matches() {
+    for (pattern, haystack, expected) in [
+        (r"(a)?b(?(1)c)", "b abc", vec![(0, 1), (2, 5)]),
+        (r"(a)?b(?(1)c|)", "b abc", vec![(0, 1), (2, 5)]),
+        (r"(a)?b(?(1)|c)", "ab bc", vec![(0, 2), (3, 5)]),
+    ] {
+        for seek in [false, true] {
+            let re = RegexBuilder::new(pattern).seek(seek).build().unwrap();
+            let matches: Vec<_> = re
+                .find_iter(haystack)
+                .map(|m| m.map(|m| (m.start(), m.end())).unwrap())
+                .collect();
+            assert_eq!(matches, expected, "{pattern:?}, seek={seek}");
+        }
+    }
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn hard_variable_lookbehind() {
+    let p = r"(?<=(\G|(?m:^)\s*\*?)\s*)x";
+    let re = common::regex(p);
+    let m = re.find("* x").unwrap().unwrap();
+    assert_eq!(m.start(), 2);
+    assert_eq!(m.end(), 3);
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn hard_variable_lookbehind_match_at_bol_optional_whitespace_and_asterisk() {
+    let re = common::regex(r"(?<=(\G|^\s*\*?)\s*)(?i:(todo\b:?)|(fixme\b:?)|(note\b:?))");
+    let tests = vec![
+        ("TODO: fix this", Some((0, 5))),
+        ("# TODO: fix this", None),
+        ("* note", Some((2, 6))),
+    ];
+
+    for (text, expected) in tests {
+        match expected {
+            Some((start, end)) => {
+                let m = re.find(text).unwrap().unwrap();
+                assert_eq!(m.start(), start, "{}", text);
+                assert_eq!(m.end(), end, "{}", text);
+                assert_eq!(m.as_str(), &text[start..end], "{}", text);
+            }
+            None => {
+                assert!(re.find(text).unwrap().is_none(), "{}", text);
+            }
+        }
+    }
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn hard_variable_lookbehind_respects_unicode_and_bytes_mode() {
+    // A hard variable-length lookbehind routes its reverse DFA through
+    // `compile_hard_variable_lookbehind`, which must honour the caller's Unicode
+    // and bytes-mode settings rather than regex-automata's defaults, just like
+    // the other delegated engines.
+    //
+    // The backreference makes the lookbehind hard; the seek pattern contains
+    // `\w+`, which is unicode/ascii-sensitive.  Without the syntax config the
+    // reverse DFA would use regex-automata's defaults while the forward
+    // capture-extraction engine below uses the configured ones.
+    let pattern = r"(?<=(\w+)\1)x";
+    let ascii = RegexBuilder::new(pattern)
+        .bytes_mode(BytesMode::Ascii)
+        .build()
+        .unwrap();
+    // ASCII \w cannot match the two bytes of 'é', so the lookbehind fails.
+    assert_eq!(
+        ascii
+            .find("\u{e9}\u{e9}x")
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
+        None
+    );
+    let unicode = RegexBuilder::new(pattern).build().unwrap();
+    assert_eq!(
+        unicode
+            .find("\u{e9}\u{e9}x")
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
+        Some((4, 5))
+    );
+}
+
+#[test]
+#[cfg(feature = "variable-lookbehinds")]
+fn hard_variable_lookbehind_negated_class_ascii() {
+    // \W is a negated class: Unicode \W is a *subset* of ASCII \W (because
+    // Unicode \w includes non-ASCII letters).  In ASCII bytes mode the reverse
+    // DFA must use ASCII \W, otherwise it can miss candidate start positions
+    // that the verification step would otherwise accept.
+    let pattern = r"(?<=(\W+)\1)x";
+    // 'é' is a non-ASCII word char: ASCII \W matches its bytes, Unicode \W does
+    // not.  With a backreference the lookbehind is hard.
+    let ascii = RegexBuilder::new(pattern)
+        .bytes_mode(BytesMode::Ascii)
+        .build()
+        .unwrap();
+    assert_eq!(
+        ascii
+            .find("\u{e9}\u{e9}x")
+            .unwrap()
+            .map(|m| (m.start(), m.end())),
+        Some((4, 5))
+    );
 }

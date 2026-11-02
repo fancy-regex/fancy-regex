@@ -31,7 +31,9 @@ use bit_set::BitSet;
 use crate::alloc::string::ToString;
 use crate::parse::ExprTree;
 use crate::vm::CaptureGroupRange;
-use crate::{Assertion, AstNode, CaptureGroupTarget, CompileError, Error, Expr, Result};
+use crate::{
+    Assertion, AstNode, CaptureGroupTarget, CompileError, Error, Expr, LookAround, Result,
+};
 
 #[cfg(not(feature = "std"))]
 use alloc::collections::BTreeMap as Map;
@@ -162,11 +164,23 @@ struct Analyzer<'a> {
     leftmost_longest: bool,
     /// Oniguruma's `^` rejects the empty match at the absolute end of the haystack after a trailing
     /// newline when it anchors the match itself. When used as a sub-assertion inside a lookaround,
-    /// it behaves as a plain line start. So we need to track when we are analyzing inside a lookaround.
-    in_lookaround: bool,
+    /// it behaves as a plain line start.
+    in_lookahead: bool,
+    /// Whether we are currently analyzing the child of a lookbehind. Word
+    /// boundaries are only hard here: regex-automata's reverse DFA can't run
+    /// a variable-length lookbehind, so the whole lookbehind is compiled on
+    /// the VM. Lookaheads have no such restriction.
+    in_lookbehind: bool,
 }
 
 impl<'a> Analyzer<'a> {
+    /// Whether we are currently analyzing inside any lookaround (lookahead or
+    /// lookbehind). Derived from the two flags so callers can ask the
+    /// question without caring which kind of lookaround we're in.
+    fn in_lookaround(&self) -> bool {
+        self.in_lookahead || self.in_lookbehind
+    }
+
     // enclosing_group: The group that currently contains the expression being analyzed.
     // This is used to track which group "owns" any subroutine calls found,
     // and to determine if we're at the root level (group 0).
@@ -188,10 +202,18 @@ impl<'a> Analyzer<'a> {
         let mut hard = false;
         match *expr {
             Expr::Assertion(assertion) if assertion.is_always_hard() => {
+                // Word boundaries are only hard when they appear inside a
+                // lookbehind: regex-automata's reverse DFA can't run a
+                // variable-length lookbehind on unicode haystacks, so the
+                // whole lookbehind is compiled on the VM.
+                // A word boundary is const-size and can be delegated when
+                // outside a lookbehind, which is what keeps patterns like
+                // `\b(?:foo|bar|baz)\b` a single delegate instead of a branch
+                // per alternative.
                 const_size = true;
-                hard = true;
+                hard = assertion.is_hard_in_lookbehind(self.in_lookbehind);
             }
-            Expr::Assertion(Assertion::StartLineOniguruma { .. }) if !self.in_lookaround => {
+            Expr::Assertion(Assertion::StartLineOniguruma { .. }) if !self.in_lookaround() => {
                 const_size = true;
                 hard = true;
             }
@@ -207,7 +229,7 @@ impl<'a> Analyzer<'a> {
                 const_size = true;
                 hard = true; // NOTE: \Z is already considered hard and covered in the branch above
             }
-            Expr::Assertion(Assertion::EndText) if self.find_not_empty && !self.in_lookaround => {
+            Expr::Assertion(Assertion::EndText) if self.find_not_empty && !self.in_lookaround() => {
                 const_size = true;
                 hard = true;
             }
@@ -305,13 +327,21 @@ impl<'a> Analyzer<'a> {
                 hard = child_info.hard | self.backrefs.contains(group);
                 children.push(child_info);
             }
-            Expr::LookAround(ref child, _) => {
-                let was_in_lookaround = self.in_lookaround;
-                self.in_lookaround = true;
+            Expr::LookAround(ref child, la) => {
+                let was_in_lookbehind = self.in_lookbehind;
+                let was_in_lookahead = self.in_lookahead;
+                // Word boundaries are only hard inside a lookbehind:
+                // regex-automata's reverse DFA can't run a variable-length
+                // lookbehind, so the whole lookbehind is compiled on the VM.
+                // Lookaheads have no such restriction.
+                self.in_lookbehind =
+                    matches!(la, LookAround::LookBehind | LookAround::LookBehindNeg);
+                self.in_lookahead = !self.in_lookbehind;
                 // NOTE: min_pos_in_group might seem weird for lookbehinds
                 let child_info =
                     self.visit(child, min_pos_in_group, inside_zero_rep, enclosing_group)?;
-                self.in_lookaround = was_in_lookaround;
+                self.in_lookbehind = was_in_lookbehind;
+                self.in_lookahead = was_in_lookahead;
                 // min_size = 0
                 const_size = true;
                 hard = true;
@@ -962,7 +992,8 @@ pub fn analyze<'a>(tree: &'a ExprTree, ctx: AnalyzeContext) -> Result<Info<'a>> 
         allow_input_assertion_overrides,
         #[cfg(feature = "leftmost_longest")]
         leftmost_longest,
-        in_lookaround: false,
+        in_lookahead: false,
+        in_lookbehind: false,
     };
 
     let mut analyzed = analyzer.visit(&tree.expr, 0, false, 0)?;
@@ -1023,6 +1054,7 @@ mod tests {
     use super::{analyze, AnalyzeContext};
     use crate::parse::ExprTree;
     use crate::{can_compile_as_anchored, CompileError, Error, Expr};
+    use alloc::vec::Vec;
     use matches::assert_matches;
 
     #[cfg_attr(feature = "track_caller", track_caller)]
@@ -2422,5 +2454,149 @@ mod tests {
         let end_text_info = &info.children[0];
         assert!(!end_text_info.hard);
         assert!(end_text_info.const_size);
+    }
+
+    // Tests for word-boundary hardness (hard only inside a lookbehind).
+
+    #[test]
+    fn word_boundary_is_easy_at_root() {
+        // `\b` is const-size and easy at the root, so it delegates to the
+        // regex-automata engine instead of forcing the pattern onto the VM.
+        let tree = Expr::parse_tree(r"\b").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert!(info.const_size);
+        assert!(!info.hard);
+        assert_matches!(info.expr, Expr::Assertion(crate::Assertion::WordBoundary));
+    }
+
+    #[test]
+    fn not_word_boundary_is_easy_at_root() {
+        let tree = Expr::parse_tree(r"\B").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert!(info.const_size);
+        assert!(!info.hard);
+    }
+
+    #[test]
+    fn word_boundary_is_easy_inside_lookahead() {
+        // Lookaheads have no restriction on word boundaries: regex-automata
+        // can run them, so the boundary stays easy and the lookahead's child
+        // is what makes the lookaround hard.
+        let tree = Expr::parse_tree(r"(?=\b)").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        let wb_info = &info.children[0];
+        assert!(wb_info.const_size);
+        assert!(!wb_info.hard);
+        assert_matches!(
+            wb_info.expr,
+            Expr::Assertion(crate::Assertion::WordBoundary)
+        );
+    }
+
+    #[test]
+    fn word_boundary_is_hard_inside_lookbehind() {
+        // regex-automata's reverse DFA can't run a variable-length lookbehind,
+        // so the whole lookbehind is compiled on the VM and `\b` is hard there.
+        let tree = Expr::parse_tree(r"(?<=\b)").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        let wb_info = &info.children[0];
+        assert!(wb_info.const_size);
+        assert!(wb_info.hard);
+    }
+
+    #[test]
+    fn word_boundary_is_hard_inside_negated_lookbehind() {
+        let tree = Expr::parse_tree(r"(?<!\b)").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        let wb_info = &info.children[0];
+        assert!(wb_info.const_size);
+        assert!(wb_info.hard);
+    }
+
+    #[test]
+    fn word_boundary_in_nested_lookbehind_is_hard() {
+        // A word boundary nested inside a lookbehind (e.g. inside a group or
+        // alternation within the lookbehind) is still hard, because the whole
+        // lookbehind is compiled on the VM.
+        let tree = Expr::parse_tree(r"(?<=\b(?:foo|bar))").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        let lookbehind_info = &info.children[0];
+        let wb_info = &lookbehind_info.children[0];
+        assert!(wb_info.const_size);
+        assert!(wb_info.hard);
+    }
+
+    #[test]
+    fn word_boundary_inside_lookahead_inside_lookbehind_is_easy() {
+        // A lookahead nested inside a lookbehind resets the lookbehind
+        // context: the lookahead is evaluated forward, so a word boundary
+        // inside it is easy even though its enclosing lookbehind is compiled
+        // on the VM. The VM's Assertion(WordBoundary) instruction handles it.
+        let tree = Expr::parse_tree(r"(?<=(?=\b))").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        // root -> LookAround(LookBehind, child=LookAround(LookAhead, child=Assertion(WordBoundary)))
+        let lookaround_info = &info.children[0];
+        assert!(lookaround_info.hard);
+        assert_eq!(lookaround_info.children.len(), 1);
+        let wb_info = &lookaround_info.children[0];
+        assert!(wb_info.const_size);
+        assert!(!wb_info.hard);
+        assert_matches!(
+            wb_info.expr,
+            Expr::Assertion(crate::Assertion::WordBoundary)
+        );
+    }
+
+    #[test]
+    fn half_boundaries_are_always_hard() {
+        // `\<half` and `\>half` have no regex-automata look, so they are hard
+        // everywhere, including at the root and inside a lookahead.
+        for pattern in [r"\b{start-half}", r"\b{end-half}"] {
+            let tree = Expr::parse_tree(pattern).unwrap();
+            let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+            assert!(info.const_size);
+            assert!(info.hard, "expected {} to be hard", pattern);
+        }
+    }
+
+    #[test]
+    fn half_boundary_inside_lookahead_is_hard() {
+        let tree = Expr::parse_tree(r"(?=\b{start-half})").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        let hb_info = &info.children[0];
+        assert!(hb_info.const_size);
+        assert!(hb_info.hard);
+    }
+
+    #[test]
+    fn word_boundary_easiness_preserved_in_concatenation() {
+        // A word boundary on either side of an easy alternation stays easy, so
+        // the whole concat delegates as one engine.
+        let tree = Expr::parse_tree(r"\b(?:foo|bar)\b").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert!(!info.hard);
+        assert!(info.const_size);
+        assert_eq!(info.children.len(), 3);
+        for child in &info.children {
+            assert!(!child.hard);
+        }
+    }
+
+    #[test]
+    fn word_boundary_easiness_preserved_in_concatenation_with_hard() {
+        // When the concat is hard for another reason (a backref), the word
+        // boundaries are still easy — only the backref forces the VM path.
+        let tree = Expr::parse_tree(r"(\w)\b\1\b").unwrap();
+        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        assert!(info.hard);
+        let wb_children: Vec<_> = info
+            .children
+            .iter()
+            .filter(|c| matches!(c.expr, Expr::Assertion(crate::Assertion::WordBoundary)))
+            .collect();
+        assert_eq!(wb_children.len(), 2);
+        for wb in wb_children {
+            assert!(!wb.hard);
+        }
     }
 }

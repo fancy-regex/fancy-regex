@@ -42,7 +42,7 @@ use crate::analyze::Info;
 use crate::seek::build_seek_pattern;
 use crate::to_hir::{expr_to_hir, HirCtx};
 #[cfg(feature = "variable-lookbehinds")]
-use crate::vm::{CachePoolFn, ReverseBackwardsDelegate};
+use crate::vm::{CachePoolFn, HardVariableLookbehind, ReverseBackwardsDelegate};
 use crate::vm::{
     CaptureGroupRange, CaseiLiteral, CharClassMatcher, ClassSeqMatcher, Delegate, Insn, Prog, Seek,
     SeqElem, SeqLook, CLASS_SEQ_MAX_SLOTS,
@@ -78,8 +78,21 @@ impl VMBuilder {
         }
     }
 
-    fn build(self, bytes_mode: BytesMode, seek_pattern: String, max_size: usize) -> Prog {
-        Prog::new(self.prog, self.n_saves, bytes_mode, seek_pattern, max_size)
+    fn build(
+        self,
+        bytes_mode: BytesMode,
+        unicode: bool,
+        seek_pattern: String,
+        max_size: usize,
+    ) -> Prog {
+        Prog::new(
+            self.prog,
+            self.n_saves,
+            bytes_mode,
+            unicode,
+            seek_pattern,
+            max_size,
+        )
     }
 
     fn newsave(&mut self) -> usize {
@@ -368,7 +381,7 @@ impl<'a> Compiler<'a> {
                 if child_info.hard {
                     // Nested absent operators are not yet supported
                     let is_absent = |e: &Expr| matches!(e, Expr::Absent(_));
-                    if is_absent(child_info.expr) || child_info.expr.has_descendant(is_absent) {
+                    if child_info.expr.has_descendant_or_self(is_absent) {
                         return Err(Error::CompileError(Box::new(
                             CompileError::FeatureNotYetSupported(
                                 "Nested absent operators".to_string(),
@@ -488,6 +501,10 @@ impl<'a> Compiler<'a> {
 
         // add the false branch, update the split target
         self.b.set_split_target(split_pc, self.b.pc(), true);
+        // The condition failed. Backtracking to the split does not undo `BeginAtomic`,
+        // so end the atomic group here too, or an enclosing atomic group would later
+        // read this group's entry on the explicit stack. There are no branches to cut.
+        self.b.add(Insn::EndAtomic)?;
         false_branch(self)?;
 
         // update the jump target for jumping over the false branch
@@ -721,7 +738,16 @@ impl<'a> Compiler<'a> {
     fn compile_positive_lookaround(&mut self, inner: &Info<'_>, la: LookAround) -> Result<()> {
         let save = self.b.newsave();
         self.b.add(Insn::Save(save))?;
+        // A lookahead is atomic: once it has matched, a later failure must not backtrack
+        // into it. Only the VM backtracks, so a delegated (easy) lookahead needs no cut.
+        let atomic = la == LookAhead && inner.hard;
+        if atomic {
+            self.b.add(Insn::BeginAtomic)?;
+        }
         self.compile_lookaround_inner(inner, la)?;
+        if atomic {
+            self.b.add(Insn::EndAtomic)?;
+        }
         self.b.add(Insn::Restore(save))?;
         Ok(())
     }
@@ -800,19 +826,28 @@ impl<'a> Compiler<'a> {
                             )))
                         }
                     } else {
-                        Err(Error::CompileError(Box::new(
-                            CompileError::FeatureNotYetSupported(
-                                "Variable length lookbehinds with fancy features".to_string(),
-                            ),
-                        )))
+                        #[cfg(feature = "variable-lookbehinds")]
+                        {
+                            self.compile_hard_variable_lookbehind(inner, la)
+                        }
+                        #[cfg(not(feature = "variable-lookbehinds"))]
+                        {
+                            Err(Error::CompileError(Box::new(
+                                CompileError::VariableLookBehindRequiresFeature,
+                            )))
+                        }
                     }
                 } else {
-                    // variable sized lookbehinds with fancy features are currently unsupported
-                    Err(Error::CompileError(Box::new(
-                        CompileError::FeatureNotYetSupported(
-                            "Variable length lookbehinds with fancy features".to_string(),
-                        ),
-                    )))
+                    #[cfg(feature = "variable-lookbehinds")]
+                    {
+                        self.compile_hard_variable_lookbehind(inner, la)
+                    }
+                    #[cfg(not(feature = "variable-lookbehinds"))]
+                    {
+                        Err(Error::CompileError(Box::new(
+                            CompileError::VariableLookBehindRequiresFeature,
+                        )))
+                    }
                 }
             }
         } else {
@@ -837,6 +872,86 @@ impl<'a> Compiler<'a> {
     }
 
     #[cfg(feature = "variable-lookbehinds")]
+    fn compile_hard_variable_lookbehind(
+        &mut self,
+        inner: &Info<'_>,
+        _la: LookAround,
+    ) -> Result<()> {
+        let end_save = self.b.newsave();
+        self.b.add(Insn::Save(end_save))?;
+        let candidate_save = self.b.newsave();
+        self.b.add(Insn::Save(candidate_save))?;
+
+        let mut seek_pattern = String::new();
+        build_seek_pattern(inner, &self.group_info_map, 0, &mut seek_pattern, 0);
+
+        use regex_automata::hybrid::dfa;
+        use regex_automata::nfa::thompson;
+        use regex_automata::util::syntax::Config as SyntaxConfig;
+        use regex_automata::MatchKind;
+        // See `compile_variable_lookbehind` for why the capacity check is skipped by default.
+        let mut dfa_config = dfa::Config::new()
+            .match_kind(MatchKind::All)
+            .unicode_word_boundary(true)
+            .skip_cache_capacity_check(self.options.delegate_dfa_skip_cache_capacity_check);
+        if let Some(limit) = self.options.delegate_dfa_size_limit {
+            dfa_config = dfa_config.cache_capacity(limit);
+        }
+        let mut thompson_config = thompson::Config::new().reverse(true);
+        if let Some(limit) = self.options.delegate_size_limit {
+            thompson_config = thompson_config.nfa_size_limit(Some(limit));
+        }
+        // This builder parses `seek_pattern` itself instead of going through
+        // `options_to_rabuilder`, so the caller's Unicode and bytes-mode settings
+        // have to be applied to its syntax config too. Without them the reverse
+        // DFA would use regex-automata's defaults while the forward
+        // capture-extraction engine below uses the configured ones.
+        let syntax = SyntaxConfig::new()
+            .utf8(matches!(self.options.bytes_mode, BytesMode::Unicode))
+            .unicode(self.options.unicode);
+        let dfa = match dfa::DFA::builder()
+            .configure(dfa_config)
+            .thompson(thompson_config)
+            .syntax(syntax)
+            .build(&seek_pattern)
+        {
+            Ok(dfa) => Arc::new(dfa),
+            Err(e) => {
+                return Err(Error::CompileError(Box::new(CompileError::DfaBuildError(
+                    seek_pattern,
+                    e.to_string(),
+                ))));
+            }
+        };
+
+        let create: CachePoolFn = alloc::boxed::Box::new({
+            let dfa = Arc::clone(&dfa);
+            move || dfa.create_cache()
+        });
+        let cache_pool = Pool::new(create);
+
+        let hard_lb_pc = self.b.pc();
+        self.b
+            .add(Insn::HardVariableLookbehind(HardVariableLookbehind {
+                dfa,
+                cache_pool,
+                pattern: seek_pattern,
+                end_pos_slot: end_save,
+                candidate_pos_slot: candidate_save,
+            }))?;
+
+        self.visit(inner, false)?;
+        self.b.add(Insn::ReverseLookbehindPosCheck {
+            slot: end_save,
+            candidate_pos_slot: candidate_save,
+            hard_lb_pc,
+        })?;
+        self.b.add(Insn::Restore(end_save))?;
+        self.b.add(Insn::Restore(candidate_save))?;
+        Ok(())
+    }
+
+    #[cfg(feature = "variable-lookbehinds")]
     fn compile_variable_lookbehind(&mut self, delegate_builder: DelegateBuilder) -> Result<()> {
         let pattern = &delegate_builder.re;
         let capture_groups = delegate_builder
@@ -848,7 +963,14 @@ impl<'a> Compiler<'a> {
         use regex_automata::nfa::thompson;
         use regex_automata::util::syntax::Config as SyntaxConfig;
 
-        let mut dfa_config = dfa::Config::new().unicode_word_boundary(true);
+        // A directly built lazy DFA cannot fall back to another engine the way
+        // `meta::Regex` does, so a too-small cache capacity must not be an error.
+        // Users cannot know the minimum in advance (it depends on the NFA size),
+        // so by default round it up instead. `delegate_dfa_skip_cache_capacity_check(false)`
+        // keeps the limit strict and turns a too-small capacity into a compile error.
+        let mut dfa_config = dfa::Config::new()
+            .unicode_word_boundary(true)
+            .skip_cache_capacity_check(self.options.delegate_dfa_skip_cache_capacity_check);
         if let Some(limit) = self.options.delegate_dfa_size_limit {
             dfa_config = dfa_config.cache_capacity(limit);
         }
@@ -1141,15 +1263,13 @@ pub(crate) fn compile_inner_from_hir(
     Ok(re)
 }
 
-pub(crate) fn options_to_rabuilder(options: &CompileOptions, usage: DelegateUsage) -> RaBuilder {
-    use regex_automata::util::syntax::Config as SyntaxConfig;
-
+pub(crate) fn options_to_raconfig(options: &CompileOptions, usage: DelegateUsage) -> RaConfig {
     let mut config = RaConfig::new();
     if let Some(limit) = options.delegate_size_limit {
         config = config.nfa_size_limit(Some(limit));
     }
     if let Some(limit) = options.delegate_dfa_size_limit {
-        config = config.dfa_size_limit(Some(limit));
+        config = config.hybrid_cache_capacity(limit);
     }
     if !usage.prefilter {
         // Anchored searches never consult a prefilter, so don't spend build time
@@ -1170,7 +1290,25 @@ pub(crate) fn options_to_rabuilder(options: &CompileOptions, usage: DelegateUsag
         // search_half/search; skip compiling explicit capture-group slots.
         config = config.which_captures(WhichCaptures::Implicit);
     }
+    // Disable regex-automata's "UTF-8 empty" optimization when the input is not
+    // guaranteed to be valid UTF-8 (i.e. in `Ascii` or `UnicodeBytes` bytes
+    // modes). That optimization skips zero-width matches whose offset falls
+    // inside a UTF-8 codepoint, on the premise that the haystack is valid UTF-8
+    // and such a match could never be part of a real match. With arbitrary
+    // bytes that premise is false: `^` / `(?m:^)` legitimately match at the
+    // start of a haystack whose first byte is a non-ASCII byte (e.g. `\x80`,
+    // also a UTF-8 continuation/lead byte), so the offset is not a codepoint
+    // boundary and the optimization wrongly rejects the match.
+    if !matches!(options.bytes_mode, BytesMode::Unicode) {
+        config = config.utf8_empty(false);
+    }
+    config
+}
 
+pub(crate) fn options_to_rabuilder(options: &CompileOptions, usage: DelegateUsage) -> RaBuilder {
+    use regex_automata::util::syntax::Config as SyntaxConfig;
+
+    let config = options_to_raconfig(options, usage);
     let mut builder = RaBuilder::new();
     builder.configure(config);
     // NOTE: our Expr to_str function handles creating the correct pattern string for regex-automata
@@ -1540,6 +1678,9 @@ pub struct CompileOptions {
     pub delegate_size_limit: Option<usize>,
     /// Optional size limit in bytes for the DFA of each delegated sub-expression.
     pub delegate_dfa_size_limit: Option<usize>,
+    /// Whether the reverse lazy DFAs of variable-length lookbehinds skip the minimum cache
+    /// capacity check, rounding the capacity up instead of failing to build.
+    pub delegate_dfa_skip_cache_capacity_check: bool,
     /// Optional cap on the number of VM instructions emitted while compiling.
     /// Subroutine calls are inlined at compile time, so a self- or
     /// mutually-recursive pattern can expand without bound even while the
@@ -1571,6 +1712,10 @@ impl core::fmt::Debug for CompileOptions {
             .field("unicode", &self.unicode)
             .field("delegate_size_limit", &self.delegate_size_limit)
             .field("delegate_dfa_size_limit", &self.delegate_dfa_size_limit)
+            .field(
+                "delegate_dfa_skip_cache_capacity_check",
+                &self.delegate_dfa_skip_cache_capacity_check,
+            )
             .field("max_prog_size", &self.max_prog_size)
             .finish()
     }
@@ -1587,6 +1732,7 @@ impl Default for CompileOptions {
             unicode: true,
             delegate_size_limit: None,
             delegate_dfa_size_limit: None,
+            delegate_dfa_skip_cache_capacity_check: true,
             max_prog_size: None,
         }
     }
@@ -1655,7 +1801,7 @@ pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
         c.b.add(Insn::RejectEmptyMatchAtEOFFollowingNewline)?;
     }
     c.b.add(Insn::End)?;
-    Ok(c.b.build(bytes_mode, seek_pattern, info.max_size))
+    Ok(c.b.build(bytes_mode, c.options.unicode, seek_pattern, info.max_size))
 }
 
 struct DelegateBuilder {
@@ -1815,8 +1961,34 @@ mod tests {
     use crate::analyze::{analyze, AnalyzeContext};
     use crate::parse::ExprTree;
     use crate::vm::Insn::*;
+    use crate::{BytesMode, Regex, RegexBuilder};
 
     use matches::assert_matches;
+
+    #[test]
+    fn delegate_dfa_size_limit_sets_hybrid_cache_capacity() {
+        let options = CompileOptions {
+            delegate_dfa_size_limit: Some(123_456),
+            ..Default::default()
+        };
+        let config = options_to_raconfig(&options, DelegateUsage::unanchored());
+        assert_eq!(config.get_hybrid_cache_capacity(), 123_456);
+        // the fully compiled DFA size limit must be left alone
+        assert_eq!(
+            config.get_dfa_size_limit(),
+            RaConfig::new().get_dfa_size_limit()
+        );
+    }
+
+    #[test]
+    fn delegate_size_limit_sets_nfa_size_limit() {
+        let options = CompileOptions {
+            delegate_size_limit: Some(54_321),
+            ..Default::default()
+        };
+        let config = options_to_raconfig(&options, DelegateUsage::unanchored());
+        assert_eq!(config.get_nfa_size_limit(), Some(54_321));
+    }
 
     #[cfg_attr(feature = "track_caller", track_caller)]
     fn assert_compile_error<T, F>(result: crate::Result<T>, check: F)
@@ -1990,16 +2162,17 @@ mod tests {
     fn conditional_expression_can_be_compiled() {
         let prog = compile_prog(r"(?(ab)c|d)");
 
-        assert_eq!(prog.len(), 8, "prog: {:?}", prog);
+        assert_eq!(prog.len(), 9, "prog: {:?}", prog);
 
         assert_matches!(prog[0], BeginAtomic);
         assert_matches!(prog[1], Split(2, 6));
         assert_matches!(prog[2], Lit(ref l) if l == "ab");
         assert_matches!(prog[3], EndAtomic);
         assert_matches!(prog[4], Lit(ref l) if l == "c");
-        assert_matches!(prog[5], Jmp(7));
-        assert_matches!(prog[6], Lit(ref l) if l == "d");
-        assert_matches!(prog[7], End);
+        assert_matches!(prog[5], Jmp(8));
+        assert_matches!(prog[6], EndAtomic);
+        assert_matches!(prog[7], Lit(ref l) if l == "d");
+        assert_matches!(prog[8], End);
     }
 
     #[test]
@@ -2277,22 +2450,140 @@ mod tests {
 
     #[test]
     #[cfg(feature = "variable-lookbehinds")]
-    fn variable_lookbehind_with_required_feature_backref_captures() {
-        // currently hard variable lookbehinds are unsupported.
-        // the backref to a capture group inside the variable lookbehind makes the capture group hard
-        let tree = Expr::parse_tree(r"(?<=a(b+))\1").unwrap();
-        let info = analyze(&tree, AnalyzeContext::default()).unwrap();
-        assert_compile_error(
+    fn variable_hard_lookbehind_patterns_compile() {
+        let patterns = vec![
+            r"(a+)(?<=\1)b",
+            r"(a+)\1(?<=\1)b",
+            r"(a+)(b)(?<=\1)c",
+            r"(a+)(?<=\1\1)b",
+            r"(?<=(\G|^\s*\*?)\s*)(?i:(todo\b:?)|(fixme\b:?)|(note\b:?))",
+            r"(?<=([!\&*-/:-=?^|~]|\b(?i:and|contain|in|is|or|not))[\t ]*)\n",
+            r"(?<=a(b+))\1",
+        ];
+        for p in patterns {
+            let prog = compile_prog_no_explicit_group0(p);
+            assert!(
+                prog.iter()
+                    .any(|i| matches!(i, crate::vm::Insn::HardVariableLookbehind(_))),
+                "HardVariableLookbehind not found in {}: {:?}",
+                p,
+                prog
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn variable_hard_lookbehind_applies_dfa_size_limit() {
+        let prog = compile_prog_with(r"(?<=(a+)\1)x", AnalyzeContext::default(), |info, tree| {
             compile(
-                &info,
+                info,
                 CompileOptions {
-                    anchored: true,
+                    anchored: false,
                     contains_subroutines: tree.contains_subroutines,
+                    delegate_dfa_size_limit: Some(1),
                     ..CompileOptions::default()
                 },
-            ),
-            |e| matches!(e, CompileError::FeatureNotYetSupported(_)),
+            )
+            .unwrap()
+            .body
+        });
+        let lookbehind = prog
+            .iter()
+            .find_map(|i| match i {
+                Insn::HardVariableLookbehind(lb) => Some(lb),
+                _ => None,
+            })
+            .expect("HardVariableLookbehind not found");
+        let config = lookbehind.dfa.get_config();
+        assert!(config.get_skip_cache_capacity_check());
+        // Checks that the configured value was forwarded; there is no API to
+        // read the effective capacity after regex-automata rounds it up.
+        assert_eq!(config.get_cache_capacity(), 1);
+    }
+
+    #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn variable_hard_lookbehind_can_disable_skip_cache_capacity_check() {
+        let tree = Expr::parse_tree(r"(?<=(a+)\1)x").unwrap();
+        let mut info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        let result = compile(
+            &mut info,
+            CompileOptions {
+                anchored: false,
+                contains_subroutines: tree.contains_subroutines,
+                delegate_dfa_size_limit: Some(1),
+                delegate_dfa_skip_cache_capacity_check: false,
+                ..CompileOptions::default()
+            },
         );
+        assert_compile_error(result, |e| matches!(e, CompileError::DfaBuildError(..)));
+    }
+
+    #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn variable_hard_lookbehind_applies_nfa_size_limit() {
+        let tree = Expr::parse_tree(r"(?<=(a+)\1)x").unwrap();
+        let mut info = analyze(&tree, AnalyzeContext::default()).unwrap();
+        let result = compile(
+            &mut info,
+            CompileOptions {
+                anchored: false,
+                contains_subroutines: tree.contains_subroutines,
+                delegate_size_limit: Some(1),
+                ..CompileOptions::default()
+            },
+        );
+        assert_compile_error(result, |e| matches!(e, CompileError::DfaBuildError(..)));
+    }
+
+    #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn variable_hard_lookbehind_debug_output() {
+        // Exercises the Debug impls of `HardVariableLookbehind` and
+        // `ReverseLookbehindPosCheck`, which format the seek pattern and the
+        // save slots but deliberately omit the DFA and cache pool.
+        let prog = compile_prog_no_explicit_group0(r"(a+)(?<=\1)b");
+        assert!(
+            prog.iter().any(|i| matches!(
+                i,
+                Insn::HardVariableLookbehind(crate::vm::HardVariableLookbehind {
+                    pattern,
+                    end_pos_slot: 5,
+                    candidate_pos_slot: 6,
+                    ..
+                }) if pattern == "a+"
+            )),
+            "HardVariableLookbehind not found or wrong fields: {:?}",
+            prog
+        );
+        assert!(
+            prog.iter().any(|i| matches!(
+                i,
+                Insn::ReverseLookbehindPosCheck {
+                    slot: 5,
+                    candidate_pos_slot: 6,
+                    hard_lb_pc: 11,
+                }
+            )),
+            "ReverseLookbehindPosCheck not found or wrong fields: {:?}",
+            prog
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn variable_hard_lookbehind_regex_clone() {
+        // `Regex::clone` shares the compiled `Arc<Prog>` rather than cloning
+        // the program, so the clone must still match the same inputs.  This
+        // is the only Clone path exercised at runtime for patterns that emit
+        // a `HardVariableLookbehind` instruction.
+        let r = RegexBuilder::new(r"(a+)(?<=\1)b").build().expect("compile");
+        let r2 = r.clone();
+        let m1 = r.find("aaab").expect("find").unwrap();
+        let m2 = r2.find("aaab").expect("find2").unwrap();
+        assert_eq!(m1.as_str(), m2.as_str());
+        assert_eq!(m1.as_str(), "aaab");
     }
 
     #[test]
@@ -2312,7 +2603,7 @@ mod tests {
         // Use explicit_capture_group_0=false so that (\w) = group 1 and \1 refers to it
         let prog = compile_prog_no_explicit_group0(r"(\w)(?~\1)");
 
-        assert_eq!(prog.len(), 20, "prog: {:?}", prog);
+        assert_eq!(prog.len(), 21, "prog: {:?}", prog);
 
         assert_matches!(prog[0], SplitUnanchored(3, 1));
         assert_matches!(prog[1], Any);
@@ -2326,7 +2617,7 @@ mod tests {
             prog[8],
             RepeatEpsilonGr {
                 lo: 0,
-                next: 18,
+                next: 19,
                 repeat: 4,
                 check: 5
             }
@@ -2345,10 +2636,11 @@ mod tests {
         assert_matches!(prog[13], FailNegativeLookAround);
         assert_matches!(prog[14], EndAtomic);
         assert_matches!(prog[15], Any);
-        assert_matches!(prog[16], Jmp(17));
-        assert_matches!(prog[17], Jmp(8));
-        assert_matches!(prog[18], Save(1));
-        assert_matches!(prog[19], End);
+        assert_matches!(prog[16], Jmp(18));
+        assert_matches!(prog[17], EndAtomic);
+        assert_matches!(prog[18], Jmp(8));
+        assert_matches!(prog[19], Save(1));
+        assert_matches!(prog[20], End);
     }
 
     #[test]
@@ -2646,6 +2938,42 @@ mod tests {
     }
 
     #[test]
+    fn word_boundary_outside_lookbehind_delegates_with_alternation() {
+        // Word boundaries are const-size and regex-automata supports them, so
+        // `\b(?:alt)\b` compiles to a single delegated engine regardless of
+        // how many alternatives it has. Previously the whole alternation was
+        // compiled branch by branch on the VM, growing linearly with branch
+        // count (e.g. MATLAB's 6741-instruction `begin` regex).
+        let prog = compile_prog(r"\b(?:abs|accumarray|acos|abcdef|ghijklmnop)\b");
+        assert_eq!(prog.len(), 2, "prog: {:?}", prog);
+        assert_delegate_insn(
+            &prog[0],
+            r"\b(?:abs|accumarray|acos|abcdef|ghijklmnop)\b",
+            None,
+        );
+        assert_matches!(prog[1], End);
+    }
+
+    #[test]
+    fn word_boundary_inside_lookbehind_stays_on_vm() {
+        // regex-automata's reverse DFA can't run a variable-length lookbehind,
+        // so the alternation *inside* a lookbehind is compiled branch by
+        // branch on the VM (GoBack + Split + per-branch literals), even though
+        // the word boundaries around it would otherwise delegate.
+        let prog = compile_prog(r"\b(?<=\b(?:foo|bar)\b)\b");
+        assert!(
+            prog.iter().any(|insn| matches!(insn, GoBack(_))),
+            "lookbehind should be compiled on the VM: {:?}",
+            prog
+        );
+        assert!(
+            prog.iter().any(|insn| matches!(insn, Lit(s) if s == "foo")),
+            "lookbehind alternation should be compiled branch by branch: {:?}",
+            prog
+        );
+    }
+
+    #[test]
     fn continue_from_prev_match_not_first_instruction_can_be_compiled() {
         let prog = compile_prog(r"\w\G\s\d");
 
@@ -2658,19 +2986,186 @@ mod tests {
     }
 
     #[test]
+    fn word_boundary_delegates_as_single_engine_with_backref() {
+        // A backref makes the pattern hard, but the word boundaries are still
+        // const-size and easy. The trailing `\b` is folded into a delegated
+        // engine; the leading `\b` is hard context (the backref follows it),
+        // so it is emitted as a native VM assertion.
+        let prog = compile_prog_no_explicit_group0(r"(\w)\b\1\b");
+        assert_eq!(prog.len(), 12, "prog: {:?}", prog);
+        assert_matches!(prog[0], SplitUnanchored(3, 1));
+        assert_matches!(prog[3], Save(0));
+        assert_matches!(prog[4], SaveCaptureGroupStart(1));
+        assert_matches!(prog[5], CharClass(_));
+        assert_matches!(prog[6], Save(3));
+        assert_matches!(prog[7], Insn::Assertion(crate::Assertion::WordBoundary));
+        assert_matches!(
+            prog[8],
+            Backref {
+                slot: 2,
+                casei: false,
+                unicode: true
+            }
+        );
+        assert_delegate_insn(&prog[9], r"\b", None);
+        assert_matches!(prog[10], Save(1));
+        assert_matches!(prog[11], End);
+    }
+
+    #[test]
+    fn word_boundary_delegates_inside_hard_concat_with_hard_middle() {
+        // The hard context flows right-to-left, so the trailing `\b` is part
+        // of the delegated suffix. The leading `\b` is easy context (it is
+        // the leftmost element) and is also delegated; the hard backref in
+        // the middle is compiled on the VM.
+        let prog = compile_prog_no_explicit_group0(r"\b(\w)\1\b");
+        assert_eq!(prog.len(), 12, "prog: {:?}", prog);
+        assert_matches!(prog[0], SplitUnanchored(3, 1));
+        assert_matches!(prog[1], Any);
+        assert_matches!(prog[2], Jmp(0));
+        assert_matches!(prog[3], Save(0));
+        assert_delegate_insn(&prog[4], r"\b", None);
+        assert_matches!(prog[5], SaveCaptureGroupStart(1));
+        assert_matches!(prog[6], CharClass(_));
+        assert_matches!(prog[7], Save(3));
+        assert_matches!(
+            prog[8],
+            Backref {
+                slot: 2,
+                casei: false,
+                unicode: true
+            }
+        );
+        assert_delegate_insn(&prog[9], r"\b", None);
+        assert_matches!(prog[10], Save(1));
+        assert_matches!(prog[11], End);
+    }
+
+    #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn word_boundary_inside_lookbehind_compiled_on_vm_with_backref() {
+        // A backref makes the lookbehind hard; the word boundary inside it
+        // stays hard too, so the whole lookbehind is compiled on the VM with
+        // the HardVariableLookbehind reverse-DFA seek path.
+        let prog = compile_prog_no_explicit_group0(r"(?<=(a+)\1)b");
+        assert!(
+            prog.iter()
+                .any(|i| matches!(i, Insn::HardVariableLookbehind(_))),
+            "expected HardVariableLookbehind: {:?}",
+            prog
+        );
+        assert!(
+            prog.iter()
+                .any(|i| matches!(i, Insn::ReverseLookbehindPosCheck { .. })),
+            "lookbehind should use ReverseLookbehindPosCheck: {:?}",
+            prog
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "variable-lookbehinds")]
+    fn word_boundary_inside_easy_variable_lookbehind_stays_delegated() {
+        // Without a backref, a variable-length lookbehind delegates to a
+        // reverse DFA. Word boundaries inside it are still hard, but the
+        // reverse DFA honours `unicode_word_boundary`, so the lookbehind
+        // compiles as a single BackwardsDelegate carrying the `\b` assertions.
+        let prog = compile_prog(r"(?<=\b\w+\b)x");
+        assert_eq!(prog.len(), 7, "prog: {:?}", prog);
+        assert_matches!(prog[0], Save(0));
+        assert_matches!(prog[1], Insn::Assertion(crate::Assertion::WordBoundary));
+        assert_matches!(
+            &prog[2],
+            BackwardsDelegate(ReverseBackwardsDelegate { pattern, .. }) if pattern == "\\w+"
+        );
+        assert_matches!(prog[3], Insn::Assertion(crate::Assertion::WordBoundary));
+        assert_matches!(prog[4], Restore(0));
+        assert_matches!(prog[5], Lit(ref l) if l == "x");
+        assert_matches!(prog[6], End);
+    }
+
+    #[test]
+    fn word_boundary_in_negated_lookahead_delegates() {
+        // A negative lookahead makes the pattern hard, but the word boundary
+        // inside it is easy and is folded into the delegated negative
+        // lookahead rather than compiled as a separate VM assertion. The
+        // trailing `bar` is a single literal, so it stays a native Lit.
+        let prog = compile_prog(r"\b(?!\bfoo\b)bar");
+        assert_eq!(prog.len(), 6, "prog: {:?}", prog);
+        assert_delegate_insn(&prog[0], r"\b", None);
+        assert_matches!(prog[1], Split(2, 4));
+        assert_delegate_insn(&prog[2], r"\bfoo\b", None);
+        assert_matches!(prog[3], FailNegativeLookAround);
+        assert_matches!(prog[4], Lit(ref l) if l == "bar");
+        assert_matches!(prog[5], End);
+    }
+
+    #[test]
+    fn word_boundary_unicode_and_ascii_modes_match() {
+        // `\b` delegates in both Unicode and ASCII bytes mode, and both must
+        // agree on where word boundaries fall. The ASCII variant is the
+        // regex-automata `WordAscii` look; the Unicode variant is `WordUnicode`.
+        for (re, text, expect) in [
+            (r"\bat\b", "at", true),
+            (r"\bat\b", "cat", false),
+            (r"\bat\b", "at ", true),
+            (r"\bat\b", " at", true),
+            (r"\bat\b", "x at y", true),
+            (r"\bat\b", " bat ", false),
+            (r"\b\d+\b", "42", true),
+            (r"\b\d+\b", "x42y", false),
+            (r"\b\d+\b", "x 42 y", true),
+        ] {
+            let str_re = regex::Regex::new(re).unwrap();
+            assert_eq!(str_re.is_match(text), expect, "str {re} on {text:?}");
+            let ascii_re = RegexBuilder::new(re)
+                .bytes_mode(BytesMode::Ascii)
+                .build()
+                .unwrap();
+            assert_eq!(
+                ascii_re.is_match(text.as_bytes()).unwrap(),
+                expect,
+                "ascii {re} on {text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn word_boundary_at_start_and_end_of_haystack() {
+        // Word boundaries at the very start and end of the haystack must match
+        // when the adjacent character is a word char and fail otherwise.
+        let re = Regex::new(r"\bat\b").unwrap();
+        assert!(re.is_match("at").unwrap());
+        assert!(re.is_match("at ").unwrap());
+        assert!(re.is_match(" at").unwrap());
+        assert!(re.find("x at y").unwrap().is_some());
+        assert!(!re.find("cat").unwrap().is_some());
+    }
+
+    #[test]
+    fn word_boundary_not_boundary_delegates() {
+        // `\B` is the negated word boundary; it is also const-size and easy
+        // outside a lookbehind, so it delegates.
+        let prog = compile_prog(r"\Bfoo\B");
+        assert_eq!(prog.len(), 2, "prog: {:?}", prog);
+        assert_delegate_insn(&prog[0], r"\Bfoo\B", None);
+        assert_matches!(prog[1], End);
+    }
+
+    #[test]
     fn continue_from_prev_match_inside_conditional_can_be_compiled() {
         let prog = compile_prog(r"(?(\G)\s\d|$)");
 
-        assert_eq!(prog.len(), 8, "prog: {:?}", prog);
+        assert_eq!(prog.len(), 9, "prog: {:?}", prog);
 
         assert_matches!(prog[0], BeginAtomic);
         assert_matches!(prog[1], Split(2, 6));
         assert_matches!(prog[2], ContinueFromPreviousMatchEnd { at_start: false });
         assert_matches!(prog[3], EndAtomic);
         assert_class_seq_insn(&prog[4], r"\s\d");
-        assert_matches!(prog[5], Jmp(7));
-        assert_class_seq_insn(&prog[6], r"$");
-        assert_matches!(prog[7], End);
+        assert_matches!(prog[5], Jmp(8));
+        assert_matches!(prog[6], EndAtomic);
+        assert_class_seq_insn(&prog[7], r"$");
+        assert_matches!(prog[8], End);
     }
 
     #[test]
@@ -2707,6 +3202,7 @@ mod tests {
         assert_matches!(prog[16], End);
     }
 
+    #[track_caller]
     fn compile_prog(re: &str) -> Vec<Insn> {
         compile_prog_with(
             re,
@@ -2729,6 +3225,7 @@ mod tests {
         )
     }
 
+    #[track_caller]
     fn compile_prog_no_explicit_group0(re: &str) -> Vec<Insn> {
         compile_prog_with(re, AnalyzeContext::default(), |info, tree| {
             compile(
@@ -2744,6 +3241,7 @@ mod tests {
         })
     }
 
+    #[track_caller]
     fn compile_prog_forced_hard(re: &str) -> Vec<Insn> {
         compile_prog_with(
             re,
@@ -2767,6 +3265,7 @@ mod tests {
         )
     }
 
+    #[track_caller]
     fn compile_prog_ascii(re: &str) -> Vec<Insn> {
         let tree = Expr::parse_tree_with_flags(re, 0).unwrap();
         let info = analyze(
@@ -2789,6 +3288,7 @@ mod tests {
         .body
     }
 
+    #[track_caller]
     fn compile_prog_with<F>(re: &str, analyze_context: AnalyzeContext, compile_fn: F) -> Vec<Insn>
     where
         F: FnOnce(&mut Info<'_>, &ExprTree) -> Vec<Insn>,

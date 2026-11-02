@@ -27,6 +27,7 @@ In Oniguruma mode (`RegexBuilder::oniguruma_mode(true)`), fancy-regex supports m
 - Conditionals (`(?(cond)then|else)`)
 - Absent repeater (`(?~absent)`)
 - Common escapes and anchors (`\A`, `\Z`, `\z`, `\G`, `\K`, `\R`, `\N`, `\O`)
+- Control character escapes (`\cX`, `\C-X`), which are only parsed in Oniguruma mode
 
 ## Known gaps vs Oniguruma
 
@@ -44,7 +45,7 @@ The remaining gaps are concentrated in specific advanced or edge-case areas:
 - **Recursion-level backreferences**
   - Relative recursion-level forms such as `\k<name+level>` are not yet implemented.
 - **Certain escape forms**
-  - Examples include `\cX`/`\C-X`, `\o{...}`, and one-digit `\x` forms accepted by Oniguruma.
+  - Examples include `\o{...}` and one-digit `\x` forms accepted by Oniguruma.
 - **Compatibility edge cases under duplicate group names / capture-state rules**
   - Some cases differ in backreference resolution and group-state behavior.
 - **A few parsing and quantifier semantics differences**
