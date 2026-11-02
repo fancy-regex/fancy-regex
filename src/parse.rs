@@ -203,15 +203,18 @@ impl<'a> Parser<'a> {
                 }
             }
             ix = self.optional_whitespace(ix + 1)?;
+            // In Oniguruma, an interval with its limits swapped (like `{3,2}`) is
+            // possessive, and a `?` after it is another quantifier, not a lazy modifier
+            let swapped = self.flag(FLAG_ONIGURUMA_MODE) && hi < lo;
             let mut greedy = true;
-            if ix < self.re.len() && self.re.as_bytes()[ix] == b'?' {
+            if !swapped && ix < self.re.len() && self.re.as_bytes()[ix] == b'?' {
                 greedy = false;
                 ix += 1;
             }
             greedy ^= self.flag(FLAG_SWAP_GREED);
             let mut atomic_group = false;
             if self.flag(FLAG_ONIGURUMA_MODE) {
-                if hi < lo {
+                if swapped {
                     (lo, hi) = (hi, lo);
                     atomic_group = true;
                 } else if !user_specified && ix < self.re.len() && self.re.as_bytes()[ix] == b'+' {
@@ -259,7 +262,9 @@ impl<'a> Parser<'a> {
             let mut adjacent = 0;
             loop {
                 let before = ix;
-                let (next_ix, next_repeat) = self.parse_quantifier(ix, before, repeat)?;
+                // Pass the start of the piece, so that a quantifier after a dropped
+                // `(?:)` repeat is dropped too instead of having nothing to target
+                let (next_ix, next_repeat) = self.parse_quantifier(ix, start, repeat)?;
                 ix = next_ix;
                 repeat = next_repeat;
                 if ix == before {
@@ -3393,6 +3398,43 @@ mod tests {
                 hi: 3,
                 greedy: true,
             }))
+        );
+    }
+
+    #[test]
+    fn question_mark_after_swapped_quantifier_oniguruma_mode() {
+        // A swapped interval is possessive, so a `?` after it is another
+        // quantifier instead of making it lazy
+        let possessive = Expr::AtomicGroup(Box::new(Expr::Repeat {
+            child: Box::new(make_literal("a")),
+            lo: 2,
+            hi: 3,
+            greedy: true,
+        }));
+        let optional = |greedy| Expr::Repeat {
+            child: Box::new(possessive.clone()),
+            lo: 0,
+            hi: 1,
+            greedy,
+        };
+        assert_eq!(parse_oniguruma("a{3,2}?").unwrap(), optional(true));
+        assert_eq!(parse_oniguruma("(?x)a{3,2} ?").unwrap(), optional(true));
+        assert_eq!(parse_oniguruma("a{3,2}??").unwrap(), optional(false));
+
+        // The quantifiers after a dropped `(?:)` repeat are dropped too
+        assert_eq!(parse_oniguruma("(?:){3,2}?").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?:){3,2}+").unwrap(), Expr::Empty);
+        assert_eq!(parse_oniguruma("(?:)**").unwrap(), Expr::Empty);
+
+        // An interval in order can still be lazy
+        assert_eq!(
+            parse_oniguruma("a{2,3}?").unwrap(),
+            Expr::Repeat {
+                child: Box::new(make_literal("a")),
+                lo: 2,
+                hi: 3,
+                greedy: false,
+            }
         );
     }
 

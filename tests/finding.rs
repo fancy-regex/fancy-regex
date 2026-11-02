@@ -1226,6 +1226,27 @@ fn oniguruma_swapped_quantifier_order_is_possessive() {
 }
 
 #[test]
+fn oniguruma_question_mark_after_swapped_quantifier() {
+    let find = |re: &str, text: &str| {
+        let re = RegexBuilder::new(re).oniguruma_mode(true).build().unwrap();
+        re.find(text).unwrap().map(|m| (m.start(), m.end()))
+    };
+
+    // `a{3,2}` is a possessive `a{2,3}`, and the `?` makes it optional
+    assert_eq!(find("a{3,2}?", ""), Some((0, 0)));
+    assert_eq!(find("a{3,2}?", "aaa"), Some((0, 3)));
+    assert_eq!(find("a{3,2}?b", "b"), Some((0, 1)));
+    assert_eq!(find("a{3,2}?a", "aaa"), Some((0, 1)));
+    assert_eq!(find("(?:ab){3,2}?", "ababab"), Some((0, 6)));
+    assert_eq!(find("a{3,2}??", "aa"), Some((0, 0)));
+    assert_eq!(find(r"(a)\1{3,2}?", "a"), Some((0, 1)));
+    assert_eq!(find(r"(a)\1{3,2}?", "aaaa"), Some((0, 4)));
+
+    // An interval in order is still lazy
+    assert_eq!(find("a{2,3}?", "aaa"), Some((0, 2)));
+}
+
+#[test]
 fn oniguruma_plus_after_quantifier() {
     let re = RegexBuilder::new("^x{2}+$")
         .oniguruma_mode(true)

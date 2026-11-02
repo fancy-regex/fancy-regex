@@ -403,11 +403,5 @@
   // Compile failed: CompileError(LeftRecursiveSubroutineCall("group 0"))
   x2("\\g'0'++{,0}?def", "abcdefgh", 3, 6);
 
-  // No match found
-  x2("a{3,2}?", "", 0, 0);
-
-  // No match found
-  x2("a{2,3}+a", "aaa", 0, 3);
-
   // Compile failed: CompileError(InnerError(BuildError { kind: Syntax { pid: PatternID(0), err: Translate(Error { kind: UnicodePropertyNotFound, pattern: "\\p{in_enclosed_cjk_letters_and_months}", span: Span(Position(o: 0, l: 1, c: 1), Position(o: 38, l: 1, c: 39)) }) } }))
   x2("\\p{In_Enclosed_CJK_Letters_and_Months}", "\xe3\x8b\xbf", 0, 3);

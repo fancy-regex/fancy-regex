@@ -965,10 +965,11 @@ impl RegexOptionsBuilder {
     ///
     /// # Swapped order quantifiers
     ///
-    /// `fancy-regex` would normally treat `x{0,3}` as a syntax error because the minimum is
+    /// `fancy-regex` would normally treat `x{3,0}` as a syntax error because the minimum is
     /// greater than the maximum. In Oniguruma mode, the limits are swapped (behaving as
-    /// `x{3,0}`) and the resulting repeat is treated as atomic (possessive), matching
-    /// Oniguruma's behavior.
+    /// `x{0,3}`) and the resulting repeat is treated as atomic (possessive), matching
+    /// Oniguruma's behavior. A `?` after it is another quantifier rather than a lazy
+    /// modifier, so `x{3,0}?` is equivalent to `(?:x{3,0})?`.
     ///
     /// # Adjacent quantifiers
     ///
