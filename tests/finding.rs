@@ -1247,6 +1247,26 @@ fn oniguruma_question_mark_after_swapped_quantifier() {
 }
 
 #[test]
+fn oniguruma_question_mark_after_fixed_quantifier() {
+    let find = |re: &str, text: &str| {
+        let re = RegexBuilder::new(re).oniguruma_mode(true).build().unwrap();
+        re.find(text).unwrap().map(|m| (m.start(), m.end()))
+    };
+
+    // `a{3}?` is `(?:a{3})?`, not a lazy `a{3}`
+    assert_eq!(find("a{3}?", "aa"), Some((0, 0)));
+    assert_eq!(find("a{3}?", "aaa"), Some((0, 3)));
+    assert_eq!(find("a{3}?b", "aab"), Some((2, 3)));
+    assert_eq!(find("(?:ab){2}?", "ab"), Some((0, 0)));
+    assert_eq!(find("a{3}??", "aaa"), Some((0, 0)));
+    assert_eq!(find("a{2}?{2}", "aaa"), Some((0, 2)));
+    assert_eq!(find(r"(a)\1{2}?", "aa"), Some((0, 1)));
+
+    // `{3,3}` is still lazy
+    assert_eq!(find("a{3,3}?", "aa"), None);
+}
+
+#[test]
 fn oniguruma_plus_after_quantifier() {
     let re = RegexBuilder::new("^x{2}+$")
         .oniguruma_mode(true)

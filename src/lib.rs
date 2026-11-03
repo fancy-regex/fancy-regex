@@ -981,6 +981,9 @@ impl RegexOptionsBuilder {
     /// possessive). In Oniguruma mode, `+` after a user-specified `{...}` repeat is treated
     /// as another repeat modifier — `x{2}+` is equivalent to `(?:x{2})+`.
     ///
+    /// The same goes for `?` after a fixed `{n}` repeat: outside Oniguruma mode `x{2}?` is lazy,
+    /// and in Oniguruma mode it is equivalent to `(?:x{2})?`. `x{2,2}?` is lazy in both modes.
+    ///
     /// # Empty interval
     ///
     /// `fancy-regex` normally treats `x{,}` as `x{0,}`. Oniguruma requires at least one of
