@@ -170,15 +170,15 @@ impl<'a> Parser<'a> {
     ) -> Result<(usize, Expr)> {
         let mut ix = self.optional_whitespace(ix)?;
         if ix < self.re.len() {
-            let (mut lo, mut hi, user_specified) = match self.re.as_bytes()[ix] {
-                b'?' => (0, 1, false),
-                b'*' => (0, usize::MAX, false),
-                b'+' => (1, usize::MAX, false),
+            let (mut lo, mut hi, user_specified, fixed) = match self.re.as_bytes()[ix] {
+                b'?' => (0, 1, false, false),
+                b'*' => (0, usize::MAX, false, false),
+                b'+' => (1, usize::MAX, false, false),
                 b'{' => {
                     match self.parse_repeat(ix) {
-                        Ok((next, lo, hi)) => {
+                        Ok((next, lo, hi, fixed)) => {
                             ix = next - 1;
-                            (lo, hi, true)
+                            (lo, hi, true, fixed)
                         }
                         Err(_) => {
                             // Invalid repeat syntax, which results in `{` being treated as a literal
@@ -206,8 +206,11 @@ impl<'a> Parser<'a> {
             // In Oniguruma, an interval with its limits swapped (like `{3,2}`) is
             // possessive, and a `?` after it is another quantifier, not a lazy modifier
             let swapped = self.flag(FLAG_ONIGURUMA_MODE) && hi < lo;
+            // A `?` after a fixed interval like `{3}` is another quantifier too, so
+            // `a{3}?` is `(?:a{3})?`
+            let greedy_only = swapped || (fixed && self.flag(FLAG_ONIGURUMA_MODE));
             let mut greedy = true;
-            if !swapped && ix < self.re.len() && self.re.as_bytes()[ix] == b'?' {
+            if !greedy_only && ix < self.re.len() && self.re.as_bytes()[ix] == b'?' {
                 greedy = false;
                 ix += 1;
             }
@@ -294,8 +297,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    // ix, lo, hi
-    fn parse_repeat(&self, ix: usize) -> Result<(usize, usize, usize)> {
+    // ix, lo, hi, fixed (an interval with no comma, like `{3}`)
+    fn parse_repeat(&self, ix: usize) -> Result<(usize, usize, usize, bool)> {
         let ix = self.optional_whitespace(ix + 1)?; // skip opening '{'
         let bytes = self.re.as_bytes();
         if ix == self.re.len() {
@@ -316,6 +319,7 @@ impl<'a> Parser<'a> {
             return Err(Error::ParseError(ix, ParseError::InvalidRepeat));
         }
         end = ix;
+        let fixed = bytes[ix] == b'}';
         let hi = match bytes[ix] {
             b'}' => lo,
             b',' => {
@@ -336,7 +340,7 @@ impl<'a> Parser<'a> {
         if ix == self.re.len() || bytes[ix] != b'}' {
             return Err(Error::ParseError(ix, ParseError::InvalidRepeat));
         }
-        Ok((ix + 1, lo, hi))
+        Ok((ix + 1, lo, hi, fixed))
     }
 
     fn parse_atom(&mut self, ix: usize, depth: usize) -> Result<(usize, Expr)> {
@@ -3436,6 +3440,38 @@ mod tests {
                 greedy: false,
             }
         );
+    }
+
+    #[test]
+    fn question_mark_after_fixed_quantifier_oniguruma_mode() {
+        // A `?` after a fixed interval like `{3}` is another quantifier
+        // instead of making it lazy
+        let fixed = Expr::Repeat {
+            child: Box::new(make_literal("a")),
+            lo: 3,
+            hi: 3,
+            greedy: true,
+        };
+        let optional = |greedy| Expr::Repeat {
+            child: Box::new(fixed.clone()),
+            lo: 0,
+            hi: 1,
+            greedy,
+        };
+        assert_eq!(parse_oniguruma("a{3}?").unwrap(), optional(true));
+        assert_eq!(parse_oniguruma("(?x)a{3} ?").unwrap(), optional(true));
+        assert_eq!(parse_oniguruma("a{3}??").unwrap(), optional(false));
+        assert_eq!(parse_oniguruma("(?:){3}?").unwrap(), Expr::Empty);
+
+        // `{3,3}` can still be lazy, and so can `{3}` outside Oniguruma mode
+        let lazy = Expr::Repeat {
+            child: Box::new(make_literal("a")),
+            lo: 3,
+            hi: 3,
+            greedy: false,
+        };
+        assert_eq!(parse_oniguruma("a{3,3}?").unwrap(), lazy);
+        assert_eq!(p("a{3}?"), lazy);
     }
 
     #[test]
