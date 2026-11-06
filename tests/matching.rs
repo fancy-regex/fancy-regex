@@ -628,6 +628,37 @@ fn repeat_minimum_holds_when_loop_runs_again() {
     assert_eq!(m.range(), 0..1);
 }
 
+#[test]
+fn repeat_minimum_after_empty_iteration() {
+    // The first iteration can only match empty at the start, a later one has to
+    // consume the `a`s.
+    assert_match(r"(?:(?=^)a*){2,}b", "aab");
+    assert_match(r"(?:(?=^)a*){2,}?b", "aab");
+    assert_match(r"(?:(^)\1a*){2,}b", "aab");
+    assert_match(r"(?:(^)\1a*){2,}?b", "aab");
+
+    let m = common::regex(r"(?:^(?=)a*){3,}")
+        .find("aa")
+        .unwrap()
+        .unwrap();
+    assert_eq!(m.range(), 0..2);
+}
+
+#[test]
+fn repeat_minimum_runs_iterations_that_read_own_captures() {
+    // Only the first iteration can match empty, as it sets group 1.
+    assert_no_match(r"^(?:(?(1)a|())){3,}$", "");
+    assert_no_match(r"^(?:(?(1)a|())){3,}$", "a");
+    assert_match(r"^(?:(?(1)a|())){3,}$", "aa");
+    assert_no_match(r"^(?:(?(1)a|())){3,}?$", "a");
+}
+
+#[test]
+fn repeat_minimum_after_empty_iteration_stays_fast() {
+    let text = "a".repeat(200);
+    assert_no_match(r"(?:(?=)|a){50,}b", &text);
+}
+
 #[cfg_attr(feature = "track_caller", track_caller)]
 fn assert_match(re: &str, text: &str) {
     let result = match_text(re, text);
