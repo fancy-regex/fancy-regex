@@ -50,38 +50,51 @@ Safety around captures and backreferences:
 
 ### Ambiguous concat repeats (`optimize_ambiguous_concat_repeats`)
 
-Targets ambiguity where two greedy, unbounded repeats of the *same* atom sit
-around a nullable/optional middle repeat in a concat: `A{L,*} M{0,h} A{R,*}`
-(`L,R ∈ {0,1}`, greedy, unbounded `A`, same `A` on both sides, `M` nullable with
-`hi != 0`). The original backtracks heavily because the boundary between the two
-`A` runs is ambiguous when `M` is absent.
+Targets ambiguity where two greedy repeats of the *same* atom sit around a
+nullable/optional middle repeat in a concat: `A{L,*} M{0,h} A{R,*}` (`L,R` any
+required minimum, greedy, same `A` on both sides, `M` nullable with `hi != 0`).
+The original backtracks heavily because the boundary between the two `A` runs
+is ambiguous when `M` is absent.
 
 The rewrite factors that boundary, with the key invariant:
 
 > A nullable wrapper must not discard a required minimum (`lo`) that the original
 > still requires on a path where the wrapper (or choice) can be skipped.
 
-Applicability/shape (`build_concat_repeat_triplet`):
+Applicability/shape (`build_concat_repeat_triplet`). Both edges must be greedy
+repeats (`X{lo,}` or `X{lo,hi}`); the middle must be nullable with `hi != 0`;
+the two edges must be the same atom.
 
-- `L < R` (stricter right side; with `{0,1}` this is `0 < 1`): keep `A{R,*}`
-  mandatory as a suffix and wrap `A{L,*}M{1,h}` as an optional prefix. Safe
-  because the moved edge has `lo == 0`.
-  Example: `\w*\.?\w+` → `(?:\w*\.{1})?\w+`.
-- `L >= R` and `R == 0`: keep `A{L,*}` mandatory as a prefix and wrap
-  `M{1,h}A{R,*}` as an optional suffix. Safe because the moved edge has `lo == 0`.
-  Example: `\w+\w?\w*` → `\w+(?:\w{1}\w*)?` / `\s*\w?\s*` → `\s*(?:\w{1}\s*)?`.
-- `L >= R` and `R >= 1` (e.g. `a+b?a+`): **do not** put `A{R,*}` inside an
-  optional group — when `M` is absent the original still requires `A{L,*}A{R,*}`
-  (combined minimum `L+R`), so dropping `A{R,*}` is unsound. Instead emit
-  `A{L,*} ( M{1,h}A{R,*} | A{R,R} )`: the left run stays mandatory and the tail
-  chooses the middle path or consuming exactly the right run's minimum. This
-  preserves the combined minimum and bounds the no-middle backtracking to a
-  single `A{R}` choice instead of an unbounded split. (A form like
-  `A+(?:(M A+)?|A{R})` would *not* be sound because the inner optional can still
-  let that alternative contribute nothing.)
+- `L == 0` (the left edge is nullable, e.g. `\w*\.?\w+`, `a{0,}b?a{2,}`,
+  `a{0,}b?a{0,}`): keep `A{R,*}` mandatory as a suffix and wrap `A{L,*}M{1,h}`
+  as an optional prefix. Safe because the moved edge has `lo == 0`, so the
+  required minimum still comes from the mandatory right repeat (if any; when
+  the right edge is also nullable the rewrite still matches the empty string,
+  as the original does).
+- `L >= R` and `R == 0` (the right edge is nullable, e.g. `\w+\w?\w*`,
+  `a{2,}b?a{0,}`): keep `A{L,*}` mandatory as a prefix and wrap
+  `M{1,h}A{R,*}` as an optional suffix. Safe because the moved edge has
+  `lo == 0`.
+- `L >= R` and `R >= 1`, both edges unbounded (e.g. `a+b?a+`, `a{2,}b?a{2,}`):
+  **do not** put `A{R,*}` inside an optional group — when `M` is absent the
+  original still requires `A{L,*}A{R,*}` (combined minimum `L+R`), so dropping
+  `A{R,*}` is unsound. Instead emit `A{L,*} ( M{1,h}A{R,*} | A{R,R} )`: the left
+  run stays mandatory and the tail chooses the middle path or consuming exactly
+  the right run's minimum. This preserves the combined minimum and bounds the
+  no-middle backtracking to a single `A{R}` choice instead of an unbounded
+  split. (A form like `A+(?:(M A+)?|A{R})` would *not* be sound because the
+  inner optional can still let that alternative contribute nothing.)
+- `L >= R` and `R >= 1`, at least one edge bounded above (e.g.
+  `a{2,5}b?a{1,4}`): keeping the edges separate still backtracks over their
+  boundary, so instead emit `( A{L,*} M{1,h} A{R,*} | A{L+R, L_hi+R_hi} )`.
+  The first alternative still consumes the middle; the second absorbs the whole
+  run in a single repeat with the combined bounds, so the no-middle path has
+  no split point to backtrack over. This is only safe when neither edge
+  contains a capture group, because merging changes how many times any group
+  inside an edge participates.
 
 `check_repeated_concat` / `build_repeated_concat` apply a related factoring for a
 quantified whole group whose body already has the `[prefix, optional-tail]`
 shape. The rewrite is bottom-up and does not depend on whether the pattern is
-otherwise “fancy”, so semantic correctness of the rewritten tree matters for all
+otherwise "fancy", so semantic correctness of the rewritten tree matters for all
 patterns.
