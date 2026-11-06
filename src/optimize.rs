@@ -238,9 +238,8 @@ fn check_concat_repeat_triplet(left: &Expr, middle: &Expr, right: &Expr) -> bool
         return false;
     };
 
-    is_unbounded_simple_repeat(*left_lo, *left_hi, *left_greedy)
-        && is_unbounded_simple_repeat(*right_lo, *right_hi, *right_greedy)
-        && compatible_edge_repeat_bounds(*left_lo, *right_lo)
+    is_unbounded_repeat(*left_lo, *left_hi, *left_greedy)
+        && is_unbounded_repeat(*right_lo, *right_hi, *right_greedy)
         && *middle_lo == 0
         && *middle_hi != 0
         && left_inner.as_ref() == right_inner.as_ref()
@@ -280,10 +279,13 @@ fn build_concat_repeat_triplet(left: Expr, middle: Expr, right: Expr) -> (Expr, 
         greedy: middle_greedy,
     };
 
-    if left_lo < right_lo {
-        // The right repeat is the stricter (higher lo) side — keep it mandatory.
-        // With the supported {0,1} edge bounds this means left_lo == 0, so moving
-        // the left repeat into the optional prefix does not drop a required minimum.
+    if left_lo == 0 && right_lo != 0 {
+        // The left repeat has no required minimum but the right one does, so
+        // moving the left repeat (with the middle) into an optional prefix is
+        // safe: when the prefix is skipped the mandatory right repeat still
+        // supplies its own minimum, and any a's the left would have taken can
+        // be absorbed by the right repeat (same atom).
+        // E.g. `\w*\.?\w+` → `(?:\w*\.{1})?\w+`, `a{0,}b?a{2,}` → `(?:a*b{1})?a{2,}`.
         let left_repeat = Expr::Repeat {
             child: left_inner,
             lo: left_lo,
@@ -333,11 +335,12 @@ fn build_concat_repeat_triplet(left: Expr, middle: Expr, right: Expr) -> (Expr, 
         };
         (prefix, optional_tail)
     } else {
-        // Both edge repeats require at least one match (e.g. a+b?a+). Moving
-        // either into an optional group would drop that minimum when the middle is
-        // absent, so keep the left repeat mandatory and make the tail choose
-        // between the middle+right path and consuming the right repeat's minimum
-        // directly.
+        // Both edge repeats require at least one match (e.g. a+b?a+, a{2,}b?a{2,}).
+        // Moving either into an optional group would drop that minimum when the
+        // middle is absent, so keep the left repeat mandatory and make the tail
+        // choose between the middle+right path and consuming the right repeat's
+        // minimum directly. This preserves the combined minimum (L+R) while
+        // bounding the no-middle backtracking to a single A{R} choice.
         let prefix = Expr::Repeat {
             child: left_inner,
             lo: left_lo,
@@ -411,9 +414,8 @@ fn check_repeated_concat(child: &Expr, outer_lo: usize) -> bool {
         return false;
     };
 
-    is_unbounded_simple_repeat(*prefix_lo, *prefix_hi, *prefix_greedy)
-        && is_unbounded_simple_repeat(*right_lo, *right_hi, *right_greedy)
-        && compatible_edge_repeat_bounds(*prefix_lo, *right_lo)
+    is_unbounded_repeat(*prefix_lo, *prefix_hi, *prefix_greedy)
+        && is_unbounded_repeat(*right_lo, *right_hi, *right_greedy)
         && prefix_inner.as_ref() == right_inner.as_ref()
 }
 
@@ -457,12 +459,10 @@ fn build_repeated_concat(child: Expr, outer_lo: usize) -> Expr {
     }
 }
 
-fn is_unbounded_simple_repeat(lo: usize, hi: usize, greedy: bool) -> bool {
-    greedy && hi == usize::MAX && matches!(lo, 0 | 1)
-}
-
-fn compatible_edge_repeat_bounds(left_lo: usize, right_lo: usize) -> bool {
-    matches!((left_lo, right_lo), (0, 0) | (0, 1) | (1, 0) | (1, 1))
+/// Whether `expr` is a greedy, unbounded `X{lo,}` repeat. `lo` may be any
+/// value, so the optimization also applies to patterns like `a{2,}`.
+fn is_unbounded_repeat(_lo: usize, hi: usize, greedy: bool) -> bool {
+    greedy && hi == usize::MAX
 }
 
 fn compose_repeat(child: Box<Expr>, result_kind: QuantifierKind) -> Expr {
@@ -1046,5 +1046,181 @@ mod tests {
     fn ambiguous_concat_repeats_plus_optional_star_uses_prefix() {
         // left=\w+ (lo=1) >= right=\w* (lo=0): left is the mandatory prefix
         assert_eq!(optimized_pattern(r"\w+\.?\w*"), r"\w+(?:\.{1}\w*)?");
+    }
+
+    #[test]
+    fn ambiguous_concat_repeats_min2_left_nullable() {
+        // left edge has lo == 0, so it (with the middle) becomes an optional
+        // prefix and the right edge stays mandatory as the suffix. Note that
+        // `{0,}` is rendered as `*` by the pretty-printer.
+        assert_eq!(optimized_pattern(r"a{0,}b?a{2,}"), r"(?:a*b{1})?a{2,}");
+        // `\w{2,}` has lo == 2 (not 0), so with `\w{3,}` (lo == 3) this is the
+        // both-mandatory case, not the left-nullable case.
+        assert_eq!(
+            optimized_pattern(r"\w{2,}\.?\w{3,}"),
+            r"\w{2,}(?:\.{1}\w{3,}|\w{3})"
+        );
+    }
+
+    #[test]
+    fn ambiguous_concat_repeats_min2_right_nullable() {
+        // right edge has lo == 0, so it (with the middle) becomes an optional
+        // suffix and the left edge stays mandatory as the prefix.
+        assert_eq!(optimized_pattern(r"a{2,}b?a{0,}"), r"a{2,}(?:b{1}a*)?");
+        // `\w{2,}` has lo == 2 (not 0), so with `\w{3,}` (lo == 3) this is the
+        // both-mandatory case, not the right-nullable case.
+        assert_eq!(
+            optimized_pattern(r"\w{3,}\.?\w{2,}"),
+            r"\w{3,}(?:\.{1}\w{2,}|\w{2})"
+        );
+    }
+
+    #[test]
+    fn ambiguous_concat_repeats_min2_both_mandatory() {
+        // both edges require at least one match: keep the left mandatory and
+        // make the tail choose between the middle+right path and the right
+        // repeat's minimum, preserving the combined minimum.
+        assert_eq!(
+            optimized_pattern(r"a{2,}b?a{2,}"),
+            r"a{2,}(?:b{1}a{2,}|a{2})"
+        );
+        assert_eq!(
+            optimized_pattern(r"^a{2,}b?a{2,}$"),
+            r"^a{2,}(?:b{1}a{2,}|a{2})$"
+        );
+        // the user's example patterns
+        assert_eq!(optimized_pattern(r"^a{2,}b?a+$"), r"^a{2,}(?:b{1}a+|a{1})$");
+        assert_eq!(optimized_pattern(r"^a+b?a{2,}$"), r"^a+(?:b{1}a{2,}|a{2})$");
+        // asymmetric minima: the stricter (left) edge stays mandatory and the
+        // tail's no-middle path consumes the right edge's minimum.
+        assert_eq!(
+            optimized_pattern(r"a{3,}b?a{2,}"),
+            r"a{3,}(?:b{1}a{2,}|a{2})"
+        );
+    }
+
+    #[test]
+    fn ambiguous_concat_repeats_both_nullable() {
+        // both edges nullable (a{0,}b?a{0,} == a*b?a*): the left edge stays as
+        // the mandatory prefix and the right edge (with the middle) becomes an
+        // optional suffix. Both the original and the rewrite match the empty
+        // string, so this is sound and still factors the ambiguous boundary.
+        assert_eq!(optimized_pattern(r"a{0,}b?a{0,}"), r"a*(?:b{1}a*)?");
+        assert_eq!(optimized_pattern(r"\s*\w?\s*"), r"\s*(?:\w{1}\s*)?");
+    }
+
+    #[test]
+    fn ambiguous_concat_repeats_min2_inside_quantifier() {
+        // A quantified whole group whose body has the min-2 triplet shape gets
+        // its body rewritten; the outer quantifier is preserved as-is (the
+        // repeated-concat collapse only applies when the rewritten tail is an
+        // optional repeat, which the both-mandatory tail is not).
+        assert_eq!(
+            optimized_pattern(r"(?:a{2,}b?a{2,})+"),
+            r"(?:a{2,}(?:b{1}a{2,}|a{2}))+"
+        );
+        assert_eq!(
+            optimized_pattern(r"(?:a{2,}b?a{2,})*"),
+            r"(?:a{2,}(?:b{1}a{2,}|a{2}))*"
+        );
+        assert_eq!(
+            optimized_pattern(r"(?:a{2,}b?a{2,}){2,}"),
+            r"(?:a{2,}(?:b{1}a{2,}|a{2})){2,}"
+        );
+    }
+
+    // Differential test using the std `regex` crate as a cross-check.
+    // Compares the original pattern against its optimized form on a set of
+    // haystacks. Fails if either engine disagrees with the other.
+    mod differential {
+        use super::optimized_pattern;
+        use crate::Regex;
+        use regex::Regex as StdRegex;
+
+        fn check(pat: &str, hay: &str) {
+            let opt_str = optimized_pattern(pat);
+            let f_orig = Regex::new(pat).unwrap();
+            let f_opt = Regex::new(&opt_str).unwrap();
+            let mo = f_orig.is_match(hay).unwrap();
+            let mo2 = f_opt.is_match(hay).unwrap();
+            assert_eq!(
+                mo, mo2,
+                "fancy mismatch pat={:?} opt={:?} hay={:?} orig={} opt={}",
+                pat, opt_str, hay, mo, mo2
+            );
+            if let Ok(s_orig) = StdRegex::new(pat) {
+                if let Ok(s_opt) = StdRegex::new(&opt_str) {
+                    let ms = s_orig.is_match(hay);
+                    let ms2 = s_opt.is_match(hay);
+                    assert_eq!(
+                        mo, ms,
+                        "fancy!=std pat={:?} hay={:?} fancy={} std={}",
+                        pat, hay, mo, ms
+                    );
+                    assert_eq!(
+                        mo2, ms2,
+                        "opt fancy!=std pat={:?} opt={:?} hay={:?} fancy={} std={}",
+                        pat, opt_str, hay, mo2, ms2
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn min2_edge_repeats() {
+            let hays = [
+                "", "a", "aa", "aaa", "aaaa", "aaaaa", "aaaaaa", "b", "ab", "ba", "aba", "aabaa",
+                "baa", "abba", "bab", "abb", "aabb", "abab", "baba", "aab", "aaab", "baaa", "abbb",
+                "aabbaa", "baaab", "ababa", "babab", "aaabaa", "baaaab",
+            ];
+            let pats = [
+                r"^a{2,}b?a+$",
+                r"^a+b?a{2,}$",
+                r"^a{2,}b?a{2,}$",
+                r"a{2,}b?a{2,}",
+                r"a{2,}b?a+",
+                r"a+b?a{2,}",
+                r"\w{2,}\.?\w{2,}",
+                r"\w{2,}\.?\w{3,}",
+                r"\w{3,}\.?\w{2,}",
+                r"ab{2,}c?ab{2,}",
+                r"ab{2,}c?ab{3,}",
+                r"ab{3,}c?ab{2,}",
+                r"foo{2,}bar?foo{3,}",
+                r"(?:a{2,}b?a{2,})+",
+                r"(?:a{2,}b?a{2,})*",
+                r"(?:a{2,}b?a{2,}){2,}",
+                r"(?:a{2,}b?a{2,}){0,}",
+                r"(?:a{2,}b?a{2,}){0,1}",
+                r"(?:a{2,}b?a{2,}){1,}",
+                r"(?:a{2,}b?a{2,}){1,1}",
+                r"(?:a+b?a*)+",
+                r"(?:a+b?a*)*",
+                r"(?:a{2,}b?a*)+",
+                r"(?:a{2,}b?a*)*",
+                r"^a{3,}b?a{2,}$",
+                r"^a{2,}b?a{3,}$",
+                r"^a{2,}b?a{2,}$",
+                r"a{3,}b?a{3,}",
+                r"a{4,}b?a{2,}",
+                r"a{2,}b?a{4,}",
+                r"(?:a{3,}b?a{3,})+",
+                r"(?:a{4,}b?a{2,})*",
+                r"(?:a{2,}b?a{4,}){2,}",
+                r"\w{2,}\.?\w{4,}",
+                r"\w{4,}\.?\w{2,}",
+                r"xy{3,}z?xy{3,}",
+                r"xy{3,}z?xy{4,}",
+                r"a{3,}b?a{2,}",
+                r"^a{3,}b?a{2,}$",
+                r"a{2,}b?a{3,}",
+                r"a{4,}b?a{3,}",
+            ];
+            for p in pats {
+                for h in hays.iter() {
+                    check(p, h);
+                }
+            }
+        }
     }
 }
