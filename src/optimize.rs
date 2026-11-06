@@ -264,9 +264,12 @@ fn build_concat_repeat_triplet(left: Expr, middle: Expr, right: Expr) -> (Expr, 
     else {
         unreachable!("check_concat_repeat_triplet guarantees middle is a Repeat");
     };
-    let right_lo = if let Expr::Repeat { lo, .. } = &right {
-        *lo
-    } else {
+    let Expr::Repeat {
+        child: right_inner,
+        lo: right_lo,
+        ..
+    } = right
+    else {
         unreachable!("check_concat_repeat_triplet guarantees right is a Repeat");
     };
 
@@ -278,10 +281,9 @@ fn build_concat_repeat_triplet(left: Expr, middle: Expr, right: Expr) -> (Expr, 
     };
 
     if left_lo < right_lo {
-        // The right repeat is the less permissive (higher lo) side — keep it as a mandatory
-        // suffix. Make the left repeat and middle optional as a prefix instead, so that the
-        // rewritten expression is no more permissive than the original.
-        // E.g. `\w*\.?\w+` → `(?:\w*\.{1})?\w+`
+        // The right repeat is the stricter (higher lo) side — keep it mandatory.
+        // With the supported {0,1} edge bounds this means left_lo == 0, so moving
+        // the left repeat into the optional prefix does not drop a required minimum.
         let left_repeat = Expr::Repeat {
             child: left_inner,
             lo: left_lo,
@@ -295,19 +297,34 @@ fn build_concat_repeat_triplet(left: Expr, middle: Expr, right: Expr) -> (Expr, 
             hi: 1,
             greedy: true,
         };
-        (optional_head, right)
-    } else {
-        // The left repeat is the less permissive (higher or equal lo) side — keep it as a
-        // mandatory prefix. Make the middle and right repeat optional as a suffix.
-        // E.g. `\w+\.?\w+` → `\w+(?:\.{1}\w+)?`
-        // E.g. `\w+\.?\w*` → `\w+(?:\.{1}\w*)?`
+        (
+            optional_head,
+            Expr::Repeat {
+                child: right_inner,
+                lo: right_lo,
+                hi: usize::MAX,
+                greedy: true,
+            },
+        )
+    } else if right_lo == 0 {
+        // The left repeat is the stricter (higher or equal lo) side and the right
+        // repeat has no required minimum, so moving it into the optional suffix is
+        // safe.
         let prefix = Expr::Repeat {
             child: left_inner,
             lo: left_lo,
             hi: usize::MAX,
             greedy: true,
         };
-        let tail = Expr::Concat(vec![mandatory_middle, right]);
+        let tail = Expr::Concat(vec![
+            mandatory_middle,
+            Expr::Repeat {
+                child: right_inner,
+                lo: right_lo,
+                hi: usize::MAX,
+                greedy: true,
+            },
+        ]);
         let optional_tail = Expr::Repeat {
             child: Box::new(tail),
             lo: 0,
@@ -315,6 +332,35 @@ fn build_concat_repeat_triplet(left: Expr, middle: Expr, right: Expr) -> (Expr, 
             greedy: true,
         };
         (prefix, optional_tail)
+    } else {
+        // Both edge repeats require at least one match (e.g. a+b?a+). Moving
+        // either into an optional group would drop that minimum when the middle is
+        // absent, so keep the left repeat mandatory and make the tail choose
+        // between the middle+right path and consuming the right repeat's minimum
+        // directly.
+        let prefix = Expr::Repeat {
+            child: left_inner,
+            lo: left_lo,
+            hi: usize::MAX,
+            greedy: true,
+        };
+        let middle_and_right = Expr::Concat(vec![
+            mandatory_middle,
+            Expr::Repeat {
+                child: right_inner.clone(),
+                lo: right_lo,
+                hi: usize::MAX,
+                greedy: true,
+            },
+        ]);
+        let right_min = Expr::Repeat {
+            child: right_inner,
+            lo: right_lo,
+            hi: right_lo,
+            greedy: true,
+        };
+        let tail = Expr::Alt(vec![middle_and_right, right_min]);
+        (prefix, tail)
     }
 }
 
