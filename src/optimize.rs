@@ -1245,6 +1245,7 @@ mod tests {
     // parse the pattern.
     mod differential {
         use super::optimized_pattern;
+        use crate::alloc::string::ToString;
         use crate::Regex;
         use crate::RegexOptionsBuilder;
         use regex::Regex as StdRegex;
