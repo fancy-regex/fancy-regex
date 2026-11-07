@@ -121,6 +121,26 @@ pub(crate) const OPTION_LEFTMOST_LONGEST: u32 = 1 << 3;
 // TODO: make configurable
 const MAX_STACK: usize = 1_000_000;
 
+/// The repetition count to go on with after an iteration matched empty, or `None` to
+/// leave the loop. Below the minimum, a body that reads its own captures runs every
+/// required iteration. Any other body skips to the last one, but only after the first
+/// iteration, as doing so later makes failing searches much slower.
+fn count_after_empty_iteration(
+    repcount: usize,
+    lo: usize,
+    reads_own_captures: bool,
+) -> Option<usize> {
+    if repcount >= lo {
+        None
+    } else if reads_own_captures {
+        Some(repcount)
+    } else if repcount == 1 {
+        Some(lo - 1)
+    } else {
+        None
+    }
+}
+
 /// Represents a range of capture groups by storing the first and last group numbers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CaptureGroupRange(pub usize, pub usize);
@@ -508,6 +528,8 @@ pub enum Insn {
         repeat: usize,
         /// The slot for saving the previous IX to check if we had an empty match
         check: usize,
+        /// Whether the body reads a capture group it sets itself
+        reads_own_captures: bool,
     },
     /// Repeat non-greedily and prevent infinite loops from empty matches
     RepeatEpsilonNg {
@@ -519,6 +541,8 @@ pub enum Insn {
         repeat: usize,
         /// The slot for saving the previous IX to check if we had an empty match
         check: usize,
+        /// Whether the body reads a capture group it sets itself
+        reads_own_captures: bool,
     },
     /// Negative look-around failed
     FailNegativeLookAround,
@@ -805,6 +829,26 @@ impl State {
         if self.options & OPTION_TRACE != 0 {
             println!("saves: {:?}", self.saves);
         }
+    }
+
+    /// Starts the next iteration of a repeat that checks for empty iterations, and
+    /// returns how many ran before it, or `None` if the loop ends here.
+    fn start_epsilon_iteration(
+        &mut self,
+        ix: usize,
+        lo: usize,
+        repeat: usize,
+        check: usize,
+        reads_own_captures: bool,
+    ) -> Option<usize> {
+        let mut repcount = self.get(repeat);
+        // `check` holds where the previous iteration of this run started
+        if repcount > 0 && self.get(check) == ix {
+            repcount = count_after_empty_iteration(repcount, lo, reads_own_captures)?;
+        }
+        self.save(repeat, repcount + 1);
+        self.save(check, ix);
+        Some(repcount)
     }
 
     fn get(&self, slot: usize) -> usize {
@@ -1466,16 +1510,14 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                     next,
                     repeat,
                     check,
+                    reads_own_captures,
                 } => {
-                    let repcount = state.get(repeat);
-                    // `check` holds where the previous iteration of this run started
-                    if repcount > 0 && state.get(check) == ix {
-                        // zero-length match on repeat, then move to next instruction
+                    let Some(repcount) =
+                        state.start_epsilon_iteration(ix, lo, repeat, check, reads_own_captures)
+                    else {
                         pc = next;
                         continue;
-                    }
-                    state.save(repeat, repcount + 1);
-                    state.save(check, ix);
+                    };
                     if repcount >= lo {
                         state.push(next, ix)?;
                     }
@@ -1485,16 +1527,14 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                     next,
                     repeat,
                     check,
+                    reads_own_captures,
                 } => {
-                    let repcount = state.get(repeat);
-                    // `check` holds where the previous iteration of this run started
-                    if repcount > 0 && state.get(check) == ix {
-                        // zero-length match on repeat, then move to next instruction
+                    let Some(repcount) =
+                        state.start_epsilon_iteration(ix, lo, repeat, check, reads_own_captures)
+                    else {
                         pc = next;
                         continue;
-                    }
-                    state.save(repeat, repcount + 1);
-                    state.save(check, ix);
+                    };
                     if repcount >= lo {
                         state.push(pc + 1, ix)?;
                         pc = next;

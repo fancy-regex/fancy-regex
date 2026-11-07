@@ -184,6 +184,19 @@ fn lookbehind_alt_as_delegate(inner: &Info<'_>) -> bool {
                 .any(|branch| branch.is_literal_get_casei().is_none()))
 }
 
+/// Whether `body` reads a capture group set inside it, so an iteration can match
+/// differently from an earlier one at the same position.
+fn reads_own_captures(body: &Info<'_>) -> bool {
+    let own = body.start_group()..body.end_group();
+    body.expr.has_descendant_or_self(|expr| match *expr {
+        Expr::Backref { group, .. }
+        | Expr::BackrefWithRelativeRecursionLevel { group, .. }
+        | Expr::BackrefExistsCondition { group, .. } => own.contains(&group),
+        Expr::SubroutineCall(_) => true,
+        _ => false,
+    })
+}
+
 impl<'a> Compiler<'a> {
     #[inline]
     fn emit_literal_bytes(&mut self, bytes: &[u8]) -> Result<()> {
@@ -589,6 +602,7 @@ impl<'a> Compiler<'a> {
             next: usize::MAX,
             repeat,
             check,
+            reads_own_captures: false,
         })?;
 
         // Compile the body as: (?((?!inner))\O|)
@@ -677,6 +691,7 @@ impl<'a> Compiler<'a> {
             // Use RepeatEpsilon instructions to prevent empty repeat
             let repeat = self.b.newsave();
             let check = self.b.newsave();
+            let reads_own_captures = reads_own_captures(child);
             self.b.add(Insn::Save0(repeat))?;
             let pc = self.b.pc();
             if greedy {
@@ -685,6 +700,7 @@ impl<'a> Compiler<'a> {
                     next: usize::MAX,
                     repeat,
                     check,
+                    reads_own_captures,
                 })?;
             } else {
                 self.b.add(Insn::RepeatEpsilonNg {
@@ -692,6 +708,7 @@ impl<'a> Compiler<'a> {
                     next: usize::MAX,
                     repeat,
                     check,
+                    reads_own_captures,
                 })?;
             }
             self.visit(child, hard)?;
@@ -2378,7 +2395,8 @@ mod tests {
                 lo: 0,
                 next: 19,
                 repeat: 4,
-                check: 5
+                check: 5,
+                reads_own_captures: false
             }
         );
         assert_matches!(prog[9], BeginAtomic);
