@@ -637,6 +637,15 @@ impl RegexOptions {
         }
     }
 
+    /// Whether the parsed expression tree should be run through the optimization
+    /// pass before analysis/compilation. The optimization is skipped when
+    /// `find_not_empty` is set (the pattern is always compiled via the VM, so
+    /// the rewrite would only be thrown away) or when the user has explicitly
+    /// disabled it via `RegexOptionsBuilder::optimize(false)`.
+    fn should_optimize(&self) -> bool {
+        self.optimize && !self.hard_regex_runtime_options.find_not_empty
+    }
+
     fn compute_flags(&self) -> u32 {
         let insensitive = Self::get_flag_value(self.syntaxc.get_case_insensitive(), FLAG_CASEI);
         let multiline = Self::get_flag_value(self.syntaxc.get_multi_line(), FLAG_MULTI);
@@ -888,6 +897,12 @@ impl RegexOptionsBuilder {
     /// pattern against its optimized form (or against a non-optimized build)
     /// helps verify that the optimization preserves match semantics.
     ///
+    /// Disabling this flag also affects the prefilter helpers
+    /// ([`start_bytes`](Self::start_bytes) and
+    /// [`required_bytes`](Self::required_bytes)): they analyze the same tree
+    /// that would be compiled, so with optimization disabled they report the
+    /// start/required bytes of the un-optimized tree.
+    ///
     /// Default is `true`.
     pub fn optimize(&mut self, yes: bool) -> &mut Self {
         self.options.optimize = yes;
@@ -1116,6 +1131,7 @@ impl RegexOptionsBuilder {
     }
 
     /// Computes the bytes a match of `pattern` can start with, without compiling it.
+    ///
     /// The possible return values are:
     ///
     /// - `Ok(Some(set))`: a byte set could be built and you can quickly check whether a byte
@@ -1124,6 +1140,14 @@ impl RegexOptionsBuilder {
     /// - `Err(..)`: the pattern is invalid
     ///
     /// This is useful if you are building your own prefilter.
+    ///
+    /// The pattern is parsed and then run through the same expression-tree
+    /// optimization pass that [`Regex::new`](Regex::new) applies before
+    /// compiling (see [`RegexOptionsBuilder::optimize`](Self::optimize)), so the
+    /// returned set reflects the tree that would actually be compiled — for
+    /// example, a trailing positive lookahead is hoisted out before the start
+    /// bytes are computed. When optimization is disabled, the parsed tree is
+    /// analyzed as-is.
     ///
     /// ```
     /// # use fancy_regex::RegexOptionsBuilder;
@@ -1141,6 +1165,12 @@ impl RegexOptionsBuilder {
     /// haystack. This means that for a haystack like `aaa` the pattern will _never_ match and
     /// we can know that without even compiling the regex.
     /// An empty set means there's nothing actionable.
+    ///
+    /// As with [`start_bytes`](Self::start_bytes), the pattern is parsed and run
+    /// through the same expression-tree optimization pass that
+    /// [`Regex::new`](Regex::new) applies before compiling, so the returned set
+    /// reflects the tree that would actually be compiled. When optimization is
+    /// disabled, the parsed tree is analyzed as-is.
     ///
     /// ```
     /// # use fancy_regex::RegexOptionsBuilder;
@@ -1355,14 +1385,13 @@ impl Regex {
         #[cfg(feature = "leftmost_longest")]
         let leftmost_longest = options.leftmost_longest;
 
-        let requires_capture_group_fixup = if find_not_empty {
-            // if the find_not_empty flag is set, we skip optimizations
-            // partially because we have to go though the VM anyway
-            // partially because having the last instruction of the expression not have
-            // ix be at the end of capture group 0 ruins our empty match checking logic.
-            false
-        } else if !options.optimize {
-            // the user has explicitly disabled optimization; compile the tree as-is.
+        let requires_capture_group_fixup = if !options.should_optimize() {
+            // Optimization is disabled, either because the user explicitly asked
+            // for it (`RegexOptionsBuilder::optimize(false)`) or because
+            // `find_not_empty` is set — in that case the pattern is always
+            // compiled via the VM anyway, and having the last instruction of the
+            // expression not be at the end of capture group 0 ruins the empty
+            // match checking logic. Compile the tree as-is.
             false
         } else {
             // try to optimize the expression tree so that a hard pattern could become easy
@@ -3219,7 +3248,7 @@ mod tests {
     use alloc::{format, vec};
 
     use crate::parse::{make_group, make_literal};
-    use crate::{Absent, Expr, Regex, RegexBuilder, RegexImpl, RegexInput};
+    use crate::{Absent, DebugRegex, Expr, Regex, RegexBuilder, RegexImpl, RegexInput};
 
     //use detect_possible_backref;
 
@@ -3625,5 +3654,57 @@ mod tests {
                 .map(|m| (m.start(), m.end())),
             Some((1, 4))
         );
+    }
+
+    #[test]
+    fn optimize_flag_skips_optimization_pass() {
+        // With optimization disabled, a trailing positive lookahead is *not*
+        // hoisted out, so the pattern stays "hard" and is compiled to the VM
+        // (its debug output is a list of VM instructions, not a delegated
+        // pattern). With optimization enabled, the lookahead is hoisted and
+        // the prefix wrapped in an explicit capture group, making the pattern
+        // "easy" and delegated to regex-automata.
+        let re = RegexBuilder::new(r"a(?=b)")
+            .optimize(false)
+            .build()
+            .unwrap();
+        let no_opt = format!("{}", DebugRegex(&re));
+        assert!(no_opt.contains("Lit(\"a\")"), "got: {no_opt}");
+        assert!(no_opt.contains("Lit(\"b\")"), "got: {no_opt}");
+        assert!(!no_opt.contains("wrapped Regex"), "got: {no_opt}");
+
+        // The default (optimized) path delegates, wrapping the prefix in an
+        // explicit capture group.
+        let re_default = Regex::new(r"a(?=b)").unwrap();
+        let opt = format!("{}", DebugRegex(&re_default));
+        assert!(opt.contains("wrapped Regex"), "got: {opt}");
+        assert!(opt.contains("(a)b"), "got: {opt}");
+
+        // Both forms agree on haystacks that exercise the lookahead.
+        assert_eq!(
+            re.is_match("ab").unwrap(),
+            re_default.is_match("ab").unwrap()
+        );
+        assert_eq!(
+            re.is_match("ac").unwrap(),
+            re_default.is_match("ac").unwrap()
+        );
+    }
+
+    #[test]
+    fn optimize_flag_with_find_not_empty() {
+        // `find_not_empty` forces the VM path and disables optimization regardless
+        // of the `optimize` flag, so the two settings produce identical regexes.
+        let a = RegexBuilder::new(r"a(?=b)")
+            .find_not_empty(true)
+            .optimize(true)
+            .build()
+            .unwrap();
+        let b = RegexBuilder::new(r"a(?=b)")
+            .find_not_empty(true)
+            .optimize(false)
+            .build()
+            .unwrap();
+        assert_eq!(a.as_str(), b.as_str());
     }
 }
