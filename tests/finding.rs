@@ -1,6 +1,6 @@
 mod common;
 
-use fancy_regex::{BytesMode, DebugRegex, Match, RegexBuilder, RegexInput};
+use fancy_regex::{BytesMode, Match, RegexBuilder, RegexInput};
 use matches::assert_matches;
 use std::ops::Range;
 
