@@ -160,6 +160,11 @@ struct Compiler<'a> {
     /// fragment, and building a `meta::Regex` dominates compile time, so
     /// identical fragments share one engine (cloning it is a cheap Arc copy).
     delegate_memo: Map<(String, bool), RaRegex>,
+    /// For each group whose body refers to the group itself, the first of the two
+    /// slots that hold its previous capture while the group runs again.
+    previous_capture_slots: Map<usize, usize>,
+    /// The groups being compiled whose body refers to the group itself.
+    open_self_referencing_groups: Vec<usize>,
 }
 
 #[cfg(feature = "variable-lookbehinds")]
@@ -192,6 +197,64 @@ impl<'a> Compiler<'a> {
             self.b.add(Insn::LitBytes(bytes.to_vec()))?;
         }
         Ok(())
+    }
+
+    fn compile_group(&mut self, group: usize, body: &Info<'_>, hard: bool) -> Result<()> {
+        let self_referencing = self.refers_to_group(body.expr, group, &mut Vec::new());
+        if self_referencing {
+            let previous = *self.previous_capture_slots.entry(group).or_insert_with(|| {
+                let slot = self.b.newsave();
+                self.b.newsave();
+                slot
+            });
+            self.b
+                .add(Insn::SaveCaptureGroupStartKeepPrevious { group, previous })?;
+            self.open_self_referencing_groups.push(group);
+        } else {
+            self.b.add(Insn::SaveCaptureGroupStart(group))?;
+        }
+        self.visit(body, hard)?;
+        if self_referencing {
+            self.open_self_referencing_groups.pop();
+        }
+        self.b.add(Insn::Save(group * 2 + 1))?;
+        Ok(())
+    }
+
+    /// Whether `expr` has a backref or a condition that refers to `group`, also
+    /// through the groups it calls.
+    fn refers_to_group(&self, expr: &Expr, group: usize, called: &mut Vec<usize>) -> bool {
+        match *expr {
+            Expr::Backref { group: g, .. } | Expr::BackrefExistsCondition { group: g, .. }
+                if g == group =>
+            {
+                return true;
+            }
+            Expr::SubroutineCall(target) if !called.contains(&target) => {
+                called.push(target);
+                let info = if target == 0 {
+                    Some(self.root_info)
+                } else {
+                    self.group_info_map.get(&target).copied()
+                };
+                if info.map_or(false, |info| self.refers_to_group(info.expr, group, called)) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        expr.children_iter()
+            .any(|child| self.refers_to_group(child, group, called))
+    }
+
+    /// The first of the slots a backref to `group` reads. Inside the group itself,
+    /// that is the previous capture, as the current one is not finished yet.
+    fn capture_slot(&self, group: usize) -> usize {
+        if self.open_self_referencing_groups.contains(&group) {
+            self.previous_capture_slots[&group]
+        } else {
+            group * 2
+        }
     }
 
     fn visit(&mut self, info: &Info<'_>, hard: bool) -> Result<()> {
@@ -237,10 +300,7 @@ impl<'a> Compiler<'a> {
                 self.compile_alt(count, |compiler, i| compiler.visit(&info.children[i], hard))?;
             }
             Expr::Group(_) => {
-                let group = info.start_group();
-                self.b.add(Insn::SaveCaptureGroupStart(group))?;
-                self.visit(&info.children[0], hard)?;
-                self.b.add(Insn::Save(group * 2 + 1))?;
+                self.compile_group(info.start_group(), &info.children[0], hard)?;
             }
             Expr::Repeat { lo, hi, greedy, .. } => {
                 self.compile_repeat(info, lo, hi, greedy, hard)?;
@@ -250,7 +310,7 @@ impl<'a> Compiler<'a> {
             }
             Expr::Backref { group, casei } => {
                 self.b.add(Insn::Backref {
-                    slot: group * 2,
+                    slot: self.capture_slot(group),
                     casei,
                     // use the pre-computed effective unicode flag (unicode && !Ascii bytes mode)
                     unicode: self.options.unicode,
@@ -260,7 +320,8 @@ impl<'a> Compiler<'a> {
                 group,
                 relative_recursion_level: None,
             } => {
-                self.b.add(Insn::BackrefExistsCondition(group))?;
+                self.b
+                    .add(Insn::BackrefExistsCondition(self.capture_slot(group)))?;
             }
             Expr::BackrefExistsCondition {
                 relative_recursion_level: Some(_),
@@ -353,9 +414,7 @@ impl<'a> Compiler<'a> {
                                 )),
                             )));
                         }
-                        self.b.add(Insn::SaveCaptureGroupStart(target_group))?;
-                        self.visit(&target_info.children[0], hard)?;
-                        self.b.add(Insn::Save(target_group * 2 + 1))?;
+                        self.compile_group(target_group, &target_info.children[0], hard)?;
                     }
 
                     // Pop the recursion stack
@@ -1506,6 +1565,8 @@ pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
         inside_alternation: false,
         group_info_map,
         subroutine_recursion_stack: Vec::new(),
+        previous_capture_slots: Map::new(),
+        open_self_referencing_groups: Vec::new(),
         root_info: info,
         delegate_memo: Map::new(),
     };

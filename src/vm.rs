@@ -465,6 +465,15 @@ pub enum Insn {
     /// Save the current string index into the specified capture group start slot if the capture group is empty
     /// or has already completed.
     SaveCaptureGroupStart(usize),
+    /// Like `SaveCaptureGroupStart`, but first copy the group's previous capture to
+    /// `previous` and `previous + 1`, for backrefs inside the group to read, and clear
+    /// the end slot, so the group counts as open until it ends
+    SaveCaptureGroupStartKeepPrevious {
+        /// The capture group
+        group: usize,
+        /// The first of the two slots for the previous capture
+        previous: usize,
+    },
     /// Set the string index to the value that was saved in the specified slot
     Restore(usize),
     /// Repeat greedily (match as much as possible)
@@ -548,7 +557,8 @@ pub enum Insn {
         /// Whether this is at the start of the pattern (allowing early exit on failure)
         at_start: bool,
     },
-    /// Continue only if the specified capture group has already been populated as part of the match
+    /// Continue only if the capture group whose start is in the given slot has already been
+    /// populated as part of the match
     BackrefExistsCondition(usize),
     /// Immediately fail the current match attempt and trigger backtracking.
     /// This is used for backtracking control verbs like `(*FAIL)`.
@@ -1406,6 +1416,16 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                         state.save(start_slot, ix);
                     }
                 }
+                Insn::SaveCaptureGroupStartKeepPrevious { group, previous } => {
+                    let start_slot = group * 2;
+                    let (start, end) = (state.get(start_slot), state.get(start_slot + 1));
+                    if start == usize::MAX || end != usize::MAX {
+                        state.save(previous, start);
+                        state.save(previous + 1, end);
+                        state.save(start_slot, ix);
+                        state.save(start_slot + 1, usize::MAX);
+                    }
+                }
                 Insn::Restore(slot) => ix = state.get(slot),
                 Insn::RepeatGr {
                     lo,
@@ -1558,8 +1578,8 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                     }
                     ix = ix_end;
                 }
-                Insn::BackrefExistsCondition(group) => {
-                    let lo = state.get(group * 2);
+                Insn::BackrefExistsCondition(slot) => {
+                    let lo = state.get(slot);
                     if lo == usize::MAX {
                         // Referenced group hasn't matched, so the backref doesn't match either
                         break 'fail;
