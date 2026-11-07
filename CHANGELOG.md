@@ -26,6 +26,7 @@ with the exception that 0.x versions can break between minor versions.
 - In Oniguruma mode, `{,}` is now literal text, as in Oniguruma, instead of being parsed as `{0,}`. For example `(?:ab){,}` matches `ab{,}`. `{,n}` is still `{0,n}`, and without Oniguruma mode `{,}` is unchanged. (#321)
 - In Oniguruma mode, a `?` after an interval with swapped limits, like `a{3,2}?`, is now another quantifier, as in Oniguruma, so it makes the possessive `a{2,3}` optional. Before, it made the repeat lazy, so `a{3,2}?` matched `aa` in `aaa` and didn't match an empty string. A `?`, `*` or `+` after a repeated empty group, like in `(?:)**` or `(?:){3,2}?`, is now dropped along with it instead of failing to parse. (#322)
 - In Oniguruma mode, a `?` after a fixed interval, like `a{3}?`, is now another quantifier, as in Oniguruma, so `a{3}?` means `(?:a{3})?`. Before, it made the repeat lazy, which doesn't change anything for a fixed count, so `a{3}?` didn't match `aa` and `a{3}??` matched `aaa` instead of an empty string. `a{3,3}?` is still lazy, and without Oniguruma mode `a{3}?` is unchanged.
+- A backref or conditional inside the group it refers to now sees the group's previous capture, as in PCRE and Perl. Before, it saw the new start of the group with the end of its previous capture, so `(?:(\1|a)b){2}` panicked on `abab` and `^((?(1)b|a))$` matched `b` but not `a`. (#328)
 
 ## [0.20.0] - 2026-10-24
 ### Added
