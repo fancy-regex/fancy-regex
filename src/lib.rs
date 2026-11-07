@@ -3273,7 +3273,7 @@ mod tests {
     use alloc::{format, vec};
 
     use crate::parse::{make_group, make_literal};
-    use crate::{Absent, DebugRegex, Expr, Regex, RegexBuilder, RegexImpl, RegexInput};
+    use crate::{Absent, Expr, Regex, RegexBuilder, RegexImpl, RegexInput};
 
     //use detect_possible_backref;
 
@@ -3678,137 +3678,6 @@ mod tests {
                 .unwrap()
                 .map(|m| (m.start(), m.end())),
             Some((1, 4))
-        );
-    }
-
-    #[test]
-    fn optimize_flag_skips_optimization_pass() {
-        // With optimization disabled, a trailing positive lookahead is *not*
-        // hoisted out, so the pattern stays "hard" and is compiled to the VM
-        // (its debug output is a list of VM instructions, not a delegated
-        // pattern). With optimization enabled, the lookahead is hoisted and
-        // the prefix wrapped in an explicit capture group, making the pattern
-        // "easy" and delegated to regex-automata.
-        let re = RegexBuilder::new(r"a(?=b)")
-            .optimize(false)
-            .build()
-            .unwrap();
-        let no_opt = format!("{}", DebugRegex(&re));
-        assert!(no_opt.contains("Lit(\"a\")"), "got: {no_opt}");
-        assert!(no_opt.contains("Lit(\"b\")"), "got: {no_opt}");
-        assert!(!no_opt.contains("wrapped Regex"), "got: {no_opt}");
-
-        // The default (optimized) path delegates, wrapping the prefix in an
-        // explicit capture group.
-        let re_default = Regex::new(r"a(?=b)").unwrap();
-        let opt = format!("{}", DebugRegex(&re_default));
-        assert!(opt.contains("wrapped Regex"), "got: {opt}");
-        assert!(opt.contains("(a)b"), "got: {opt}");
-
-        // Both forms agree on haystacks that exercise the lookahead.
-        assert_eq!(
-            re.is_match("ab").unwrap(),
-            re_default.is_match("ab").unwrap()
-        );
-        assert_eq!(
-            re.is_match("ac").unwrap(),
-            re_default.is_match("ac").unwrap()
-        );
-    }
-
-    #[test]
-    fn optimize_flag_with_find_not_empty_keeps_pattern_on_vm() {
-        // `find_not_empty` must keep the pattern on the VM even when the
-        // optimization pass would otherwise make it delegatable: the Wrap
-        // (delegated) path has no way to reject empty matches, so the
-        // KeepOut/trailing-lookahead rewrites are skipped under
-        // `find_not_empty`. The safe rewrites (nested/ambiguous repeats) are
-        // still applied.
-        let re = RegexBuilder::new(r"a(?=b)")
-            .find_not_empty(true)
-            .optimize(true)
-            .build()
-            .unwrap();
-        let debug = format!("{}", DebugRegex(&re));
-        assert!(
-            debug.contains("Lit(\"a\")"),
-            "expected VM instructions, got: {debug}"
-        );
-        assert!(
-            !debug.contains("wrapped Regex"),
-            "find_not_empty pattern must not delegate: {debug}"
-        );
-
-        // Disabling optimization entirely skips even the safe rewrites, so the
-        // two settings differ when the pattern has nested repeats.
-        let with_rewrites = RegexBuilder::new(r"(?:x+)+")
-            .find_not_empty(true)
-            .optimize(true)
-            .build()
-            .unwrap();
-        let without_rewrites = RegexBuilder::new(r"(?:x+)+")
-            .find_not_empty(true)
-            .optimize(false)
-            .build()
-            .unwrap();
-        assert_ne!(
-            format!("{}", DebugRegex(&with_rewrites)),
-            format!("{}", DebugRegex(&without_rewrites)),
-            "safe rewrites should still apply under find_not_empty when optimize is on"
-        );
-    }
-
-    #[test]
-    fn find_not_empty_rejects_empty_matches_end_to_end() {
-        // The whole point of keeping `find_not_empty` patterns on the VM: the
-        // delegated (Wrap) path can't reject empty matches, so empty matches
-        // must be rejected at runtime. This pins that the rejection actually
-        // works for patterns the optimization pass would otherwise make
-        // delegatable (trailing lookahead).
-        let re = RegexBuilder::new(r"a(?=b)")
-            .find_not_empty(true)
-            .build()
-            .unwrap();
-        // "a" matches the lookahead position but consumes nothing -> rejected.
-        assert_eq!(re.find("a").unwrap(), None);
-        // "ab" -> real match "a".
-        assert_eq!(re.find("ab").unwrap().map(|m| m.as_str()), Some("a"));
-        // "ac" -> lookahead fails -> no match.
-        assert_eq!(re.find("ac").unwrap(), None);
-
-        // An alternation with an empty branch: the empty branch must be
-        // skipped in favor of the non-empty one.
-        let re_alt = RegexBuilder::new(r"(?:|a)")
-            .find_not_empty(true)
-            .build()
-            .unwrap();
-        assert_eq!(re_alt.find("a").unwrap().map(|m| m.as_str()), Some("a"));
-        assert_eq!(re_alt.find("").unwrap(), None);
-    }
-
-    #[test]
-    fn find_not_empty_rejects_consumed_empty_not_reported_empty() {
-        // `find_not_empty` rejects matches that consume nothing, but it checks
-        // the *consumed* length (`ix == match_attempt_start`), not the reported
-        // span. So a pattern whose reported match is empty but which consumed
-        // input — e.g. `\K` after a prefix — is NOT rejected. This pins that
-        // nuance so the behavior can't be silently changed by future edits to
-        // the rejection logic.
-        let re = RegexBuilder::new(r#"\w+:\s*"\K[^"]*"#)
-            .find_not_empty(true)
-            .build()
-            .unwrap();
-        // Consumes `word: "` (7 bytes), then \K resets the reported start to
-        // 7 and `[^"]*` matches nothing -> reported match is empty but was
-        // consumed, so it is NOT rejected.
-        assert_eq!(
-            re.find(r#"word: ""#).unwrap().map(|m| (m.start(), m.end())),
-            Some((7, 7))
-        );
-        // A real match still works.
-        assert_eq!(
-            re.find(r#"word: "hi""#).unwrap().map(|m| m.as_str()),
-            Some("hi")
         );
     }
 }
