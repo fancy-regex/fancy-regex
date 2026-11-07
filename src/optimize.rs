@@ -1188,39 +1188,50 @@ mod tests {
     }
 
     // Differential test using the std `regex` crate as a cross-check.
+    //
     // Compares the original pattern against its optimized form on a set of
     // haystacks. Fails if either engine disagrees with the other.
+    //
+    // Because `Regex::new` always runs the optimization pass, comparing
+    // `Regex::new(pat)` against `Regex::new(&optimized_pattern(pat))` would
+    // just be testing the same compiled regex twice. To make the test
+    // meaningful, we also compile the original pattern with optimization
+    // disabled (via `RegexOptionsBuilder::optimize(false)`), so the
+    // un-optimized tree is exercised against the optimized one. This is the
+    // actual differential check: it verifies that the optimization pass
+    // preserves match semantics.
+    //
+    // The std `regex` crate is used as an independent control where it can
+    // parse the pattern.
     mod differential {
         use super::optimized_pattern;
         use crate::Regex;
+        use crate::RegexOptionsBuilder;
         use regex::Regex as StdRegex;
 
         fn check(pat: &str, hay: &str) {
             let opt_str = optimized_pattern(pat);
-            let f_orig = Regex::new(pat).unwrap();
-            let f_opt = Regex::new(&opt_str).unwrap();
-            let mo = f_orig.is_match(hay).unwrap();
-            let mo2 = f_opt.is_match(hay).unwrap();
+            // optimized fancy-regex (default)
+            let f_opt = Regex::new(pat).unwrap();
+            // un-optimized fancy-regex (the real differential comparison)
+            let f_no_opt = RegexOptionsBuilder::new()
+                .optimize(false)
+                .build(pat.to_string())
+                .unwrap();
+            let mo = f_opt.is_match(hay).unwrap();
+            let mo2 = f_no_opt.is_match(hay).unwrap();
             assert_eq!(
                 mo, mo2,
-                "fancy mismatch pat={:?} opt={:?} hay={:?} orig={} opt={}",
+                "fancy optimized!=unoptimized pat={:?} opt={:?} hay={:?} opt={} no_opt={}",
                 pat, opt_str, hay, mo, mo2
             );
             if let Ok(s_orig) = StdRegex::new(pat) {
-                if let Ok(s_opt) = StdRegex::new(&opt_str) {
-                    let ms = s_orig.is_match(hay);
-                    let ms2 = s_opt.is_match(hay);
-                    assert_eq!(
-                        mo, ms,
-                        "fancy!=std pat={:?} hay={:?} fancy={} std={}",
-                        pat, hay, mo, ms
-                    );
-                    assert_eq!(
-                        mo2, ms2,
-                        "opt fancy!=std pat={:?} opt={:?} hay={:?} fancy={} std={}",
-                        pat, opt_str, hay, mo2, ms2
-                    );
-                }
+                let ms = s_orig.is_match(hay);
+                assert_eq!(
+                    mo, ms,
+                    "fancy!=std pat={:?} hay={:?} fancy={} std={}",
+                    pat, hay, mo, ms
+                );
             }
         }
 

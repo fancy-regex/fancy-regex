@@ -318,7 +318,9 @@ pub(crate) fn start_bytes(pattern: &str, options: &RegexOptions) -> Result<Optio
     let mut tree = Expr::parse_tree_with_flags(pattern, options.compute_flags())?;
     // Same rewrite `Regex::new_options` applies before compiling so we look at the tree
     // that actually gets compiled
-    optimize(&mut tree);
+    if options.optimize {
+        optimize(&mut tree);
+    }
     Ok(byte_set_from_expr(&tree.expr, options))
 }
 
@@ -398,7 +400,9 @@ fn required_byte_set_from_expr(expr: &Expr) -> ByteSet {
 /// See [`crate::RegexOptionsBuilder::required_bytes`]
 pub(crate) fn required_bytes(pattern: &str, options: &RegexOptions) -> Result<ByteSet> {
     let mut tree = Expr::parse_tree_with_flags(pattern, options.compute_flags())?;
-    optimize(&mut tree);
+    if options.optimize {
+        optimize(&mut tree);
+    }
     Ok(required_byte_set_from_expr(&tree.expr))
 }
 

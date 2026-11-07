@@ -549,6 +549,13 @@ struct RegexOptions {
     /// the set only ever searches them anchored at candidate positions, where
     /// a prefilter is never consulted, so building one wastes time and memory.
     delegate_prefilter: bool,
+    /// Whether the expression tree should be optimized before analysis/compilation.
+    /// When disabled, the parsed expression is compiled as-is, without the
+    /// KeepOut/\K, trailing-lookahead, and nested-repeat rewrites that `optimize`
+    /// performs. This is mainly useful for differential testing: it lets callers
+    /// compare a pattern against its optimized form, or compile a pattern without
+    /// optimization entirely.
+    optimize: bool,
     #[cfg(feature = "leftmost_longest")]
     leftmost_longest: bool,
 }
@@ -582,7 +589,8 @@ impl fmt::Debug for RegexOptions {
                 &self.hard_regex_runtime_options,
             )
             .field("seek_filter", &seek_filter_desc)
-            .field("delegate_prefilter", &self.delegate_prefilter);
+            .field("delegate_prefilter", &self.delegate_prefilter)
+            .field("optimize", &self.optimize);
         #[cfg(feature = "leftmost_longest")]
         debug.field("leftmost_longest", &self.leftmost_longest);
         debug.finish()
@@ -603,6 +611,7 @@ impl Default for RegexOptions {
             bytes_mode: BytesMode::default(),
             seek_filter: None, // when we are ready to enable seek by default, use: `Some(seek_pattern_is_useful)`
             delegate_prefilter: true,
+            optimize: true,
             #[cfg(feature = "leftmost_longest")]
             leftmost_longest: false,
         }
@@ -865,6 +874,23 @@ impl RegexOptionsBuilder {
     /// combination to execute pointlessly at runtime.
     pub fn find_not_empty(&mut self, yes: bool) -> &mut Self {
         self.options.hard_regex_runtime_options.find_not_empty = yes;
+        self
+    }
+
+    /// Enable or disable the expression-tree optimization pass.
+    ///
+    /// When enabled (the default), the parsed expression tree is rewritten before
+    /// analysis/compilation to simplify nested quantifiers, hoist trailing
+    /// positive lookaheads, and handle `\K` (KeepOut). When disabled, the tree is
+    /// compiled as-is.
+    ///
+    /// This is primarily intended for differential testing, where comparing a
+    /// pattern against its optimized form (or against a non-optimized build)
+    /// helps verify that the optimization preserves match semantics.
+    ///
+    /// Default is `true`.
+    pub fn optimize(&mut self, yes: bool) -> &mut Self {
+        self.options.optimize = yes;
         self
     }
 
@@ -1240,6 +1266,12 @@ impl RegexBuilder {
         self
     }
 
+    /// See [`RegexOptionsBuilder::optimize`]
+    pub fn optimize(&mut self, yes: bool) -> &mut Self {
+        self.options.optimize(yes);
+        self
+    }
+
     /// See [`RegexOptionsBuilder::leftmost_longest`]
     #[cfg(feature = "leftmost_longest")]
     pub fn leftmost_longest(&mut self, yes: bool) -> &mut Self {
@@ -1328,6 +1360,9 @@ impl Regex {
             // partially because we have to go though the VM anyway
             // partially because having the last instruction of the expression not have
             // ix be at the end of capture group 0 ruins our empty match checking logic.
+            false
+        } else if !options.optimize {
+            // the user has explicitly disabled optimization; compile the tree as-is.
             false
         } else {
             // try to optimize the expression tree so that a hard pattern could become easy
