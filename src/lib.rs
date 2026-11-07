@@ -70,7 +70,7 @@ mod vm;
 use crate::analyze::can_compile_as_anchored;
 use crate::analyze::{analyze, AnalyzeContext};
 use crate::compile::{compile, CompileOptions};
-use crate::optimize::optimize;
+use crate::optimize::{optimize, OptimizeOptions};
 use crate::parse::{ExprTree, NamedGroups, Parser};
 use crate::parse_flags::*;
 #[cfg(feature = "leftmost_longest")]
@@ -887,10 +887,11 @@ impl RegexOptionsBuilder {
     /// combination to execute pointlessly at runtime.
     ///
     /// N.B. Because the pattern must stay on the VM, the KeepOut (`\K`) and trailing
-    /// positive-lookahead rewrites are skipped during optimization when `find_not_empty` is set:
-    /// both wrap the prefix in an explicit capture group 0, which is what would otherwise flip
-    /// `info.hard` to `false` and let the pattern delegate to regex-automata. The safe rewrites
-    /// (nested-repeat simplification and ambiguous-concat-repeat rewriting) are still applied.
+    /// positive-lookahead rewrites are skipped during optimization when `find_not_empty` is set
+    /// (see `OptimizeOptions` in `fancy_regex::internal`): both wrap the prefix in an explicit
+    /// capture group 0, which is what would otherwise flip `info.hard` to `false` and let the
+    /// pattern delegate to regex-automata. The safe rewrites (nested-repeat simplification and
+    /// ambiguous-concat-repeat rewriting) are still applied.
     pub fn find_not_empty(&mut self, yes: bool) -> &mut Self {
         self.options.hard_regex_runtime_options.find_not_empty = yes;
         self
@@ -899,9 +900,16 @@ impl RegexOptionsBuilder {
     /// Enable or disable the expression-tree optimization pass.
     ///
     /// When enabled (the default), the parsed expression tree is rewritten before
-    /// analysis/compilation to simplify nested quantifiers, hoist trailing
-    /// positive lookaheads, and handle `\K` (KeepOut). When disabled, the tree is
-    /// compiled as-is.
+    /// analysis/compilation. The rewrite has two tiers (see
+    /// [`OptimizeOptions`](crate::internal::OptimizeOptions)):
+    ///
+    /// - **Always applied**: nested-repeat simplification and ambiguous-concat-repeat
+    ///   rewriting.
+    /// - **Skipped when `find_not_empty` is set**: KeepOut (`\K`) and trailing
+    ///   positive-lookahead hoisting, because both would make the pattern
+    ///   delegatable and the delegated path can't reject empty matches.
+    ///
+    /// When disabled, the tree is compiled as-is.
     ///
     /// This is primarily intended for differential testing, where comparing a
     /// pattern against its optimized form (or against a non-optimized build)
@@ -1408,7 +1416,12 @@ impl Regex {
             // with a fixup of the capture groups. `find_not_empty` is passed through so
             // the KeepOut/trailing-lookahead rewrites (which would make the pattern
             // delegatable, and the Wrap path can't reject empty matches) are skipped.
-            optimize(&mut tree, find_not_empty)
+            optimize(
+                &mut tree,
+                OptimizeOptions {
+                    find_not_empty: find_not_empty,
+                },
+            )
         };
         let info = analyze(
             &tree,
@@ -3242,7 +3255,7 @@ pub fn detect_possible_backref(re: &str) -> bool {
 pub mod internal {
     pub use crate::analyze::{analyze, can_compile_as_anchored, AnalyzeContext, Info};
     pub use crate::compile::{compile, CompileOptions};
-    pub use crate::optimize::optimize;
+    pub use crate::optimize::{optimize, OptimizeOptions};
     pub use crate::parse_flags::{
         FLAG_CASEI, FLAG_CRLF, FLAG_DOTNL, FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST,
         FLAG_IGNORE_SPACE, FLAG_MULTI, FLAG_ONIGURUMA_MODE, FLAG_UNICODE,
@@ -3742,6 +3755,60 @@ mod tests {
             format!("{}", DebugRegex(&with_rewrites)),
             format!("{}", DebugRegex(&without_rewrites)),
             "safe rewrites should still apply under find_not_empty when optimize is on"
+        );
+    }
+
+    #[test]
+    fn find_not_empty_rejects_empty_matches_end_to_end() {
+        // The whole point of keeping `find_not_empty` patterns on the VM: the
+        // delegated (Wrap) path can't reject empty matches, so empty matches
+        // must be rejected at runtime. This pins that the rejection actually
+        // works for patterns the optimization pass would otherwise make
+        // delegatable (trailing lookahead).
+        let re = RegexBuilder::new(r"a(?=b)")
+            .find_not_empty(true)
+            .build()
+            .unwrap();
+        // "a" matches the lookahead position but consumes nothing -> rejected.
+        assert_eq!(re.find("a").unwrap(), None);
+        // "ab" -> real match "a".
+        assert_eq!(re.find("ab").unwrap().map(|m| m.as_str()), Some("a"));
+        // "ac" -> lookahead fails -> no match.
+        assert_eq!(re.find("ac").unwrap(), None);
+
+        // An alternation with an empty branch: the empty branch must be
+        // skipped in favor of the non-empty one.
+        let re_alt = RegexBuilder::new(r"(?:|a)")
+            .find_not_empty(true)
+            .build()
+            .unwrap();
+        assert_eq!(re_alt.find("a").unwrap().map(|m| m.as_str()), Some("a"));
+        assert_eq!(re_alt.find("").unwrap(), None);
+    }
+
+    #[test]
+    fn find_not_empty_rejects_consumed_empty_not_reported_empty() {
+        // `find_not_empty` rejects matches that consume nothing, but it checks
+        // the *consumed* length (`ix == match_attempt_start`), not the reported
+        // span. So a pattern whose reported match is empty but which consumed
+        // input — e.g. `\K` after a prefix — is NOT rejected. This pins that
+        // nuance so the behavior can't be silently changed by future edits to
+        // the rejection logic.
+        let re = RegexBuilder::new(r#"\w+:\s*"\K[^"]*"#)
+            .find_not_empty(true)
+            .build()
+            .unwrap();
+        // Consumes `word: "` (7 bytes), then \K resets the reported start to
+        // 7 and `[^"]*` matches nothing -> reported match is empty but was
+        // consumed, so it is NOT rejected.
+        assert_eq!(
+            re.find(r#"word: ""#).unwrap().map(|m| (m.start(), m.end())),
+            Some((7, 7))
+        );
+        // A real match still works.
+        assert_eq!(
+            re.find(r#"word: "hi""#).unwrap().map(|m| m.as_str()),
+            Some("hi")
         );
     }
 }

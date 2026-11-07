@@ -30,6 +30,18 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::mem;
 
+/// Options controlling the optimization pass.
+///
+/// Using a struct (rather than a bare boolean parameter) makes the call site
+/// self-documenting and leaves room for future options without breaking the
+/// signature.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OptimizeOptions {
+    /// When true, skip the KeepOut (`\K`) and trailing-lookahead rewrites that
+    /// would otherwise make the pattern delegatable. See [`optimize`].
+    pub find_not_empty: bool,
+}
+
 /// Rewrite the expression tree to help the VM compile an efficient program.
 ///
 /// `find_not_empty` controls which rewrites are applied:
@@ -49,7 +61,8 @@ use core::mem;
 ///   rewrites above are still applied.
 ///
 /// Returns a boolean to say whether the new tree explicitly contains capture group 0.
-pub fn optimize(tree: &mut ExprTree, find_not_empty: bool) -> bool {
+pub fn optimize(tree: &mut ExprTree, options: OptimizeOptions) -> bool {
+    let find_not_empty = options.find_not_empty;
     // self recursion prevents us from moving the trailing lookahead out of group 0
     let requires_capture_group_fixup = if !tree.self_recursive && !find_not_empty {
         // KeepOut (\K) optimization is tried first; it also handles a trailing positive
@@ -718,10 +731,10 @@ fn optimize_trailing_lookahead(tree: &mut ExprTree) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::optimize;
     use super::vec;
     use super::Arc;
     use super::Box;
+    use super::{optimize, OptimizeOptions};
     use crate::parse::make_literal;
     use crate::Expr;
     use alloc::string::String;
@@ -732,7 +745,7 @@ mod tests {
 
     fn optimized_pattern_with_flags(pattern: &str, flags: u32) -> String {
         let mut tree = Expr::parse_tree_with_flags(pattern, flags).unwrap();
-        optimize(&mut tree, false);
+        optimize(&mut tree, OptimizeOptions::default());
         let mut s = String::new();
         tree.expr.to_str(&mut s, 0);
         s
@@ -745,7 +758,7 @@ mod tests {
     #[test]
     fn trailing_positive_lookahead_optimized() {
         let mut tree = Expr::parse_tree("a(?=b)").unwrap();
-        let requires_capture_group_fixup = optimize(&mut tree, false);
+        let requires_capture_group_fixup = optimize(&mut tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, true);
         let mut s = String::new();
         tree.expr.to_str(&mut s, 0);
@@ -755,7 +768,7 @@ mod tests {
     #[test]
     fn standalone_positive_lookahead_optimized() {
         let mut tree = Expr::parse_tree("(?=b)").unwrap();
-        let requires_capture_group_fixup = optimize(&mut tree, false);
+        let requires_capture_group_fixup = optimize(&mut tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, true);
         let mut s = String::new();
         tree.expr.to_str(&mut s, 0);
@@ -765,7 +778,7 @@ mod tests {
     #[test]
     fn trailing_positive_lookahead_with_alternative_optimized() {
         let mut tree = Expr::parse_tree("a(?=b|c)").unwrap();
-        let requires_capture_group_fixup = optimize(&mut tree, false);
+        let requires_capture_group_fixup = optimize(&mut tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, true);
         let mut s = String::new();
         tree.expr.to_str(&mut s, 0);
@@ -775,7 +788,7 @@ mod tests {
     #[test]
     fn trailing_positive_lookahead_moved_even_if_not_easy() {
         let mut tree = Expr::parse_tree(r"(a)\1(?=c)").unwrap();
-        let requires_capture_group_fixup = optimize(&mut tree, false);
+        let requires_capture_group_fixup = optimize(&mut tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, true);
         assert_eq!(
             tree.expr,
@@ -796,7 +809,8 @@ mod tests {
     fn trailing_positive_lookahead_left_alone_when_self_recursive() {
         let tree = Expr::parse_tree(r"ab?\g<0>?(?=a|$)").unwrap();
         let mut optimized_tree = tree.clone();
-        let requires_capture_group_fixup = optimize(&mut optimized_tree, false);
+        let requires_capture_group_fixup =
+            optimize(&mut optimized_tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, false);
         assert_eq!(&optimized_tree.expr, &tree.expr);
     }
@@ -805,7 +819,8 @@ mod tests {
     fn trailing_negative_lookahead_left_alone() {
         let tree = Expr::parse_tree(r"a(?!b)").unwrap();
         let mut optimized_tree = tree.clone();
-        let requires_capture_group_fixup = optimize(&mut optimized_tree, false);
+        let requires_capture_group_fixup =
+            optimize(&mut optimized_tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, false);
         assert_eq!(&optimized_tree.expr, &tree.expr);
     }
@@ -814,7 +829,8 @@ mod tests {
     fn trailing_positive_lookbehind_left_alone() {
         let tree = Expr::parse_tree(r"(?<=b)").unwrap();
         let mut optimized_tree = tree.clone();
-        let requires_capture_group_fixup = optimize(&mut optimized_tree, false);
+        let requires_capture_group_fixup =
+            optimize(&mut optimized_tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, false);
         assert_eq!(&optimized_tree.expr, &tree.expr);
     }
@@ -823,13 +839,15 @@ mod tests {
     fn non_trailing_positive_lookahead_left_alone() {
         let tree = Expr::parse_tree(r"a(?=(b))\1").unwrap();
         let mut optimized_tree = tree.clone();
-        let requires_capture_group_fixup = optimize(&mut optimized_tree, false);
+        let requires_capture_group_fixup =
+            optimize(&mut optimized_tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, false);
         assert_eq!(&optimized_tree.expr, &tree.expr);
 
         let tree = Expr::parse_tree(r"(?=(b))\1").unwrap();
         let mut optimized_tree = tree.clone();
-        let requires_capture_group_fixup = optimize(&mut optimized_tree, false);
+        let requires_capture_group_fixup =
+            optimize(&mut optimized_tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, false);
         assert_eq!(&optimized_tree.expr, &tree.expr);
     }
@@ -837,7 +855,7 @@ mod tests {
     #[test]
     fn keepout_optimized() {
         let mut tree = Expr::parse_tree(r"ab\Kcd").unwrap();
-        let requires_capture_group_fixup = optimize(&mut tree, false);
+        let requires_capture_group_fixup = optimize(&mut tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, true);
         let mut s = String::new();
         tree.expr.to_str(&mut s, 0);
@@ -847,7 +865,7 @@ mod tests {
     #[test]
     fn keepout_at_start_of_concat_optimized() {
         let mut tree = Expr::parse_tree(r"\Kcd").unwrap();
-        let requires_capture_group_fixup = optimize(&mut tree, false);
+        let requires_capture_group_fixup = optimize(&mut tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, true);
         let mut s = String::new();
         tree.expr.to_str(&mut s, 0);
@@ -859,7 +877,7 @@ mod tests {
         // \K and trailing positive lookahead should be merged into one capture group,
         // not two separate group-0 wrappers.
         let mut tree = Expr::parse_tree(r#"ab\Kcd(?=e)"#).unwrap();
-        let requires_capture_group_fixup = optimize(&mut tree, false);
+        let requires_capture_group_fixup = optimize(&mut tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, true);
         let mut s = String::new();
         tree.expr.to_str(&mut s, 0);
@@ -870,7 +888,8 @@ mod tests {
     fn keepout_left_alone_when_self_recursive() {
         let tree = Expr::parse_tree(r"ab?\g<0>?\Kc").unwrap();
         let mut optimized_tree = tree.clone();
-        let requires_capture_group_fixup = optimize(&mut optimized_tree, false);
+        let requires_capture_group_fixup =
+            optimize(&mut optimized_tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, false);
         assert_eq!(&optimized_tree.expr, &tree.expr);
     }
@@ -880,7 +899,8 @@ mod tests {
         // \K inside a capturing group (not the root concat) should not be optimized
         let tree = Expr::parse_tree(r"c(a\Kb)d").unwrap();
         let mut optimized_tree = tree.clone();
-        let requires_capture_group_fixup = optimize(&mut optimized_tree, false);
+        let requires_capture_group_fixup =
+            optimize(&mut optimized_tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, false);
         assert_eq!(&optimized_tree.expr, &tree.expr);
     }
@@ -892,7 +912,8 @@ mod tests {
         // we must leave the pattern unchanged.
         let tree = Expr::parse_tree(r"(\w+)\K\s*(\w+)").unwrap();
         let mut optimized_tree = tree.clone();
-        let requires_capture_group_fixup = optimize(&mut optimized_tree, false);
+        let requires_capture_group_fixup =
+            optimize(&mut optimized_tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, false);
         assert_eq!(&optimized_tree.expr, &tree.expr);
     }
@@ -973,7 +994,7 @@ mod tests {
     #[test]
     fn nested_repeat_does_not_affect_capture_group_fixup_return() {
         let mut tree = Expr::parse_tree(r"(x+){1,}").unwrap();
-        let requires_capture_group_fixup = optimize(&mut tree, false);
+        let requires_capture_group_fixup = optimize(&mut tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, false);
         assert_eq!(optimized_pattern(r"(x+){1,}"), "(x+)");
     }
@@ -996,7 +1017,7 @@ mod tests {
         // When there's a backreference, the * → ? downgrade must NOT happen
         // because the group participation count is observable via \1.
         let mut tree = Expr::parse_tree_with_flags(r"(x+){1,}{0,}\1", oniguruma_flags()).unwrap();
-        optimize(&mut tree, false);
+        optimize(&mut tree, OptimizeOptions::default());
         // The inner {1,} is simplified to (x+), but the outer {0,} stays
         // as ZeroOrMore (not downgraded to Optional) because has_backrefs is true.
         assert_eq!(

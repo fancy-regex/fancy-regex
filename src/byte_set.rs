@@ -1,6 +1,6 @@
 use regex_syntax::hir::{Class, ClassUnicode, ClassUnicodeRange, Hir, HirKind};
 
-use crate::optimize::optimize;
+use crate::optimize::{optimize, OptimizeOptions};
 use crate::to_hir::{parse_fragment, HirCtx};
 use crate::{Expr, LookAround, RegexOptions, Result};
 
@@ -323,7 +323,12 @@ pub(crate) fn start_bytes(pattern: &str, options: &RegexOptions) -> Result<Optio
     // same tree the compile path would (KeepOut/trailing-lookahead skipped when
     // the pattern must stay on the VM).
     if options.should_optimize() {
-        optimize(&mut tree, options.hard_regex_runtime_options.find_not_empty);
+        optimize(
+            &mut tree,
+            OptimizeOptions {
+                find_not_empty: options.hard_regex_runtime_options.find_not_empty,
+            },
+        );
     }
     Ok(byte_set_from_expr(&tree.expr, options))
 }
@@ -409,7 +414,12 @@ pub(crate) fn required_bytes(pattern: &str, options: &RegexOptions) -> Result<By
     // `find_not_empty` is forwarded so the prefilter analyzes the same tree the
     // compile path would.
     if options.should_optimize() {
-        optimize(&mut tree, options.hard_regex_runtime_options.find_not_empty);
+        optimize(
+            &mut tree,
+            OptimizeOptions {
+                find_not_empty: options.hard_regex_runtime_options.find_not_empty,
+            },
+        );
     }
     Ok(required_byte_set_from_expr(&tree.expr))
 }

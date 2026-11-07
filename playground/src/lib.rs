@@ -201,11 +201,16 @@ pub fn analyze_regex(pattern: &str, flags: JsValue) -> Result<String, String> {
     let flags = get_flags(flags)?;
     let regex_flags = compute_regex_flags(&flags);
 
-    use fancy_regex::internal::{analyze, optimize, AnalyzeContext};
+    use fancy_regex::internal::{analyze, optimize, AnalyzeContext, OptimizeOptions};
 
     match fancy_regex::Expr::parse_tree_with_flags(pattern, regex_flags) {
         Ok(mut tree) => {
-            let requires_capture_group_fixup = optimize(&mut tree, flags.find_not_empty);
+            let requires_capture_group_fixup = optimize(
+                &mut tree,
+                OptimizeOptions {
+                    find_not_empty: flags.find_not_empty,
+                },
+            );
             match analyze(
                 &tree,
                 AnalyzeContext {
@@ -515,14 +520,19 @@ pub fn analyze_regex_tree(pattern: &str, flags: JsValue) -> Result<JsValue, Stri
     let flags = get_flags(flags)?;
     let regex_flags = compute_regex_flags(&flags);
 
-    use fancy_regex::internal::{analyze, optimize, AnalyzeContext};
+    use fancy_regex::internal::{analyze, optimize, AnalyzeContext, OptimizeOptions};
 
     match fancy_regex::Expr::parse_tree_with_flags(pattern, regex_flags) {
         Ok(mut tree) => {
             let named_groups = tree.named_groups.clone();
             // Build reverse lookup map from group index to name once
             let group_names = build_group_names_lookup(&named_groups);
-            let requires_capture_group_fixup = optimize(&mut tree, flags.find_not_empty);
+            let requires_capture_group_fixup = optimize(
+                &mut tree,
+                OptimizeOptions {
+                    find_not_empty: flags.find_not_empty,
+                },
+            );
             match analyze(
                 &tree,
                 AnalyzeContext {

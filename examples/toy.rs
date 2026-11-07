@@ -22,7 +22,7 @@
 
 use fancy_regex::internal::{
     analyze, can_compile_as_anchored, compile, optimize, run_trace, AnalyzeContext, CompileOptions,
-    Insn, Prog,
+    Insn, OptimizeOptions, Prog,
 };
 use fancy_regex::*;
 use std::env;
@@ -41,7 +41,7 @@ fn main() {
         } else if cmd == "optimize" {
             let re = args.next().expect("expected regexp argument");
             let mut e = Expr::parse_tree(&re).expect("expected regexp to be parsed successfully");
-            let explicit_capture_group0 = optimize(&mut e, false);
+            let explicit_capture_group0 = optimize(&mut e, OptimizeOptions::default());
             println!("explicit capture group 0: {:?}", explicit_capture_group0);
             println!("{:#?}", e);
         } else if cmd == "analyze" {
@@ -138,7 +138,7 @@ fn graph(re: &str, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
 
 fn show_analysis(re: &str, writer: &mut Formatter<'_>) -> Result {
     let mut tree = Expr::parse_tree(&re).unwrap();
-    let requires_capture_group_fixup = optimize(&mut tree, false);
+    let requires_capture_group_fixup = optimize(&mut tree, OptimizeOptions::default());
     let a = analyze(
         &tree,
         AnalyzeContext {
@@ -159,7 +159,7 @@ fn prog(re: &str) -> Prog {
     // constructing a regex might not produce a prog - it may be wrapped Regex instead,
     // which means that "toy" behaves differently to tests etc.
     let mut tree = Expr::parse_tree(re).expect("Expected parsing regex to work");
-    let requires_capture_group_fixup = optimize(&mut tree, false);
+    let requires_capture_group_fixup = optimize(&mut tree, OptimizeOptions::default());
     let result = analyze(
         &tree,
         AnalyzeContext {

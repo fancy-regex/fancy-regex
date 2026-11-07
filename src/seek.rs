@@ -519,7 +519,7 @@ mod tests {
     use super::*;
     use crate::analyze::{analyze, AnalyzeContext};
     use crate::compile::populate_group_info_map;
-    use crate::optimize;
+    use crate::optimize::{optimize, OptimizeOptions};
     use crate::ExprTree;
     use crate::Regex;
     use alloc::string::ToString;
@@ -538,7 +538,7 @@ mod tests {
 
     // Build the seek pattern for the given ExprTree
     fn get_seek_pattern_for_tree(tree: &mut ExprTree) -> String {
-        let requires_capture_group_fixup = optimize(tree, false);
+        let requires_capture_group_fixup = optimize(tree, OptimizeOptions::default());
 
         let info = analyze(
             &tree,
