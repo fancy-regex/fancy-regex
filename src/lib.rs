@@ -638,12 +638,14 @@ impl RegexOptions {
     }
 
     /// Whether the parsed expression tree should be run through the optimization
-    /// pass before analysis/compilation. The optimization is skipped when
-    /// `find_not_empty` is set (the pattern is always compiled via the VM, so
-    /// the rewrite would only be thrown away) or when the user has explicitly
-    /// disabled it via `RegexOptionsBuilder::optimize(false)`.
+    /// pass before analysis/compilation. The optimization is skipped when the
+    /// user has explicitly disabled it via
+    /// `RegexOptionsBuilder::optimize(false)`. When `find_not_empty` is set the
+    /// pass still runs, but `optimize()` is told to skip the KeepOut and
+    /// trailing-lookahead rewrites (which would make the pattern
+    /// delegatable, and the Wrap path can't reject empty matches).
     fn should_optimize(&self) -> bool {
-        self.optimize && !self.hard_regex_runtime_options.find_not_empty
+        self.optimize
     }
 
     fn compute_flags(&self) -> u32 {
@@ -872,7 +874,9 @@ impl RegexOptionsBuilder {
     /// Require that matches are non-empty (i.e. match at least one character).
     ///
     /// When this is enabled, any match attempt that would result in a zero-length match is
-    /// rejected.
+    /// rejected. The rejection happens on the VM path, so any sub-expression that could
+    /// produce an empty match is promoted to `hard` during analysis and the whole pattern is
+    /// compiled to the VM — the delegated (`Wrap`) path has no way to reject empty matches.
     ///
     /// Default is `false`.
     ///
@@ -881,6 +885,12 @@ impl RegexOptionsBuilder {
     /// `CompileError::PatternCanNeverMatch` instead of silently constructing a regex that can never
     /// return a result. This catches the user error at compile time rather than allowing the
     /// combination to execute pointlessly at runtime.
+    ///
+    /// N.B. Because the pattern must stay on the VM, the KeepOut (`\K`) and trailing
+    /// positive-lookahead rewrites are skipped during optimization when `find_not_empty` is set:
+    /// both wrap the prefix in an explicit capture group 0, which is what would otherwise flip
+    /// `info.hard` to `false` and let the pattern delegate to regex-automata. The safe rewrites
+    /// (nested-repeat simplification and ambiguous-concat-repeat rewriting) are still applied.
     pub fn find_not_empty(&mut self, yes: bool) -> &mut Self {
         self.options.hard_regex_runtime_options.find_not_empty = yes;
         self
@@ -1395,8 +1405,10 @@ impl Regex {
             false
         } else {
             // try to optimize the expression tree so that a hard pattern could become easy
-            // with a fixup of the capture groups
-            optimize(&mut tree)
+            // with a fixup of the capture groups. `find_not_empty` is passed through so
+            // the KeepOut/trailing-lookahead rewrites (which would make the pattern
+            // delegatable, and the Wrap path can't reject empty matches) are skipped.
+            optimize(&mut tree, find_not_empty)
         };
         let info = analyze(
             &tree,
@@ -3692,19 +3704,44 @@ mod tests {
     }
 
     #[test]
-    fn optimize_flag_with_find_not_empty() {
-        // `find_not_empty` forces the VM path and disables optimization regardless
-        // of the `optimize` flag, so the two settings produce identical regexes.
-        let a = RegexBuilder::new(r"a(?=b)")
+    fn optimize_flag_with_find_not_empty_keeps_pattern_on_vm() {
+        // `find_not_empty` must keep the pattern on the VM even when the
+        // optimization pass would otherwise make it delegatable: the Wrap
+        // (delegated) path has no way to reject empty matches, so the
+        // KeepOut/trailing-lookahead rewrites are skipped under
+        // `find_not_empty`. The safe rewrites (nested/ambiguous repeats) are
+        // still applied.
+        let re = RegexBuilder::new(r"a(?=b)")
             .find_not_empty(true)
             .optimize(true)
             .build()
             .unwrap();
-        let b = RegexBuilder::new(r"a(?=b)")
+        let debug = format!("{}", DebugRegex(&re));
+        assert!(
+            debug.contains("Lit(\"a\")"),
+            "expected VM instructions, got: {debug}"
+        );
+        assert!(
+            !debug.contains("wrapped Regex"),
+            "find_not_empty pattern must not delegate: {debug}"
+        );
+
+        // Disabling optimization entirely skips even the safe rewrites, so the
+        // two settings differ when the pattern has nested repeats.
+        let with_rewrites = RegexBuilder::new(r"(?:x+)+")
+            .find_not_empty(true)
+            .optimize(true)
+            .build()
+            .unwrap();
+        let without_rewrites = RegexBuilder::new(r"(?:x+)+")
             .find_not_empty(true)
             .optimize(false)
             .build()
             .unwrap();
-        assert_eq!(a.as_str(), b.as_str());
+        assert_ne!(
+            format!("{}", DebugRegex(&with_rewrites)),
+            format!("{}", DebugRegex(&without_rewrites)),
+            "safe rewrites should still apply under find_not_empty when optimize is on"
+        );
     }
 }

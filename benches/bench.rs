@@ -536,7 +536,7 @@ fn bench_concat_repeat_optimization(c: &mut Criterion, name: &str, with_optimize
     let pattern = r"(\w)(?:\s*\w?\s*)+\1";
     let mut tree = Expr::parse_tree(pattern).unwrap();
     if with_optimize {
-        optimize(&mut tree);
+        optimize(&mut tree, false);
     }
     let a = analyze(
         &tree,

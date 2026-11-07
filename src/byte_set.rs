@@ -319,9 +319,11 @@ pub(crate) fn start_bytes(pattern: &str, options: &RegexOptions) -> Result<Optio
     // Apply the same rewrite `Regex::new_options` applies before compiling so we
     // look at the tree that actually gets compiled. The decision to optimize is
     // centralized on `RegexOptions::should_optimize` so it stays in sync with the
-    // compile path.
+    // compile path; `find_not_empty` is forwarded so the prefilter analyzes the
+    // same tree the compile path would (KeepOut/trailing-lookahead skipped when
+    // the pattern must stay on the VM).
     if options.should_optimize() {
-        optimize(&mut tree);
+        optimize(&mut tree, options.hard_regex_runtime_options.find_not_empty);
     }
     Ok(byte_set_from_expr(&tree.expr, options))
 }
@@ -403,9 +405,11 @@ fn required_byte_set_from_expr(expr: &Expr) -> ByteSet {
 pub(crate) fn required_bytes(pattern: &str, options: &RegexOptions) -> Result<ByteSet> {
     let mut tree = Expr::parse_tree_with_flags(pattern, options.compute_flags())?;
     // Same rewrite `Regex::new_options` applies before compiling; the decision
-    // to optimize is centralized on `RegexOptions::should_optimize`.
+    // to optimize is centralized on `RegexOptions::should_optimize`, and
+    // `find_not_empty` is forwarded so the prefilter analyzes the same tree the
+    // compile path would.
     if options.should_optimize() {
-        optimize(&mut tree);
+        optimize(&mut tree, options.hard_regex_runtime_options.find_not_empty);
     }
     Ok(required_byte_set_from_expr(&tree.expr))
 }

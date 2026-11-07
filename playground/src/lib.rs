@@ -205,7 +205,7 @@ pub fn analyze_regex(pattern: &str, flags: JsValue) -> Result<String, String> {
 
     match fancy_regex::Expr::parse_tree_with_flags(pattern, regex_flags) {
         Ok(mut tree) => {
-            let requires_capture_group_fixup = optimize(&mut tree);
+            let requires_capture_group_fixup = optimize(&mut tree, flags.find_not_empty);
             match analyze(
                 &tree,
                 AnalyzeContext {
@@ -522,7 +522,7 @@ pub fn analyze_regex_tree(pattern: &str, flags: JsValue) -> Result<JsValue, Stri
             let named_groups = tree.named_groups.clone();
             // Build reverse lookup map from group index to name once
             let group_names = build_group_names_lookup(&named_groups);
-            let requires_capture_group_fixup = optimize(&mut tree);
+            let requires_capture_group_fixup = optimize(&mut tree, flags.find_not_empty);
             match analyze(
                 &tree,
                 AnalyzeContext {

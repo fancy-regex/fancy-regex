@@ -538,7 +538,7 @@ mod tests {
 
     // Build the seek pattern for the given ExprTree
     fn get_seek_pattern_for_tree(tree: &mut ExprTree) -> String {
-        let requires_capture_group_fixup = optimize(tree);
+        let requires_capture_group_fixup = optimize(tree, false);
 
         let info = analyze(
             &tree,
