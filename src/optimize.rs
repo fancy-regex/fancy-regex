@@ -1148,7 +1148,6 @@ mod tests {
             optimized_pattern(r"^a{2,}b?a{2,}$"),
             r"^a{2,}(?:b{1}a{2,}|a{2})$"
         );
-        // the user's example patterns
         assert_eq!(optimized_pattern(r"^a{2,}b?a+$"), r"^a{2,}(?:b{1}a+|a{1})$");
         assert_eq!(optimized_pattern(r"^a+b?a{2,}$"), r"^a+(?:b{1}a{2,}|a{2})$");
         // asymmetric minima: the stricter (left) edge stays mandatory and the
@@ -1163,14 +1162,13 @@ mod tests {
     fn ambiguous_concat_repeats_bounded_both_mandatory() {
         // When at least one edge is bounded above, keeping the edges separate
         // still backtracks over their boundary, so the two runs are merged into
-        // a single repeat with the combined bounds [L+R, L_hi+R_hi] and the
-        // tail chooses the middle+right path or the combined run directly. This
-        // is the user's proposed form.
+        // a single repeat with the combined bounds [L+R, L_hi+R_hi]: the first
+        // alternative still consumes the middle, and the second absorbs the
+        // combined run directly.
         assert_eq!(
             optimized_pattern(r"a{2,5}b?a{1,4}"),
             r"(?:a{2,5}b{1}a{1,4}|a{3,9})"
         );
-        // the user's example pattern
         assert_eq!(
             optimized_pattern(r"^a{2,5}b?a{1,4}$"),
             r"^(?:a{2,5}b{1}a{1,4}|a{3,9})$"
