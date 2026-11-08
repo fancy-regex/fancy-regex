@@ -11,9 +11,44 @@ handling in the root API). It skips the root-level capture-group rewrites for
 self-recursive patterns, because moving that structure out of group 0 would be
 incorrect.
 
-## Passes
+## Explained simply
 
-### KeepOut / trailing positive lookahead (`optimize_keepout`, `optimize_trailing_lookahead`)
+The optimizer runs **before** the regex is compiled. Its job is to take the
+parsed pattern (`Expr` tree) and rewrite it into an equivalent but more
+efficient form — without changing what the pattern matches or what it captures.
+
+It does three main things:
+
+1. **Simplifies nested quantifiers**  
+   `(?:x+)+` → `x+` — redundant nesting only causes the backtracking VM to
+   do useless work. The optimizer collapses them when it's safe (no capture
+   groups or backreferences that would change semantics).
+
+2. **Factors ambiguous boundaries between repeated runs of the same thing**  
+   Patterns like `\s*\w?\s*` or `a{2,}b*a{2,}` have two runs of the same atom
+   (`\s*…\s*` or `a…a`) separated by an optional middle. When the middle is
+   absent, the VM doesn't know where the first run ends and the second begins,
+   so it backtracks heavily. The optimizer rewrites these so the boundary is
+   explicit — the VM only backtracks over a bounded choice, not an unbounded
+   split.
+
+3. **Hoists `\K` and trailing positive lookahead into an explicit capture group**  
+   `\K` means "discard everything matched so far." The optimizer wraps the
+   suffix after `\K` in a capture group so the whole pattern can be delegated
+   to the fast `regex-automata` engine, reading the match span from that group.
+   Same for a trailing positive lookahead like `a(?=b)` → `(a)b`.
+
+These rewrites are **semantics-preserving** — they don't change what matches,
+what gets captured, or which backreferences see what. They just remove work
+the VM would otherwise do.
+
+---
+
+## Technical reference
+
+### Passes
+
+#### KeepOut / trailing positive lookahead (`optimize_keepout`, `optimize_trailing_lookahead`)
 
 A root-level `\K` resets the reported match start, so the reported match is the
 suffix after `\K`. When the prefix before `\K` contains no capture groups, the
@@ -29,7 +64,7 @@ break the mechanism that reads the match span from group 1, so those cases are
 left alone. The pass is root-concat-level (or the specific lookahead form) and
 is not applied to self-recursive trees.
 
-### Nested repeats (`optimize_nested_repeats`)
+#### Nested repeats (`optimize_nested_repeats`)
 
 Simplifies provably equivalent nested greedy quantifiers, e.g. `(?:x+)+` → `x+`,
 to avoid catastrophic backtracking from redundant nesting. It only folds
@@ -48,10 +83,10 @@ Safety around captures and backreferences:
   `?` (`(X+)*` = `(X+)?`) because participation count is not observable; this is
   **not** done when backreferences exist.
 
-### Ambiguous concat repeats (`optimize_ambiguous_concat_repeats`)
+#### Ambiguous concat repeats (`optimize_ambiguous_concat_repeats`)
 
-Targets ambiguity where two greedy repeats of the *same* atom sit around a
-nullable/optional middle repeat in a concat: `A{L,*} M{0,h} A{R,*}` (`L,R` any
+Targets ambiguity where two greedy repeats of the *same* `Expr` leaf sit around a
+nullable/optional middle repeat in a `Concat`: `A{lo,*} M{0,hi} A{lo,*}` (`lo` any
 required minimum, greedy, same `A` on both sides, `M` nullable with `hi != 0`).
 The original backtracks heavily because the boundary between the two `A` runs
 is ambiguous when `M` is absent.
@@ -63,7 +98,7 @@ The rewrite factors that boundary, with the key invariant:
 
 Applicability/shape (`build_concat_repeat_triplet`). Both edges must be greedy
 repeats (`X{lo,}` or `X{lo,hi}`); the middle must be nullable with `hi != 0`;
-the two edges must be the same atom.
+the two edges must be the same `Expr` leaf.
 
 - `L == 0` (the left edge is nullable, e.g. `\w*\.?\w+`, `a{0,}b?a{2,}`,
   `a{0,}b?a{0,}`): keep `A{R,*}` mandatory as a suffix and wrap `A{L,*}M{1,h}`
