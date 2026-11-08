@@ -1335,3 +1335,35 @@ fn lookahead_is_atomic() {
     assert_no_match(r"(?=a|(?:(a)))\1a", "aa");
     assert_match(r"(?=(x)|x)\1x", "xx");
 }
+
+#[cfg(feature = "variable-lookbehinds")]
+#[test]
+fn variable_lookbehind_leading_assertion() {
+    for pattern in [
+        r"x(?<=\b.{1,3})",
+        r"x(?<=\b.{2,3})",
+        r"x(?<=(?<= ).{1,3})",
+        r"x(?<=\b.{1,2})",
+        r"x(?<=(?=\w).{1,3})",
+    ] {
+        assert_match(pattern, "ab x");
+    }
+    assert_no_match(r"x(?<!\b.{1,3})", "ab x");
+    assert_no_match(r"x(?<=\b.{2,3})", "abcdx");
+    assert_match(r"x(?<!\b.{2,3})", "abcdx");
+    assert_match(r"x(?<=\b.{1,3})", "αβ x");
+}
+
+#[cfg(feature = "variable-lookbehinds")]
+#[test]
+fn variable_lookbehind_boundary_preserves_backtrack_budget() {
+    let text = "a".repeat(1000) + "b";
+    assert_match(r"(?<=\ba+)b", &text);
+}
+
+#[cfg(feature = "variable-lookbehinds")]
+#[test]
+fn variable_lookbehind_quantified_boundary() {
+    assert_match(r"x(?<=a\b{2}.{1,2})", "a x");
+    assert_match(r"x(?<=\b{1}.{1,3})", "ab x");
+}

@@ -111,6 +111,7 @@ pub(crate) fn build_seek_pattern<'a>(
     depth: usize,
     buf: &mut String,
     precedence: u8,
+    drop_word_boundaries: bool,
 ) {
     let mut inlined_groups = Vec::new();
     build_seek_pattern_impl(
@@ -121,6 +122,7 @@ pub(crate) fn build_seek_pattern<'a>(
         precedence,
         false,
         &mut inlined_groups,
+        drop_word_boundaries,
     );
 }
 
@@ -132,6 +134,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
     precedence: u8,
     drop_positional_anchors: bool,
     inlined_groups: &mut Vec<usize>,
+    drop_word_boundaries: bool,
 ) {
     // Drop positional anchors at this node when requested (used when inlining for a backref).
     if drop_positional_anchors {
@@ -158,7 +161,21 @@ pub(crate) fn build_seek_pattern_impl<'a>(
     }
 
     let has_capture_groups = info.start_group() != info.end_group();
-    if !info.hard && !has_capture_groups {
+    let contains_word_boundary = drop_word_boundaries
+        && info.expr.has_descendant_or_self(|expr| {
+            matches!(
+                expr,
+                Expr::Assertion(
+                    Assertion::WordBoundary
+                        | Assertion::NotWordBoundary
+                        | Assertion::LeftWordBoundary
+                        | Assertion::RightWordBoundary
+                        | Assertion::LeftWordHalfBoundary
+                        | Assertion::RightWordHalfBoundary
+                )
+            )
+        });
+    if !info.hard && !has_capture_groups && !contains_word_boundary {
         // Easy subtree — use to_str directly when no positional-anchor dropping is needed,
         // or when the subtree contains no positional anchors (so dropping is a no-op).
         if !drop_positional_anchors || !expr_contains_positional_anchor(info.expr) {
@@ -172,11 +189,10 @@ pub(crate) fn build_seek_pattern_impl<'a>(
     match info.expr {
         Expr::Empty | Expr::DefineGroup { .. } => {}
         Expr::Assertion(assertion) => {
-            // Emit word boundaries, including half boundaries, as `to_str` writes them.
             // Note: easy positional assertions (StartText, EndText, StartLine, EndLine) are
             // handled by the to_str early return above (drop_positional_anchors=false) or by
             // the early drop at the top of this function (drop_positional_anchors=true).
-            // Only hard assertions reach this arm.
+            // Reverse seek patterns also reach this arm for easy assertions.
             match assertion {
                 Assertion::EndTextIgnoreTrailingNewlines { crlf: false } => buf.push_str(r"\n*$"),
                 Assertion::EndTextIgnoreTrailingNewlines { crlf: true } => {
@@ -187,7 +203,15 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                 | Assertion::LeftWordBoundary
                 | Assertion::RightWordBoundary
                 | Assertion::LeftWordHalfBoundary
-                | Assertion::RightWordHalfBoundary => info.expr.to_str(buf, precedence),
+                | Assertion::RightWordHalfBoundary => {
+                    // The VM verifies boundaries omitted from a reverse seek DFA,
+                    // which would otherwise quit on non-ASCII input.
+                    if drop_word_boundaries {
+                        buf.push_str("(?:)");
+                    } else {
+                        info.expr.to_str(buf, precedence);
+                    }
+                }
                 // Easy positional anchors — handled by early return / early drop above.
                 // They can only reach here when drop_positional_anchors=false and the subtree
                 // is easy (handled by to_str) but the Group/Concat parent fell through to match.
@@ -212,6 +236,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                     2,
                     drop_positional_anchors,
                     inlined_groups,
+                    drop_word_boundaries,
                 );
             }
             if precedence > 1 {
@@ -235,6 +260,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                     1,
                     drop_positional_anchors,
                     inlined_groups,
+                    drop_word_boundaries,
                 );
                 first = false;
             }
@@ -253,6 +279,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                     precedence,
                     drop_positional_anchors,
                     inlined_groups,
+                    drop_word_boundaries,
                 );
             }
         }
@@ -269,6 +296,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                     3,
                     drop_positional_anchors,
                     inlined_groups,
+                    drop_word_boundaries,
                 );
             }
             write_quantifier(buf, *lo, *hi, false);
@@ -310,6 +338,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                                 0,
                                 true,
                                 inlined_groups,
+                                drop_word_boundaries,
                             );
                             inlined_groups.pop();
                             if !inner.is_empty() {
@@ -326,6 +355,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                                 precedence,
                                 true,
                                 inlined_groups,
+                                drop_word_boundaries,
                             );
                             inlined_groups.pop();
                         }
@@ -359,6 +389,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                             precedence,
                             drop_positional_anchors,
                             inlined_groups,
+                            drop_word_boundaries,
                         );
                         inlined_groups.pop();
                         return;
@@ -381,6 +412,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                     precedence,
                     drop_positional_anchors,
                     inlined_groups,
+                    drop_word_boundaries,
                 );
             }
         }
@@ -412,6 +444,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                     2,
                     drop_positional_anchors,
                     inlined_groups,
+                    drop_word_boundaries,
                 );
             }
             if info.children.len() >= 2 {
@@ -423,6 +456,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                     2,
                     drop_positional_anchors,
                     inlined_groups,
+                    drop_word_boundaries,
                 );
             }
             if info.children.len() >= 3 {
@@ -434,6 +468,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                     1,
                     drop_positional_anchors,
                     inlined_groups,
+                    drop_word_boundaries,
                 );
             }
             // Build the "condition then true-branch" alternative.
@@ -477,6 +512,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                     precedence,
                     drop_positional_anchors,
                     inlined_groups,
+                    drop_word_boundaries,
                 );
             }
         }
@@ -552,7 +588,7 @@ mod tests {
         let mut group_info_map = Map::new();
         populate_group_info_map(&mut group_info_map, &info);
         let mut buf = String::new();
-        build_seek_pattern(&info, &group_info_map, 0, &mut buf, 0);
+        build_seek_pattern(&info, &group_info_map, 0, &mut buf, 0, false);
         buf
     }
 
