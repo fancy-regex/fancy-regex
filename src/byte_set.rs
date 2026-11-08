@@ -1,6 +1,6 @@
 use regex_syntax::hir::{Class, ClassUnicode, ClassUnicodeRange, Hir, HirKind};
 
-use crate::optimize::optimize;
+use crate::optimize::{optimize, OptimizeOptions};
 use crate::to_hir::{parse_fragment, HirCtx};
 use crate::{Expr, LookAround, RegexOptions, Result};
 
@@ -316,9 +316,20 @@ pub(crate) fn byte_set_from_expr(expr: &Expr, options: &RegexOptions) -> Option<
 /// See [`crate::RegexOptionsBuilder::start_bytes`]
 pub(crate) fn start_bytes(pattern: &str, options: &RegexOptions) -> Result<Option<ByteSet>> {
     let mut tree = Expr::parse_tree_with_flags(pattern, options.compute_flags())?;
-    // Same rewrite `Regex::new_options` applies before compiling so we look at the tree
-    // that actually gets compiled
-    optimize(&mut tree);
+    // Apply the same rewrite `Regex::new_options` applies before compiling so we
+    // look at the tree that actually gets compiled. The decision to optimize is
+    // centralized on `RegexOptions::should_optimize` so it stays in sync with the
+    // compile path; `find_not_empty` is forwarded so the prefilter analyzes the
+    // same tree the compile path would (KeepOut/trailing-lookahead skipped when
+    // the pattern must stay on the VM).
+    if options.should_optimize() {
+        optimize(
+            &mut tree,
+            OptimizeOptions {
+                find_not_empty: options.hard_regex_runtime_options.find_not_empty,
+            },
+        );
+    }
     Ok(byte_set_from_expr(&tree.expr, options))
 }
 
@@ -398,7 +409,18 @@ fn required_byte_set_from_expr(expr: &Expr) -> ByteSet {
 /// See [`crate::RegexOptionsBuilder::required_bytes`]
 pub(crate) fn required_bytes(pattern: &str, options: &RegexOptions) -> Result<ByteSet> {
     let mut tree = Expr::parse_tree_with_flags(pattern, options.compute_flags())?;
-    optimize(&mut tree);
+    // Same rewrite `Regex::new_options` applies before compiling; the decision
+    // to optimize is centralized on `RegexOptions::should_optimize`, and
+    // `find_not_empty` is forwarded so the prefilter analyzes the same tree the
+    // compile path would.
+    if options.should_optimize() {
+        optimize(
+            &mut tree,
+            OptimizeOptions {
+                find_not_empty: options.hard_regex_runtime_options.find_not_empty,
+            },
+        );
+    }
     Ok(required_byte_set_from_expr(&tree.expr))
 }
 

@@ -1232,6 +1232,28 @@ fn ambiguous_concat_repeat_optimization_not_more_permissive() {
 }
 
 #[test]
+fn ambiguous_concat_repeats_preserve_combined_minimum() {
+    // Two unbounded repeats of the same atom around an optional separator must
+    // still satisfy the combined minimum of both repeats when the separator is
+    // absent.
+    common::assert_no_match(r"^a+b?a+$", "a");
+    common::assert_no_match(r"a+b?a+", "a");
+    common::assert_is_match(r"^a+b?a+$", "aa");
+    common::assert_is_match(r"^a+b?a+$", "aba");
+    common::assert_is_match(r"^a+b?a+$", "aabaa");
+    common::assert_is_match(r"^a+b?a+$", "aaaa");
+    common::assert_no_match(r"^a+b?a+$", "baa");
+
+    common::assert_no_match(r"^-+a?-+$", "-");
+    common::assert_is_match(r"^-+a?-+$", "--");
+    common::assert_is_match(r"^-+a?-+$", "-a-");
+
+    // Also applies when the pattern uses "fancy" features.
+    common::assert_no_match(r"^(?!x)a+b?a+$", "a");
+    common::assert_is_match(r"^(?!x)a+b?a+$", "aa");
+}
+
+#[test]
 fn casei_literal_in_hard_pattern() {
     // Lookbehind forces these onto the VM, where casei literals are matched
     // by the native LitCasei instruction. Semantics must equal a delegated

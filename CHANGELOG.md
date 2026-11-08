@@ -9,6 +9,7 @@ with the exception that 0.x versions can break between minor versions.
 ## [Unreleased]
 ### Added
 - A new `Expr::has_descendant_or_self` method to easily traverse the Expr descendants to find an Expr matching a predicate. (#319)
+- Add a `RegexOptionsBuilder::optimize` / `RegexBuilder::optimize` flag to disable the expression-tree optimization pass (enabled by default), and rework it into two tiers: `optimize()` now takes an `OptimizeOptions` struct with a `find_not_empty` flag that skips only the KeepOut (`\K`) and trailing-lookahead rewrites, while the safe rewrites still apply — so `find_not_empty` patterns benefit from them instead of skipping the whole pass. The decision on whether to optimize is centralized on `RegexOptions::should_optimize` and forwarded to the prefilter helpers (`start_bytes`, `required_bytes`) so they analyze the same tree as the compile path. (#323)
 - Support control character escapes `\cX` and `\C-X` in Oniguruma mode, e.g. `\ca` matches `\x01` and `\c\\` matches `\x1C`, both inside and outside of character classes. Without Oniguruma mode they are still invalid escapes. (#320)
 ### Changed
 ### Fixed
