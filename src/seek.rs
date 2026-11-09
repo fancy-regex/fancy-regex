@@ -161,28 +161,29 @@ pub(crate) fn build_seek_pattern_impl<'a>(
     }
 
     let has_capture_groups = info.start_group() != info.end_group();
-    let contains_word_boundary = drop_word_boundaries
-        && info.expr.has_descendant_or_self(|expr| {
-            matches!(
-                expr,
-                Expr::Assertion(
-                    Assertion::WordBoundary
-                        | Assertion::NotWordBoundary
-                        | Assertion::LeftWordBoundary
-                        | Assertion::RightWordBoundary
-                        | Assertion::LeftWordHalfBoundary
-                        | Assertion::RightWordHalfBoundary
+    if !info.hard && !has_capture_groups {
+        let contains_word_boundary = drop_word_boundaries
+            && info.expr.has_descendant_or_self(|expr| {
+                matches!(
+                    expr,
+                    Expr::Assertion(
+                        Assertion::WordBoundary
+                            | Assertion::NotWordBoundary
+                            | Assertion::LeftWordBoundary
+                            | Assertion::RightWordBoundary
+                            | Assertion::LeftWordHalfBoundary
+                            | Assertion::RightWordHalfBoundary
+                    )
                 )
-            )
-        });
-    if !info.hard && !has_capture_groups && !contains_word_boundary {
-        // Easy subtree — use to_str directly when no positional-anchor dropping is needed,
-        // or when the subtree contains no positional anchors (so dropping is a no-op).
-        if !drop_positional_anchors || !expr_contains_positional_anchor(info.expr) {
+            });
+        // Use to_str directly when the subtree contains no assertions that need dropping.
+        if !contains_word_boundary
+            && (!drop_positional_anchors || !expr_contains_positional_anchor(info.expr))
+        {
             info.expr.to_str(buf, precedence);
             return;
         }
-        // The easy subtree contains positional anchors that need to be stripped.
+        // The easy subtree contains assertions that need to be stripped.
         // Fall through to the match below, which recurses via build_seek_pattern_impl.
     }
 
@@ -206,10 +207,11 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                 | Assertion::RightWordHalfBoundary => {
                     // The VM verifies boundaries omitted from a reverse seek DFA,
                     // which would otherwise quit on non-ASCII input.
-                    if drop_word_boundaries {
-                        buf.push_str("(?:)");
-                    } else {
+                    if !drop_word_boundaries {
                         info.expr.to_str(buf, precedence);
+                    } else if precedence > 2 {
+                        // A quantifier still needs an atom when its boundary is omitted.
+                        buf.push_str("(?:)");
                     }
                 }
                 // Easy positional anchors — handled by early return / early drop above.

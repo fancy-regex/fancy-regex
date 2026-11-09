@@ -855,9 +855,9 @@ impl<'a> Compiler<'a> {
                     )))
                 }
             } else {
-                // Keep the reverse check for constant-sized hard children. If a
-                // hard child can reject a variable delegate's chosen start, retry
-                // with the VM only when the reverse check fails.
+                // If the variable lookbehind is a Concat expression where all children
+                // are either easy or have constant size, compile the easy pieces as
+                // variable lookbehinds and use goback instructions for the hard children.
                 if let Expr::Concat(_) = inner.expr {
                     let can_compile = inner
                         .children
@@ -867,6 +867,8 @@ impl<'a> Compiler<'a> {
                     if can_compile {
                         #[cfg(feature = "variable-lookbehinds")]
                         {
+                            // If a hard child can reject a variable delegate's chosen start,
+                            // retry with the VM only when the reverse check fails.
                             let needs_fallback = !inner
                                 .children
                                 .iter()
@@ -1038,8 +1040,9 @@ impl<'a> Compiler<'a> {
                 candidate_pos_slot: candidate_save,
             }))?;
 
-        // The body must backtrack to the saved end instead of committing to
-        // a delegated suffix that could consume past it.
+        // Use a hard context so that we can backtrack through variable
+        // length nodes instead of just accepting a single end position
+        // from the delegate.
         self.visit(inner, true)?;
         self.b.add(Insn::ReverseLookbehindPosCheck {
             slot: end_save,
