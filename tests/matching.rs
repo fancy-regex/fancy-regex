@@ -1367,3 +1367,12 @@ fn variable_lookbehind_quantified_boundary() {
     assert_match(r"x(?<=a\b{2}.{1,2})", "a x");
     assert_match(r"x(?<=\b{1}.{1,3})", "ab x");
 }
+
+#[cfg(feature = "variable-lookbehinds")]
+#[test]
+fn variable_lookbehind_quantified_conditional_boundary() {
+    let pattern = r"(a)?x(?<=(?(1)\b|\B){1}.{1,3})";
+    assert_match(pattern, "ax");
+    assert_match(pattern, "ab x");
+    assert_no_match(pattern, "x");
+}

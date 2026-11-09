@@ -482,6 +482,9 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                 format!("(?:{}{})", cond_pat, true_pat)
             };
             if cond_true.is_empty() && false_pat.is_empty() {
+                if precedence > 2 {
+                    buf.push_str("(?:)");
+                }
                 return;
             }
             // An empty branch still matches the empty string. Keep it in the union
