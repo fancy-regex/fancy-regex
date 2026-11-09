@@ -90,13 +90,14 @@ pub(crate) fn emit_min_size_placeholder(buf: &mut String, min_size: usize, prece
 
 /// Write the seek-pattern approximation for `info` into `buf`.
 ///
-/// Easy subtrees without capture groups are serialised verbatim via [`Expr::to_str`].
+/// Easy subtrees without capture groups are serialised verbatim via [`Expr::to_str`],
+/// unless they contain assertions that must be stripped.
 /// Hard nodes are handled as follows:
 /// - `Backref` / `SubroutineCall`: inline the referenced group's body (up to
-///   `MAX_SUBROUTINE_RECURSION_DEPTH`). For backrefs, positional anchors (`^`, `$`, `\b`) etc.
-///   are dropped from the inlined body because backreferences only capture text, not positions.
-///   If inlining is not possible, a permissive `(?s:.){min_size,}` placeholder is emitted
-///   instead of silently dropping, to maintain correctness.
+///   `MAX_SUBROUTINE_RECURSION_DEPTH`). For backrefs, positional anchors (`^`, `$`, `\Z`)
+///   are dropped from the inlined body because backreferences only capture text, not
+///   positions. If inlining is not possible, a permissive `(?s:.){min_size,}` placeholder
+///   is emitted instead of silently dropping, to maintain correctness.
 /// - `LookAround`, `KeepOut`, `ContinueFromPreviousMatchEnd`, `BacktrackingControlVerb`,
 ///   `BackrefExistsCondition`, `Absent`: dropped (emit nothing — safe over-approximation,
 ///   their `min_size` is 0).
@@ -104,7 +105,14 @@ pub(crate) fn emit_min_size_placeholder(buf: &mut String, min_size: usize, prece
 /// - `Group`: keep the contents, discard the capture group wrapper.
 /// - `Conditional`: emit the union of the true and false branches.
 /// - `GeneralNewline`: replaced with an explicit alternation.
-/// - `Assertion`: anchors and word-boundary assertions, half boundaries included, are emitted.
+/// - `Assertion`: emitted (unless they are part of a backref as mentioned above, or the
+///    assertion is a word boundary and drop_word_boundaries is set - more on that below.)
+///    (or replaced with an empty atom when a quantifier still needs one).
+///
+/// `drop_word_boundaries` must be set when the seek pattern feeds a reverse DFA searching
+/// a Unicode haystack — regex-automata cannot evaluate word boundaries in reverse on
+/// Unicode input, so emitting them would produce an invalid pattern. It is left `false`
+/// for forward seeks, where word boundaries are safe and useful. See [`SeekOptions`].
 pub(crate) fn build_seek_pattern<'a>(
     info: &Info<'a>,
     group_info_map: &Map<usize, &'a Info<'a>>,
