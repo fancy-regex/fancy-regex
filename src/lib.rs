@@ -1416,12 +1416,7 @@ impl Regex {
             // with a fixup of the capture groups. `find_not_empty` is passed through so
             // the KeepOut/trailing-lookahead rewrites (which would make the pattern
             // delegatable, and the Wrap path can't reject empty matches) are skipped.
-            optimize(
-                &mut tree,
-                OptimizeOptions {
-                    find_not_empty: find_not_empty,
-                },
-            )
+            optimize(&mut tree, OptimizeOptions { find_not_empty })
         };
         let info = analyze(
             &tree,
