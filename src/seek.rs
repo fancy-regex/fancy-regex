@@ -120,9 +120,11 @@ pub(crate) fn build_seek_pattern<'a>(
         depth,
         buf,
         precedence,
-        false,
         &mut inlined_groups,
-        drop_word_boundaries,
+        SeekOptions {
+            drop_positional_anchors: false,
+            drop_word_boundaries,
+        },
     );
 }
 
@@ -132,12 +134,11 @@ pub(crate) fn build_seek_pattern_impl<'a>(
     depth: usize,
     buf: &mut String,
     precedence: u8,
-    drop_positional_anchors: bool,
     inlined_groups: &mut Vec<usize>,
-    drop_word_boundaries: bool,
+    opts: SeekOptions,
 ) {
     // Drop positional anchors at this node when requested (used when inlining for a backref).
-    if drop_positional_anchors {
+    if opts.drop_positional_anchors {
         if let Expr::Assertion(
             Assertion::StartText
             | Assertion::EndText
@@ -162,7 +163,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
 
     let has_capture_groups = info.start_group() != info.end_group();
     if !info.hard && !has_capture_groups {
-        let contains_word_boundary = drop_word_boundaries
+        let contains_word_boundary = opts.drop_word_boundaries
             && info.expr.has_descendant_or_self(|expr| {
                 matches!(
                     expr,
@@ -178,7 +179,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
             });
         // Use to_str directly when the subtree contains no assertions that need dropping.
         if !contains_word_boundary
-            && (!drop_positional_anchors || !expr_contains_positional_anchor(info.expr))
+            && (!opts.drop_positional_anchors || !expr_contains_positional_anchor(info.expr))
         {
             info.expr.to_str(buf, precedence);
             return;
@@ -207,7 +208,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                 | Assertion::RightWordHalfBoundary => {
                     // The VM verifies boundaries omitted from a reverse seek DFA,
                     // which would otherwise quit on non-ASCII input.
-                    if !drop_word_boundaries {
+                    if !opts.drop_word_boundaries {
                         info.expr.to_str(buf, precedence);
                     } else if precedence > 2 {
                         // A quantifier still needs an atom when its boundary is omitted.
@@ -230,16 +231,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                 buf.push_str("(?:");
             }
             for child in &info.children {
-                build_seek_pattern_impl(
-                    child,
-                    group_info_map,
-                    depth,
-                    buf,
-                    2,
-                    drop_positional_anchors,
-                    inlined_groups,
-                    drop_word_boundaries,
-                );
+                build_seek_pattern_impl(child, group_info_map, depth, buf, 2, inlined_groups, opts);
             }
             if precedence > 1 {
                 buf.push(')');
@@ -254,16 +246,7 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                 if !first {
                     buf.push('|');
                 }
-                build_seek_pattern_impl(
-                    child,
-                    group_info_map,
-                    depth,
-                    buf,
-                    1,
-                    drop_positional_anchors,
-                    inlined_groups,
-                    drop_word_boundaries,
-                );
+                build_seek_pattern_impl(child, group_info_map, depth, buf, 1, inlined_groups, opts);
                 first = false;
             }
             if precedence > 0 {
@@ -279,9 +262,8 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                     depth,
                     buf,
                     precedence,
-                    drop_positional_anchors,
                     inlined_groups,
-                    drop_word_boundaries,
+                    opts,
                 );
             }
         }
@@ -296,9 +278,8 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                     depth,
                     buf,
                     3,
-                    drop_positional_anchors,
                     inlined_groups,
-                    drop_word_boundaries,
+                    opts,
                 );
             }
             write_quantifier(buf, *lo, *hi, false);
@@ -338,9 +319,11 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                                 &mut inner,
                                 // Precedence 0 (alternation) so content inside (?i:...) is unambiguous.
                                 0,
-                                true,
                                 inlined_groups,
-                                drop_word_boundaries,
+                                SeekOptions {
+                                    drop_positional_anchors: true,
+                                    drop_word_boundaries: opts.drop_word_boundaries,
+                                },
                             );
                             inlined_groups.pop();
                             if !inner.is_empty() {
@@ -355,9 +338,11 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                                 depth + 1,
                                 buf,
                                 precedence,
-                                true,
                                 inlined_groups,
-                                drop_word_boundaries,
+                                SeekOptions {
+                                    drop_positional_anchors: true,
+                                    drop_word_boundaries: opts.drop_word_boundaries,
+                                },
                             );
                             inlined_groups.pop();
                         }
@@ -389,9 +374,8 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                             depth + 1,
                             buf,
                             precedence,
-                            drop_positional_anchors,
                             inlined_groups,
-                            drop_word_boundaries,
+                            opts,
                         );
                         inlined_groups.pop();
                         return;
@@ -412,9 +396,8 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                     depth,
                     buf,
                     precedence,
-                    drop_positional_anchors,
                     inlined_groups,
-                    drop_word_boundaries,
+                    opts,
                 );
             }
         }
@@ -444,9 +427,8 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                     depth,
                     &mut cond_pat,
                     2,
-                    drop_positional_anchors,
                     inlined_groups,
-                    drop_word_boundaries,
+                    opts,
                 );
             }
             if info.children.len() >= 2 {
@@ -456,9 +438,8 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                     depth,
                     &mut true_pat,
                     2,
-                    drop_positional_anchors,
                     inlined_groups,
-                    drop_word_boundaries,
+                    opts,
                 );
             }
             if info.children.len() >= 3 {
@@ -468,9 +449,8 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                     depth,
                     &mut false_pat,
                     1,
-                    drop_positional_anchors,
                     inlined_groups,
-                    drop_word_boundaries,
+                    opts,
                 );
             }
             // Build the "condition then true-branch" alternative.
@@ -515,9 +495,8 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                     depth,
                     buf,
                     precedence,
-                    drop_positional_anchors,
                     inlined_groups,
-                    drop_word_boundaries,
+                    opts,
                 );
             }
         }
@@ -541,6 +520,19 @@ pub(crate) fn build_seek_pattern_impl<'a>(
             unreachable!("unexpected expr variant after analysis")
         }
     }
+}
+
+/// Options controlling which assertions are dropped when building a seek pattern.
+///
+/// Both flags relate to inlining a group body (for a backref or subroutine call) where the
+/// original position of the match is no longer meaningful: positional anchors (`^`, `$`) and
+/// word-boundary assertions must be dropped or approximated to stay correct.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct SeekOptions {
+    /// Drop positional anchors (`^`, `$`, `\Z`) from the inlined body.
+    pub(crate) drop_positional_anchors: bool,
+    /// Drop word-boundary assertions (`\b`, `\B`, half boundaries) from the inlined body.
+    pub(crate) drop_word_boundaries: bool,
 }
 
 /// Returns `true` if `pattern` contains at least one character that provides useful filtering
