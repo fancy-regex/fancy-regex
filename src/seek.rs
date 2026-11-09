@@ -163,7 +163,14 @@ pub(crate) fn build_seek_pattern_impl<'a>(
 
     let has_capture_groups = info.start_group() != info.end_group();
     if !info.hard && !has_capture_groups {
-        let contains_word_boundary = opts.drop_word_boundaries
+        // An easy subtree without capture groups can be serialised verbatim unless it
+        // contains assertions that must be stripped while inlining: word boundaries
+        // (when `drop_word_boundaries` is set) or positional anchors (when
+        // `drop_positional_anchors` is set). Each descendant scan is short-circuited by
+        // its own option flag, so we only pay the cost when stripping is actually
+        // requested — i.e. when word boundaries are not being dropped, the word-boundary
+        // scan is skipped entirely.
+        let needs_assertion_strip = (opts.drop_word_boundaries
             && info.expr.has_descendant_or_self(|expr| {
                 matches!(
                     expr,
@@ -176,11 +183,10 @@ pub(crate) fn build_seek_pattern_impl<'a>(
                             | Assertion::RightWordHalfBoundary
                     )
                 )
-            });
+            }))
+            || (opts.drop_positional_anchors && expr_contains_positional_anchor(info.expr));
         // Use to_str directly when the subtree contains no assertions that need dropping.
-        if !contains_word_boundary
-            && (!opts.drop_positional_anchors || !expr_contains_positional_anchor(info.expr))
-        {
+        if !needs_assertion_strip {
             info.expr.to_str(buf, precedence);
             return;
         }
