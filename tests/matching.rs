@@ -680,6 +680,22 @@ fn assert_no_match(re: &str, text: &str) {
 }
 
 #[test]
+fn ambiguous_concat_repeat_optional_edges_anchored() {
+    // Regression test for the quantifier-simplification bug introduced in #326:
+    // an optional literal between two optional repeats of the same atom must not
+    // have its edges widened to unbounded, which would swallow the end anchor.
+    assert_no_match(r"^.?a?.?$", "aba");
+    assert_no_match(r"^.?a?.?$", "abab");
+    assert_no_match(r"^[^x]?a?[^x]?$", "aba");
+    assert_no_match(r"^.?a?.?.?$", "abab");
+    // Legitimate matches must still succeed.
+    assert_match(r"^.?a?.?$", "a");
+    assert_match(r"^.?a?.?$", "");
+    assert_match(r"^.?a?.?$", "ab");
+    assert_match(r"^.?a?.?$", "aa");
+}
+
+#[test]
 fn unicode_property_remapping_outside_char_class() {
     // Test \p{alnum} - should match alphanumeric characters
     assert_match(r"\p{alnum}", "a");
