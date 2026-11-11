@@ -680,6 +680,92 @@ fn assert_no_match(re: &str, text: &str) {
 }
 
 #[test]
+fn ambiguous_concat_repeat_optional_edges_anchored() {
+    // Regression test for the quantifier-simplification bug introduced in #326:
+    // an optional literal between two optional repeats of the same atom must not
+    // have its edges widened to unbounded, which would swallow the end anchor.
+    assert_no_match(r"^.?a?.?$", "aba");
+    assert_no_match(r"^.?a?.?$", "abab");
+    assert_no_match(r"^[^x]?a?[^x]?$", "aba");
+    assert_no_match(r"^.?a?.?.?$", "abab");
+    // Legitimate matches must still succeed.
+    assert_match(r"^.?a?.?$", "a");
+    assert_match(r"^.?a?.?$", "");
+    assert_match(r"^.?a?.?$", "ab");
+    assert_match(r"^.?a?.?$", "aa");
+}
+
+#[test]
+fn optimize_matches_identical_to_default() {
+    let cases: &[(&str, &str)] = &[
+        // ambiguous concat repeat (the bug fixed in dd589f7)
+        (r"^.?a?.?$", "aba"),
+        (r"^.?a?.?$", "abab"),
+        (r"^[^x]?a?[^x]?$", "aba"),
+        (r"^.?a?.?.?$", "abab"),
+        (r"^.?a?.?$", "a"),
+        (r"^.?a?.?$", ""),
+        (r"^.?a?.?$", "ab"),
+        (r"^.?a?.?$", "aa"),
+        // `*` quantifier (unbounded, lo=0) as an edge
+        (r"^a*b*a*$", "ababa"),
+        (r"^a*b*a*$", ""),
+        (r"^a*b*a*$", "aaa"),
+        (r"^a*b*a*$", "bbb"),
+        // exact `{2}` quantifier (bounded, mandatory) as an edge
+        (r"^a{2}b?a{2}$", "aabaa"),
+        (r"^a{2}b?a{2}$", "aaaa"),
+        (r"^a{2}b?a{2}$", "aab"),
+        // bounded range `{2,50}` as an edge
+        (r"^a{2,50}b?a{2,50}$", "aaaabaaaab"),
+        (r"^a{2,50}b?a{2,50}$", "aaaaa"),
+        (r"^a{2,50}b?a{2,50}$", "aab"),
+        // bounded range `{2,}` (unbounded upper) as an edge
+        (r"^a{2,}b?a{2,}$", "aaabaaa"),
+        (r"^a{2,}b?a{2,}$", "aa"),
+        // bounded range `{0,5}` as a middle as well
+        (r"^a{2,}b{0,5}a{2,}$", "aa"),
+        (r"^a{2,}b{0,5}a{2,}$", "aaaa"),
+        (r"^a{2,}b{0,5}a{2,}$", "aaaaa"),
+        (r"^a{2,}b{0,5}a{2,}$", "aabbbbbaa"),
+        (r"^a{2,}b{0,5}a{2,}$", "aabbbbbaaa"),
+        (r"^a{2,}b{0,5}a{2,}$", "aaabbbbbaaa"),
+        (r"^a{2,}b{0,5}a{2,}$", "aaabbbbbaa"),
+        // bounded middle range, unbounded edge
+        (r"^a+b{0,5}a+$", "aa"),
+        (r"^a+b{0,5}a+$", "aaaaaaaa"),
+        (r"^a+b{0,5}a+$", "aaabbbbbaaaaa"),
+        // nested repeats
+        (r"(?:x+)+", "xxx"),
+        (r"(?:x+)+", ""),
+        (r"(?:a+)+b", "aaab"),
+        (r"(?:a+)+b", "aaa"),
+        (r"(?:x*)*", "xxxxx"),
+        (r"(?:x{2,5})+", "xxxxxxxxxx"),
+        // keepout / trailing lookahead rewrites
+        (r"ab\Kc", "abc"),
+        (r"ab\Kc", "abx"),
+        (r"a(?=b)", "ab"),
+        (r"a(?=b)", "ac"),
+        // backrefs and lookarounds (hard patterns)
+        (r"(\w+) \1", "hello hello world"),
+        (r"(\w+) \1", "no match here"),
+        (r"(?<=foo)bar", "foobar"),
+        (r"(?<=foo)bar", "bazbar"),
+        // long haystack with rare match
+        (
+            r"(xyz)\1",
+            &format!("{}{}", "abcdefghij".repeat(1000), "xyzxyz"),
+        ),
+        // long haystack with no match
+        (r"(xyz)\1", &"abcdefghij".repeat(1000)),
+    ];
+    for (re, text) in cases {
+        common::assert_optimize_same(re, text);
+    }
+}
+
+#[test]
 fn unicode_property_remapping_outside_char_class() {
     // Test \p{alnum} - should match alphanumeric characters
     assert_match(r"\p{alnum}", "a");

@@ -291,6 +291,15 @@ fn check_concat_repeat_triplet(left: &Expr, middle: &Expr, right: &Expr) -> bool
         && *middle_lo == 0
         && *middle_hi != 0
         && left_inner.as_ref() == right_inner.as_ref()
+        // Branches 1 and 2 move one edge into an optional group with the
+        // middle. That is only sound when both edges are unbounded, so the
+        // preserved edge can absorb the moved edge's contribution; bounded
+        // edges would drop the case where both edges match without the middle
+        // (e.g. `.?a?.?` matching "bc"). Branch 4 (bounded, both mandatory)
+        // is safe because neither edge is nullable, so both-mandatory is
+        // always allowed.
+        && ((*left_hi == usize::MAX && *right_hi == usize::MAX)
+            || (*left_lo >= 1 && *right_lo >= 1))
         && (!(*left_hi != usize::MAX || *right_hi != usize::MAX)
             || (!left_inner.has_descendant(|e| matches!(e, Expr::Group(_)))
                 && !right_inner.has_descendant(|e| matches!(e, Expr::Group(_)))))
@@ -1203,6 +1212,15 @@ mod tests {
         // string, so this is sound and still factors the ambiguous boundary.
         assert_eq!(optimized_pattern(r"a{0,}b?a{0,}"), r"a*(?:b{1}a*)?");
         assert_eq!(optimized_pattern(r"\s*\w?\s*"), r"\s*(?:\w{1}\s*)?");
+    }
+
+    #[test]
+    fn ambiguous_concat_repeats_both_nullable_bounded_edges() {
+        // bounded nullable edges must be left alone: moving one into an optional
+        // group would drop the case where both edges match without the middle
+        // (e.g. `.?a?.?` matching "bc"), so the guard rejects them.
+        assert_eq!(optimized_pattern(r".?a?.?"), r".?a?.?");
+        assert_eq!(optimized_pattern(r"^[^x]?a?[^x]?$"), r"^[^x]?a?[^x]?$");
     }
 
     #[test]

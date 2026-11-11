@@ -329,3 +329,23 @@ pub fn assert_seek_same(re: &str, text: &str) -> Option<(usize, usize)> {
     );
     str_result.map(|m| (m.start(), m.end()))
 }
+
+#[cfg_attr(feature = "track_caller", track_caller)]
+#[allow(dead_code)]
+/// Assert that `optimize(true)` produces the same first match as without
+/// optimization applied (`optimize(false)`).
+pub fn assert_optimize_same(re: &str, text: &str) -> Option<(usize, usize)> {
+    let str_result = regex(re).find(text).unwrap();
+    let no_opt_result = RegexBuilder::new(re)
+        .optimize(false)
+        .build()
+        .expect("regex should compile with optimization disabled")
+        .find(text)
+        .unwrap();
+    assert_eq!(
+        str_result.map(|m| (m.start(), m.end())),
+        no_opt_result.map(|m| (m.start(), m.end())),
+        "optimize=true gave different result for /{re}/ on '{text}'"
+    );
+    str_result.map(|m| (m.start(), m.end()))
+}

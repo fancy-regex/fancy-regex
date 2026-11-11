@@ -10,6 +10,7 @@ with the exception that 0.x versions can break between minor versions.
 ### Added
 ### Changed
 ### Fixed
+- Fixed more cases where the optimizations made were unsound (#333)
 
 ## [0.20.1] - 2026-11-09
 ### Added
