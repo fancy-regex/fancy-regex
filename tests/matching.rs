@@ -707,11 +707,41 @@ fn optimize_matches_identical_to_default() {
         (r"^.?a?.?$", ""),
         (r"^.?a?.?$", "ab"),
         (r"^.?a?.?$", "aa"),
+        // `*` quantifier (unbounded, lo=0) as an edge
+        (r"^a*b*a*$", "ababa"),
+        (r"^a*b*a*$", ""),
+        (r"^a*b*a*$", "aaa"),
+        (r"^a*b*a*$", "bbb"),
+        // exact `{2}` quantifier (bounded, mandatory) as an edge
+        (r"^a{2}b?a{2}$", "aabaa"),
+        (r"^a{2}b?a{2}$", "aaaa"),
+        (r"^a{2}b?a{2}$", "aab"),
+        // bounded range `{2,50}` as an edge
+        (r"^a{2,50}b?a{2,50}$", "aaaabaaaab"),
+        (r"^a{2,50}b?a{2,50}$", "aaaaa"),
+        (r"^a{2,50}b?a{2,50}$", "aab"),
+        // bounded range `{2,}` (unbounded upper) as an edge
+        (r"^a{2,}b?a{2,}$", "aaabaaa"),
+        (r"^a{2,}b?a{2,}$", "aa"),
+        // bounded range `{0,5}` as a middle as well
+        (r"^a{2,}b{0,5}a{2,}$", "aa"),
+        (r"^a{2,}b{0,5}a{2,}$", "aaaa"),
+        (r"^a{2,}b{0,5}a{2,}$", "aaaaa"),
+        (r"^a{2,}b{0,5}a{2,}$", "aabbbbbaa"),
+        (r"^a{2,}b{0,5}a{2,}$", "aabbbbbaaa"),
+        (r"^a{2,}b{0,5}a{2,}$", "aaabbbbbaaa"),
+        (r"^a{2,}b{0,5}a{2,}$", "aaabbbbbaa"),
+        // bounded middle range, unbounded edge
+        (r"^a+b{0,5}a+$", "aa"),
+        (r"^a+b{0,5}a+$", "aaaaaaaa"),
+        (r"^a+b{0,5}a+$", "aaabbbbbaaaaa"),
         // nested repeats
         (r"(?:x+)+", "xxx"),
         (r"(?:x+)+", ""),
         (r"(?:a+)+b", "aaab"),
         (r"(?:a+)+b", "aaa"),
+        (r"(?:x*)*", "xxxxx"),
+        (r"(?:x{2,5})+", "xxxxxxxxxx"),
         // keepout / trailing lookahead rewrites
         (r"ab\Kc", "abc"),
         (r"ab\Kc", "abx"),
