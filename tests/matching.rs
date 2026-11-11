@@ -696,6 +696,46 @@ fn ambiguous_concat_repeat_optional_edges_anchored() {
 }
 
 #[test]
+fn optimize_matches_identical_to_default() {
+    let cases: &[(&str, &str)] = &[
+        // ambiguous concat repeat (the bug fixed in dd589f7)
+        (r"^.?a?.?$", "aba"),
+        (r"^.?a?.?$", "abab"),
+        (r"^[^x]?a?[^x]?$", "aba"),
+        (r"^.?a?.?.?$", "abab"),
+        (r"^.?a?.?$", "a"),
+        (r"^.?a?.?$", ""),
+        (r"^.?a?.?$", "ab"),
+        (r"^.?a?.?$", "aa"),
+        // nested repeats
+        (r"(?:x+)+", "xxx"),
+        (r"(?:x+)+", ""),
+        (r"(?:a+)+b", "aaab"),
+        (r"(?:a+)+b", "aaa"),
+        // keepout / trailing lookahead rewrites
+        (r"ab\Kc", "abc"),
+        (r"ab\Kc", "abx"),
+        (r"a(?=b)", "ab"),
+        (r"a(?=b)", "ac"),
+        // backrefs and lookarounds (hard patterns)
+        (r"(\w+) \1", "hello hello world"),
+        (r"(\w+) \1", "no match here"),
+        (r"(?<=foo)bar", "foobar"),
+        (r"(?<=foo)bar", "bazbar"),
+        // long haystack with rare match
+        (
+            r"(xyz)\1",
+            &format!("{}{}", "abcdefghij".repeat(1000), "xyzxyz"),
+        ),
+        // long haystack with no match
+        (r"(xyz)\1", &"abcdefghij".repeat(1000)),
+    ];
+    for (re, text) in cases {
+        common::assert_optimize_same(re, text);
+    }
+}
+
+#[test]
 fn unicode_property_remapping_outside_char_class() {
     // Test \p{alnum} - should match alphanumeric characters
     assert_match(r"\p{alnum}", "a");
