@@ -8,18 +8,33 @@ with the exception that 0.x versions can break between minor versions.
 
 ## [Unreleased]
 ### Added
+### Changed
+### Fixed
+
+## [0.20.2] - 2026-11-11
+### Added
+### Changed
+### Fixed
+- Fixed more cases where the optimizations made were unsound (#333)
+
+## [0.20.1] - 2026-11-09
+### Added
 - A new `Expr::has_descendant_or_self` method to easily traverse the Expr descendants to find an Expr matching a predicate. (#319)
+- Add a `RegexOptionsBuilder::optimize` / `RegexBuilder::optimize` flag to disable the expression-tree optimization pass (enabled by default), and rework it into two tiers: `optimize()` now takes an `OptimizeOptions` struct with a `find_not_empty` flag that skips only the KeepOut (`\K`) and trailing-lookahead rewrites, while the safe rewrites still apply — so `find_not_empty` patterns benefit from them instead of skipping the whole pass. The decision on whether to optimize is centralized on `RegexOptions::should_optimize` and forwarded to the prefilter helpers (`start_bytes`, `required_bytes`) so they analyze the same tree as the compile path. (#323)
 - Support control character escapes `\cX` and `\C-X` in Oniguruma mode, e.g. `\ca` matches `\x01` and `\c\\` matches `\x1C`, both inside and outside of character classes. Without Oniguruma mode they are still invalid escapes. (#320)
 ### Changed
 ### Fixed
 - Positive lookaheads are now atomic, as in Oniguruma and PCRE: once a lookahead has matched, a later failure no longer backtracks into it to try another way of matching it. For example `(?=x|(x))\1x` no longer matches `xx`. (#313)
 - A hard variable-length lookbehind no longer reuses the candidate start positions left behind by a previous lookbehind that matched (or by a negative lookbehind whose body matched), which gave wrong results such as `(b*)(?<!\1)c` matching `abc`, or hit the backtrack limit when a pattern had two such lookbehinds, like `(a*)b(?<=\1b)(c*)d(?<=\2d)`. (#314)
 - A repetition with a minimum count whose body can match an empty string (e.g. `(?:a|(?=b)){2,}`) could stop before reaching the minimum when it ran again at a position its previous run had reached, for example inside a repeated lookahead: `(?:(?=(?:a|(?=b)){2,})a){2}` matched `aa`. (#312)
+- A `{n,}` repetition whose body can match an empty string ended as soon as an iteration matched empty, even below the minimum. When the first iteration matched empty, the last required one now still runs, so `(?:(?=^)a*){2,}b` matches `aab`. A body that reads a capture group it sets itself can match differently in the next iteration, so there all required iterations run, and `^(?:(?(1)a|())){3,}$` no longer matches an empty string. (#325)
 - A conditional whose condition fails no longer leaves its entry on the VM's explicit stack. Before, an enclosing atomic group or possessive repeat read that entry at its end and kept its backtrack branches: `(z)?(?>a*(?(1)x))a` matched "aaa". (#316)
 - A conditional whose true branch is a group of alternatives, such as `(?(1)(?:a|b))`, was parsed as `(?(1)a|b)`, so `b` became the false branch. (#315)
 - Inline flags set inside a capturing, named, atomic, lookaround, conditional or absent group, like `(a(?i)b)c`, now end with the group. Before, they leaked to the rest of the pattern, so `(a(?i)b)c` matched `aBC` and `(?x)G(o(?-x)o) g` did not ignore the spaces after the group. Only `(?:...)` and `(?flags:...)` restored them. (#317)
 - In Oniguruma mode, `{,}` is now literal text, as in Oniguruma, instead of being parsed as `{0,}`. For example `(?:ab){,}` matches `ab{,}`. `{,n}` is still `{0,n}`, and without Oniguruma mode `{,}` is unchanged. (#321)
 - In Oniguruma mode, a `?` after an interval with swapped limits, like `a{3,2}?`, is now another quantifier, as in Oniguruma, so it makes the possessive `a{2,3}` optional. Before, it made the repeat lazy, so `a{3,2}?` matched `aa` in `aaa` and didn't match an empty string. A `?`, `*` or `+` after a repeated empty group, like in `(?:)**` or `(?:){3,2}?`, is now dropped along with it instead of failing to parse. (#322)
+- In Oniguruma mode, a `?` after a fixed interval, like `a{3}?`, is now another quantifier, as in Oniguruma, so `a{3}?` means `(?:a{3})?`. Before, it made the repeat lazy, which doesn't change anything for a fixed count, so `a{3}?` didn't match `aa` and `a{3}??` matched `aaa` instead of an empty string. `a{3,3}?` is still lazy, and without Oniguruma mode `a{3}?` is unchanged.
+- A backref or conditional inside the group it refers to now sees the group's previous capture, as in PCRE and Perl. Before, it saw the new start of the group with the end of its previous capture, so `(?:(\1|a)b){2}` panicked on `abab` and `^((?(1)b|a))$` matched `b` but not `a`. (#328)
 
 ## [0.20.0] - 2026-10-24
 ### Added
@@ -339,7 +354,9 @@ If you previously stored i.e. `Captures`, you would need to change the type to `
 ### Added
 - Initial release
 
-[Unreleased]: https://github.com/fancy-regex/fancy-regex/compare/0.20.0...HEAD
+[Unreleased]: https://github.com/fancy-regex/fancy-regex/compare/0.20.2...HEAD
+[0.20.2]: https://github.com/fancy-regex/fancy-regex/compare/0.20.1...0.20.2
+[0.20.1]: https://github.com/fancy-regex/fancy-regex/compare/0.20.0...0.20.1
 [0.20.0]: https://github.com/fancy-regex/fancy-regex/compare/0.19.2...0.20.0
 [0.19.2]: https://github.com/fancy-regex/fancy-regex/compare/0.19.1...0.19.2
 [0.19.1]: https://github.com/fancy-regex/fancy-regex/compare/0.19.0...0.19.1

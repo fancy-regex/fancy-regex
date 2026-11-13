@@ -122,6 +122,26 @@ pub(crate) const OPTION_LEFTMOST_LONGEST: u32 = 1 << 3;
 // TODO: make configurable
 const MAX_STACK: usize = 1_000_000;
 
+/// The repetition count to go on with after an iteration matched empty, or `None` to
+/// leave the loop. Below the minimum, a body that reads its own captures runs every
+/// required iteration. Any other body skips to the last one, but only after the first
+/// iteration, as doing so later makes failing searches much slower.
+fn count_after_empty_iteration(
+    repcount: usize,
+    lo: usize,
+    reads_own_captures: bool,
+) -> Option<usize> {
+    if repcount >= lo {
+        None
+    } else if reads_own_captures {
+        Some(repcount)
+    } else if repcount == 1 {
+        Some(lo - 1)
+    } else {
+        None
+    }
+}
+
 /// Represents a range of capture groups by storing the first and last group numbers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CaptureGroupRange(pub usize, pub usize);
@@ -732,6 +752,15 @@ pub enum Insn {
     /// Save the current string index into the specified capture group start slot if the capture group is empty
     /// or has already completed.
     SaveCaptureGroupStart(usize),
+    /// Like `SaveCaptureGroupStart`, but first copy the group's previous capture to
+    /// `previous` and `previous + 1`, for backrefs inside the group to read, and clear
+    /// the end slot, so the group counts as open until it ends
+    SaveCaptureGroupStartKeepPrevious {
+        /// The capture group
+        group: usize,
+        /// The first of the two slots for the previous capture
+        previous: usize,
+    },
     /// Set the string index to the value that was saved in the specified slot
     Restore(usize),
     /// Repeat greedily (match as much as possible)
@@ -766,6 +795,8 @@ pub enum Insn {
         repeat: usize,
         /// The slot for saving the previous IX to check if we had an empty match
         check: usize,
+        /// Whether the body reads a capture group it sets itself
+        reads_own_captures: bool,
     },
     /// Repeat non-greedily and prevent infinite loops from empty matches
     RepeatEpsilonNg {
@@ -777,6 +808,8 @@ pub enum Insn {
         repeat: usize,
         /// The slot for saving the previous IX to check if we had an empty match
         check: usize,
+        /// Whether the body reads a capture group it sets itself
+        reads_own_captures: bool,
     },
     /// Negative look-around failed
     FailNegativeLookAround,
@@ -815,7 +848,8 @@ pub enum Insn {
         /// Whether this is at the start of the pattern (allowing early exit on failure)
         at_start: bool,
     },
-    /// Continue only if the specified capture group has already been populated as part of the match
+    /// Continue only if the capture group whose start is in the given slot has already been
+    /// populated as part of the match
     BackrefExistsCondition(usize),
     /// Immediately fail the current match attempt and trigger backtracking.
     /// This is used for backtracking control verbs like `(*FAIL)`.
@@ -1062,6 +1096,26 @@ impl State {
         if self.options & OPTION_TRACE != 0 {
             println!("saves: {:?}", self.saves);
         }
+    }
+
+    /// Starts the next iteration of a repeat that checks for empty iterations, and
+    /// returns how many ran before it, or `None` if the loop ends here.
+    fn start_epsilon_iteration(
+        &mut self,
+        ix: usize,
+        lo: usize,
+        repeat: usize,
+        check: usize,
+        reads_own_captures: bool,
+    ) -> Option<usize> {
+        let mut repcount = self.get(repeat);
+        // `check` holds where the previous iteration of this run started
+        if repcount > 0 && self.get(check) == ix {
+            repcount = count_after_empty_iteration(repcount, lo, reads_own_captures)?;
+        }
+        self.save(repeat, repcount + 1);
+        self.save(check, ix);
+        Some(repcount)
     }
 
     fn get(&self, slot: usize) -> usize {
@@ -1695,6 +1749,16 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                         state.save(start_slot, ix);
                     }
                 }
+                Insn::SaveCaptureGroupStartKeepPrevious { group, previous } => {
+                    let start_slot = group * 2;
+                    let (start, end) = (state.get(start_slot), state.get(start_slot + 1));
+                    if start == usize::MAX || end != usize::MAX {
+                        state.save(previous, start);
+                        state.save(previous + 1, end);
+                        state.save(start_slot, ix);
+                        state.save(start_slot + 1, usize::MAX);
+                    }
+                }
                 Insn::Restore(slot) => ix = state.get(slot),
                 Insn::RepeatGr {
                     lo,
@@ -1735,16 +1799,14 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                     next,
                     repeat,
                     check,
+                    reads_own_captures,
                 } => {
-                    let repcount = state.get(repeat);
-                    // `check` holds where the previous iteration of this run started
-                    if repcount > 0 && state.get(check) == ix {
-                        // zero-length match on repeat, then move to next instruction
+                    let Some(repcount) =
+                        state.start_epsilon_iteration(ix, lo, repeat, check, reads_own_captures)
+                    else {
                         pc = next;
                         continue;
-                    }
-                    state.save(repeat, repcount + 1);
-                    state.save(check, ix);
+                    };
                     if repcount >= lo {
                         state.push(next, ix)?;
                     }
@@ -1754,16 +1816,14 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                     next,
                     repeat,
                     check,
+                    reads_own_captures,
                 } => {
-                    let repcount = state.get(repeat);
-                    // `check` holds where the previous iteration of this run started
-                    if repcount > 0 && state.get(check) == ix {
-                        // zero-length match on repeat, then move to next instruction
+                    let Some(repcount) =
+                        state.start_epsilon_iteration(ix, lo, repeat, check, reads_own_captures)
+                    else {
                         pc = next;
                         continue;
-                    }
-                    state.save(repeat, repcount + 1);
-                    state.save(check, ix);
+                    };
                     if repcount >= lo {
                         state.push(pc + 1, ix)?;
                         pc = next;
@@ -1847,8 +1907,8 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                     }
                     ix = ix_end;
                 }
-                Insn::BackrefExistsCondition(group) => {
-                    let lo = state.get(group * 2);
+                Insn::BackrefExistsCondition(slot) => {
+                    let lo = state.get(slot);
                     if lo == usize::MAX {
                         // Referenced group hasn't matched, so the backref doesn't match either
                         break 'fail;

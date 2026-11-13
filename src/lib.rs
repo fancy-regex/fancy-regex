@@ -70,7 +70,7 @@ mod vm;
 use crate::analyze::can_compile_as_anchored;
 use crate::analyze::{analyze, AnalyzeContext};
 use crate::compile::{compile, CompileOptions};
-use crate::optimize::optimize;
+use crate::optimize::{optimize, OptimizeOptions};
 use crate::parse::{ExprTree, NamedGroups, Parser};
 use crate::parse_flags::*;
 #[cfg(feature = "leftmost_longest")]
@@ -549,6 +549,13 @@ struct RegexOptions {
     /// the set only ever searches them anchored at candidate positions, where
     /// a prefilter is never consulted, so building one wastes time and memory.
     delegate_prefilter: bool,
+    /// Whether the expression tree should be optimized before analysis/compilation.
+    /// When disabled, the parsed expression is compiled as-is, without the
+    /// KeepOut/\K, trailing-lookahead, and nested-repeat rewrites that `optimize`
+    /// performs. This is mainly useful for differential testing: it lets callers
+    /// compare a pattern against its optimized form, or compile a pattern without
+    /// optimization entirely.
+    optimize: bool,
     #[cfg(feature = "leftmost_longest")]
     leftmost_longest: bool,
 }
@@ -582,7 +589,8 @@ impl fmt::Debug for RegexOptions {
                 &self.hard_regex_runtime_options,
             )
             .field("seek_filter", &seek_filter_desc)
-            .field("delegate_prefilter", &self.delegate_prefilter);
+            .field("delegate_prefilter", &self.delegate_prefilter)
+            .field("optimize", &self.optimize);
         #[cfg(feature = "leftmost_longest")]
         debug.field("leftmost_longest", &self.leftmost_longest);
         debug.finish()
@@ -603,6 +611,7 @@ impl Default for RegexOptions {
             bytes_mode: BytesMode::default(),
             seek_filter: None, // when we are ready to enable seek by default, use: `Some(seek_pattern_is_useful)`
             delegate_prefilter: true,
+            optimize: true,
             #[cfg(feature = "leftmost_longest")]
             leftmost_longest: false,
         }
@@ -626,6 +635,17 @@ impl RegexOptions {
         } else {
             0
         }
+    }
+
+    /// Whether the parsed expression tree should be run through the optimization
+    /// pass before analysis/compilation. The optimization is skipped when the
+    /// user has explicitly disabled it via
+    /// `RegexOptionsBuilder::optimize(false)`. When `find_not_empty` is set the
+    /// pass still runs, but `optimize()` is told to skip the KeepOut and
+    /// trailing-lookahead rewrites (which would make the pattern
+    /// delegatable, and the Wrap path can't reject empty matches).
+    fn should_optimize(&self) -> bool {
+        self.optimize
     }
 
     fn compute_flags(&self) -> u32 {
@@ -854,7 +874,9 @@ impl RegexOptionsBuilder {
     /// Require that matches are non-empty (i.e. match at least one character).
     ///
     /// When this is enabled, any match attempt that would result in a zero-length match is
-    /// rejected.
+    /// rejected. The rejection happens on the VM path, so any sub-expression that could
+    /// produce an empty match is promoted to `hard` during analysis and the whole pattern is
+    /// compiled to the VM — the delegated (`Wrap`) path has no way to reject empty matches.
     ///
     /// Default is `false`.
     ///
@@ -863,8 +885,45 @@ impl RegexOptionsBuilder {
     /// `CompileError::PatternCanNeverMatch` instead of silently constructing a regex that can never
     /// return a result. This catches the user error at compile time rather than allowing the
     /// combination to execute pointlessly at runtime.
+    ///
+    /// N.B. Because the pattern must stay on the VM, the KeepOut (`\K`) and trailing
+    /// positive-lookahead rewrites are skipped during optimization when `find_not_empty` is set
+    /// (see `OptimizeOptions` in `fancy_regex::internal`): both wrap the prefix in an explicit
+    /// capture group 0, which is what would otherwise flip `info.hard` to `false` and let the
+    /// pattern delegate to regex-automata. The safe rewrites (nested-repeat simplification and
+    /// ambiguous-concat-repeat rewriting) are still applied.
     pub fn find_not_empty(&mut self, yes: bool) -> &mut Self {
         self.options.hard_regex_runtime_options.find_not_empty = yes;
+        self
+    }
+
+    /// Enable or disable the expression-tree optimization pass.
+    ///
+    /// When enabled (the default), the parsed expression tree is rewritten before
+    /// analysis/compilation. The rewrite has two tiers (see
+    /// [`OptimizeOptions`](crate::internal::OptimizeOptions)):
+    ///
+    /// - **Always applied**: nested-repeat simplification and ambiguous-concat-repeat
+    ///   rewriting.
+    /// - **Skipped when `find_not_empty` is set**: KeepOut (`\K`) and trailing
+    ///   positive-lookahead hoisting, because both would make the pattern
+    ///   delegatable and the delegated path can't reject empty matches.
+    ///
+    /// When disabled, the tree is compiled as-is.
+    ///
+    /// This is primarily intended for differential testing, where comparing a
+    /// pattern against its optimized form (or against a non-optimized build)
+    /// helps verify that the optimization preserves match semantics.
+    ///
+    /// Disabling this flag also affects the prefilter helpers
+    /// ([`start_bytes`](Self::start_bytes) and
+    /// [`required_bytes`](Self::required_bytes)): they analyze the same tree
+    /// that would be compiled, so with optimization disabled they report the
+    /// start/required bytes of the un-optimized tree.
+    ///
+    /// Default is `true`.
+    pub fn optimize(&mut self, yes: bool) -> &mut Self {
+        self.options.optimize = yes;
         self
     }
 
@@ -981,6 +1040,9 @@ impl RegexOptionsBuilder {
     /// possessive). In Oniguruma mode, `+` after a user-specified `{...}` repeat is treated
     /// as another repeat modifier — `x{2}+` is equivalent to `(?:x{2})+`.
     ///
+    /// The same goes for `?` after a fixed `{n}` repeat: outside Oniguruma mode `x{2}?` is lazy,
+    /// and in Oniguruma mode it is equivalent to `(?:x{2})?`. `x{2,2}?` is lazy in both modes.
+    ///
     /// # Empty interval
     ///
     /// `fancy-regex` normally treats `x{,}` as `x{0,}`. Oniguruma requires at least one of
@@ -1087,6 +1149,7 @@ impl RegexOptionsBuilder {
     }
 
     /// Computes the bytes a match of `pattern` can start with, without compiling it.
+    ///
     /// The possible return values are:
     ///
     /// - `Ok(Some(set))`: a byte set could be built and you can quickly check whether a byte
@@ -1095,6 +1158,14 @@ impl RegexOptionsBuilder {
     /// - `Err(..)`: the pattern is invalid
     ///
     /// This is useful if you are building your own prefilter.
+    ///
+    /// The pattern is parsed and then run through the same expression-tree
+    /// optimization pass that [`Regex::new`](Regex::new) applies before
+    /// compiling (see [`RegexOptionsBuilder::optimize`](Self::optimize)), so the
+    /// returned set reflects the tree that would actually be compiled — for
+    /// example, a trailing positive lookahead is hoisted out before the start
+    /// bytes are computed. When optimization is disabled, the parsed tree is
+    /// analyzed as-is.
     ///
     /// ```
     /// # use fancy_regex::RegexOptionsBuilder;
@@ -1112,6 +1183,12 @@ impl RegexOptionsBuilder {
     /// haystack. This means that for a haystack like `aaa` the pattern will _never_ match and
     /// we can know that without even compiling the regex.
     /// An empty set means there's nothing actionable.
+    ///
+    /// As with [`start_bytes`](Self::start_bytes), the pattern is parsed and run
+    /// through the same expression-tree optimization pass that
+    /// [`Regex::new`](Regex::new) applies before compiling, so the returned set
+    /// reflects the tree that would actually be compiled. When optimization is
+    /// disabled, the parsed tree is analyzed as-is.
     ///
     /// ```
     /// # use fancy_regex::RegexOptionsBuilder;
@@ -1237,6 +1314,12 @@ impl RegexBuilder {
         self
     }
 
+    /// See [`RegexOptionsBuilder::optimize`]
+    pub fn optimize(&mut self, yes: bool) -> &mut Self {
+        self.options.optimize(yes);
+        self
+    }
+
     /// See [`RegexOptionsBuilder::leftmost_longest`]
     #[cfg(feature = "leftmost_longest")]
     pub fn leftmost_longest(&mut self, yes: bool) -> &mut Self {
@@ -1320,16 +1403,20 @@ impl Regex {
         #[cfg(feature = "leftmost_longest")]
         let leftmost_longest = options.leftmost_longest;
 
-        let requires_capture_group_fixup = if find_not_empty {
-            // if the find_not_empty flag is set, we skip optimizations
-            // partially because we have to go though the VM anyway
-            // partially because having the last instruction of the expression not have
-            // ix be at the end of capture group 0 ruins our empty match checking logic.
+        let requires_capture_group_fixup = if !options.should_optimize() {
+            // Optimization is disabled, either because the user explicitly asked
+            // for it (`RegexOptionsBuilder::optimize(false)`) or because
+            // `find_not_empty` is set — in that case the pattern is always
+            // compiled via the VM anyway, and having the last instruction of the
+            // expression not be at the end of capture group 0 ruins the empty
+            // match checking logic. Compile the tree as-is.
             false
         } else {
             // try to optimize the expression tree so that a hard pattern could become easy
-            // with a fixup of the capture groups
-            optimize(&mut tree)
+            // with a fixup of the capture groups. `find_not_empty` is passed through so
+            // the KeepOut/trailing-lookahead rewrites (which would make the pattern
+            // delegatable, and the Wrap path can't reject empty matches) are skipped.
+            optimize(&mut tree, OptimizeOptions { find_not_empty })
         };
         let info = analyze(
             &tree,
@@ -3163,7 +3250,7 @@ pub fn detect_possible_backref(re: &str) -> bool {
 pub mod internal {
     pub use crate::analyze::{analyze, can_compile_as_anchored, AnalyzeContext, Info};
     pub use crate::compile::{compile, CompileOptions};
-    pub use crate::optimize::optimize;
+    pub use crate::optimize::{optimize, OptimizeOptions};
     pub use crate::parse_flags::{
         FLAG_CASEI, FLAG_CRLF, FLAG_DOTNL, FLAG_IGNORE_NUMBERED_GROUPS_WHEN_NAMED_GROUPS_EXIST,
         FLAG_IGNORE_SPACE, FLAG_MULTI, FLAG_ONIGURUMA_MODE, FLAG_UNICODE,

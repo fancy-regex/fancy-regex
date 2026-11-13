@@ -155,6 +155,28 @@ fn nested_repeats_preserve_capture_numbering() {
 }
 
 #[test]
+fn backref_inside_own_group_reads_previous_capture() {
+    let captures = common::assert_captures(r"(?:(\1|a)b){2}", "abab").unwrap();
+    assert_match(captures.get(0), "abab", 0, 4);
+    assert_match(captures.get(1), "a", 2, 3);
+
+    let captures = common::assert_captures(r"^(a|\1b)+$", "aab").unwrap();
+    assert_match(captures.get(1), "ab", 1, 3);
+
+    let captures = common::assert_captures(r"^((?(1)b|a))+$", "ab").unwrap();
+    assert_match(captures.get(1), "b", 1, 2);
+    assert!(common::assert_captures(r"^((?(1)b|a))$", "b").is_none());
+
+    let captures = common::assert_captures(r"^(?:(?=(\1?a))a)+$", "aaa").unwrap();
+    assert_match(captures.get(1), "a", 2, 3);
+
+    let captures = common::assert_captures(r"(?i)^(?<n>a|\k<n>b)+$", "aAB").unwrap();
+    assert_match(captures.get(1), "AB", 1, 3);
+
+    assert!(common::assert_captures(r"^(?:(a|b\g<2>)(c\1))+$", "acabcaca").is_none());
+}
+
+#[test]
 fn captures_fancy_named() {
     let captures = common::assert_captures(r"\s*(?<name>\w+)(?=\.)", "foo bar.").unwrap();
     assert_eq!(captures.len(), 2);

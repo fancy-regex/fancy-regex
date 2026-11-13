@@ -30,11 +30,41 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::mem;
 
+/// Options controlling the optimization pass.
+///
+/// Using a struct (rather than a bare boolean parameter) makes the call site
+/// self-documenting and leaves room for future options without breaking the
+/// signature.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OptimizeOptions {
+    /// When true, skip the KeepOut (`\K`) and trailing-lookahead rewrites that
+    /// would otherwise make the pattern delegatable. See [`optimize`].
+    pub find_not_empty: bool,
+}
+
 /// Rewrite the expression tree to help the VM compile an efficient program.
+///
+/// `find_not_empty` controls which rewrites are applied:
+///
+/// - **Always applied** (they preserve match semantics and capture semantics,
+///   so they're safe under `find_not_empty`): nested-repeat simplification and
+///   ambiguous-concat-repeat rewriting. These don't create delegation by
+///   themselves, so they can't accidentally make a `find_not_empty` pattern
+///   delegatable.
+/// - **Skipped when `find_not_empty` is set**: KeepOut (`\K`) and trailing
+///   positive-lookahead hoisting. Both rewrites wrap the prefix in an explicit
+///   capture group 0, which is what flips `info.hard` to `false` and lets the
+///   pattern delegate to regex-automata. But the delegated (`Wrap`) path has
+///   no way to reject empty matches — the `OPTION_FIND_NOT_EMPTY` flag is only
+///   honored on the `Fancy` path — so a `find_not_empty` pattern must stay on
+///   the VM. Skipping these two rewrites is enough to keep it hard; the safe
+///   rewrites above are still applied.
+///
 /// Returns a boolean to say whether the new tree explicitly contains capture group 0.
-pub fn optimize(tree: &mut ExprTree) -> bool {
+pub fn optimize(tree: &mut ExprTree, options: OptimizeOptions) -> bool {
+    let find_not_empty = options.find_not_empty;
     // self recursion prevents us from moving the trailing lookahead out of group 0
-    let requires_capture_group_fixup = if !tree.self_recursive {
+    let requires_capture_group_fixup = if !tree.self_recursive && !find_not_empty {
         // KeepOut (\K) optimization is tried first; it also handles a trailing positive
         // lookahead when both are present, so we skip the standalone lookahead pass in
         // that case to avoid creating a second explicit capture group 0.
@@ -47,6 +77,8 @@ pub fn optimize(tree: &mut ExprTree) -> bool {
         false
     };
 
+    // These rewrites preserve match and capture semantics, so they're safe to
+    // apply even when the pattern must stay on the VM (e.g. `find_not_empty`).
     let has_backrefs = !tree.backrefs.is_empty();
     optimize_nested_repeats(&mut tree.expr, has_backrefs);
     optimize_ambiguous_concat_repeats(&mut tree.expr);
@@ -201,9 +233,18 @@ fn rewrite_concat_repeat_windows(children: &mut Vec<Expr>) {
             mem::swap(&mut left, &mut children[ix]);
             mem::swap(&mut middle, &mut children[ix + 1]);
             mem::swap(&mut right, &mut children[ix + 2]);
-            let (prefix, optional_tail) = build_concat_repeat_triplet(left, middle, right);
-            children.splice(ix..ix + 3, [prefix, optional_tail]);
-            ix += 2;
+            // The replacement is itself a concat (or, for the bounded branch, an
+            // alternation), so splice its children in directly to avoid nesting
+            // a Concat inside a Concat (which the pretty-printer would wrap in
+            // an extra `(?:...)` group).
+            let replacement = build_concat_repeat_triplet(left, middle, right);
+            let replacement_children: Vec<Expr> = match replacement {
+                Expr::Concat(children) => children,
+                other => vec![other],
+            };
+            let replacement_len = replacement_children.len();
+            children.splice(ix..ix + 3, replacement_children);
+            ix += replacement_len;
         } else {
             ix += 1;
         }
@@ -238,18 +279,37 @@ fn check_concat_repeat_triplet(left: &Expr, middle: &Expr, right: &Expr) -> bool
         return false;
     };
 
-    is_unbounded_simple_repeat(*left_lo, *left_hi, *left_greedy)
-        && is_unbounded_simple_repeat(*right_lo, *right_hi, *right_greedy)
-        && compatible_edge_repeat_bounds(*left_lo, *right_lo)
+    // Both edges must be greedy repeats (unbounded `X{lo,}` or bounded `X{lo,hi}`).
+    // The unbounded branch is always safe; the bounded branch merges the two
+    // runs into a single repeat, which changes how many times any capture
+    // group inside an edge participates, so it is only safe when neither
+    // edge contains a capture group.
+    (is_unbounded_repeat(*left_lo, *left_hi, *left_greedy)
+        || is_bounded_repeat(*left_lo, *left_hi, *left_greedy))
+        && (is_unbounded_repeat(*right_lo, *right_hi, *right_greedy)
+            || is_bounded_repeat(*right_lo, *right_hi, *right_greedy))
         && *middle_lo == 0
         && *middle_hi != 0
         && left_inner.as_ref() == right_inner.as_ref()
+        // Branches 1 and 2 move one edge into an optional group with the
+        // middle. That is only sound when both edges are unbounded, so the
+        // preserved edge can absorb the moved edge's contribution; bounded
+        // edges would drop the case where both edges match without the middle
+        // (e.g. `.?a?.?` matching "bc"). Branch 4 (bounded, both mandatory)
+        // is safe because neither edge is nullable, so both-mandatory is
+        // always allowed.
+        && ((*left_hi == usize::MAX && *right_hi == usize::MAX)
+            || (*left_lo >= 1 && *right_lo >= 1))
+        && (!(*left_hi != usize::MAX || *right_hi != usize::MAX)
+            || (!left_inner.has_descendant(|e| matches!(e, Expr::Group(_)))
+                && !right_inner.has_descendant(|e| matches!(e, Expr::Group(_)))))
 }
 
-fn build_concat_repeat_triplet(left: Expr, middle: Expr, right: Expr) -> (Expr, Expr) {
+fn build_concat_repeat_triplet(left: Expr, middle: Expr, right: Expr) -> Expr {
     let Expr::Repeat {
         child: left_inner,
         lo: left_lo,
+        hi: left_hi,
         ..
     } = left
     else {
@@ -264,9 +324,13 @@ fn build_concat_repeat_triplet(left: Expr, middle: Expr, right: Expr) -> (Expr, 
     else {
         unreachable!("check_concat_repeat_triplet guarantees middle is a Repeat");
     };
-    let right_lo = if let Expr::Repeat { lo, .. } = &right {
-        *lo
-    } else {
+    let Expr::Repeat {
+        child: right_inner,
+        lo: right_lo,
+        hi: right_hi,
+        ..
+    } = right
+    else {
         unreachable!("check_concat_repeat_triplet guarantees right is a Repeat");
     };
 
@@ -277,44 +341,83 @@ fn build_concat_repeat_triplet(left: Expr, middle: Expr, right: Expr) -> (Expr, 
         greedy: middle_greedy,
     };
 
-    if left_lo < right_lo {
-        // The right repeat is the less permissive (higher lo) side — keep it as a mandatory
-        // suffix. Make the left repeat and middle optional as a prefix instead, so that the
-        // rewritten expression is no more permissive than the original.
-        // E.g. `\w*\.?\w+` → `(?:\w*\.{1})?\w+`
-        let left_repeat = Expr::Repeat {
-            child: left_inner,
-            lo: left_lo,
-            hi: usize::MAX,
-            greedy: true,
-        };
-        let head = Expr::Concat(vec![left_repeat, mandatory_middle]);
+    let left_repeat = |lo: usize, hi: usize| Expr::Repeat {
+        child: left_inner.clone(),
+        lo,
+        hi,
+        greedy: true,
+    };
+    let right_repeat = |lo: usize, hi: usize| Expr::Repeat {
+        child: right_inner.clone(),
+        lo,
+        hi,
+        greedy: true,
+    };
+
+    if left_lo == 0 && right_lo != 0 {
+        // The left repeat has no required minimum but the right one does, so
+        // moving the left repeat (with the middle) into an optional prefix is
+        // safe: when the prefix is skipped the mandatory right repeat still
+        // supplies its own minimum, and any a's the left would have taken can
+        // be absorbed by the right repeat (same atom).
+        // E.g. `\w*\.?\w+` → `(?:\w*\.{1})?\w+`, `a{0,}b?a{2,}` → `(?:a*b{1})?a{2,}`.
+        let head = Expr::Concat(vec![left_repeat(left_lo, usize::MAX), mandatory_middle]);
         let optional_head = Expr::Repeat {
             child: Box::new(head),
             lo: 0,
             hi: 1,
             greedy: true,
         };
-        (optional_head, right)
-    } else {
-        // The left repeat is the less permissive (higher or equal lo) side — keep it as a
-        // mandatory prefix. Make the middle and right repeat optional as a suffix.
-        // E.g. `\w+\.?\w+` → `\w+(?:\.{1}\w+)?`
-        // E.g. `\w+\.?\w*` → `\w+(?:\.{1}\w*)?`
-        let prefix = Expr::Repeat {
-            child: left_inner,
-            lo: left_lo,
-            hi: usize::MAX,
-            greedy: true,
-        };
-        let tail = Expr::Concat(vec![mandatory_middle, right]);
+        Expr::Concat(vec![optional_head, right_repeat(right_lo, usize::MAX)])
+    } else if right_lo == 0 {
+        // The left repeat is the stricter (higher or equal lo) side and the right
+        // repeat has no required minimum, so moving it into the optional suffix is
+        // safe.
+        let prefix = left_repeat(left_lo, usize::MAX);
+        let tail = Expr::Concat(vec![mandatory_middle, right_repeat(right_lo, usize::MAX)]);
         let optional_tail = Expr::Repeat {
             child: Box::new(tail),
             lo: 0,
             hi: 1,
             greedy: true,
         };
-        (prefix, optional_tail)
+        Expr::Concat(vec![prefix, optional_tail])
+    } else if left_hi == usize::MAX && right_hi == usize::MAX {
+        // Both edge repeats require at least one match and are unbounded
+        // (e.g. a+b?a+, a{2,}b?a{2,}). Moving either into an optional group
+        // would drop that minimum when the middle is absent, so keep the left
+        // repeat mandatory and make the tail choose between the middle+right
+        // path and consuming the right repeat's minimum directly. This
+        // preserves the combined minimum (L+R) while bounding the no-middle
+        // backtracking to a single A{R} choice.
+        let prefix = left_repeat(left_lo, usize::MAX);
+        let middle_and_right =
+            Expr::Concat(vec![mandatory_middle, right_repeat(right_lo, usize::MAX)]);
+        let right_min = right_repeat(right_lo, right_lo);
+        let tail = Expr::Alt(vec![middle_and_right, right_min]);
+        Expr::Concat(vec![prefix, tail])
+    } else {
+        // Both edge repeats require at least one match and at least one side is
+        // bounded above (e.g. a{2,5}b?a{1,4}). Keeping the edges separate still
+        // backtracks over their boundary, so instead merge the whole run into a
+        // single repeat with the combined bounds [L+R, L_hi+R_hi] and emit
+        // `( A{L,*} M{1,h} A{R,*} | A{L+R, L_hi+R_hi} )`. The first alternative
+        // still consumes the middle, the second absorbs the combined run
+        // directly. This is only safe when neither edge contains a capture
+        // group, because merging changes the number of iterations each group
+        // participates in.
+        let left_part = Expr::Concat(vec![
+            left_repeat(left_lo, left_hi),
+            mandatory_middle,
+            right_repeat(right_lo, right_hi),
+        ]);
+        let merged = Expr::Repeat {
+            child: left_inner.clone(),
+            lo: left_lo + right_lo,
+            hi: left_hi.saturating_add(right_hi),
+            greedy: true,
+        };
+        Expr::Alt(vec![left_part, merged])
     }
 }
 
@@ -365,9 +468,8 @@ fn check_repeated_concat(child: &Expr, outer_lo: usize) -> bool {
         return false;
     };
 
-    is_unbounded_simple_repeat(*prefix_lo, *prefix_hi, *prefix_greedy)
-        && is_unbounded_simple_repeat(*right_lo, *right_hi, *right_greedy)
-        && compatible_edge_repeat_bounds(*prefix_lo, *right_lo)
+    is_unbounded_repeat(*prefix_lo, *prefix_hi, *prefix_greedy)
+        && is_unbounded_repeat(*right_lo, *right_hi, *right_greedy)
         && prefix_inner.as_ref() == right_inner.as_ref()
 }
 
@@ -411,12 +513,17 @@ fn build_repeated_concat(child: Expr, outer_lo: usize) -> Expr {
     }
 }
 
-fn is_unbounded_simple_repeat(lo: usize, hi: usize, greedy: bool) -> bool {
-    greedy && hi == usize::MAX && matches!(lo, 0 | 1)
+/// Whether `expr` is a greedy, unbounded `X{lo,}` repeat. `lo` may be any
+/// value, so the optimization also applies to patterns like `a{2,}`.
+fn is_unbounded_repeat(_lo: usize, hi: usize, greedy: bool) -> bool {
+    greedy && hi == usize::MAX
 }
 
-fn compatible_edge_repeat_bounds(left_lo: usize, right_lo: usize) -> bool {
-    matches!((left_lo, right_lo), (0, 0) | (0, 1) | (1, 0) | (1, 1))
+/// Whether `expr` is a greedy repeat with a finite upper bound (e.g. `a{2,5}`).
+/// Used by the bounded branch, which only applies to edges that cap the number
+/// of iterations.
+fn is_bounded_repeat(lo: usize, hi: usize, greedy: bool) -> bool {
+    greedy && hi != usize::MAX && hi >= lo
 }
 
 fn compose_repeat(child: Box<Expr>, result_kind: QuantifierKind) -> Expr {
@@ -633,10 +740,10 @@ fn optimize_trailing_lookahead(tree: &mut ExprTree) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::optimize;
     use super::vec;
     use super::Arc;
     use super::Box;
+    use super::{optimize, OptimizeOptions};
     use crate::parse::make_literal;
     use crate::Expr;
     use alloc::string::String;
@@ -647,7 +754,7 @@ mod tests {
 
     fn optimized_pattern_with_flags(pattern: &str, flags: u32) -> String {
         let mut tree = Expr::parse_tree_with_flags(pattern, flags).unwrap();
-        optimize(&mut tree);
+        optimize(&mut tree, OptimizeOptions::default());
         let mut s = String::new();
         tree.expr.to_str(&mut s, 0);
         s
@@ -660,7 +767,7 @@ mod tests {
     #[test]
     fn trailing_positive_lookahead_optimized() {
         let mut tree = Expr::parse_tree("a(?=b)").unwrap();
-        let requires_capture_group_fixup = optimize(&mut tree);
+        let requires_capture_group_fixup = optimize(&mut tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, true);
         let mut s = String::new();
         tree.expr.to_str(&mut s, 0);
@@ -670,7 +777,7 @@ mod tests {
     #[test]
     fn standalone_positive_lookahead_optimized() {
         let mut tree = Expr::parse_tree("(?=b)").unwrap();
-        let requires_capture_group_fixup = optimize(&mut tree);
+        let requires_capture_group_fixup = optimize(&mut tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, true);
         let mut s = String::new();
         tree.expr.to_str(&mut s, 0);
@@ -680,7 +787,7 @@ mod tests {
     #[test]
     fn trailing_positive_lookahead_with_alternative_optimized() {
         let mut tree = Expr::parse_tree("a(?=b|c)").unwrap();
-        let requires_capture_group_fixup = optimize(&mut tree);
+        let requires_capture_group_fixup = optimize(&mut tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, true);
         let mut s = String::new();
         tree.expr.to_str(&mut s, 0);
@@ -690,7 +797,7 @@ mod tests {
     #[test]
     fn trailing_positive_lookahead_moved_even_if_not_easy() {
         let mut tree = Expr::parse_tree(r"(a)\1(?=c)").unwrap();
-        let requires_capture_group_fixup = optimize(&mut tree);
+        let requires_capture_group_fixup = optimize(&mut tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, true);
         assert_eq!(
             tree.expr,
@@ -711,7 +818,8 @@ mod tests {
     fn trailing_positive_lookahead_left_alone_when_self_recursive() {
         let tree = Expr::parse_tree(r"ab?\g<0>?(?=a|$)").unwrap();
         let mut optimized_tree = tree.clone();
-        let requires_capture_group_fixup = optimize(&mut optimized_tree);
+        let requires_capture_group_fixup =
+            optimize(&mut optimized_tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, false);
         assert_eq!(&optimized_tree.expr, &tree.expr);
     }
@@ -720,7 +828,8 @@ mod tests {
     fn trailing_negative_lookahead_left_alone() {
         let tree = Expr::parse_tree(r"a(?!b)").unwrap();
         let mut optimized_tree = tree.clone();
-        let requires_capture_group_fixup = optimize(&mut optimized_tree);
+        let requires_capture_group_fixup =
+            optimize(&mut optimized_tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, false);
         assert_eq!(&optimized_tree.expr, &tree.expr);
     }
@@ -729,7 +838,8 @@ mod tests {
     fn trailing_positive_lookbehind_left_alone() {
         let tree = Expr::parse_tree(r"(?<=b)").unwrap();
         let mut optimized_tree = tree.clone();
-        let requires_capture_group_fixup = optimize(&mut optimized_tree);
+        let requires_capture_group_fixup =
+            optimize(&mut optimized_tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, false);
         assert_eq!(&optimized_tree.expr, &tree.expr);
     }
@@ -738,13 +848,15 @@ mod tests {
     fn non_trailing_positive_lookahead_left_alone() {
         let tree = Expr::parse_tree(r"a(?=(b))\1").unwrap();
         let mut optimized_tree = tree.clone();
-        let requires_capture_group_fixup = optimize(&mut optimized_tree);
+        let requires_capture_group_fixup =
+            optimize(&mut optimized_tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, false);
         assert_eq!(&optimized_tree.expr, &tree.expr);
 
         let tree = Expr::parse_tree(r"(?=(b))\1").unwrap();
         let mut optimized_tree = tree.clone();
-        let requires_capture_group_fixup = optimize(&mut optimized_tree);
+        let requires_capture_group_fixup =
+            optimize(&mut optimized_tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, false);
         assert_eq!(&optimized_tree.expr, &tree.expr);
     }
@@ -752,7 +864,7 @@ mod tests {
     #[test]
     fn keepout_optimized() {
         let mut tree = Expr::parse_tree(r"ab\Kcd").unwrap();
-        let requires_capture_group_fixup = optimize(&mut tree);
+        let requires_capture_group_fixup = optimize(&mut tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, true);
         let mut s = String::new();
         tree.expr.to_str(&mut s, 0);
@@ -762,7 +874,7 @@ mod tests {
     #[test]
     fn keepout_at_start_of_concat_optimized() {
         let mut tree = Expr::parse_tree(r"\Kcd").unwrap();
-        let requires_capture_group_fixup = optimize(&mut tree);
+        let requires_capture_group_fixup = optimize(&mut tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, true);
         let mut s = String::new();
         tree.expr.to_str(&mut s, 0);
@@ -774,7 +886,7 @@ mod tests {
         // \K and trailing positive lookahead should be merged into one capture group,
         // not two separate group-0 wrappers.
         let mut tree = Expr::parse_tree(r#"ab\Kcd(?=e)"#).unwrap();
-        let requires_capture_group_fixup = optimize(&mut tree);
+        let requires_capture_group_fixup = optimize(&mut tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, true);
         let mut s = String::new();
         tree.expr.to_str(&mut s, 0);
@@ -785,7 +897,8 @@ mod tests {
     fn keepout_left_alone_when_self_recursive() {
         let tree = Expr::parse_tree(r"ab?\g<0>?\Kc").unwrap();
         let mut optimized_tree = tree.clone();
-        let requires_capture_group_fixup = optimize(&mut optimized_tree);
+        let requires_capture_group_fixup =
+            optimize(&mut optimized_tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, false);
         assert_eq!(&optimized_tree.expr, &tree.expr);
     }
@@ -795,7 +908,8 @@ mod tests {
         // \K inside a capturing group (not the root concat) should not be optimized
         let tree = Expr::parse_tree(r"c(a\Kb)d").unwrap();
         let mut optimized_tree = tree.clone();
-        let requires_capture_group_fixup = optimize(&mut optimized_tree);
+        let requires_capture_group_fixup =
+            optimize(&mut optimized_tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, false);
         assert_eq!(&optimized_tree.expr, &tree.expr);
     }
@@ -807,7 +921,8 @@ mod tests {
         // we must leave the pattern unchanged.
         let tree = Expr::parse_tree(r"(\w+)\K\s*(\w+)").unwrap();
         let mut optimized_tree = tree.clone();
-        let requires_capture_group_fixup = optimize(&mut optimized_tree);
+        let requires_capture_group_fixup =
+            optimize(&mut optimized_tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, false);
         assert_eq!(&optimized_tree.expr, &tree.expr);
     }
@@ -888,7 +1003,7 @@ mod tests {
     #[test]
     fn nested_repeat_does_not_affect_capture_group_fixup_return() {
         let mut tree = Expr::parse_tree(r"(x+){1,}").unwrap();
-        let requires_capture_group_fixup = optimize(&mut tree);
+        let requires_capture_group_fixup = optimize(&mut tree, OptimizeOptions::default());
         assert_eq!(requires_capture_group_fixup, false);
         assert_eq!(optimized_pattern(r"(x+){1,}"), "(x+)");
     }
@@ -911,7 +1026,7 @@ mod tests {
         // When there's a backreference, the * → ? downgrade must NOT happen
         // because the group participation count is observable via \1.
         let mut tree = Expr::parse_tree_with_flags(r"(x+){1,}{0,}\1", oniguruma_flags()).unwrap();
-        optimize(&mut tree);
+        optimize(&mut tree, OptimizeOptions::default());
         // The inner {1,} is simplified to (x+), but the outer {0,} stays
         // as ZeroOrMore (not downgraded to Optional) because has_backrefs is true.
         assert_eq!(
@@ -1000,5 +1115,252 @@ mod tests {
     fn ambiguous_concat_repeats_plus_optional_star_uses_prefix() {
         // left=\w+ (lo=1) >= right=\w* (lo=0): left is the mandatory prefix
         assert_eq!(optimized_pattern(r"\w+\.?\w*"), r"\w+(?:\.{1}\w*)?");
+    }
+
+    #[test]
+    fn ambiguous_concat_repeats_min2_left_nullable() {
+        // left edge has lo == 0, so it (with the middle) becomes an optional
+        // prefix and the right edge stays mandatory as the suffix. Note that
+        // `{0,}` is rendered as `*` by the pretty-printer.
+        assert_eq!(optimized_pattern(r"a{0,}b?a{2,}"), r"(?:a*b{1})?a{2,}");
+        // `\w{2,}` has lo == 2 (not 0), so with `\w{3,}` (lo == 3) this is the
+        // both-mandatory case, not the left-nullable case.
+        assert_eq!(
+            optimized_pattern(r"\w{2,}\.?\w{3,}"),
+            r"\w{2,}(?:\.{1}\w{3,}|\w{3})"
+        );
+    }
+
+    #[test]
+    fn ambiguous_concat_repeats_min2_right_nullable() {
+        // right edge has lo == 0, so it (with the middle) becomes an optional
+        // suffix and the left edge stays mandatory as the prefix.
+        assert_eq!(optimized_pattern(r"a{2,}b?a{0,}"), r"a{2,}(?:b{1}a*)?");
+        // `\w{2,}` has lo == 2 (not 0), so with `\w{3,}` (lo == 3) this is the
+        // both-mandatory case, not the right-nullable case.
+        assert_eq!(
+            optimized_pattern(r"\w{3,}\.?\w{2,}"),
+            r"\w{3,}(?:\.{1}\w{2,}|\w{2})"
+        );
+    }
+
+    #[test]
+    fn ambiguous_concat_repeats_min2_both_mandatory() {
+        // both edges require at least one match: keep the left mandatory and
+        // make the tail choose between the middle+right path and the right
+        // repeat's minimum, preserving the combined minimum.
+        assert_eq!(
+            optimized_pattern(r"a{2,}b?a{2,}"),
+            r"a{2,}(?:b{1}a{2,}|a{2})"
+        );
+        assert_eq!(
+            optimized_pattern(r"^a{2,}b?a{2,}$"),
+            r"^a{2,}(?:b{1}a{2,}|a{2})$"
+        );
+        assert_eq!(optimized_pattern(r"^a{2,}b?a+$"), r"^a{2,}(?:b{1}a+|a{1})$");
+        assert_eq!(optimized_pattern(r"^a+b?a{2,}$"), r"^a+(?:b{1}a{2,}|a{2})$");
+        // asymmetric minima: the stricter (left) edge stays mandatory and the
+        // tail's no-middle path consumes the right edge's minimum.
+        assert_eq!(
+            optimized_pattern(r"a{3,}b?a{2,}"),
+            r"a{3,}(?:b{1}a{2,}|a{2})"
+        );
+    }
+
+    #[test]
+    fn ambiguous_concat_repeats_bounded_both_mandatory() {
+        // When at least one edge is bounded above, keeping the edges separate
+        // still backtracks over their boundary, so the two runs are merged into
+        // a single repeat with the combined bounds [L+R, L_hi+R_hi]: the first
+        // alternative still consumes the middle, and the second absorbs the
+        // combined run directly.
+        assert_eq!(
+            optimized_pattern(r"a{2,5}b?a{1,4}"),
+            r"(?:a{2,5}b{1}a{1,4}|a{3,9})"
+        );
+        assert_eq!(
+            optimized_pattern(r"^a{2,5}b?a{1,4}$"),
+            r"^(?:a{2,5}b{1}a{1,4}|a{3,9})$"
+        );
+        // asymmetric bounds
+        assert_eq!(
+            optimized_pattern(r"a{2,3}b?a{1,4}"),
+            r"(?:a{2,3}b{1}a{1,4}|a{3,7})"
+        );
+        assert_eq!(
+            optimized_pattern(r"a{2,5}b?a{1,2}"),
+            r"(?:a{2,5}b{1}a{1,2}|a{3,7})"
+        );
+        // one edge unbounded, the other bounded
+        assert_eq!(optimized_pattern(r"a{2,5}b?a+"), r"(?:a{2,5}b{1}a+|a{3,})");
+        assert_eq!(optimized_pattern(r"a+b?a{1,4}"), r"(?:a+b{1}a{1,4}|a{2,})");
+    }
+
+    #[test]
+    fn ambiguous_concat_repeats_bounded_with_capture_left_alone() {
+        // The bounded branch merges the two runs, which changes how many times
+        // a capture group inside an edge participates, so it is left alone.
+        assert_eq!(optimized_pattern(r"(a){2,5}b?a{1,4}"), r"(a){2,5}b?a{1,4}");
+        assert_eq!(optimized_pattern(r"a{2,5}b?(a){1,4}"), r"a{2,5}b?(a){1,4}");
+    }
+
+    #[test]
+    fn ambiguous_concat_repeats_both_nullable() {
+        // both edges nullable (a{0,}b?a{0,} == a*b?a*): the left edge stays as
+        // the mandatory prefix and the right edge (with the middle) becomes an
+        // optional suffix. Both the original and the rewrite match the empty
+        // string, so this is sound and still factors the ambiguous boundary.
+        assert_eq!(optimized_pattern(r"a{0,}b?a{0,}"), r"a*(?:b{1}a*)?");
+        assert_eq!(optimized_pattern(r"\s*\w?\s*"), r"\s*(?:\w{1}\s*)?");
+    }
+
+    #[test]
+    fn ambiguous_concat_repeats_both_nullable_bounded_edges() {
+        // bounded nullable edges must be left alone: moving one into an optional
+        // group would drop the case where both edges match without the middle
+        // (e.g. `.?a?.?` matching "bc"), so the guard rejects them.
+        assert_eq!(optimized_pattern(r".?a?.?"), r".?a?.?");
+        assert_eq!(optimized_pattern(r"^[^x]?a?[^x]?$"), r"^[^x]?a?[^x]?$");
+    }
+
+    #[test]
+    fn ambiguous_concat_repeats_min2_inside_quantifier() {
+        // A quantified whole group whose body has the min-2 triplet shape gets
+        // its body rewritten; the outer quantifier is preserved as-is (the
+        // repeated-concat collapse only applies when the rewritten tail is an
+        // optional repeat, which the both-mandatory tail is not).
+        assert_eq!(
+            optimized_pattern(r"(?:a{2,}b?a{2,})+"),
+            r"(?:a{2,}(?:b{1}a{2,}|a{2}))+"
+        );
+        assert_eq!(
+            optimized_pattern(r"(?:a{2,}b?a{2,})*"),
+            r"(?:a{2,}(?:b{1}a{2,}|a{2}))*"
+        );
+        assert_eq!(
+            optimized_pattern(r"(?:a{2,}b?a{2,}){2,}"),
+            r"(?:a{2,}(?:b{1}a{2,}|a{2})){2,}"
+        );
+    }
+
+    // Differential test using the std `regex` crate as a cross-check.
+    //
+    // Compares the original pattern against its optimized form on a set of
+    // haystacks. Fails if either engine disagrees with the other.
+    //
+    // Because `Regex::new` always runs the optimization pass, comparing
+    // `Regex::new(pat)` against `Regex::new(&optimized_pattern(pat))` would
+    // just be testing the same compiled regex twice. To make the test
+    // meaningful, we also compile the original pattern with optimization
+    // disabled (via `RegexOptionsBuilder::optimize(false)`), so the
+    // un-optimized tree is exercised against the optimized one. This is the
+    // actual differential check: it verifies that the optimization pass
+    // preserves match semantics.
+    //
+    // The std `regex` crate is used as an independent control where it can
+    // parse the pattern.
+    mod differential {
+        use super::optimized_pattern;
+        use crate::alloc::string::ToString;
+        use crate::Regex;
+        use crate::RegexOptionsBuilder;
+        use regex::Regex as StdRegex;
+
+        fn check(pat: &str, hay: &str) {
+            let opt_str = optimized_pattern(pat);
+            // optimized fancy-regex (default)
+            let f_opt = Regex::new(pat).unwrap();
+            // un-optimized fancy-regex (the real differential comparison)
+            let f_no_opt = RegexOptionsBuilder::new()
+                .optimize(false)
+                .build(pat.to_string())
+                .unwrap();
+            let mo = f_opt.is_match(hay).unwrap();
+            let mo2 = f_no_opt.is_match(hay).unwrap();
+            assert_eq!(
+                mo, mo2,
+                "fancy optimized!=unoptimized pat={:?} opt={:?} hay={:?} opt={} no_opt={}",
+                pat, opt_str, hay, mo, mo2
+            );
+            if let Ok(s_orig) = StdRegex::new(pat) {
+                let ms = s_orig.is_match(hay);
+                assert_eq!(
+                    mo, ms,
+                    "fancy!=std pat={:?} hay={:?} fancy={} std={}",
+                    pat, hay, mo, ms
+                );
+            }
+        }
+
+        #[test]
+        fn min2_edge_repeats() {
+            let hays = [
+                "", "a", "aa", "aaa", "aaaa", "aaaaa", "aaaaaa", "b", "ab", "ba", "aba", "aabaa",
+                "baa", "abba", "bab", "abb", "aabb", "abab", "baba", "aab", "aaab", "baaa", "abbb",
+                "aabbaa", "baaab", "ababa", "babab", "aaabaa", "baaaab",
+            ];
+            let pats = [
+                r"^a{2,}b?a+$",
+                r"^a+b?a{2,}$",
+                r"^a{2,}b?a{2,}$",
+                r"a{2,}b?a{2,}",
+                r"a{2,}b?a+",
+                r"a+b?a{2,}",
+                r"\w{2,}\.?\w{2,}",
+                r"\w{2,}\.?\w{3,}",
+                r"\w{3,}\.?\w{2,}",
+                r"ab{2,}c?ab{2,}",
+                r"ab{2,}c?ab{3,}",
+                r"ab{3,}c?ab{2,}",
+                r"foo{2,}bar?foo{3,}",
+                r"(?:a{2,}b?a{2,})+",
+                r"(?:a{2,}b?a{2,})*",
+                r"(?:a{2,}b?a{2,}){2,}",
+                r"(?:a{2,}b?a{2,}){0,}",
+                r"(?:a{2,}b?a{2,}){0,1}",
+                r"(?:a{2,}b?a{2,}){1,}",
+                r"(?:a{2,}b?a{2,}){1,1}",
+                r"(?:a+b?a*)+",
+                r"(?:a+b?a*)*",
+                r"(?:a{2,}b?a*)+",
+                r"(?:a{2,}b?a*)*",
+                r"^a{3,}b?a{2,}$",
+                r"^a{2,}b?a{3,}$",
+                r"^a{2,}b?a{2,}$",
+                r"a{3,}b?a{3,}",
+                r"a{4,}b?a{2,}",
+                r"a{2,}b?a{4,}",
+                r"(?:a{3,}b?a{3,})+",
+                r"(?:a{4,}b?a{2,})*",
+                r"(?:a{2,}b?a{4,}){2,}",
+                r"\w{2,}\.?\w{4,}",
+                r"\w{4,}\.?\w{2,}",
+                r"xy{3,}z?xy{3,}",
+                r"xy{3,}z?xy{4,}",
+                r"a{3,}b?a{2,}",
+                r"^a{3,}b?a{2,}$",
+                r"a{2,}b?a{3,}",
+                r"a{4,}b?a{3,}",
+                r"a{2,5}b?a{1,4}",
+                r"^a{2,5}b?a{1,4}$",
+                r"a{2,3}b?a{1,4}",
+                r"a{2,5}b?a{1,2}",
+                r"a{3,6}b?a{2,7}",
+                r"ab{2,5}c?ab{1,4}",
+                r"xy{3,6}z?xy{2,5}",
+                r"a{2,5}b?a+",
+                r"a+b?a{1,4}",
+                r"a{2,3}b?a{1,4}",
+                r"a{2,5}b?a{1,2}",
+                r"a{3,6}b?a{2,7}",
+                r"\w{2,5}\.?\w{1,4}",
+                r"\w{1,4}\.?\w{2,5}",
+            ];
+            for p in pats {
+                for h in hays.iter() {
+                    check(p, h);
+                }
+            }
+        }
     }
 }

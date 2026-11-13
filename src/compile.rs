@@ -162,6 +162,11 @@ struct Compiler<'a> {
     /// fragment, and building a `meta::Regex` dominates compile time, so
     /// identical fragments share one engine (cloning it is a cheap Arc copy).
     delegate_memo: Map<(String, bool), RaRegex>,
+    /// For each group whose body refers to the group itself, the first of the two
+    /// slots that hold its previous capture while the group runs again.
+    previous_capture_slots: Map<usize, usize>,
+    /// The groups being compiled whose body refers to the group itself.
+    open_self_referencing_groups: Vec<usize>,
 }
 
 #[cfg(feature = "variable-lookbehinds")]
@@ -181,6 +186,19 @@ fn lookbehind_alt_as_delegate(inner: &Info<'_>) -> bool {
                 .any(|branch| branch.is_literal_get_casei().is_none()))
 }
 
+/// Whether `body` reads a capture group set inside it, so an iteration can match
+/// differently from an earlier one at the same position.
+fn reads_own_captures(body: &Info<'_>) -> bool {
+    let own = body.start_group()..body.end_group();
+    body.expr.has_descendant_or_self(|expr| match *expr {
+        Expr::Backref { group, .. }
+        | Expr::BackrefWithRelativeRecursionLevel { group, .. }
+        | Expr::BackrefExistsCondition { group, .. } => own.contains(&group),
+        Expr::SubroutineCall(_) => true,
+        _ => false,
+    })
+}
+
 impl<'a> Compiler<'a> {
     #[inline]
     fn emit_literal_bytes(&mut self, bytes: &[u8]) -> Result<()> {
@@ -194,6 +212,64 @@ impl<'a> Compiler<'a> {
             self.b.add(Insn::LitBytes(bytes.to_vec()))?;
         }
         Ok(())
+    }
+
+    fn compile_group(&mut self, group: usize, body: &Info<'_>, hard: bool) -> Result<()> {
+        let self_referencing = self.refers_to_group(body.expr, group, &mut Vec::new());
+        if self_referencing {
+            let previous = *self.previous_capture_slots.entry(group).or_insert_with(|| {
+                let slot = self.b.newsave();
+                self.b.newsave();
+                slot
+            });
+            self.b
+                .add(Insn::SaveCaptureGroupStartKeepPrevious { group, previous })?;
+            self.open_self_referencing_groups.push(group);
+        } else {
+            self.b.add(Insn::SaveCaptureGroupStart(group))?;
+        }
+        self.visit(body, hard)?;
+        if self_referencing {
+            self.open_self_referencing_groups.pop();
+        }
+        self.b.add(Insn::Save(group * 2 + 1))?;
+        Ok(())
+    }
+
+    /// Whether `expr` has a backref or a condition that refers to `group`, also
+    /// through the groups it calls.
+    fn refers_to_group(&self, expr: &Expr, group: usize, called: &mut Vec<usize>) -> bool {
+        match *expr {
+            Expr::Backref { group: g, .. } | Expr::BackrefExistsCondition { group: g, .. }
+                if g == group =>
+            {
+                return true;
+            }
+            Expr::SubroutineCall(target) if !called.contains(&target) => {
+                called.push(target);
+                let info = if target == 0 {
+                    Some(self.root_info)
+                } else {
+                    self.group_info_map.get(&target).copied()
+                };
+                if info.map_or(false, |info| self.refers_to_group(info.expr, group, called)) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        expr.children_iter()
+            .any(|child| self.refers_to_group(child, group, called))
+    }
+
+    /// The first of the slots a backref to `group` reads. Inside the group itself,
+    /// that is the previous capture, as the current one is not finished yet.
+    fn capture_slot(&self, group: usize) -> usize {
+        if self.open_self_referencing_groups.contains(&group) {
+            self.previous_capture_slots[&group]
+        } else {
+            group * 2
+        }
     }
 
     fn visit(&mut self, info: &Info<'_>, hard: bool) -> Result<()> {
@@ -239,10 +315,7 @@ impl<'a> Compiler<'a> {
                 self.compile_alt(count, |compiler, i| compiler.visit(&info.children[i], hard))?;
             }
             Expr::Group(_) => {
-                let group = info.start_group();
-                self.b.add(Insn::SaveCaptureGroupStart(group))?;
-                self.visit(&info.children[0], hard)?;
-                self.b.add(Insn::Save(group * 2 + 1))?;
+                self.compile_group(info.start_group(), &info.children[0], hard)?;
             }
             Expr::Repeat { lo, hi, greedy, .. } => {
                 self.compile_repeat(info, lo, hi, greedy, hard)?;
@@ -252,7 +325,7 @@ impl<'a> Compiler<'a> {
             }
             Expr::Backref { group, casei } => {
                 self.b.add(Insn::Backref {
-                    slot: group * 2,
+                    slot: self.capture_slot(group),
                     casei,
                     // use the pre-computed effective unicode flag (unicode && !Ascii bytes mode)
                     unicode: self.options.unicode,
@@ -262,7 +335,8 @@ impl<'a> Compiler<'a> {
                 group,
                 relative_recursion_level: None,
             } => {
-                self.b.add(Insn::BackrefExistsCondition(group))?;
+                self.b
+                    .add(Insn::BackrefExistsCondition(self.capture_slot(group)))?;
             }
             Expr::BackrefExistsCondition {
                 relative_recursion_level: Some(_),
@@ -355,9 +429,7 @@ impl<'a> Compiler<'a> {
                                 )),
                             )));
                         }
-                        self.b.add(Insn::SaveCaptureGroupStart(target_group))?;
-                        self.visit(&target_info.children[0], hard)?;
-                        self.b.add(Insn::Save(target_group * 2 + 1))?;
+                        self.compile_group(target_group, &target_info.children[0], hard)?;
                     }
 
                     // Pop the recursion stack
@@ -532,6 +604,7 @@ impl<'a> Compiler<'a> {
             next: usize::MAX,
             repeat,
             check,
+            reads_own_captures: false,
         })?;
 
         // Compile the body as: (?((?!inner))\O|)
@@ -620,6 +693,7 @@ impl<'a> Compiler<'a> {
             // Use RepeatEpsilon instructions to prevent empty repeat
             let repeat = self.b.newsave();
             let check = self.b.newsave();
+            let reads_own_captures = reads_own_captures(child);
             self.b.add(Insn::Save0(repeat))?;
             let pc = self.b.pc();
             if greedy {
@@ -628,6 +702,7 @@ impl<'a> Compiler<'a> {
                     next: usize::MAX,
                     repeat,
                     check,
+                    reads_own_captures,
                 })?;
             } else {
                 self.b.add(Insn::RepeatEpsilonNg {
@@ -635,6 +710,7 @@ impl<'a> Compiler<'a> {
                     next: usize::MAX,
                     repeat,
                     check,
+                    reads_own_captures,
                 })?;
             }
             self.visit(child, hard)?;
@@ -782,8 +858,8 @@ impl<'a> Compiler<'a> {
                 }
             } else {
                 // If the variable lookbehind is a Concat expression where all children
-                // are either easy or are guaranteed to consume 0 characters, then we can
-                // compile it as variable lookbehind without additional goback instructions.
+                // are either easy or have constant size, compile the easy pieces as
+                // variable lookbehinds and use goback instructions for the hard children.
                 if let Expr::Concat(_) = inner.expr {
                     let can_compile = inner
                         .children
@@ -793,6 +869,21 @@ impl<'a> Compiler<'a> {
                     if can_compile {
                         #[cfg(feature = "variable-lookbehinds")]
                         {
+                            // If a hard child can reject a variable delegate's chosen start,
+                            // retry with the VM only when the reverse check fails.
+                            let needs_fallback = !inner
+                                .children
+                                .iter()
+                                .skip_while(|child| !child.hard)
+                                .all(|child| child.const_size);
+                            let fallback = if needs_fallback {
+                                self.b.add(Insn::BeginAtomic)?;
+                                let pc = self.b.pc();
+                                self.b.add(Insn::Split(pc + 1, usize::MAX))?;
+                                Some(pc)
+                            } else {
+                                None
+                            };
                             let mut delegate_nodes = vec![];
                             let mut go_back: usize = 0;
                             for child in inner.children.iter().rev() {
@@ -817,6 +908,17 @@ impl<'a> Compiler<'a> {
                                 }
                             }
                             self.compile_variable_lookbehind_from_concat_nodes(&delegate_nodes)?;
+                            if let Some(split_pc) = fallback {
+                                // A successful reverse check must not retry the slower
+                                // verifier when the surrounding pattern later fails.
+                                self.b.add(Insn::EndAtomic)?;
+                                let jump_pc = self.b.pc();
+                                self.b.add(Insn::Jmp(usize::MAX))?;
+                                self.b.set_split_target(split_pc, self.b.pc(), true);
+                                self.b.add(Insn::EndAtomic)?;
+                                self.compile_hard_variable_lookbehind(inner, la)?;
+                                self.b.set_jmp_target(jump_pc, self.b.pc());
+                            }
                             Ok(())
                         }
                         #[cfg(not(feature = "variable-lookbehinds"))]
@@ -883,7 +985,7 @@ impl<'a> Compiler<'a> {
         self.b.add(Insn::Save(candidate_save))?;
 
         let mut seek_pattern = String::new();
-        build_seek_pattern(inner, &self.group_info_map, 0, &mut seek_pattern, 0);
+        build_seek_pattern(inner, &self.group_info_map, 0, &mut seek_pattern, 0, true);
 
         use regex_automata::hybrid::dfa;
         use regex_automata::nfa::thompson;
@@ -940,7 +1042,10 @@ impl<'a> Compiler<'a> {
                 candidate_pos_slot: candidate_save,
             }))?;
 
-        self.visit(inner, false)?;
+        // Use a hard context so that we can backtrack through variable
+        // length nodes instead of just accepting a single end position
+        // from the delegate.
+        self.visit(inner, true)?;
         self.b.add(Insn::ReverseLookbehindPosCheck {
             slot: end_save,
             candidate_pos_slot: candidate_save,
@@ -1751,12 +1856,14 @@ pub fn compile(info: &Info<'_>, options: CompileOptions) -> Result<Prog> {
         inside_alternation: false,
         group_info_map,
         subroutine_recursion_stack: Vec::new(),
+        previous_capture_slots: Map::new(),
+        open_self_referencing_groups: Vec::new(),
         root_info: info,
         delegate_memo: Map::new(),
     };
 
     let mut seek_pattern = String::new();
-    build_seek_pattern(info, &c.group_info_map, 0, &mut seek_pattern, 0);
+    build_seek_pattern(info, &c.group_info_map, 0, &mut seek_pattern, 0, false);
 
     if !c.options.anchored {
         let mut used_seek = false;
@@ -2384,54 +2491,35 @@ mod tests {
     #[cfg(feature = "variable-lookbehinds")]
     fn variable_lookbehind_with_required_feature_no_captures_hard_const_size_zero_length() {
         let prog = compile_prog(r"(?<=\bab+)x");
-
-        assert_eq!(prog.len(), 6, "prog: {:?}", prog);
-
-        assert_matches!(prog[0], Save(0));
-        assert_matches!(&prog[1], BackwardsDelegate(ReverseBackwardsDelegate { pattern, dfa: _, cache_pool: _, capture_group_extraction_inner: None, capture_groups: None }) if pattern == "ab+");
-        assert_matches!(prog[2], Insn::Assertion(crate::Assertion::WordBoundary));
-        assert_matches!(prog[3], Restore(0));
-        assert_matches!(prog[4], Lit(ref l) if l == "x");
-        assert_matches!(prog[5], End);
+        assert!(prog.iter().any(|i| matches!(i,
+            BackwardsDelegate(ReverseBackwardsDelegate { pattern, .. }) if pattern == "ab+"
+        )));
+        assert!(prog
+            .iter()
+            .any(|i| matches!(i, Insn::HardVariableLookbehind(_))));
+        assert!(prog
+            .iter()
+            .any(|i| matches!(i, Insn::Assertion(crate::Assertion::WordBoundary))));
     }
 
     #[test]
     #[cfg(feature = "variable-lookbehinds")]
     fn variable_lookbehind_with_required_feature_no_captures_hard_const_size_non_zero_length() {
         let prog = compile_prog(r"((.)b+(?<=\1\1b+)x)");
-
-        assert_eq!(prog.len(), 16, "prog: {:?}", prog);
-
-        assert_matches!(prog[0], SaveCaptureGroupStart(0));
-        assert_matches!(prog[1], SaveCaptureGroupStart(1));
-        assert_matches!(prog[2], AnyNoNL);
-        assert_matches!(prog[3], Save(3));
-        assert_matches!(prog[4], Lit(ref l) if l == "b");
-        assert_matches!(prog[5], Split(4, 6));
-        assert_matches!(prog[6], Save(4));
-        assert_matches!(&prog[7], BackwardsDelegate(ReverseBackwardsDelegate { pattern, dfa: _, cache_pool: _, capture_group_extraction_inner: None, capture_groups: None }) if pattern == "b+");
-        assert_matches!(prog[8], GoBack(1));
-        assert_matches!(
-            prog[9],
+        assert!(prog.iter().any(|i| matches!(i,
+            BackwardsDelegate(ReverseBackwardsDelegate { pattern, .. }) if pattern == "b+"
+        )));
+        assert!(prog
+            .iter()
+            .any(|i| matches!(i, Insn::HardVariableLookbehind(_))));
+        assert!(prog.iter().any(|i| matches!(
+            i,
             Backref {
                 slot: 2,
                 casei: false,
-                unicode: true,
+                unicode: true
             }
-        );
-        assert_matches!(prog[10], GoBack(2));
-        assert_matches!(
-            prog[11],
-            Backref {
-                slot: 2,
-                casei: false,
-                unicode: true,
-            }
-        );
-        assert_matches!(prog[12], Restore(4));
-        assert_matches!(prog[13], Lit(ref l) if l == "x");
-        assert_matches!(prog[14], Save(1));
-        assert_matches!(prog[15], End);
+        )));
     }
 
     #[test]
@@ -2619,7 +2707,8 @@ mod tests {
                 lo: 0,
                 next: 19,
                 repeat: 4,
-                check: 5
+                check: 5,
+                reads_own_captures: false
             }
         );
         assert_matches!(prog[9], BeginAtomic);
@@ -3064,23 +3153,20 @@ mod tests {
 
     #[test]
     #[cfg(feature = "variable-lookbehinds")]
-    fn word_boundary_inside_easy_variable_lookbehind_stays_delegated() {
-        // Without a backref, a variable-length lookbehind delegates to a
-        // reverse DFA. Word boundaries inside it are still hard, but the
-        // reverse DFA honours `unicode_word_boundary`, so the lookbehind
-        // compiles as a single BackwardsDelegate carrying the `\b` assertions.
-        let prog = compile_prog(r"(?<=\b\w+\b)x");
-        assert_eq!(prog.len(), 7, "prog: {:?}", prog);
+    fn word_boundary_after_easy_variable_lookbehind_stays_on_vm() {
+        // A trailing assertion runs before the reverse delegate, so it cannot
+        // reject a start position chosen by that delegate.
+        let prog = compile_prog(r"(?<=\w+\b)x");
+        assert_eq!(prog.len(), 6, "prog: {:?}", prog);
         assert_matches!(prog[0], Save(0));
         assert_matches!(prog[1], Insn::Assertion(crate::Assertion::WordBoundary));
         assert_matches!(
             &prog[2],
             BackwardsDelegate(ReverseBackwardsDelegate { pattern, .. }) if pattern == "\\w+"
         );
-        assert_matches!(prog[3], Insn::Assertion(crate::Assertion::WordBoundary));
-        assert_matches!(prog[4], Restore(0));
-        assert_matches!(prog[5], Lit(ref l) if l == "x");
-        assert_matches!(prog[6], End);
+        assert_matches!(prog[3], Restore(0));
+        assert_matches!(prog[4], Lit(ref l) if l == "x");
+        assert_matches!(prog[5], End);
     }
 
     #[test]

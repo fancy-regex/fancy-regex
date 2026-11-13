@@ -25,7 +25,7 @@ use criterion::{black_box, Criterion};
 use std::time::Duration;
 
 use fancy_regex::internal::{
-    analyze, compile, optimize, run_default, AnalyzeContext, CompileOptions,
+    analyze, compile, optimize, run_default, AnalyzeContext, CompileOptions, OptimizeOptions,
 };
 use fancy_regex::seek_pattern_is_useful;
 use fancy_regex::Expr;
@@ -574,7 +574,7 @@ fn bench_concat_repeat_optimization(c: &mut Criterion, name: &str, with_optimize
     let pattern = r"(\w)(?:\s*\w?\s*)+\1";
     let mut tree = Expr::parse_tree(pattern).unwrap();
     if with_optimize {
-        optimize(&mut tree);
+        optimize(&mut tree, OptimizeOptions::default());
     }
     let a = analyze(
         &tree,

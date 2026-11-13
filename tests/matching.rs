@@ -628,6 +628,37 @@ fn repeat_minimum_holds_when_loop_runs_again() {
     assert_eq!(m.range(), 0..1);
 }
 
+#[test]
+fn repeat_minimum_after_empty_iteration() {
+    // The first iteration can only match empty at the start, a later one has to
+    // consume the `a`s.
+    assert_match(r"(?:(?=^)a*){2,}b", "aab");
+    assert_match(r"(?:(?=^)a*){2,}?b", "aab");
+    assert_match(r"(?:(^)\1a*){2,}b", "aab");
+    assert_match(r"(?:(^)\1a*){2,}?b", "aab");
+
+    let m = common::regex(r"(?:^(?=)a*){3,}")
+        .find("aa")
+        .unwrap()
+        .unwrap();
+    assert_eq!(m.range(), 0..2);
+}
+
+#[test]
+fn repeat_minimum_runs_iterations_that_read_own_captures() {
+    // Only the first iteration can match empty, as it sets group 1.
+    assert_no_match(r"^(?:(?(1)a|())){3,}$", "");
+    assert_no_match(r"^(?:(?(1)a|())){3,}$", "a");
+    assert_match(r"^(?:(?(1)a|())){3,}$", "aa");
+    assert_no_match(r"^(?:(?(1)a|())){3,}?$", "a");
+}
+
+#[test]
+fn repeat_minimum_after_empty_iteration_stays_fast() {
+    let text = "a".repeat(200);
+    assert_no_match(r"(?:(?=)|a){50,}b", &text);
+}
+
 #[cfg_attr(feature = "track_caller", track_caller)]
 fn assert_match(re: &str, text: &str) {
     let result = match_text(re, text);
@@ -646,6 +677,92 @@ fn assert_no_match(re: &str, text: &str) {
         "Expected regex '{}' to not match text '{}'",
         re, text
     );
+}
+
+#[test]
+fn ambiguous_concat_repeat_optional_edges_anchored() {
+    // Regression test for the quantifier-simplification bug introduced in #326:
+    // an optional literal between two optional repeats of the same atom must not
+    // have its edges widened to unbounded, which would swallow the end anchor.
+    assert_no_match(r"^.?a?.?$", "aba");
+    assert_no_match(r"^.?a?.?$", "abab");
+    assert_no_match(r"^[^x]?a?[^x]?$", "aba");
+    assert_no_match(r"^.?a?.?.?$", "abab");
+    // Legitimate matches must still succeed.
+    assert_match(r"^.?a?.?$", "a");
+    assert_match(r"^.?a?.?$", "");
+    assert_match(r"^.?a?.?$", "ab");
+    assert_match(r"^.?a?.?$", "aa");
+}
+
+#[test]
+fn optimize_matches_identical_to_default() {
+    let cases: &[(&str, &str)] = &[
+        // ambiguous concat repeat (the bug fixed in dd589f7)
+        (r"^.?a?.?$", "aba"),
+        (r"^.?a?.?$", "abab"),
+        (r"^[^x]?a?[^x]?$", "aba"),
+        (r"^.?a?.?.?$", "abab"),
+        (r"^.?a?.?$", "a"),
+        (r"^.?a?.?$", ""),
+        (r"^.?a?.?$", "ab"),
+        (r"^.?a?.?$", "aa"),
+        // `*` quantifier (unbounded, lo=0) as an edge
+        (r"^a*b*a*$", "ababa"),
+        (r"^a*b*a*$", ""),
+        (r"^a*b*a*$", "aaa"),
+        (r"^a*b*a*$", "bbb"),
+        // exact `{2}` quantifier (bounded, mandatory) as an edge
+        (r"^a{2}b?a{2}$", "aabaa"),
+        (r"^a{2}b?a{2}$", "aaaa"),
+        (r"^a{2}b?a{2}$", "aab"),
+        // bounded range `{2,50}` as an edge
+        (r"^a{2,50}b?a{2,50}$", "aaaabaaaab"),
+        (r"^a{2,50}b?a{2,50}$", "aaaaa"),
+        (r"^a{2,50}b?a{2,50}$", "aab"),
+        // bounded range `{2,}` (unbounded upper) as an edge
+        (r"^a{2,}b?a{2,}$", "aaabaaa"),
+        (r"^a{2,}b?a{2,}$", "aa"),
+        // bounded range `{0,5}` as a middle as well
+        (r"^a{2,}b{0,5}a{2,}$", "aa"),
+        (r"^a{2,}b{0,5}a{2,}$", "aaaa"),
+        (r"^a{2,}b{0,5}a{2,}$", "aaaaa"),
+        (r"^a{2,}b{0,5}a{2,}$", "aabbbbbaa"),
+        (r"^a{2,}b{0,5}a{2,}$", "aabbbbbaaa"),
+        (r"^a{2,}b{0,5}a{2,}$", "aaabbbbbaaa"),
+        (r"^a{2,}b{0,5}a{2,}$", "aaabbbbbaa"),
+        // bounded middle range, unbounded edge
+        (r"^a+b{0,5}a+$", "aa"),
+        (r"^a+b{0,5}a+$", "aaaaaaaa"),
+        (r"^a+b{0,5}a+$", "aaabbbbbaaaaa"),
+        // nested repeats
+        (r"(?:x+)+", "xxx"),
+        (r"(?:x+)+", ""),
+        (r"(?:a+)+b", "aaab"),
+        (r"(?:a+)+b", "aaa"),
+        (r"(?:x*)*", "xxxxx"),
+        (r"(?:x{2,5})+", "xxxxxxxxxx"),
+        // keepout / trailing lookahead rewrites
+        (r"ab\Kc", "abc"),
+        (r"ab\Kc", "abx"),
+        (r"a(?=b)", "ab"),
+        (r"a(?=b)", "ac"),
+        // backrefs and lookarounds (hard patterns)
+        (r"(\w+) \1", "hello hello world"),
+        (r"(\w+) \1", "no match here"),
+        (r"(?<=foo)bar", "foobar"),
+        (r"(?<=foo)bar", "bazbar"),
+        // long haystack with rare match
+        (
+            r"(xyz)\1",
+            &format!("{}{}", "abcdefghij".repeat(1000), "xyzxyz"),
+        ),
+        // long haystack with no match
+        (r"(xyz)\1", &"abcdefghij".repeat(1000)),
+    ];
+    for (re, text) in cases {
+        common::assert_optimize_same(re, text);
+    }
 }
 
 #[test]
@@ -1227,6 +1344,28 @@ fn ambiguous_concat_repeat_optimization_not_more_permissive() {
 }
 
 #[test]
+fn ambiguous_concat_repeats_preserve_combined_minimum() {
+    // Two unbounded repeats of the same atom around an optional separator must
+    // still satisfy the combined minimum of both repeats when the separator is
+    // absent.
+    common::assert_no_match(r"^a+b?a+$", "a");
+    common::assert_no_match(r"a+b?a+", "a");
+    common::assert_is_match(r"^a+b?a+$", "aa");
+    common::assert_is_match(r"^a+b?a+$", "aba");
+    common::assert_is_match(r"^a+b?a+$", "aabaa");
+    common::assert_is_match(r"^a+b?a+$", "aaaa");
+    common::assert_no_match(r"^a+b?a+$", "baa");
+
+    common::assert_no_match(r"^-+a?-+$", "-");
+    common::assert_is_match(r"^-+a?-+$", "--");
+    common::assert_is_match(r"^-+a?-+$", "-a-");
+
+    // Also applies when the pattern uses "fancy" features.
+    common::assert_no_match(r"^(?!x)a+b?a+$", "a");
+    common::assert_is_match(r"^(?!x)a+b?a+$", "aa");
+}
+
+#[test]
 fn casei_literal_in_hard_pattern() {
     // Lookbehind forces these onto the VM, where casei literals are matched
     // by the native LitCasei instruction. Semantics must equal a delegated
@@ -1307,4 +1446,45 @@ fn lookahead_is_atomic() {
     assert_no_match(r"(?=x|(x))\1x", "xx");
     assert_no_match(r"(?=a|(?:(a)))\1a", "aa");
     assert_match(r"(?=(x)|x)\1x", "xx");
+}
+
+#[cfg(feature = "variable-lookbehinds")]
+#[test]
+fn variable_lookbehind_leading_assertion() {
+    for pattern in [
+        r"x(?<=\b.{1,3})",
+        r"x(?<=\b.{2,3})",
+        r"x(?<=(?<= ).{1,3})",
+        r"x(?<=\b.{1,2})",
+        r"x(?<=(?=\w).{1,3})",
+    ] {
+        assert_match(pattern, "ab x");
+    }
+    assert_no_match(r"x(?<!\b.{1,3})", "ab x");
+    assert_no_match(r"x(?<=\b.{2,3})", "abcdx");
+    assert_match(r"x(?<!\b.{2,3})", "abcdx");
+    assert_match(r"x(?<=\b.{1,3})", "αβ x");
+}
+
+#[cfg(feature = "variable-lookbehinds")]
+#[test]
+fn variable_lookbehind_boundary_preserves_backtrack_budget() {
+    let text = "a".repeat(1000) + "b";
+    assert_match(r"(?<=\ba+)b", &text);
+}
+
+#[cfg(feature = "variable-lookbehinds")]
+#[test]
+fn variable_lookbehind_quantified_boundary() {
+    assert_match(r"x(?<=a\b{2}.{1,2})", "a x");
+    assert_match(r"x(?<=\b{1}.{1,3})", "ab x");
+}
+
+#[cfg(feature = "variable-lookbehinds")]
+#[test]
+fn variable_lookbehind_quantified_conditional_boundary() {
+    let pattern = r"(a)?x(?<=(?(1)\b|\B){1}.{1,3})";
+    assert_match(pattern, "ax");
+    assert_match(pattern, "ab x");
+    assert_no_match(pattern, "x");
 }
