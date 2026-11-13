@@ -9,6 +9,7 @@ with the exception that 0.x versions can break between minor versions.
 ## [Unreleased]
 ### Added
 ### Changed
+- Extends the `CharClassMatcher` idea to sequences to reduce compile times (#290)
 ### Fixed
 
 ## [0.20.2] - 2026-11-11
