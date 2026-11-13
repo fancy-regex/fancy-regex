@@ -2187,6 +2187,65 @@ mod tests {
         assert_matches!(prog[1], End);
     }
 
+    #[cfg(feature = "leftmost_longest")]
+    #[test]
+    fn class_seq_not_used_for_non_const_size_in_leftmost_longest() {
+        // Non-const-size fragments are `hard` in leftmost-longest mode
+        // and must be delegated to an engine whose search honors
+        // leftmost-longest semantics - not matched by
+        // `ClassSeqMatcher::run`, which is leftmost-first / deterministic.
+
+        //for re in [r"a*", r"a+", r"a{1,3}", r"a?"] {
+        let re = "a*";
+        let prog = compile_prog_leftmost_longest(re);
+        assert_eq!(prog.len(), 4, "prog: {:?}", prog);
+        assert_matches!(prog[0], Split(1, 3));
+        assert_matches!(prog[1], Lit(ref l) if l == "a");
+        assert_matches!(prog[2], Jmp(0));
+        assert_matches!(prog[3], End);
+
+        let re = "a+";
+        let prog = compile_prog_leftmost_longest(re);
+        assert_eq!(prog.len(), 3, "prog: {:?}", prog);
+        assert_matches!(prog[0], Lit(ref l) if l == "a");
+        assert_matches!(prog[1], Split(0, 2));
+        assert_matches!(prog[2], End);
+
+        let re = "a{1,3}";
+        let prog = compile_prog_leftmost_longest(re);
+        assert_eq!(prog.len(), 5, "prog: {:?}", prog);
+        assert_matches!(prog[0], Save0(0));
+        assert_matches!(
+            prog[1],
+            RepeatGr {
+                lo: 1,
+                hi: 3,
+                next: 4,
+                repeat: 0
+            }
+        );
+        assert_matches!(prog[2], Lit(ref l) if l == "a");
+        assert_matches!(prog[3], Jmp(1));
+        assert_matches!(prog[4], End);
+
+        let re = "a?";
+        let prog = compile_prog_leftmost_longest(re);
+        assert_eq!(prog.len(), 3, "prog: {:?}", prog);
+        assert_matches!(prog[0], Split(1, 2));
+        assert_matches!(prog[1], Lit(ref l) if l == "a");
+        assert_matches!(prog[2], End);
+    }
+
+    #[cfg(feature = "leftmost_longest")]
+    #[test]
+    fn class_seq_used_for_const_size_in_leftmost_longest() {
+        // const-size fragments stay easy and may still reach ClassSeq.
+        let prog = compile_prog_leftmost_longest(r"\s{3}");
+        assert_eq!(prog.len(), 2, "prog: {:?}", prog);
+        assert_class_seq_insn(&prog[0], r"\s{3}");
+        assert_matches!(prog[1], End);
+    }
+
     #[test]
     fn jumps_for_alternation() {
         let prog = compile_prog_forced_hard("a|b|c");
@@ -3337,6 +3396,34 @@ mod tests {
             },
             |info, tree| {
                 info.hard = true;
+                compile(
+                    info,
+                    CompileOptions {
+                        anchored: true,
+                        contains_subroutines: tree.contains_subroutines,
+                        ..CompileOptions::default()
+                    },
+                )
+                .unwrap()
+                .body
+            },
+        )
+    }
+
+    /// Like [`compile_prog_forced_hard`] but with leftmost-longest enabled, so
+    /// non-const-size fragments are promoted to `hard` and must not reach
+    /// `ClassSeqMatcher` (whose run is leftmost-first / deterministic).
+    #[cfg(feature = "leftmost_longest")]
+    #[track_caller]
+    fn compile_prog_leftmost_longest(re: &str) -> Vec<Insn> {
+        compile_prog_with(
+            re,
+            AnalyzeContext {
+                explicit_capture_group_0: true,
+                leftmost_longest: true,
+                ..Default::default()
+            },
+            |info, tree| {
                 compile(
                     info,
                     CompileOptions {
