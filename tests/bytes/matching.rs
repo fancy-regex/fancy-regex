@@ -1,6 +1,26 @@
 use fancy_regex::{BytesMode, RegexBuilder};
 
 #[test]
+fn bytes_class_seq_matches_ascii_and_unicode_bytes() {
+    // The hard lookahead routes the easy suffix through ClassSeq. Exercise
+    // both matcher representations: a byte bitmap in ASCII mode and Unicode
+    // codepoint ranges in UnicodeBytes mode.
+    let ascii = RegexBuilder::new(r"(?=.).x")
+        .bytes_mode(BytesMode::Ascii)
+        .build()
+        .unwrap();
+    assert!(ascii.is_match(b"\x80x").unwrap());
+    assert!(!ascii.is_match(b"\x80y").unwrap());
+
+    let unicode = RegexBuilder::new(r"(?=.)\p{Greek}+x")
+        .bytes_mode(BytesMode::UnicodeBytes)
+        .build()
+        .unwrap();
+    assert!(unicode.is_match("αβx".as_bytes()).unwrap());
+    assert!(!unicode.is_match("αβy".as_bytes()).unwrap());
+}
+
+#[test]
 fn bytes_find_from_pos() {
     let re = RegexBuilder::new(r"\d+")
         .bytes_mode(BytesMode::Ascii)
