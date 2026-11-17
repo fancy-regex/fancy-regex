@@ -1367,6 +1367,28 @@ fn oniguruma_question_mark_after_fixed_quantifier() {
 }
 
 #[test]
+fn oniguruma_plus_after_lazy_quantifier() {
+    let find = |re: &str, oniguruma_mode: bool, text: &str| {
+        let re = RegexBuilder::new(re)
+            .oniguruma_mode(oniguruma_mode)
+            .build()
+            .unwrap();
+        re.find(text).unwrap().map(|m| (m.start(), m.end()))
+    };
+
+    // `a*?+` is `(?:a*?)+`, not a possessive `a*?`
+    assert_eq!(find("a*?+b", true, "aaab"), Some((0, 4)));
+    assert_eq!(find("a*?+$", true, "aaa"), Some((0, 3)));
+    assert_eq!(find("a+?+", true, "aaa"), Some((0, 3)));
+    assert_eq!(find("a??+b", true, "ab"), Some((0, 2)));
+    assert_eq!(find("(?:ab)+?+", true, "ababab"), Some((0, 6)));
+    assert_eq!(find(r"(a)\1*?+$", true, "aaa"), Some((0, 3)));
+
+    // Without Oniguruma mode it is still possessive
+    assert_eq!(find("a*?+b", false, "aaab"), Some((3, 4)));
+}
+
+#[test]
 fn oniguruma_plus_after_quantifier() {
     let re = RegexBuilder::new("^x{2}+$")
         .oniguruma_mode(true)

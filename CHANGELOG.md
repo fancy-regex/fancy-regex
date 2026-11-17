@@ -11,6 +11,7 @@ with the exception that 0.x versions can break between minor versions.
 ### Changed
 - Extends the `CharClassMatcher` idea to sequences to reduce compile times (#290)
 ### Fixed
+- In Oniguruma mode, a `+` after a lazy quantifier, like `a*?+`, is now another quantifier, as in Oniguruma, so `a*?+` means `(?:a*?)+`. Before, it made the lazy repeat possessive, so `a*?+b` matched only `b` in `aaab` and `a+?+` matched one `a` in `aaa`. Without Oniguruma mode `a*?+` is unchanged.
 
 ## [0.20.2] - 2026-11-11
 ### Added
