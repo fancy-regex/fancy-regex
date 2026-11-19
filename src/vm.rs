@@ -935,7 +935,8 @@ pub struct Prog {
     /// instruction steps back (0 if none), and the pc of the first instruction
     /// after it that can fail (reached only through instructions that cannot
     /// fail, apart from that `GoBack`). See [`first_insn_fails`].
-    unanchored_first: Option<(usize, usize, usize)>,
+    /// `None` turns the check off, for example with `optimize(false)`.
+    pub(crate) unanchored_first: Option<(usize, usize, usize)>,
 }
 
 impl Prog {
