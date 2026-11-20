@@ -1404,15 +1404,16 @@ fn apply_best_saves(
     }
 }
 
-/// Finds the standard unanchored preamble (`SplitUnanchored(pc + 3, pc + 1)`,
-/// `Any`, `Jmp(pc)`) and the first instruction after it that can fail, if
-/// every instruction before that one only records state (which a failed
-/// attempt undoes on backtrack), except for at most one `GoBack`.
+/// Finds the standard unanchored preamble (`SplitUnanchored(3, 1)`, `Any`,
+/// `Jmp(0)`) at the start of the program and the first instruction after it
+/// that can fail, if every instruction before that one only records state
+/// (which a failed attempt undoes on backtrack), except for at most one
+/// `GoBack`. The compiler emits this preamble first, so only the first
+/// instruction is checked: a program that starts with `Seek` or is anchored
+/// returns at once.
 fn find_unanchored_first(body: &[Insn]) -> Option<(usize, usize, usize)> {
-    let split_pc = body
-        .iter()
-        .position(|insn| matches!(insn, Insn::SplitUnanchored(..)))?;
-    let Insn::SplitUnanchored(x, y) = body[split_pc] else {
+    let split_pc = 0;
+    let Some(&Insn::SplitUnanchored(x, y)) = body.first() else {
         return None;
     };
     if y != split_pc + 1
