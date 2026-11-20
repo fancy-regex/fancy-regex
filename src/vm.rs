@@ -1918,7 +1918,7 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                         break 'fail;
                     }
                     let ref_text = &haystack.as_bytes()[lo..hi];
-                                        let mut ix_end = ix + ref_text.len();
+                    let mut ix_end = ix + ref_text.len();
                     if let (true, Some(fold)) = (casei, options.backref_fold) {
                         match matches_literal_folded(haystack, ix, ref_text, fold) {
                             Some(end) => ix_end = end,

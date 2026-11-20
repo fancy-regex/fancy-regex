@@ -626,6 +626,7 @@ struct HardRegexRuntimeOptions {
     allow_input_assertion_overrides: bool,
     #[cfg(feature = "leftmost_longest")]
     leftmost_longest: bool,
+    backref_fold: Option<fn(char) -> char>,
 }
 
 impl RegexOptions {
