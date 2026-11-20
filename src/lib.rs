@@ -681,6 +681,7 @@ impl Default for HardRegexRuntimeOptions {
         HardRegexRuntimeOptions {
             backtrack_limit: 1_000_000,
             find_not_empty: false,
+            backref_fold: None,
             disallow_empty_match_at_eof_after_newline: false,
             allow_input_assertion_overrides: false,
             #[cfg(feature = "leftmost_longest")]
@@ -894,6 +895,43 @@ impl RegexOptionsBuilder {
     /// ambiguous-concat-repeat rewriting) are still applied.
     pub fn find_not_empty(&mut self, yes: bool) -> &mut Self {
         self.options.hard_regex_runtime_options.find_not_empty = yes;
+        self
+    }
+
+    /// Set the function used to compare a case-insensitive backreference with the text
+    /// captured by the group it refers to.
+    ///
+    /// When this is set, a case-insensitive backreference matches if the function maps each
+    /// character of the text at the current position and the character at the same place in
+    /// the captured text to the same character. The matched text can have a different length
+    /// in bytes than the captured text. Backreferences that are not case-insensitive are not
+    /// affected.
+    ///
+    /// This is useful for emulating engines that don't use Unicode simple case folding for
+    /// backreferences. For example, Python's `re` module compares the lowercase of each
+    /// character.
+    ///
+    /// Default is `None`, which compares using Unicode simple case folding (or ASCII case
+    /// folding if unicode mode is disabled).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use fancy_regex::RegexBuilder;
+    /// // With simple case folding, `ς` (final sigma) is equal to `σ`
+    /// let re = RegexBuilder::new(r"(?i)(σ)\1").build().unwrap();
+    /// assert!(re.is_match("σς").unwrap());
+    ///
+    /// // But `ς` is its own lowercase
+    /// let re = RegexBuilder::new(r"(?i)(σ)\1")
+    ///     .backref_fold(Some(|c| c.to_lowercase().next().unwrap_or(c)))
+    ///     .build()
+    ///     .unwrap();
+    /// assert!(!re.is_match("σς").unwrap());
+    /// assert!(re.is_match("σΣ").unwrap());
+    /// ```
+    pub fn backref_fold(&mut self, fold: Option<fn(char) -> char>) -> &mut Self {
+        self.options.hard_regex_runtime_options.backref_fold = fold;
         self
     }
 
@@ -1311,6 +1349,12 @@ impl RegexBuilder {
     /// See [`RegexOptionsBuilder::find_not_empty`]
     pub fn find_not_empty(&mut self, yes: bool) -> &mut Self {
         self.options.find_not_empty(yes);
+        self
+    }
+
+    /// See [`RegexOptionsBuilder::backref_fold`]
+    pub fn backref_fold(&mut self, fold: Option<fn(char) -> char>) -> &mut Self {
+        self.options.backref_fold(fold);
         self
     }
 

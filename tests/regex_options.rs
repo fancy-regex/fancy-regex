@@ -765,3 +765,25 @@ fn word_boundary_follows_unicode_mode_in_the_vm() {
         );
     }
 }
+
+/// Matches the text at `ix` against `literal`, comparing the characters after mapping them
+/// with `fold`. Returns the end of the matched text, which can have a different length in
+/// bytes than `literal`.
+fn matches_literal_folded<S: HaystackInput + ?Sized>(
+    s: &S,
+    ix: usize,
+    literal: &[u8],
+    fold: fn(char) -> char,
+) -> Option<usize> {
+    let literal = core::str::from_utf8(literal).ok()?;
+    let text = core::str::from_utf8(s.as_bytes().get(ix..)?).ok()?;
+    let mut text_chars = text.char_indices();
+    for l in literal.chars() {
+        let (_, t) = text_chars.next()?;
+        if fold(t) != fold(l) {
+            return None;
+        }
+    }
+    Some(ix + text_chars.next().map_or(text.len(), |(i, _)| i))
+}
+
