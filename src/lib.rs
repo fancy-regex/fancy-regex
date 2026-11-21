@@ -909,7 +909,8 @@ impl RegexOptionsBuilder {
     ///   positive-lookahead hoisting, because both would make the pattern
     ///   delegatable and the delegated path can't reject empty matches.
     ///
-    /// When disabled, the tree is compiled as-is.
+    /// When disabled, the tree is compiled as-is, and the VM does not check the
+    /// first instruction before it starts a match attempt at each position.
     ///
     /// This is primarily intended for differential testing, where comparing a
     /// pattern against its optimized form (or against a non-optimized build)
@@ -1488,7 +1489,7 @@ impl Regex {
             });
         }
 
-        let prog = compile(
+        let mut prog = compile(
             &info,
             CompileOptions {
                 anchored: can_compile_as_anchored(&tree.expr),
@@ -1505,6 +1506,9 @@ impl Regex {
                 max_prog_size: options.max_prog_size,
             },
         )?;
+        if !options.should_optimize() {
+            prog.unanchored_first = None;
+        }
         Ok(Regex {
             inner: RegexImpl::Fancy {
                 prog: Arc::new(prog),
@@ -3674,5 +3678,21 @@ mod tests {
                 .map(|m| (m.start(), m.end())),
             Some((1, 4))
         );
+    }
+
+    #[test]
+    fn optimize_false_turns_off_start_check() {
+        let has_check = |optimize: bool| {
+            let regex = RegexBuilder::new(r"(?<=hello )\w+")
+                .optimize(optimize)
+                .build()
+                .unwrap();
+            match regex.inner {
+                RegexImpl::Fancy { prog, .. } => prog.unanchored_first.is_some(),
+                _ => panic!("expected a fancy regex"),
+            }
+        };
+        assert!(has_check(true));
+        assert!(!has_check(false));
     }
 }
