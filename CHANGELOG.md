@@ -8,6 +8,7 @@ with the exception that 0.x versions can break between minor versions.
 
 ## [Unreleased]
 ### Added
+- Add `EngineCache` and `RegexOptionsBuilder::engine_cache` / `RegexBuilder::engine_cache` to share compiled regex-automata engines between all regexes built with the same cache, instead of building a copy for each identical pattern or delegated fragment. This saves memory and compile time for applications that compile many patterns, like syntax highlighters. Requires the `std` feature.
 ### Changed
 - Extends the `CharClassMatcher` idea to sequences to reduce compile times (#290)
 - Skip start positions where the first instruction of the program cannot match (#335)
