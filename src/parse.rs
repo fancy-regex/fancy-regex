@@ -209,18 +209,23 @@ impl<'a> Parser<'a> {
             // A `?` after a fixed interval like `{3}` is another quantifier too, so
             // `a{3}?` is `(?:a{3})?`
             let greedy_only = swapped || (fixed && self.flag(FLAG_ONIGURUMA_MODE));
-            let mut greedy = true;
-            if !greedy_only && ix < self.re.len() && self.re.as_bytes()[ix] == b'?' {
-                greedy = false;
+            let lazy = !greedy_only && ix < self.re.len() && self.re.as_bytes()[ix] == b'?';
+            if lazy {
                 ix += 1;
             }
-            greedy ^= self.flag(FLAG_SWAP_GREED);
+            let greedy = !lazy ^ self.flag(FLAG_SWAP_GREED);
             let mut atomic_group = false;
             if self.flag(FLAG_ONIGURUMA_MODE) {
                 if swapped {
                     (lo, hi) = (hi, lo);
                     atomic_group = true;
-                } else if !user_specified && ix < self.re.len() && self.re.as_bytes()[ix] == b'+' {
+                } else if !user_specified
+                    // A `+` after a lazy quantifier is another quantifier, so `a*?+`
+                    // is `(?:a*?)+`
+                    && !lazy
+                    && ix < self.re.len()
+                    && self.re.as_bytes()[ix] == b'+'
+                {
                     ix += 1;
                     atomic_group = true;
                 }
@@ -3490,6 +3495,47 @@ mod tests {
                 greedy: true,
             }
         );
+    }
+
+    #[test]
+    fn plus_after_lazy_quantifier_oniguruma_mode() {
+        // A `+` after a lazy quantifier is another quantifier instead of
+        // making it possessive
+        let lazy = |lo, hi| Expr::Repeat {
+            child: Box::new(make_literal("a")),
+            lo,
+            hi,
+            greedy: false,
+        };
+        let one_or_more = |child: Expr| Expr::Repeat {
+            child: Box::new(child),
+            lo: 1,
+            hi: usize::MAX,
+            greedy: true,
+        };
+        assert_eq!(
+            parse_oniguruma("a*?+").unwrap(),
+            one_or_more(lazy(0, usize::MAX))
+        );
+        assert_eq!(
+            parse_oniguruma("a+?+").unwrap(),
+            one_or_more(lazy(1, usize::MAX))
+        );
+        assert_eq!(parse_oniguruma("a??+").unwrap(), one_or_more(lazy(0, 1)));
+        assert_eq!(parse_oniguruma("(?:)*?+").unwrap(), Expr::Empty);
+
+        // A greedy `*` can still be possessive, and so can a lazy one outside
+        // Oniguruma mode
+        assert_eq!(
+            parse_oniguruma("a*+").unwrap(),
+            Expr::AtomicGroup(Box::new(Expr::Repeat {
+                child: Box::new(make_literal("a")),
+                lo: 0,
+                hi: usize::MAX,
+                greedy: true,
+            }))
+        );
+        assert_eq!(p("a*?+"), Expr::AtomicGroup(Box::new(lazy(0, usize::MAX))));
     }
 
     #[test]

@@ -1044,6 +1044,9 @@ impl RegexOptionsBuilder {
     /// The same goes for `?` after a fixed `{n}` repeat: outside Oniguruma mode `x{2}?` is lazy,
     /// and in Oniguruma mode it is equivalent to `(?:x{2})?`. `x{2,2}?` is lazy in both modes.
     ///
+    /// A `+` after a lazy quantifier is another repeat in Oniguruma mode too, so `x*?+` is
+    /// equivalent to `(?:x*?)+`. Outside Oniguruma mode it makes the lazy `x*?` possessive.
+    ///
     /// # Empty interval
     ///
     /// `fancy-regex` normally treats `x{,}` as `x{0,}`. Oniguruma requires at least one of
