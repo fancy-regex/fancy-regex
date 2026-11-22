@@ -1335,6 +1335,10 @@ fn matches_literal_folded<S: HaystackInput + ?Sized>(
     literal: &[u8],
     fold: fn(char) -> char,
 ) -> Option<usize> {
+    let end = ix + literal.len();
+    if matches_literal(s, ix, end, literal) {
+        return Some(end);
+    }
     let literal = core::str::from_utf8(literal).ok()?;
     let text = core::str::from_utf8(s.as_bytes().get(ix..)?).ok()?;
     let mut text_chars = text.char_indices();
