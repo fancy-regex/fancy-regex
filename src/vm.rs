@@ -1339,16 +1339,18 @@ fn matches_literal_folded<S: HaystackInput + ?Sized>(
     if matches_literal(s, ix, end, literal) {
         return Some(end);
     }
-    let literal = core::str::from_utf8(literal).ok()?;
-    let text = core::str::from_utf8(s.as_bytes().get(ix..)?).ok()?;
-    let mut text_chars = text.char_indices();
-    for l in literal.chars() {
-        let (_, t) = text_chars.next()?;
-        if fold(t) != fold(l) {
+    let bytes = s.as_bytes();
+    let mut end = ix;
+    for l in core::str::from_utf8(literal).ok()?.chars() {
+        // Decode only the next character, the rest of the haystack doesn't need to be valid
+        let next = end + codepoint_len(*bytes.get(end)?);
+        let t = core::str::from_utf8(bytes.get(end..next)?).ok()?;
+        if fold(t.chars().next()?) != fold(l) {
             return None;
         }
+        end = next;
     }
-    Some(ix + text_chars.next().map_or(text.len(), |(i, _)| i))
+    Some(end)
 }
 
 /// Helper function to store capture group positions from inner_slots into state.
