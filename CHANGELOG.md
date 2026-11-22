@@ -11,6 +11,7 @@ with the exception that 0.x versions can break between minor versions.
 - Add a `RegexOptionsBuilder::backref_fold` / `RegexBuilder::backref_fold` option to set the function used to compare a case-insensitive backreference with the captured text, instead of Unicode simple case folding. This makes it possible to emulate engines like Python's `re`, which compares the lowercase of each character.
 ### Changed
 - Extends the `CharClassMatcher` idea to sequences to reduce compile times (#290)
+- Skip start positions where the first instruction of the program cannot match (#335)
 ### Fixed
 
 ## [0.20.2] - 2026-11-11

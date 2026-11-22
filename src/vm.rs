@@ -430,6 +430,22 @@ impl ClassSeqMatcher {
         self.run(&self.elems, s, ix, slots).map(|end| end - ix)
     }
 
+    /// Returns `true` when the sequence certainly fails at `ix`: its first
+    /// consuming element cannot match there. `false` means "may match".
+    fn fails_at<S: HaystackInput + ?Sized>(&self, s: &S, ix: usize) -> bool {
+        for elem in self.elems.iter() {
+            match elem {
+                SeqElem::GroupStart(_) | SeqElem::GroupEnd(_) => {}
+                SeqElem::Class(class) => return class.match_len(s, ix).is_none(),
+                SeqElem::ClassRepeat { class, min, .. } if *min >= 1 => {
+                    return class.match_len(s, ix).is_none()
+                }
+                _ => return false,
+            }
+        }
+        false
+    }
+
     /// Matches `elems` at `pos`, returning the end position. The only choice
     /// points are `Optional` elements (their inner sequences are
     /// deterministic), so this is bounded backtracking: greedy tries
@@ -914,6 +930,13 @@ pub struct Prog {
     /// Maximum number of bytes this pattern can match. When `leftmost_longest` is enabled and a match
     /// of this length is found, no longer match is possible, so backtracking can stop early.
     pub max_size: usize,
+    /// For the standard `SplitUnanchored` / `Any` / `Jmp` preamble: its pc and
+    /// the number of characters a `GoBack` before the first checked
+    /// instruction steps back (0 if none), and the pc of the first instruction
+    /// after it that can fail (reached only through instructions that cannot
+    /// fail, apart from that `GoBack`). See [`first_insn_fails`].
+    /// `None` turns the check off, for example with `optimize(false)`.
+    pub(crate) unanchored_first: Option<(usize, usize, usize)>,
 }
 
 impl Prog {
@@ -925,8 +948,10 @@ impl Prog {
         seek_pattern: String,
         max_size: usize,
     ) -> Prog {
+        let unanchored_first = find_unanchored_first(&body);
         Prog {
             body,
+            unanchored_first,
             n_saves,
             bytes_mode,
             unicode,
@@ -1406,6 +1431,67 @@ fn apply_best_saves(
     }
 }
 
+/// Finds the standard unanchored preamble (`SplitUnanchored(3, 1)`, `Any`,
+/// `Jmp(0)`) at the start of the program and the first instruction after it
+/// that can fail, if every instruction before that one only records state
+/// (which a failed attempt undoes on backtrack), except for at most one
+/// `GoBack`. The compiler emits this preamble first, so only the first
+/// instruction is checked: a program that starts with `Seek` or is anchored
+/// returns at once.
+fn find_unanchored_first(body: &[Insn]) -> Option<(usize, usize, usize)> {
+    let split_pc = 0;
+    let Some(&Insn::SplitUnanchored(x, y)) = body.first() else {
+        return None;
+    };
+    if y != split_pc + 1
+        || x != split_pc + 3
+        || !matches!(body.get(y), Some(Insn::Any))
+        || !matches!(body.get(y + 1), Some(Insn::Jmp(t)) if *t == split_pc)
+    {
+        return None;
+    }
+    let mut pc = x;
+    let mut go_back = None;
+    loop {
+        match body.get(pc)? {
+            Insn::Save(_) | Insn::SaveCaptureGroupStart(_) | Insn::BeginAtomic => pc += 1,
+            Insn::GoBack(count) if go_back.is_none() => {
+                go_back = Some(*count);
+                pc += 1;
+            }
+            Insn::CharClass(_) | Insn::ClassSeq(_) | Insn::Lit(_) | Insn::LitBytes(_) => {
+                return Some((split_pc, go_back.unwrap_or(0), pc))
+            }
+            _ => return None,
+        }
+    }
+}
+
+/// Returns `true` when `insn` (one accepted by [`find_unanchored_first`])
+/// certainly fails at `ix` after stepping back `go_back` characters, exactly
+/// as executing the `GoBack` and the instruction in the VM would.
+fn first_insn_fails<S: HaystackInput + ?Sized>(
+    insn: &Insn,
+    s: &S,
+    mut ix: usize,
+    go_back: usize,
+    bytes_mode: BytesMode,
+) -> bool {
+    for _ in 0..go_back {
+        if ix == 0 {
+            return true;
+        }
+        ix = prev_ix(s, ix, bytes_mode);
+    }
+    match insn {
+        Insn::CharClass(matcher) => matcher.match_len(s, ix).is_none(),
+        Insn::ClassSeq(matcher) => matcher.fails_at(s, ix),
+        Insn::Lit(val) => !matches_literal(s, ix, ix + val.len(), val.as_bytes()),
+        Insn::LitBytes(bytes) => !matches_literal(s, ix, ix + bytes.len(), bytes),
+        _ => false,
+    }
+}
+
 /// Run the program with trace printing for debugging.
 pub fn run_trace(prog: &Prog, s: &str, pos: usize) -> Result<Option<Vec<usize>>> {
     run(
@@ -1747,6 +1833,38 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                     }
                     if ix > match_range.end {
                         return Ok(None);
+                    }
+                    // Skip start positions where the first consuming
+                    // instruction fails, doing exactly what the VM would do
+                    // for each: count the backtrack, then step `Any`.
+                    #[cfg(feature = "leftmost_longest")]
+                    let skip_ok = !leftmost_longest;
+                    #[cfg(not(feature = "leftmost_longest"))]
+                    let skip_ok = true;
+                    if let Some((split_pc, go_back, first_pc)) = prog.unanchored_first {
+                        if skip_ok
+                            && split_pc == pc
+                            && option_flags & OPTION_TRACE == 0
+                            && !input.is_anchored()
+                            && state.stack.is_empty()
+                        {
+                            let first = &prog.body[first_pc];
+                            while first_insn_fails(first, haystack, ix, go_back, prog.bytes_mode) {
+                                backtrack_count += 1;
+                                if backtrack_count > options.backtrack_limit {
+                                    return Err(Error::RuntimeError(
+                                        RuntimeError::BacktrackLimitExceeded,
+                                    ));
+                                }
+                                if ix >= haystack.len() {
+                                    return Ok(None);
+                                }
+                                ix += advance_one(haystack, ix, prog.bytes_mode);
+                                if ix > match_range.end {
+                                    return Ok(None);
+                                }
+                            }
+                        }
                     }
                     match_attempt_start = ix;
                     slash_z_matched = false;
