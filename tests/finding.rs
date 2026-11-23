@@ -1,6 +1,6 @@
 mod common;
 
-use fancy_regex::{BytesMode, Match, RegexBuilder, RegexInput};
+use fancy_regex::{BytesMode, Error, Match, ParseError, RegexBuilder, RegexInput};
 use matches::assert_matches;
 use std::ops::Range;
 
@@ -1368,24 +1368,29 @@ fn oniguruma_question_mark_after_fixed_quantifier() {
 
 #[test]
 fn oniguruma_plus_after_lazy_quantifier() {
-    let find = |re: &str, oniguruma_mode: bool, text: &str| {
-        let re = RegexBuilder::new(re)
-            .oniguruma_mode(oniguruma_mode)
-            .build()
-            .unwrap();
-        re.find(text).unwrap().map(|m| (m.start(), m.end()))
-    };
+    // Oniguruma reads `a*?+` as `(?:a*?)+`, which isn't supported, so it is
+    // rejected rather than being made possessive
+    for re in ["a*?+b", "a+?+", "a??+b", "(?:ab)+?+", r"(a)\1*?+$"] {
+        let result = RegexBuilder::new(re).oniguruma_mode(true).build();
+        assert!(
+            matches!(result, Err(Error::ParseError(_, ParseError::InvalidRepeat))),
+            "{}: {:?}",
+            re,
+            result
+        );
+    }
 
-    // `a*?+` is `(?:a*?)+`, not a possessive `a*?`
-    assert_eq!(find("a*?+b", true, "aaab"), Some((0, 4)));
-    assert_eq!(find("a*?+$", true, "aaa"), Some((0, 3)));
-    assert_eq!(find("a+?+", true, "aaa"), Some((0, 3)));
-    assert_eq!(find("a??+b", true, "ab"), Some((0, 2)));
-    assert_eq!(find("(?:ab)+?+", true, "ababab"), Some((0, 6)));
-    assert_eq!(find(r"(a)\1*?+$", true, "aaa"), Some((0, 3)));
+    // A greedy quantifier can still be possessive
+    let re = RegexBuilder::new("a*+a")
+        .oniguruma_mode(true)
+        .build()
+        .unwrap();
+    assert!(!re.is_match("aaa").unwrap());
 
-    // Without Oniguruma mode it is still possessive
-    assert_eq!(find("a*?+b", false, "aaab"), Some((3, 4)));
+    // Without Oniguruma mode `a*?+` is still a possessive lazy repeat
+    let re = RegexBuilder::new("a*?+b").build().unwrap();
+    let m = re.find("aaab").unwrap().unwrap();
+    assert_eq!((m.start(), m.end()), (3, 4));
 }
 
 #[test]
