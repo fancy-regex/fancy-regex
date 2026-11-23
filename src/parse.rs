@@ -209,18 +209,24 @@ impl<'a> Parser<'a> {
             // A `?` after a fixed interval like `{3}` is another quantifier too, so
             // `a{3}?` is `(?:a{3})?`
             let greedy_only = swapped || (fixed && self.flag(FLAG_ONIGURUMA_MODE));
-            let mut greedy = true;
-            if !greedy_only && ix < self.re.len() && self.re.as_bytes()[ix] == b'?' {
-                greedy = false;
+            let lazy = !greedy_only && ix < self.re.len() && self.re.as_bytes()[ix] == b'?';
+            if lazy {
                 ix += 1;
             }
-            greedy ^= self.flag(FLAG_SWAP_GREED);
+            let greedy = !lazy ^ self.flag(FLAG_SWAP_GREED);
             let mut atomic_group = false;
             if self.flag(FLAG_ONIGURUMA_MODE) {
                 if swapped {
                     (lo, hi) = (hi, lo);
                     atomic_group = true;
                 } else if !user_specified && ix < self.re.len() && self.re.as_bytes()[ix] == b'+' {
+                    // Oniguruma reads a `+` after a lazy quantifier as another
+                    // quantifier, so `a*?+` is `(?:a*?)+`. Reject it instead of
+                    // silently making the lazy repeat possessive. A skipped `(?:)`
+                    // repeat is a no-op either way.
+                    if lazy && !skip {
+                        return Err(Error::ParseError(ix, ParseError::InvalidRepeat));
+                    }
                     ix += 1;
                     atomic_group = true;
                 }
@@ -3490,6 +3496,48 @@ mod tests {
                 greedy: true,
             }
         );
+    }
+
+    #[test]
+    fn plus_after_lazy_quantifier_oniguruma_mode() {
+        // Oniguruma reads a `+` after a lazy quantifier as another quantifier,
+        // which we don't support, so it is rejected instead of being possessive
+        let cases = [
+            ("a*?+", 3),
+            ("a+?+", 3),
+            ("a??+", 3),
+            ("a*?+b", 3),
+            ("(?:ab)+?+", 8),
+            ("x[ab]*?+", 7),
+        ];
+        for (re, position) in cases {
+            assert_error_oniguruma(
+                re,
+                &format!(
+                    "Parsing error at position {}: Invalid repeat syntax",
+                    position
+                ),
+            );
+        }
+
+        let lazy = |lo, hi| Expr::Repeat {
+            child: Box::new(make_literal("a")),
+            lo,
+            hi,
+            greedy: false,
+        };
+        // A greedy `*` can still be possessive, and so can a lazy one outside
+        // Oniguruma mode
+        assert_eq!(
+            parse_oniguruma("a*+").unwrap(),
+            Expr::AtomicGroup(Box::new(Expr::Repeat {
+                child: Box::new(make_literal("a")),
+                lo: 0,
+                hi: usize::MAX,
+                greedy: true,
+            }))
+        );
+        assert_eq!(p("a*?+"), Expr::AtomicGroup(Box::new(lazy(0, usize::MAX))));
     }
 
     #[test]

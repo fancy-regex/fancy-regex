@@ -12,6 +12,7 @@ with the exception that 0.x versions can break between minor versions.
 - Extends the `CharClassMatcher` idea to sequences to reduce compile times (#290)
 - Skip start positions where the first instruction of the program cannot match (#335)
 ### Fixed
+- In Oniguruma mode, a `+` after a lazy quantifier, like `a*?+`, is now a parse error. Oniguruma reads it as another quantifier, so `a*?+` means `(?:a*?)+`, but it used to make the lazy repeat possessive instead, so `a*?+b` matched only `b` in `aaab`. Without Oniguruma mode `a*?+` is unchanged.
 
 ## [0.20.2] - 2026-11-11
 ### Added

@@ -1,6 +1,6 @@
 mod common;
 
-use fancy_regex::{BytesMode, Match, RegexBuilder, RegexInput};
+use fancy_regex::{BytesMode, Error, Match, ParseError, RegexBuilder, RegexInput};
 use matches::assert_matches;
 use std::ops::Range;
 
@@ -1364,6 +1364,33 @@ fn oniguruma_question_mark_after_fixed_quantifier() {
 
     // `{3,3}` is still lazy
     assert_eq!(find("a{3,3}?", "aa"), None);
+}
+
+#[test]
+fn oniguruma_plus_after_lazy_quantifier() {
+    // Oniguruma reads `a*?+` as `(?:a*?)+`, which isn't supported, so it is
+    // rejected rather than being made possessive
+    for re in ["a*?+b", "a+?+", "a??+b", "(?:ab)+?+", r"(a)\1*?+$"] {
+        let result = RegexBuilder::new(re).oniguruma_mode(true).build();
+        assert!(
+            matches!(result, Err(Error::ParseError(_, ParseError::InvalidRepeat))),
+            "{}: {:?}",
+            re,
+            result
+        );
+    }
+
+    // A greedy quantifier can still be possessive
+    let re = RegexBuilder::new("a*+a")
+        .oniguruma_mode(true)
+        .build()
+        .unwrap();
+    assert!(!re.is_match("aaa").unwrap());
+
+    // Without Oniguruma mode `a*?+` is still a possessive lazy repeat
+    let re = RegexBuilder::new("a*?+b").build().unwrap();
+    let m = re.find("aaab").unwrap().unwrap();
+    assert_eq!((m.start(), m.end()), (3, 4));
 }
 
 #[test]
