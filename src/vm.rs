@@ -1351,6 +1351,33 @@ fn matches_literal_casei<S: HaystackInput + ?Sized>(
     false
 }
 
+/// Matches the text at `ix` against `literal`, comparing the characters after mapping them
+/// with `fold`. Returns the end of the matched text, which can have a different length in
+/// bytes than `literal`.
+fn matches_literal_folded<S: HaystackInput + ?Sized>(
+    s: &S,
+    ix: usize,
+    literal: &[u8],
+    fold: fn(char) -> char,
+) -> Option<usize> {
+    let end = ix + literal.len();
+    if matches_literal(s, ix, end, literal) {
+        return Some(end);
+    }
+    let bytes = s.as_bytes();
+    let mut end = ix;
+    for l in core::str::from_utf8(literal).ok()?.chars() {
+        // Decode only the next character, the rest of the haystack doesn't need to be valid
+        let next = end + codepoint_len(*bytes.get(end)?);
+        let t = core::str::from_utf8(bytes.get(end..next)?).ok()?;
+        if fold(t.chars().next()?) != fold(l) {
+            return None;
+        }
+        end = next;
+    }
+    Some(end)
+}
+
 /// Helper function to store capture group positions from inner_slots into state.
 /// This is used by both Delegate and BackwardsDelegate instructions.
 #[inline]
@@ -2015,8 +2042,13 @@ fn run_with<S: HaystackInput + ?Sized, T>(
                         break 'fail;
                     }
                     let ref_text = &haystack.as_bytes()[lo..hi];
-                    let ix_end = ix + ref_text.len();
-                    if casei {
+                    let mut ix_end = ix + ref_text.len();
+                    if let (true, Some(fold)) = (casei, options.backref_fold) {
+                        match matches_literal_folded(haystack, ix, ref_text, fold) {
+                            Some(end) => ix_end = end,
+                            None => break 'fail,
+                        }
+                    } else if casei {
                         if !matches_literal_casei(haystack, ix, ix_end, ref_text, unicode) {
                             break 'fail;
                         }

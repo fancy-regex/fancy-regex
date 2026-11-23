@@ -765,3 +765,34 @@ fn word_boundary_follows_unicode_mode_in_the_vm() {
         );
     }
 }
+
+#[test]
+fn backref_fold_compares_case_insensitive_backreferences() {
+    let lowercase: fn(char) -> char = |c| c.to_lowercase().next().unwrap_or(c);
+    let ascii_lowercase: fn(char) -> char = |c| c.to_ascii_lowercase();
+
+    for (re, text, default_expect, lowercase_expect, ascii_expect) in [
+        (r"(?i)(a)\1", "aA", true, true, true),
+        (r"(?i)(a)\1", "ab", false, false, false),
+        (r"(?i)(é)\1", "éÉ", true, true, false),
+        // `ς` folds to `σ`, but it is its own lowercase
+        (r"(?i)(σ)\1", "σς", true, false, false),
+        (r"(?i)(ſ)\1", "ſs", false, false, false),
+        // The lowercase of `İ` is `i` followed by a combining dot, the first char is compared
+        (r"(?i)(i)\1", "iİ", false, true, false),
+        // The matched text is longer than the captured text, so the match ends later
+        (r"(?i)^(i)\1$", "iİ", false, true, false),
+        (r"(?i)(ab)\1", "aba", false, false, false),
+        // Backreferences that are not case-insensitive are not affected
+        (r"(a)\1", "aA", false, false, false),
+    ] {
+        let default = build_regex(&RegexBuilder::new(re));
+        assert_eq!(default.is_match(text).unwrap(), default_expect, "{re}");
+
+        let folded = build_regex(RegexBuilder::new(re).backref_fold(Some(lowercase)));
+        assert_eq!(folded.is_match(text).unwrap(), lowercase_expect, "{re}");
+
+        let folded = build_regex(RegexBuilder::new(re).backref_fold(Some(ascii_lowercase)));
+        assert_eq!(folded.is_match(text).unwrap(), ascii_expect, "{re}");
+    }
+}
