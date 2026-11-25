@@ -155,6 +155,34 @@ fn nested_repeats_preserve_capture_numbering() {
 }
 
 #[test]
+fn backref_to_group_in_nested_repeat_sees_last_iteration() {
+    let captures = common::assert_captures(r"(a+)+\1", "aaaa").unwrap();
+    assert_match(captures.get(0), "aaaa", 0, 4);
+    assert_match(captures.get(1), "a", 2, 3);
+
+    let captures = common::assert_captures(r"(a?)+\1", "a").unwrap();
+    assert_match(captures.get(0), "a", 0, 1);
+    assert_match(captures.get(1), "", 1, 1);
+
+    let captures = common::assert_captures(r"(\w+)+\1", "abcbc").unwrap();
+    assert_match(captures.get(0), "abcbc", 0, 5);
+    assert_match(captures.get(1), "bc", 1, 3);
+
+    let captures = common::assert_captures(r"^(?:(\d+)+,)\1$", "12,2").unwrap();
+    assert_match(captures.get(0), "12,2", 0, 4);
+    assert_match(captures.get(1), "2", 1, 2);
+
+    let captures = common::assert_captures(r"((a)?)+\2", "aa").unwrap();
+    assert_match(captures.get(0), "aa", 0, 2);
+    assert_match(captures.get(1), "", 1, 1);
+    assert_match(captures.get(2), "a", 0, 1);
+
+    // A backreference to another group doesn't keep the nested repeat around group 1
+    let text = format!("{}c", "a".repeat(40));
+    assert!(common::assert_captures(r"^(a+)+(b)\2$", &text).is_none());
+}
+
+#[test]
 fn backref_inside_own_group_reads_previous_capture() {
     let captures = common::assert_captures(r"(?:(\1|a)b){2}", "abab").unwrap();
     assert_match(captures.get(0), "abab", 0, 4);

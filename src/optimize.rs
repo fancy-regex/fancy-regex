@@ -28,6 +28,7 @@ use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
+use bit_set::BitSet;
 use core::mem;
 
 /// Options controlling the optimization pass.
@@ -79,8 +80,9 @@ pub fn optimize(tree: &mut ExprTree, options: OptimizeOptions) -> bool {
 
     // These rewrites preserve match and capture semantics, so they're safe to
     // apply even when the pattern must stay on the VM (e.g. `find_not_empty`).
-    let has_backrefs = !tree.backrefs.is_empty();
-    optimize_nested_repeats(&mut tree.expr, has_backrefs);
+    // An explicit capture group 0 added above is numbered before the pattern's own groups.
+    let mut next_group = if requires_capture_group_fixup { 0 } else { 1 };
+    optimize_nested_repeats(&mut tree.expr, &tree.backrefs, &mut next_group);
     optimize_ambiguous_concat_repeats(&mut tree.expr);
 
     requires_capture_group_fixup
@@ -93,10 +95,17 @@ pub fn optimize(tree: &mut ExprTree, options: OptimizeOptions) -> bool {
 /// - if backreferences are used, the optimization is not valid.
 /// - if the outer group is optional, the capture group can be skipped entirely,
 ///   so we need to preserve that behavior.
-fn optimize_nested_repeats(expr: &mut Expr, has_backrefs: bool) {
-    for child in expr.children_iter_mut() {
-        optimize_nested_repeats(child, has_backrefs);
+fn optimize_nested_repeats(expr: &mut Expr, backrefs: &BitSet, next_group: &mut usize) {
+    // Capture groups are numbered in the order this walk enters them, so after visiting the
+    // children, `first_group..*next_group` are the groups inside `expr`.
+    let first_group = *next_group;
+    if let Expr::Group(_) = expr {
+        *next_group += 1;
     }
+    for child in expr.children_iter_mut() {
+        optimize_nested_repeats(child, backrefs, next_group);
+    }
+    let has_backrefs = !backrefs.is_empty();
 
     let replacement = if let Expr::Repeat {
         child,
@@ -152,6 +161,11 @@ fn optimize_nested_repeats(expr: &mut Expr, has_backrefs: bool) {
                     {
                         *outer_hi = 1;
                     }
+                    None
+                } else if (first_group..*next_group).any(|group| backrefs.contains(group)) {
+                    // A backreference can observe which iteration the group captured last:
+                    // `(a+)+\1` on "aaaa" captures "a" (from 2..3), but `(a+)\1` captures "aa",
+                    // and `^(?:(\d+)+,)\1$` would no longer match "12,2" at all.
                     None
                 } else {
                     // Here we only optimize when outer_lo is > 0 (i.e. not Optional or ZeroOrMore)
@@ -1027,8 +1041,8 @@ mod tests {
         // because the group participation count is observable via \1.
         let mut tree = Expr::parse_tree_with_flags(r"(x+){1,}{0,}\1", oniguruma_flags()).unwrap();
         optimize(&mut tree, OptimizeOptions::default());
-        // The inner {1,} is simplified to (x+), but the outer {0,} stays
-        // as ZeroOrMore (not downgraded to Optional) because has_backrefs is true.
+        // \1 keeps the inner {1,} around the group, and folding it with the outer {0,}
+        // gives ZeroOrMore (not downgraded to Optional) because has_backrefs is true.
         assert_eq!(
             tree.expr,
             Expr::Concat(vec![
@@ -1048,6 +1062,26 @@ mod tests {
                     casei: false,
                 },
             ])
+        );
+    }
+
+    #[test]
+    fn backref_prevents_nested_repeat_simplification_around_group() {
+        // \1 sees the group's last iteration, which (x+)+ and (x+) don't agree on.
+        for pattern in [r"(x+){1,}\1", r"(x*){1,}\k<1>", r"((x)?){1,}\2"] {
+            let tree = Expr::parse_tree(pattern).unwrap();
+            let mut optimized_tree = Expr::parse_tree(pattern).unwrap();
+            optimize(&mut optimized_tree, OptimizeOptions::default());
+            assert_eq!(optimized_tree.expr, tree.expr, "{pattern}");
+        }
+    }
+
+    #[test]
+    fn backref_to_another_group_still_simplifies_nested_repeat() {
+        let mut tree = Expr::parse_tree(r"(x+){1,}(y)\2").unwrap();
+        optimize(&mut tree, OptimizeOptions::default());
+        assert!(
+            matches!(&tree.expr, Expr::Concat(children) if matches!(children[0], Expr::Group(_)))
         );
     }
 

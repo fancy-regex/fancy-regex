@@ -14,6 +14,7 @@ with the exception that 0.x versions can break between minor versions.
 - Skip start positions where the first instruction of the program cannot match (#335)
 ### Fixed
 - In Oniguruma mode, a `+` after a lazy quantifier, like `a*?+`, is now a parse error. Oniguruma reads it as another quantifier, so `a*?+` means `(?:a*?)+`, but it used to make the lazy repeat possessive instead, so `a*?+b` matched only `b` in `aaab`. Without Oniguruma mode `a*?+` is unchanged.
+- A repeated capture group whose content is itself repeated, like `(\w+)+` or `(a?)+`, is no longer folded into a single iteration when a backreference points to it (or to a group inside it). The backreference sees the group's last iteration, so the fold changed results: `^(?:(\d+)+,)\1$` did not match `12,2`, and `(a+)+\1` captured `aa` instead of `a` in `aaaa`. Such patterns now backtrack as written, so on long non-matching input they can hit the backtrack limit, as `(a+)*\1` already did.
 
 ## [0.20.2] - 2026-11-11
 ### Added
