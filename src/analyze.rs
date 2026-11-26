@@ -171,6 +171,8 @@ struct Analyzer<'a> {
     /// a variable-length lookbehind, so the whole lookbehind is compiled on
     /// the VM. Lookaheads have no such restriction.
     in_lookbehind: bool,
+    /// Groups tested by `(?(N)...)` conditionals, range-checked after the visit like backrefs
+    condition_groups: Vec<usize>,
 }
 
 impl<'a> Analyzer<'a> {
@@ -448,7 +450,8 @@ impl<'a> Analyzer<'a> {
                 hard = true;
                 const_size = true;
             }
-            Expr::BackrefExistsCondition { .. } => {
+            Expr::BackrefExistsCondition { group, .. } => {
+                self.condition_groups.push(group);
                 hard = true;
                 const_size = true;
             }
@@ -994,6 +997,7 @@ pub fn analyze<'a>(tree: &'a ExprTree, ctx: AnalyzeContext) -> Result<Info<'a>> 
         leftmost_longest,
         in_lookahead: false,
         in_lookbehind: false,
+        condition_groups: Vec::new(),
     };
 
     let mut analyzed = analyzer.visit(&tree.expr, 0, false, 0)?;
@@ -1012,7 +1016,11 @@ pub fn analyze<'a>(tree: &'a ExprTree, ctx: AnalyzeContext) -> Result<Info<'a>> 
             group,
         ))));
     }
-    for group in tree.backrefs.iter() {
+    for group in tree
+        .backrefs
+        .iter()
+        .chain(analyzer.condition_groups.iter().copied())
+    {
         if group < start_group || group > max_valid_group {
             return Err(Error::CompileError(Box::new(CompileError::InvalidBackref(
                 group,
@@ -1166,6 +1174,14 @@ mod tests {
         assert_invalid_backref(r"(a(b)\1\2)c", true, 2);
         assert_invalid_backref(r"(a\1)b", true, 1);
         assert_invalid_backref(r"(a(b))\2", true, 2);
+    }
+
+    #[test]
+    fn invalid_conditional_group() {
+        assert_invalid_backref(r"(?(1)a|b)", false, 1);
+        assert_invalid_backref(r"(?(2))", false, 2);
+        assert_invalid_backref(r"(a)(?(2)a|b)", false, 2);
+        assert_invalid_backref(r"(a(b)(?(2)c))d", true, 2);
     }
 
     #[test]
