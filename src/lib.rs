@@ -1106,6 +1106,14 @@ impl RegexOptionsBuilder {
     /// the control character for *X*, e.g. `\ca` and `\C-a` match `\x01` and `\c?` matches
     /// `\x7F`.
     ///
+    /// # Whitespace in hex escapes
+    ///
+    /// Inside a hex escape, `(?#...)` comments are normally skipped, and so are whitespace
+    /// and `#` comments with the `x` flag, so `(?x)\x{41 42}` is U+4142. Oniguruma doesn't
+    /// skip them there, and reads `\x{41 42}` as the two characters `AB`. That isn't
+    /// supported yet, so in Oniguruma mode whitespace or a comment inside a `\x`, `\u` or
+    /// `\U` escape is a parse error.
+    ///
     /// ## Example
     ///
     /// ```
