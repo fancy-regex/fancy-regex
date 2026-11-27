@@ -638,13 +638,13 @@ impl<'a> Parser<'a> {
                 },
             )
         } else if b == b'x' {
-            let end = self.optional_whitespace(end)?;
+            let end = self.hex_whitespace(end)?;
             return self.parse_hex(end, 2, true);
         } else if b == b'u' {
-            let end = self.optional_whitespace(end)?;
+            let end = self.hex_whitespace(end)?;
             return self.parse_hex(end, 4, false);
         } else if b == b'U' {
-            let end = self.optional_whitespace(end)?;
+            let end = self.hex_whitespace(end)?;
             return self.parse_hex(end, 8, false);
         } else if (b | 32) == b'p' && end != bytes.len() {
             let mut end = end;
@@ -794,8 +794,7 @@ impl<'a> Parser<'a> {
             let mut pos = ix + 1;
             let mut hex_chars = String::new();
             while pos < self.re.len() {
-                // Skip whitespace/comments if FLAG_IGNORE_SPACE is set
-                pos = self.optional_whitespace(pos)?;
+                pos = self.hex_whitespace(pos)?;
                 if pos >= self.re.len() {
                     return Err(Error::ParseError(ix, ParseError::InvalidHex));
                 }
@@ -815,6 +814,18 @@ impl<'a> Parser<'a> {
             }
         }
         Err(Error::ParseError(ix, ParseError::InvalidHex))
+    }
+
+    // Skip whitespace/comments inside a hex escape if FLAG_IGNORE_SPACE is set.
+    // Oniguruma doesn't allow them there, even with `(?x)`, and reads a space in
+    // `\x{41 42}` as a separator between code points, so in Oniguruma mode they
+    // are not skipped and the escape is invalid instead.
+    fn hex_whitespace(&self, ix: usize) -> Result<usize> {
+        if self.flag(FLAG_ONIGURUMA_MODE) {
+            Ok(ix)
+        } else {
+            self.optional_whitespace(ix)
+        }
     }
 
     fn hex_to_literal(
@@ -3538,6 +3549,39 @@ mod tests {
             }))
         );
         assert_eq!(p("a*?+"), Expr::AtomicGroup(Box::new(lazy(0, usize::MAX))));
+    }
+
+    #[test]
+    fn hex_escape_whitespace_oniguruma_mode() {
+        // Oniguruma doesn't skip whitespace or comments inside a hex escape, even
+        // with `(?x)`, and reads `\x{41 42}` as `AB`, so these are rejected instead
+        // of becoming a single code point like U+4142
+        let cases = [
+            ("(?x)\\x{41 42}", 6),
+            ("(?x)[\\x{41 42}]", 7),
+            ("(?x)\\x{41#c\n42}", 6),
+            ("\\x{41(?#c)42}", 2),
+            ("(?x)\\x 41", 6),
+            ("\\x(?#c)41", 2),
+            ("(?x)\\u 0041", 6),
+            ("(?x)\\u{0041 0042}", 6),
+            ("(?x)\\U{0001 F600}", 6),
+        ];
+        for (re, position) in cases {
+            assert_error_oniguruma(
+                re,
+                &format!("Parsing error at position {}: Invalid hex escape", position),
+            );
+        }
+
+        // Whitespace around the escape is still ignored
+        assert_eq!(
+            parse_oniguruma("(?x) \\x{41} \\x42 ").unwrap(),
+            parse_oniguruma("\\x{41}\\x42").unwrap()
+        );
+        // Without Oniguruma mode it is still skipped inside the escape too
+        assert_eq!(p("(?x)\\x{41 42}"), make_literal("\u{4142}"));
+        assert_eq!(p("\\x(?#c)41"), make_literal("A"));
     }
 
     #[test]
